@@ -4,12 +4,12 @@
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex
 ```
 
 The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semantius` and adds it to your user PATH automatically.

@@ -19,13 +19,13 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 **Linux / macOS:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex
 ```
 
 The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semantius` and adds it to your user PATH automatically.
@@ -469,7 +469,7 @@ The CLI includes **automatic retry with exponential backoff** for transient fail
 ### Setup
 
 ```bash
-git clone https://github.com/IntranetFactory/semantius-cli.git
+git clone https://github.com/semantius/semantius-cli.git
 cd semantius
 bun install
 ```

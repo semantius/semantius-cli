@@ -1,6 +1,6 @@
 {
   "name": "semantius-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A lightweight CLI for interacting with MCP (Model Context Protocol) servers",
   "type": "module",
   "main": "src/index.ts",
@@ -43,12 +43,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/IntranetFactory/semantius-cli"
+    "url": "https://github.com/semantius/semantius-cli"
   },
   "bugs": {
-    "url": "https://github.com/IntranetFactory/semantius-cli/issues"
+    "url": "https://github.com/semantius/semantius-cli/issues"
   },
-  "homepage": "https://github.com/IntranetFactory/semantius-cli#readme",
+  "homepage": "https://github.com/semantius/semantius-cli#readme",
   "engines": {
     "bun": ">=1.0.0"
   }

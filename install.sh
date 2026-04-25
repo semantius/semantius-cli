@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install script for semantius-cli
-# Usage: curl -fsSL https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
 
 set -e
 
@@ -59,7 +59,7 @@ if [ -z "${INSTALL_DIR:-}" ]; then
     fi
 fi
 
-GITHUB_REPO="IntranetFactory/semantius-cli"
+GITHUB_REPO="semantius/semantius-cli"
 
 # Print banner
 echo ""

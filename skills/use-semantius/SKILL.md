@@ -93,8 +93,8 @@ semantius --version
 If this command fails (command not found, exit code 127), STOP immediately. Do NOT attempt to run any semantius commands. Instead, tell the user:
 
 > "semantius is not installed. Please install it first:
-> - Linux/macOS: curl -fsSL https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.sh | bash
-> - Windows: Run PowerShell as admin and run: irm https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.ps1 | iex"
+> - Linux/macOS: curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
+> - Windows: Run PowerShell as admin and run: irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex"
 
 Do not proceed with any other tasks until the CLI is installed and `semantius --version` returns successfully.
 

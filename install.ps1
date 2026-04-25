@@ -1,5 +1,5 @@
 # Install script for semantius-cli (Windows)
-# Usage: irm https://raw.githubusercontent.com/IntranetFactory/semantius-cli/main/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex
 
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\Semantius"
@@ -24,7 +24,7 @@ switch ($arch) {
     }
 }
 
-$githubRepo = 'IntranetFactory/semantius-cli'
+$githubRepo = 'semantius/semantius-cli'
 $downloadUrl = "https://github.com/$githubRepo/releases/latest/download/$binary"
 $checksumUrl = "https://github.com/$githubRepo/releases/latest/download/checksums.txt"
 $destExe     = Join-Path $InstallDir 'semantius.exe'
