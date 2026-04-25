@@ -10,11 +10,11 @@ jobs:
     name: Test before release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
       
       - uses: oven-sh/setup-bun@v2
         with:
@@ -40,15 +40,15 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v6
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      
+
       - name: Build Linux x64
         run: bun build --compile --minify --target=bun-linux-x64 src/index.ts --outfile dist/semantius-linux-x64
       
@@ -68,7 +68,7 @@ jobs:
         run: bun build --compile --minify --target=bun-windows-arm64 src/index.ts --outfile dist/semantius-windows-arm64.exe
       
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binaries
           path: dist/
@@ -80,10 +80,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v6
+
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries
           path: dist/
