@@ -55,7 +55,7 @@ jobs:
         run: bun test tests/config.test.ts tests/output.test.ts tests/client.test.ts tests/errors.test.ts tests/grep.test.ts
       
       - name: Pre-cache MCP filesystem server
-        run: npx --yes @modelcontextprotocol/server-filesystem --version
+        run: npx --yes --package=@modelcontextprotocol/server-filesystem -- node -e "0"
         continue-on-error: true
         env:
           npm_config_registry: https://registry.npmjs.org
