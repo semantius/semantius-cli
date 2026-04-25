@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude plugins *)",
+      "Bash(bash skills/semantius-cli/evals/run-evals.sh)",
+      "Bash(where claude *)",
+      "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/data-modeling.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/data-modeling.md)",
+      "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/rbac.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/rbac.md)",
+      "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/crud-tools.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/crud-tools.md)"
+    ]
+  },
+  "enabledPlugins": {}
+}
