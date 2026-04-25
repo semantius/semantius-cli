@@ -1,0 +1,22 @@
+[
+  {"query": "I need to create a new module for tracking our support tickets, with fields for subject, description, priority, and status. How do I set this up using semantius?", "should_trigger": true},
+  {"query": "ok so my boss just sent me this xlsx file (its in my downloads, called something like 'Q4 sales final FINAL v2.xlsx') and she wants me to add a column that shows the profit margin as a percentage. The revenue is in column C and costs are in column D i think. she wants me to upload this to our semantius db", "should_trigger": false},
+  {"query": "Create a junction table for enrollments linking students and courses. Already have both entities.", "should_trigger": true},
+  {"query": "Write me the CRUD operations for a products API using Express and PostgreSQL", "should_trigger": false},
+  {"query": "Use cube to show me total revenue by month for the last quarter as a line chart", "should_trigger": true},
+  {"query": "Show me the git diff between main and feature-branch", "should_trigger": false},
+  {"query": "User alice@example.com can't edit invoices - help me debug the permission chain", "should_trigger": true},
+  {"query": "Fix this Python script - it's giving me a KeyError when parsing JSON", "should_trigger": false},
+  {"query": "Batch update all products to set discontinued=true where units_in_stock is 0", "should_trigger": true},
+  {"query": "Convert this CSV to JSON using python", "should_trigger": false},
+  {"query": "Generate 50k product records from a CSV into our webhook receiver - bun is installed", "should_trigger": true},
+  {"query": "What's the weather in San Francisco?", "should_trigger": false},
+  {"query": "Build a complete CRM with Companies, Contacts, and Deals entities - permissions for salespeople and viewers", "should_trigger": true},
+  {"query": "Write a unit test for the calculateTotal function", "should_trigger": false},
+  {"query": "Set up RBAC: viewer role can only read, manager role can read and write the orders table", "should_trigger": true},
+  {"query": "Get me a coffee", "should_trigger": false},
+  {"query": "Add a new category record and capture its ID, then create 2 products linked to it", "should_trigger": true},
+  {"query": "echo 'hello world'", "should_trigger": false},
+  {"query": "The sales_team role is missing the orders:edit permission - fix it", "should_trigger": true},
+  {"query": "Format this date string as YYYY-MM-DD", "should_trigger": false}
+]

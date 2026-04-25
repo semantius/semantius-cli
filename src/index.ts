@@ -1,0 +1,499 @@
+#!/usr/bin/env bun
+/**
+ * semantius - A lightweight CLI for interacting with MCP servers
+ *
+ * Commands:
+ *   semantius                         List all servers and tools
+ *   semantius info <server>            Show server details
+ *   semantius info <server> <tool>     Show tool schema
+ *   semantius grep <pattern>           Search tools by glob pattern
+ *   semantius call <server> <tool>     Call tool (reads JSON from stdin if no args)
+ *   semantius call <server> <tool> {}  Call tool with JSON args
+ */
+
+import { callCommand } from './commands/call.js';
+import { grepCommand } from './commands/grep.js';
+import { infoCommand } from './commands/info.js';
+import { listCommand } from './commands/list.js';
+import { markdownCommand } from './commands/markdown.js';
+import {
+  DEFAULT_CONCURRENCY,
+  DEFAULT_MAX_RETRIES,
+  DEFAULT_RETRY_DELAY_MS,
+  DEFAULT_TIMEOUT_SECONDS,
+  listServerNames,
+  loadConfig,
+  loadDotEnv,
+} from './config.js';
+import {
+  ErrorCode,
+  ambiguousCommandError,
+  formatCliError,
+  missingArgumentError,
+  tooManyArgumentsError,
+  unknownOptionError,
+  unknownSubcommandError,
+} from './errors.js';
+import { VERSION } from './version.js';
+
+interface ParsedArgs {
+  command: 'list' | 'info' | 'grep' | 'call' | 'help' | 'version' | 'markdown';
+  server?: string;
+  tool?: string;
+  pattern?: string;
+  args?: string;
+  withDescriptions: boolean;
+  withMarkdown: boolean;
+  configPath?: string;
+}
+
+/**
+ * Known subcommands
+ */
+const SUBCOMMANDS = ['info', 'grep', 'call'] as const;
+
+/**
+ * Check if a string looks like a subcommand (not a server name)
+ */
+function isKnownSubcommand(arg: string): boolean {
+  return SUBCOMMANDS.includes(arg as (typeof SUBCOMMANDS)[number]);
+}
+
+/**
+ * Check if a string looks like it could be an unknown subcommand
+ * (common aliases that users might try)
+ */
+function isPossibleSubcommand(arg: string): boolean {
+  const aliases = [
+    'run',
+    'execute',
+    'exec',
+    'invoke',
+    'list',
+    'ls',
+    'get',
+    'show',
+    'describe',
+    'search',
+    'find',
+    'query',
+  ];
+  return aliases.includes(arg.toLowerCase());
+}
+
+/**
+ * Parse server/tool from either "server/tool" or "server tool" format
+ */
+function parseServerTool(args: string[]): { server: string; tool?: string } {
+  if (args.length === 0) {
+    return { server: '' };
+  }
+
+  const first = args[0];
+
+  // Check for slash format: server/tool
+  if (first.includes('/')) {
+    const slashIndex = first.indexOf('/');
+    return {
+      server: first.substring(0, slashIndex),
+      tool: first.substring(slashIndex + 1) || undefined,
+    };
+  }
+
+  // Space format: server tool
+  return {
+    server: first,
+    tool: args[1],
+  };
+}
+
+/**
+ * Parse command line arguments
+ */
+function parseArgs(args: string[]): ParsedArgs {
+  const result: ParsedArgs = {
+    command: 'info',
+    withDescriptions: false,
+    withMarkdown: false,
+  };
+
+  const positional: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    switch (arg) {
+      case '-h':
+      case '--help':
+        result.command = 'help';
+        return result;
+
+      case '-v':
+      case '--version':
+        result.command = 'version';
+        return result;
+
+      case '-d':
+      case '--with-descriptions':
+        result.withDescriptions = true;
+        break;
+
+      case '-md':
+      case '--markdown':
+        result.withMarkdown = true;
+        break;
+
+      case '-c':
+      case '--config':
+        result.configPath = args[++i];
+        if (!result.configPath) {
+          console.error(
+            formatCliError(missingArgumentError('-c/--config', 'path')),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        break;
+
+      default:
+        // Single '-' is allowed (stdin indicator), but other dash-prefixed args are options
+        if (arg.startsWith('-') && arg !== '-') {
+          console.error(formatCliError(unknownOptionError(arg)));
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        positional.push(arg);
+    }
+  }
+
+  // No positional args = list all servers (or markdown dump if -md)
+  if (positional.length === 0) {
+    result.command = result.withMarkdown ? 'markdown' : 'list';
+    return result;
+  }
+
+  const firstArg = positional[0];
+
+  // =========================================================================
+  // Explicit subcommand routing
+  // =========================================================================
+
+  if (firstArg === 'info') {
+    const remaining = positional.slice(1);
+    const { server, tool } = parseServerTool(remaining);
+
+    // info without a server → markdown dump if -md, otherwise list all servers
+    if (!server) {
+      result.command = result.withMarkdown ? 'markdown' : 'list';
+      return result;
+    }
+
+    result.command = 'info';
+    result.server = server;
+    result.tool = tool;
+    return result;
+  }
+
+  if (firstArg === 'grep') {
+    result.command = 'grep';
+    result.pattern = positional[1];
+    if (!result.pattern) {
+      console.error(formatCliError(missingArgumentError('grep', 'pattern')));
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    if (positional.length > 2) {
+      console.error(
+        formatCliError(tooManyArgumentsError('grep', positional.length - 1, 1)),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    return result;
+  }
+
+  if (firstArg === 'call') {
+    result.command = 'call';
+    const remaining = positional.slice(1);
+
+    if (remaining.length === 0) {
+      console.error(
+        formatCliError(missingArgumentError('call', 'server and tool')),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+
+    // Parse server/tool from remaining args
+    const { server, tool } = parseServerTool(remaining);
+    result.server = server;
+
+    if (!tool) {
+      // Check if it was slash format without tool
+      if (remaining[0].includes('/') && !remaining[0].split('/')[1]) {
+        console.error(formatCliError(missingArgumentError('call', 'tool')));
+        process.exit(ErrorCode.CLIENT_ERROR);
+      }
+      // Space format with only server
+      if (remaining.length < 2) {
+        console.error(formatCliError(missingArgumentError('call', 'tool')));
+        process.exit(ErrorCode.CLIENT_ERROR);
+      }
+    }
+
+    result.tool = tool;
+
+    // Determine where args start
+    let argsStartIndex: number;
+    if (remaining[0].includes('/')) {
+      // slash format: call server/tool '{}' → args at index 1
+      argsStartIndex = 1;
+    } else {
+      // space format: call server tool '{}' → args at index 2
+      argsStartIndex = 2;
+    }
+
+    // Collect remaining args as JSON (support '-' for stdin)
+    const jsonArgs = remaining.slice(argsStartIndex);
+    if (jsonArgs.length > 0) {
+      const argsValue = jsonArgs.join(' ');
+      result.args = argsValue === '-' ? undefined : argsValue;
+    }
+
+    return result;
+  }
+
+  // =========================================================================
+  // Check for unknown subcommand (common aliases)
+  // =========================================================================
+
+  if (isPossibleSubcommand(firstArg)) {
+    console.error(formatCliError(unknownSubcommandError(firstArg)));
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // =========================================================================
+  // Slash format without subcommand → error (require explicit subcommand)
+  // =========================================================================
+
+  if (firstArg.includes('/')) {
+    const parts = firstArg.split('/');
+    const serverName = parts[0];
+    const toolName = parts[1] || '';
+    const hasArgs = positional.length > 1;
+    console.error(
+      formatCliError(ambiguousCommandError(serverName, toolName, hasArgs)),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // =========================================================================
+  // Ambiguous command detection: server tool without subcommand
+  // =========================================================================
+
+  if (positional.length >= 2) {
+    const serverName = positional[0];
+    const possibleTool = positional[1];
+
+    // Check if second arg looks like a tool name (not JSON)
+    const looksLikeJson =
+      possibleTool.startsWith('{') || possibleTool.startsWith('[');
+    const looksLikeToolName = /^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(possibleTool);
+
+    if (!looksLikeJson && looksLikeToolName) {
+      const hasArgs = positional.length > 2;
+      console.error(
+        formatCliError(
+          ambiguousCommandError(serverName, possibleTool, hasArgs),
+        ),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+  }
+
+  // =========================================================================
+  // Default: single server name → info
+  // =========================================================================
+
+  result.command = 'info';
+  result.server = firstArg;
+  return result;
+}
+
+/**
+ * Print help message
+ */
+function printHelp(): void {
+  const missingVars = ['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG'].filter(
+    (v) => !process.env[v],
+  );
+
+  console.log(`
+semantius v${VERSION} - CLI for the Semantius platform
+
+Usage:
+  semantius [options]                              List all servers and tools
+  semantius [options] info <server>                Show server details
+  semantius [options] info <server> <tool>         Show tool schema
+  semantius [options] grep <pattern>               Search tools by glob pattern
+  semantius [options] call <server> <tool>         Call tool (reads JSON from stdin if no args)
+  semantius [options] call <server> <tool> <json>  Call tool with JSON arguments
+
+Formats (both work):
+  semantius info server tool                       Space-separated
+  semantius info server/tool                       Slash-separated
+  semantius call server tool '{}'                  Space-separated
+  semantius call server/tool '{}'                  Slash-separated
+
+Options:
+  -h, --help               Show this help message
+  -v, --version            Show version number
+  -d, --with-descriptions  Include tool descriptions
+  -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
+
+Output:
+  semantius/info/grep      Human-readable text to stdout
+  call                     Raw JSON to stdout (for piping)
+  Errors                   Always to stderr
+
+Examples:
+  semantius                                        # List all servers
+  semantius -d                                     # List with descriptions
+  semantius grep "*crud*"                          # Search for crud tools
+  semantius info crud                              # Show server tools
+  semantius info crud create_record                # Show tool schema
+  semantius call crud create_record '{}'           # Call tool
+  cat input.json | semantius call crud create_record  # Read from stdin (no '-' needed)
+
+Environment Variables:
+  SEMANTIUS_API_KEY      API key for Semantius (required)
+  SEMANTIUS_ORG          Organization name for Semantius (required)
+  MCP_NO_DAEMON=1        Disable connection caching (force fresh connections)
+  MCP_DAEMON_TIMEOUT=N   Set daemon idle timeout in seconds (default: 60)
+
+${
+  missingVars.length > 0
+    ? `
+⚠  Missing required environment variables:
+${missingVars.map((v) => `   ${v}`).join('\n')}
+   Set these in a .env file next to the executable or export them in your shell.`
+    : ''
+}`);
+}
+
+/**
+ * Check that required environment variables are set at startup.
+ * Exits with an error listing each missing variable by name.
+ */
+function checkRequiredEnvVars(): void {
+  const required = ['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG'];
+  const missing = required.filter((v) => !process.env[v]);
+
+  if (missing.length > 0) {
+    for (const v of missing) {
+      console.error(
+        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v}`,
+      );
+    }
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+}
+
+/**
+ * Build target string from server and tool
+ */
+function buildTarget(server?: string, tool?: string): string {
+  if (!server) return '';
+  if (!tool) return server;
+  return `${server}/${tool}`;
+}
+
+/**
+ * Main entry point
+ */
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.command === 'help') {
+    // Load .env early so help can reflect actual missing vars
+    await loadDotEnv();
+    printHelp();
+    return;
+  }
+
+  if (args.command === 'version') {
+    await loadDotEnv();
+    console.log(`semantius v${VERSION}`);
+    const missingVars = ['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG'].filter(
+      (v) => !process.env[v],
+    );
+    if (missingVars.length > 0) {
+      console.log(`
+⚠  Missing required environment variables:
+${missingVars.map((v) => `   ${v}`).join('\n')}
+   Set these in a .env file next to the executable or export them in your shell.`);
+    }
+    return;
+  }
+
+  // Load .env before checking required env vars (supports .env next to exe)
+  await loadDotEnv();
+
+  // Validate required environment variables before running any data command
+  checkRequiredEnvVars();
+
+  switch (args.command) {
+    case 'list':
+      await listCommand({
+        withDescriptions: args.withDescriptions,
+        configPath: args.configPath,
+      });
+      break;
+
+    case 'markdown':
+      await markdownCommand({
+        configPath: args.configPath,
+      });
+      break;
+
+    case 'info':
+      // info always has a server (validated in parseArgs)
+      await infoCommand({
+        target: buildTarget(args.server, args.tool),
+        withDescriptions: args.withDescriptions,
+        configPath: args.configPath,
+      });
+      break;
+
+    case 'grep':
+      await grepCommand({
+        pattern: args.pattern ?? '',
+        withDescriptions: args.withDescriptions,
+        configPath: args.configPath,
+      });
+      break;
+
+    case 'call':
+      await callCommand({
+        target: buildTarget(args.server, args.tool),
+        args: args.args,
+        configPath: args.configPath,
+      });
+      break;
+  }
+}
+
+// Handle graceful shutdown on SIGINT/SIGTERM
+process.on('SIGINT', () => {
+  process.exit(130); // 128 + SIGINT(2)
+});
+process.on('SIGTERM', () => {
+  process.exit(143); // 128 + SIGTERM(15)
+});
+
+// Run
+main()
+  .then(() => {
+    // Use setImmediate to let stdout flush before exiting
+    setImmediate(() => process.exit(0));
+  })
+  .catch((error) => {
+    // Error message already formatted by command handlers
+    console.error(error.message);
+    setImmediate(() => process.exit(ErrorCode.CLIENT_ERROR));
+  });

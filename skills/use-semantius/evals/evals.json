@@ -1,0 +1,151 @@
+{
+  "skill_name": "use-semantius",
+  "evals": [
+    {
+      "id": 1,
+      "name": "build-crm-module-from-scratch",
+      "prompt": "Build me a complete CRM module from scratch. I need to track Companies (name, industry, website, employee count), Contacts (first name, last name, email, phone, linked to a company), and Deals (title, value, stage as a dropdown: Prospect/Qualified/Proposal/Closed Won/Closed Lost, linked to both a company and a contact). Set up appropriate roles so salespeople can manage everything and a read-only viewer role exists. Give me the full sequence of CLI commands.",
+      "expected_output": "A complete ordered sequence of ~20+ CLI calls: (1) read_module to check for existing crm module, (2) create_module for crm, (3) create_permission for crm:read and crm:manage, (4) create_permission_hierarchy so manage implies read, (5) create_entity for companies with label_column=company_name, (6) create_field for industry/website/employee_count on companies — NOT id/label/company_name/created_at/updated_at, (7) create_entity for contacts, (8) create_field for first_name/last_name/email/phone, (9) create_field for company_id on contacts as format:parent with cascade, (10) create_entity for deals, (11) create_field for value (float) and stage (enum with 5 values), (12) create_field company_id and contact_id on deals as format:reference (not parent — deals have independent lifecycle), (13) create_role for viewer and salesperson, (14) create_role_permission assignments, (15) UI links for all 3 entities.",
+      "assertions": [
+        "Calls read_module before creating the crm module",
+        "Creates crm:read and crm:manage permissions with module:action naming",
+        "Creates permission_hierarchy linking manage->read",
+        "Creates 3 entities: companies, contacts, deals",
+        "Never calls create_field for id, label, created_at, updated_at, or the label_column field on any entity",
+        "company_id on contacts uses format:parent with reference_table:companies and cascade (contacts owned by company)",
+        "company_id and contact_id on deals use format:reference not format:parent (deals have independent lifecycle)",
+        "stage field on deals is format:enum with all 5 values in enum_values array",
+        "Creates 2 roles: viewer with :read and salesperson with :manage",
+        "Creates role_permission records granting permissions to each role",
+        "Provides tests.semantius.app UI links for each entity",
+        "Total CLI command count is 15 or more"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "seed-records-sequential-cli-calls",
+      "prompt": "Write a bash script that: creates 3 categories (Electronics, Clothing, Food) in the 'categories' entity, captures each new record's ID from the response, then creates 2 products per category (6 total) in the 'products' entity where each product references its parent category. Use heredocs for the JSON and jq to extract IDs. Handle errors with set -e.",
+      "expected_output": "A complete bash script using jq to capture IDs. Pattern: ELEC_ID=$(semantius call crud postgrestRequest ... | jq -r '.[0].id') for each category, then 6 product create calls each embedding the correct category ID. Uses heredoc <<EOF syntax. Has set -e at the top. Total of 9 create calls (3 categories + 6 products). Explains that category IDs from the first 3 responses must be captured before the product calls.",
+      "assertions": [
+        "Uses set -e or equivalent error handling",
+        "Captures category record IDs from create responses using jq",
+        "Creates 3 category records",
+        "Creates 6 product records (2 per category)",
+        "Each product creation embeds the correct captured category ID",
+        "Uses heredoc <<EOF or pipe for clean multi-line JSON (not inline escaped JSON)",
+        "Total CLI call count is 9 or more",
+        "Correctly references the right category ID variable for each pair of products"
+      ],
+      "files": ["test-import.csv"]
+    },
+    {
+      "id": 4,
+      "name": "bulk-update-via-postgrest-direct",
+      "prompt": "Using postgrestRequest, write me the CLI commands to: first find all fields on the 'orders' entity that have format 'string' but are not yet searchable, then bulk-update all of them to searchable=true in a single PATCH. Explain why you're not using update_field here.",
+      "expected_output": "Two postgrestRequest CLI calls: (1) GET /fields?table_name=eq.orders&format=eq.string&searchable=eq.false&select=id,field_name to see affected fields before patching, (2) PATCH /fields?table_name=eq.orders&format=eq.string&searchable=eq.false with body {searchable: true}. Clear explanation that update_field takes a single ID so cannot bulk-update — postgrestRequest with a filter-based PATCH is the right tool here.",
+      "assertions": [
+        "Uses postgrestRequest for both calls, not typed update_field",
+        "First call is a GET to inspect affected fields before patching",
+        "Second call is a PATCH with PostgREST filter operators on the path",
+        "PATCH path filters by table_name, format, and searchable",
+        "PATCH body sets searchable to true",
+        "Explains that update_field only accepts a single ID so bulk update requires postgrestRequest",
+        "Both path filters use correct PostgREST operator syntax (eq.)"
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "shell-script-create-entity-and-fields-with-captured-ids",
+      "prompt": "Write a shell script that creates a new 'suppliers' entity in the existing 'inventory' module, captures the module ID first, then immediately creates 3 fields on it: email, phone, and country. Use jq throughout to extract IDs, use heredocs for JSON, and end by printing the UI link.",
+      "expected_output": "A complete bash script: MODULE_ID=$(semantius call crud read_module '{\"filters\":\"name=eq.inventory\"}' | jq -r '.[0].id'), then create_entity call storing result in a variable, then 3 create_field calls for email (format:email), phone (format:string), country (format:string). Does NOT create supplier_name field because it is the label_column. Ends with echo https://tests.semantius.app/inventory/suppliers. Uses heredocs throughout.",
+      "assertions": [
+        "Reads existing inventory module to capture its ID with jq",
+        "create_entity call uses the captured module ID",
+        "Does NOT call create_field for the label_column field (auto-generated)",
+        "Creates exactly 3 additional fields: email, phone, country",
+        "email field uses format:email",
+        "Uses heredoc <<EOF or pipe for all JSON payloads",
+        "Script includes error handling",
+        "Ends by printing the tests.semantius.app URL for the new entity"
+      ],
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "m2m-junction-table-full-setup-and-seed",
+      "prompt": "I have 'students' and 'courses' entities already. Model the M:N enrollment relationship with a junction table, then seed it: create 2 students, 3 courses, and enroll each student in all 3 courses (6 enrollment records). Give me every CLI command in order.",
+      "expected_output": "Ordered sequence: (1) create_entity for enrollments junction, (2) create_field student_id as format:parent referencing students with cascade, (3) create_field course_id as format:parent referencing courses with cascade, (4) 2 create calls for student records, (5) 3 create calls for course records, (6) 6 create calls for enrollment records capturing IDs from prior responses. Explains why both FKs use format:parent for junction tables.",
+      "assertions": [
+        "Creates a junction entity (enrollments or similar)",
+        "student_id uses format:parent not format:reference",
+        "course_id uses format:parent not format:reference",
+        "Both parent fields have reference_delete_mode:cascade",
+        "Creates 2 student records and captures their IDs",
+        "Creates 3 course records and captures their IDs",
+        "Creates 6 enrollment records (2 students x 3 courses each)",
+        "Each enrollment record references the correct student_id and course_id",
+        "Explains why parent (not reference) is correct for M:N junction FKs",
+        "Never manually creates id/label/created_at/updated_at on the junction entity"
+      ],
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "diagnose-and-fix-permission-denied",
+      "prompt": "My user alice@example.com is getting 'permission denied' when she tries to edit records in the 'invoices' entity. Walk me through the exact CLI commands to diagnose what's wrong and fix it.",
+      "expected_output": "Ordered diagnosis chain of 5-7 CLI calls: (1) read_user filtering by email to get alice's ID, (2) read_entity for invoices to find its edit_permission value, (3) read_user_role to see alice's current roles, (4) read_role_permission for each of her roles to see what permissions they grant, (5) read_permission_hierarchy to check inheritance, (6) identify the specific missing permission, (7) create_role_permission or create_user_role to fix it.",
+      "assertions": [
+        "Starts with read_user filtering by email=eq.alice@example.com",
+        "Reads the invoices entity to find its edit_permission field value",
+        "Reads alice's user_roles to find her current role IDs",
+        "Reads role_permissions for those roles to check what they grant",
+        "Checks permission_hierarchy for inherited permissions",
+        "Identifies the specific missing permission by name (not just 'some permission')",
+        "Provides a concrete fix command (create_role_permission or create_user_role with real IDs)",
+        "Does not skip steps or guess — traces the full user->role->permission chain"
+      ],
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "cube-total-vs-trend-correct-pattern",
+      "prompt": "Show me two things about our sales data: (1) total revenue for the last 6 months as a single KPI number, and (2) the monthly revenue breakdown over those same 6 months as a line chart. Call discover first. Explain why the two queries are structured differently.",
+      "expected_output": "Three calls: (1) cube discover (mandatory), (2) cube load or chart with kpiNumber type using filters+inDateRange for the total — no timeDimensions, (3) cube chart with timeDimensions using granularity:month and dateRange:last 6 months for the trend line. Clear explanation: totals need inDateRange in filters (aggregates everything into one row), trends need timeDimensions+granularity (produces one row per time bucket).",
+      "assertions": [
+        "Calls cube discover first before any load or chart call",
+        "Total query uses filters array with operator:inDateRange — no timeDimensions key",
+        "Trend query uses timeDimensions array with granularity:month",
+        "Trend is rendered as a chart with type:line",
+        "Total is rendered as kpiNumber or similar single-value format",
+        "Both queries cover the same 6-month period",
+        "Explanation clearly distinguishes why the two approaches are different",
+        "Does NOT use timeDimensions without a granularity in either query"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "import-large-csv-via-webhook",
+      "prompt": "I have a CSV file with 50,000 product records. Columns are: Product Code, Product Title, Category, List Price, Stock Count, Is Active. The entity is called products. Generate a complete import script — I have Bun installed. Sign each request correctly, show progress every 100 rows, handle rate limiting, save failed rows for retry.",
+      "expected_output": "A complete Bun/TypeScript script: searches for/creates Agent Import webhook receiver, calls getCurrentUser for api_baseurl, maps all 6 columns, signs with createHmac (Standard Webhooks: msgId.timestamp.body), uses fetch(), shows progress every 100 rows, sleeps 50ms, saves failed_rows.json. No external packages needed.",
+      "assertions": [
+        "Searches for existing Agent Import webhook receiver before creating one",
+        "Calls getCurrentUser to obtain api_baseurl",
+        "Uses createHmac from crypto (not Python hmac)",
+        "Signed payload format is webhook-id.webhook-timestamp.body",
+        "Body is compact JSON (JSON.stringify with no spaces)",
+        "All 3 required headers present: webhook-id, webhook-timestamp, webhook-signature",
+        "Signature header value starts with v1,",
+        "Uses fetch() for HTTP requests",
+        "Prints progress counter every N rows",
+        "Includes Bun.sleep or equivalent rate limiting",
+        "Failed rows saved to file for retry",
+        "All 6 CSV columns mapped to entity field names"
+      ],
+      "files": [],
+      "notes": "NOTE: This test may fail due to platform limitation: Neon serverless doesn't support transactions required for webhook inserts. The generated script is correct - the failure is a platform bug, not a skill bug."
+    }
+  ]
+}
