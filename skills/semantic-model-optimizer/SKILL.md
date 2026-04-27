@@ -165,11 +165,30 @@ Follow `semantic-model-analyst/references/semantic-model-template.md` verbatim. 
 artifact: semantic-model
 system_name: <module.label>
 system_slug: <module.module_name>
-domain: custom
+# domain: see inference rule below — omit when no canonical category fits
 naming_mode: agent-optimized
 created_at: <today, YYYY-MM-DD>
+entities:
+  - <table_name_1>
+  - <table_name_2>
+# departments and industries: see carry-over / inference rule below
 ---
 ```
+
+**`entities` is required.** Populate it from the live module's entity list — every `table_name` rendered in §2 (in §2 order, lowercase snake_case). Include only the entities owned by *this* module; do **not** list `related_entities[]` pulled in for self-containment, since the discovery tag is meant to identify what the model is about, not its FK neighbourhood. Regenerate every run from live state — never trust a prior file's list.
+
+**`domain` — infer from the entities you just read.** `domain` is not stored in Semantius. The live entity names are usually the strongest signal — a module containing `tickets`, `incidents`, `agents` is `ITSM`; one containing `leads`, `accounts`, `opportunities` is `CRM`; one containing `employees`, `positions`, `time_off` is `HRIS`; one dominated by clinical entities is `EHR`. Use the module label and description as supporting signal but the entity shape is what disambiguates.
+
+The vocabulary is open: prefer the common values (`CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`) when one fits cleanly, otherwise coin a new Title-case / acronym value that captures the system shape (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). Only omit `domain` when you genuinely can't categorise the system. **Never write `custom`** — it adds zero discovery signal. A prior file's `domain` value is *not* carried over — re-infer from live state every run.
+
+**`departments` and `industries` — carry over when a prior file has them, otherwise infer from the gathered live state.** These tags aren't a column in Semantius, but the live state still carries plenty of signal — `module.label`, `module.description`, the entity names you just read in Stage 2, the field names within those entities — that maps to the same inference the analyst makes from a Stage 1 capture. Use that signal, not a guess from the module name alone. **Use Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) — never lowercase snake_case.
+
+Two cases at Stage 4:
+
+1. **Prior file exists with `departments` / `industries`.** Copy each present key byte-for-byte into the new file (same mechanic as `initial_request`). The user has already curated these tags; respect that.
+2. **Prior file is missing the key (or no prior file at all).** Re-run the analyst's Stage 5 inference rule against the gathered live state — entity names, module label, module description, field names. If you can confidently propose a value, include it. If you have low or no confidence, omit the key. Never invent a value with no supporting signal.
+
+Either way, the result is a single concrete YAML key (or omission). Do not block on user input.
 
 > **🛑 Do not search the workspace for existing semantic-model files.** This skill exports the currently-live module from Semantius — the live state *is* the source of truth. Never glob `*semantic-model*.md`, and never read unrelated semantic-model files. Other systems' models tell you nothing about this module, and the template (already loaded in Step 0) is the only style reference you need.
 
@@ -182,9 +201,9 @@ At Stage 4, do exactly this — no broader search:
 3. If the file exists but has no `initial_request` (or has an empty one), **omit the key entirely** in the new file. Do not invent a placeholder, do not write a synthetic "extracted on …" value.
 4. If the file does not exist, **omit the key entirely**. The analyst's audit treats missing `initial_request` as a 🟡 Warning (not a blocker), which correctly signals that this file was reverse-engineered.
 
-> **Only `initial_request` is carried over — nothing else.** Do not copy `domain`, `naming_mode`, `system_name`, the §1 Overview prose, or any other content from the prior file. The live module is the source of truth for every field except the historical `initial_request`, and the prior file's other content may be stale relative to what users have since customized in Semantius. Regenerate everything else from live state.
+> **Only the user-curated metadata is preferentially carried over — nothing else.** From the prior file, copy `initial_request` (immutable historical record), `departments`, and `industries` byte-for-byte if present. `initial_request` is purely carry-over (omit when absent — never invent). `departments` and `industries` fall back to live-state inference when the prior file lacks them — see the dedicated rule below. Do not copy `domain`, `naming_mode`, `system_name`, the §1 Overview prose, the §2 entity list, or any structural content — the live module is the source of truth for everything the platform stores, and the prior file's structural content may be stale relative to what users have since customized in Semantius. Regenerate everything except those carry-over keys from live state.
 
-**`domain` and `naming_mode`** are not persisted in Semantius. Always write `domain: custom` and `naming_mode: agent-optimized` unless the user tells you otherwise in this conversation.
+**`naming_mode`** is not persisted in Semantius. Always write `naming_mode: agent-optimized` unless the user tells you otherwise in this conversation. **`domain`** is handled by its own inference rule above — never default it to `custom`, never carry over from a prior file; either infer from entities or omit.
 
 ### Reference notation in §3 Notes
 

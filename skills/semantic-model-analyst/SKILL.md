@@ -215,6 +215,21 @@ Use the template in `references/semantic-model-template.md` — it has the exact
 
 **Set `initial_request` in the front-matter** to the verbatim user opening captured in Stage 1. Use a YAML literal block (`|`) so newlines, quotes, and punctuation survive unchanged. This value is immutable from this point on — future audits and extensions must preserve it exactly.
 
+**Set the discovery tags in the front-matter.** Two casing conventions apply:
+
+- `entities` is **lowercase snake_case** because every value is a Semantius `table_name` (which is always plural snake_case) — the tag is the table name itself.
+- `departments` and `industries` use **Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`). Snake_case mangles initialisms — `it`/`hr`/`saas` look wrong and don't sort or scan well.
+
+Detail per key:
+
+- `entities` (**required**) — the complete list of `table_name` values from the §2 entity summary, in §2 order. Mechanical to populate from the confirmed entity list.
+- `departments` (**optional**) — the department(s) where this system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments; cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant — do not write an empty list.
+- `industries` (**optional**) — the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when industry-agnostic — do not write an empty list.
+
+Infer `departments` and `industries` the same way you infer `domain` — from everything captured in Stage 1 (the full conversation by the end of capture, not just the verbatim `initial_request`). The opening ask is rarely enough on its own; the org-size cues, sector hints, and follow-up clarifications gathered through Stage 1 are what make the call reliable. If you can confidently propose a value from those signals, include it; if you have low or no confidence, omit the key — don't ask the user a separate question just to tag the file.
+
+**`domain` follows the same rule.** Always Title-case / acronym form. Common values to prefer when they fit: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. These are seed examples — pick one when it genuinely matches (keeps the discovery vocabulary tight and groups similar systems together). When none fit, coin a new Title-case / acronym value that captures the system shape (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). Only omit `domain` when you genuinely can't categorize the system. **Never write `custom`** — it adds zero discovery signal; an absent key already means "uncategorized".
+
 **Author §7 Implementation notes with two non-obvious rules in mind:**
 
 1. **The module name in §7 step 1 must be the exact `system_slug` from the front-matter** — not a shortened, rebranded, or "cleaner" variant. The deployer treats both the frontmatter and §7 as authoritative; if they disagree the deployer cannot silently pick one and the deployment stalls. So if the frontmatter says `system_slug: acme_expense_tracker`, §7 step 1 reads *"Create one module named `acme_expense_tracker` …"* with permissions `acme_expense_tracker:read` / `acme_expense_tracker:manage`. Do not introduce a second identifier like `acme_spend` in §7.
@@ -261,11 +276,19 @@ After listing findings, give an overall summary: how many issues of each severit
 - Check the reference file for any other platform constraints added since this skill was written
 
 **Front-matter (YAML block)**
-- All seven keys present: `artifact`, `system_name`, `system_slug`, `domain`, `naming_mode`, `created_at`, `initial_request`
+- Required keys present: `artifact`, `system_name`, `system_slug`, `naming_mode`, `created_at`, `entities`, `initial_request`
+- Optional keys: `domain`, `departments`, `industries` (omit when not applicable; do not flag absence)
 - `artifact` is `semantic-model`
 - `naming_mode` is either `template:<vendor>` or `agent-optimized`
 - `system_slug` is snake_case
 - `created_at` is a valid date
+- 🟡 `domain`, when present, is **Title-case / acronym form**. Common preferred values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. Non-common Title-case values (e.g. `Talent Acquisition`, `EHR`, `Compliance`) are fine — the vocabulary is open. Two specific Warnings:
+  - The literal string `custom` is **not allowed** — flag as 🟡 Warning and propose dropping the key (absence already means "uncategorized"; `custom` adds zero discovery signal).
+  - Lowercase or snake_case values (`crm`, `field_service`) are 🟡 Warning — propose the Title-case / acronym form.
+- 🟡 **Re-evaluate `domain` against the actual model content** if it's missing or feels off. A model dominated by `tickets`, `incidents`, `agents` with no `domain` set → propose `ITSM`; a model tagged `domain: CRM` whose entities are mostly `employees`, `positions`, `time_off` → propose `HRIS`; a model dominated by clinical entities → propose `EHR` (a non-common but valid Title-case value). Flag as 🟡 Warning with a concrete proposed value. Only leave `domain` absent when the system genuinely can't be categorized.
+- 🔴 `entities` is a YAML list of every `table_name` from the §2 entity summary, in §2 order, all lowercase snake_case. Missing entries, extras, wrong order, or non-snake_case values are 🔴 Blocker — discovery tags only work when they're accurate. A file missing the key predates the rule; flag as 🟡 Warning and offer to backfill from §2.
+- 🟡 `departments` and `industries`, when present, must be YAML lists of **Title-case / acronym-form** strings (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`). Lowercase snake_case (`sales`, `financial_services`) and lowercased acronyms (`it`, `hr`, `saas`) are 🟡 Warning — propose normalized values. Empty lists (`departments: []`) are 🟡 Warning — the key should be omitted instead.
+- 🟡 **Re-evaluate the `departments` and `industries` values against the actual model content** (entity names, fields, §1 Overview, `initial_request`). The author's first-pass guess may have been narrow, generic, or just wrong. Examples worth flagging: a model dominated by `patients`, `appointments`, and `prescriptions` with no `industries` set → propose `Healthcare`; a model tagged `departments: [Sales]` that has heavy support-ticket entities → propose adding `Support` (or moving to it). Flag missing-but-inferable, present-but-inaccurate, and present-but-too-narrow as 🟡 Warning with a concrete proposed value. Do not flag genuine judgment calls where multiple values are equally defensible.
 - `initial_request` is a non-empty string (YAML literal block preferred) — **do not evaluate the wording or suggest rewording it**; this field is an immutable historical record of the user's opening ask. A file missing this key predates the rule; flag as 🟡 Warning, not 🔴 Blocker, and only backfill if the user explicitly asks.
 
 **Document structure**
@@ -308,8 +331,8 @@ After listing findings, give an overall summary: how many issues of each severit
 
 **Implementation notes (§7) — cross-check against the rest of the file** _(treat mismatches as 🔴 Blocker unless noted)_
 - 🔴 **Module name in §7 equals the front-matter `system_slug` exactly.** The frontmatter `system_slug` is the single source of truth for the module identifier. If §7 step 1 names a module different from `system_slug` (e.g. frontmatter `saas_expense_tracker` but §7 says *"module named `saas_spend`"*), this is a blocker — the deployer sees two authoritative sources and cannot silently pick one. Permissions in §7 must also follow the `{system_slug}:read` / `{system_slug}:manage` pattern. If any entity sub-section in §3 references permissions by name, those names must also match `{system_slug}:read` / `{system_slug}:manage`.
-- 🔴 **§7 includes the label-column title fixup step** when any entity's §3 field table specifies a Label for the `label_column` row that differs from that entity's `singular_label`. Example: entity `vendors` with `singular_label: "Vendor"` and a §3 field `vendor_name` with Label `"Vendor Name"` — §7 must instruct the deployer to call `update_field` with the composite string id `"vendors.vendor_name"` (passed as a **string**, not an integer) to set the correct title. If §7 is silent, the deployer will ship UIs labelled `"Vendor"` where the author specified `"Vendor Name"`. If *no* entity has a divergent label_column Label, the fixup step is not required (but including it as a conditional instruction is fine).
-- 🟡 **Audit cannot silently harmonise labels.** If you detect a label_column whose §3 Label matches `singular_label` but the `feedback_semantius_entity_label_symmetry` pattern suggests the author likely wanted a more specific field-level title (e.g. `singular_label: "Subscription"` and label_column `subscription_name` with Label `"Subscription"` — technically consistent, but a human author usually means `"Subscription Name"`), flag as a warning asking the user to confirm. **Never** rewrite `singular_label` to `"Subscription Name"` — that breaks plural/singular symmetry.
+- 🔴 **§7 includes the label-column title fixup step** when any entity's §3 field table specifies a Label for the `label_column` row that differs from that entity's `singular_label`. Example: entity `vendors` with `singular_label: "Vendor"` and a §3 field `vendor_name` with Label `"Vendor Name"` — §7 must instruct the deployer to call `update_field` with the composite string id `"vendors.vendor_name"` (passed as a **string**, not an integer) to set the correct title. If §7 is silent, the deployer will ship UIs labeled `"Vendor"` where the author specified `"Vendor Name"`. If *no* entity has a divergent label_column Label, the fixup step is not required (but including it as a conditional instruction is fine).
+- 🟡 **Audit cannot silently harmonize labels.** If you detect a label_column whose §3 Label matches `singular_label` but the `feedback_semantius_entity_label_symmetry` pattern suggests the author likely wanted a more specific field-level title (e.g. `singular_label: "Subscription"` and label_column `subscription_name` with Label `"Subscription"` — technically consistent, but a human author usually means `"Subscription Name"`), flag as a warning asking the user to confirm. **Never** rewrite `singular_label` to `"Subscription Name"` — that breaks plural/singular symmetry.
 
 **Enumeration completeness**
 - Every `enum` field across all entities has a sub-section in §5
@@ -400,6 +423,8 @@ Update the file in place:
 - Update §4 relationship summary with new rows
 - Add new enum sub-sections to §5 if needed
 - Update `created_at` in the front-matter to today's date
+- **Refresh the `entities` front-matter list** to match the new §2 entity summary (in §2 order, lowercase snake_case). A stale `entities` tag breaks discovery — never skip this step when entities are added, removed, or renamed.
+- **Re-evaluate `departments` and `industries`** against the post-extension model — the new entities, fields, and any scope cues from the extension request can shift these tags (e.g. adding HR entities to a finance system → add `hr` to `departments`; adding patient-record entities to a generic CRM → add `healthcare` to `industries`). If the inference is now confident where it wasn't before, add the key; if a previously-valid value is no longer accurate, change or drop it. Mention any change in the summary so the user can push back. If the extension doesn't shift scope, leave the existing values as-is.
 - Add any new questions surfaced during the extension to the appropriate §6 bucket — **§6.1 🔴 Decisions needed** if the extension introduces ambiguity that blocks implementation, **§6.2 🟡 Future considerations** if it's deferred-scope or extensibility. Phrase every entry as a forward-looking question — never as a decision log. Do not move existing questions between buckets unless the extension genuinely changes their severity.
 
 **Before saving, run a self-audit pass on the updated draft.** Work through every 🔴 Blocker check from the Audit checklist (Mode B) — including the Mermaid diagram checks — and fix any issues before writing. Do not save a file that would fail its own audit.

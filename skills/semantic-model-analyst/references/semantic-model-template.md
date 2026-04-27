@@ -11,9 +11,16 @@ Use this template verbatim for the final semantic-model output in Stage 5. Each 
 artifact: semantic-model
 system_name: {{System display name}}
 system_slug: {{system_slug}}
-domain: {{CRM | ITSM | HRIS | LMS | ERP | PIM | Project Management | Field Service | Subscription Billing | CMS | custom}}
+domain: {{System category, e.g. CRM, ITSM, HRIS, LMS, ERP, PIM, Project Management, Field Service, Subscription Billing, CMS}}
 naming_mode: {{template:<vendor> | agent-optimized}}
 created_at: {{YYYY-MM-DD}}
+entities:
+  - {{table_name_1}}
+  - {{table_name_2}}
+departments:
+  - {{department_name}}
+industries:
+  - {{industry_name}}
 initial_request: |
   {{Verbatim user request that kicked off this model — e.g. "I need a basic lead tracker". Captured once at creation and NEVER modified by later audits or extensions.}}
 ---
@@ -147,7 +154,12 @@ A short checklist for the agent who will materialise this model in Semantius (or
 - The §2 Mermaid diagram is **required** — it must list every entity in the summary table and every relationship in §4. Regenerate it whenever entities or relationships change.
 - Keep the "Open questions" section and both severity sub-sections (§6.1 Decisions needed, §6.2 Future considerations) even when empty — write "None." under an empty bucket. Every entry is a forward-looking question; decision-log prose ("X was folded into Y") does not belong here. The semantic-model-deployer skill uses §6.1 as a gate — any unresolved 🔴 item blocks deployment.
 - **§7 module name must equal `system_slug`.** The frontmatter `system_slug` is the single source of truth for the module identifier. Do not introduce a second name like `{domain}_spend` or `{domain}_tracker` in §7 — if the frontmatter says `acme_crm`, §7 step 1 must read "Create one module named `acme_crm` …" and the permissions must be `acme_crm:read` / `acme_crm:manage`. A divergence between frontmatter and §7 is a blocker: the downstream deployer sees two authoritative sources and cannot pick silently.
-- **§7 must explain the label-column title fixup.** After `create_entity`, Semantius auto-creates a field named `<label_column>` with its `title` defaulting to `singular_label`. If any entity's §3 field table specifies a Label for the label_column row that differs from `singular_label` (e.g. `singular_label: "Vendor"` but §3 Label `"Vendor Name"`), §7 step 5 must explicitly instruct the implementer to call `update_field` with the composite string id (`"{table_name}.{field_name}"`, passed as a **string** not an integer) to set the correct title. Do not silently harmonise labels to avoid the fixup — `singular_label` stays a bare singular for plural/singular symmetry, and field-level titles live on the field.
+- **§7 must explain the label-column title fixup.** After `create_entity`, Semantius auto-creates a field named `<label_column>` with its `title` defaulting to `singular_label`. If any entity's §3 field table specifies a Label for the label_column row that differs from `singular_label` (e.g. `singular_label: "Vendor"` but §3 Label `"Vendor Name"`), §7 step 5 must explicitly instruct the implementer to call `update_field` with the composite string id (`"{table_name}.{field_name}"`, passed as a **string** not an integer) to set the correct title. Do not silently harmonize labels to avoid the fixup — `singular_label` stays a bare singular for plural/singular symmetry, and field-level titles live on the field.
 - The front-matter is YAML — every value must be quoted if it contains a colon.
+- **`domain`** — the system category in **Title-case / acronym form**. Common values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. These are seed examples, not a closed set — prefer one when it genuinely fits (keeps the vocabulary tight for discovery), but coin a new Title-case / acronym value when nothing fits (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). **Omit the key entirely** only when you can't categorize the system at all. **Never write `custom`** — it adds no information; absence already means "uncategorized".
+- **Discovery tags** — `entities` is **lowercase snake_case** (matches Semantius `table_name` form so it works as an exact-match table tag). `departments` and `industries` use **Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) so acronyms read correctly and humans can scan them — snake_case mangles initialisms (`it`, `hr`, `saas`).
+  - `entities` is **required** and must be the complete list of `table_name` values from §2 (in §2 order, lowercase snake_case). Regenerate it whenever entities are added, removed, or renamed — a stale list defeats discovery.
+  - `departments` is **optional**: list the department(s) where the system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments — for cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant; do not write an empty list.
+  - `industries` is **optional**: list the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when the model is industry-agnostic; do not write an empty list.
 - `initial_request` is **immutable**. It captures the user's verbatim opening ask from the Create session. Audit and Extend modes must preserve it exactly — never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
 - If the system has no enums, §5 can read "No enumerations defined." — don't omit the section; keeping section numbers stable helps humans navigate multiple models.
