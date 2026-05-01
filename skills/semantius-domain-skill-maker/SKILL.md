@@ -69,10 +69,24 @@ and the SKILL.md `name` frontmatter match exactly.
 If both exist, ask the user which to use; default to the project root. If
 neither exists, ask before creating one.
 
-The skill **links back** to the model file (absolute or repo-relative path)
-rather than duplicating its field tables. Because the SKILL.md no longer
-sits next to the model, always use a path that resolves regardless of
-where the skill is loaded from — an absolute path is safest.
+### Source-of-truth and the model reference
+
+The generated SKILL.md is **self-contained at runtime** — its glossary,
+enums, FK cheatsheet, and recipes resolve every value at generation time so
+the calling agent never needs to open the model file to act.
+
+The model file is still referenced, but only as **provenance metadata in
+frontmatter** (`semantic_model:` key — see the template below), not as a
+clickable link in the body. Two reasons:
+
+- A body link invites the agent to fetch a 400+ line file the SKILL.md
+  has already condensed. That defeats the point of generating the skill.
+- Provenance still needs to live somewhere — for re-generation, audit, and
+  drift detection — and frontmatter is the right place because it's
+  machine-readable and the agent doesn't render it as a follow-up action.
+
+Use an absolute path for `semantic_model` because the SKILL.md no longer
+sits next to the model.
 
 ---
 
@@ -110,21 +124,82 @@ skill would bake in wrong recipes.
 
 ### Step 2 — Reason about jobs to be done
 
-Use the **same nine patterns** as `semantius-agent-maker` (A–I) and the
-same skip rules. They are not duplicated here — read them in
-`<skills-root>/semantius-agent-maker/SKILL.md` (Step 2) and apply them
-unchanged.
+JTBD discovery is a two-pass process: **nominate** broadly with the shared
+patterns, then **filter** with the merit test. The merit test matters more
+here than in `semantius-agent-maker` because every section sits in one
+file — slack adds noise to every load, not just to one rarely-triggered
+sibling skill.
 
-The difference is what you do with the result:
+#### Pass 1 — Nominate with the shared patterns
 
-- `semantius-agent-maker` emits one SKILL.md per job.
-- **This skill emits one SKILL.md with one section per job.**
+Apply the **same nine patterns (A–I)** and the same skip rules from
+`<skills-root>/semantius-agent-maker/SKILL.md` (Step 2). Read them once
+and walk all of them; the patterns are generic across domains, so don't
+short-circuit because the model "looks like" only one pattern.
 
-Aim for 5–12 jobs. If the count grows beyond ~12, suggest the user switch
-to `semantius-agent-maker` — a single skill that long under-triggers.
+Two pattern-level adjustments specific to this skill:
 
-Present the JTBD list to the user for confirmation before writing files.
-This is the only human checkpoint.
+- **Pattern I (cross-entity reporting) does not become a JTBD section
+  here.** Promote it instead to a `## Common queries` appendix at the
+  end of the SKILL.md — 3–5 pre-shaped cube queries the calling agent
+  can adapt. Reporting is largely `use-semantius` territory once the
+  schema is known; baking in *example queries* is useful, but framing
+  it as a "job" misleads the calling agent into routing every analytic
+  question through this skill.
+- **Pattern H (bulk ingest) becomes a one-line pointer**, not a recipe,
+  unless the model declares webhook receivers explicitly. If it does,
+  write a JTBD; otherwise the SKILL.md just notes "for CSV import, see
+  `use-semantius` `references/webhook-import.md`".
+
+#### Pass 2 — Apply the merit test (earn-its-place filter)
+
+For each candidate from Pass 1, ask: *would the calling agent get this
+right with `use-semantius` alone?* If yes, drop the candidate — an extra
+section is just noise, the calling agent should call `use-semantius`
+directly. A candidate **earns** a section only if it answers YES to ≥1
+of the following:
+
+| Merit signal | What to check in the model |
+|---|---|
+| **Caller-populated label** | Junction or sub-entity has a required `*_label` column distinct from any `label_column`, with no DB-level default. The recipe must compose the label client-side — not obvious from the schema alone. |
+| **Computed field** | A stored numeric/derived field (e.g. `rice_score`, `total_amount`, `days_open`) whose value depends on sibling fields. The recipe must recompute on every relevant PATCH. |
+| **DB-unguarded lifecycle gate** | Status enum where some transitions are valid and others aren't, but the DB accepts any value. The recipe must read-before-write. |
+| **DB-unguarded invariant across FKs** | E.g. `features.release_id` and `features.product_id` must agree on product. The recipe must read both rows and check before patching. |
+| **Cascade flow** | Flipping one parent row should flip a filtered set of children in the same logical operation (e.g. release-shipped → its planned/in-progress features → shipped). |
+| **Junction without uniqueness** | M:N junction without a DB-level unique constraint on the natural key. The recipe must dedupe-before-insert. |
+| **Materialization / handoff** | One entity row spawns rows in a different table (Pattern C). The order, FK back-pointers, and source-status flip are easy to get wrong. |
+| **Side-effect fields on transition** | `approved_at`, `committed_at`, `actual_release_date`, etc. that must be set in the same PATCH as the status flip — easy to forget. |
+| **Audit-trail read** | Audit-logged entity (`audit_log: true`) where "who/when changed X" is a likely user question. Worth a short recipe even though writes need no special handling. |
+
+If the only thing a candidate does is single-table CRUD with the platform
+defaults (no merit signals), drop it. List dropped candidates in the Step
+4 summary as `skipped: pure CRUD against <table> — calling agent uses
+use-semantius directly`. This is not a failure; it is the design.
+
+#### Sizing
+
+After filtering, aim for **5–10 sections** plus the optional `Common
+queries` appendix.
+
+- Fewer than 5 sections after filtering: the model may be too thin to
+  justify a domain skill. Tell the user; ask whether to ship it anyway
+  or extend `use-semantius` with a glossary file instead.
+- More than ~10 sections after filtering: a single skill that long
+  under-triggers. Recommend `semantius-agent-maker` for finer trigger
+  granularity (one skill per JTBD).
+
+#### Confirmation checkpoint
+
+Present three lists to the user:
+
+1. **Sections** — the JTBDs that earned a place (one bullet each, with
+   the merit signals that justified them).
+2. **Common queries** — the cube queries that go in the appendix.
+3. **Skipped** — Pass-1 candidates that failed the merit test, with the
+   reason. The user may disagree and ask to add some back.
+
+Wait for confirmation before writing files. This is the only human
+checkpoint.
 
 ### Step 3 — Write the consolidated SKILL.md
 
@@ -146,18 +221,25 @@ description: >-
   "report pipeline by stage"). Be slightly pushy — skills under-trigger
   by default. Mention that the skill delegates platform mechanics to
   `use-semantius` so the model knows both can load together.>
+semantic_model: <absolute-path-to-model.md>
+generated_from: semantius-domain-skill-maker
 ---
 
 # <system_name> domain skill
 
-**Model:** [<system_name>](<relative-path-to-model.md>)
-**Platform layer:** delegates to `use-semantius` for CLI, schema rules,
-and CRUD/cube mechanics. This skill adds the domain map and the
-jobs-to-be-done.
+This skill carries the domain map and the jobs-to-be-done for
+<system_name>. Platform mechanics — CLI install, env vars, PostgREST
+URL-encoding, `sqlToRest`, cube `discover`/`validate`/`load`, and
+schema-management tools — live in `use-semantius`. Assume it loads
+alongside; do not re-explain CLI basics here.
 
-If a task is purely about *defining* schema, permissions, or running
-ad-hoc queries against tables you already know, use `use-semantius`
-directly — that's faster than going through this skill.
+If a task is purely about defining schema, managing permissions, or
+running ad-hoc queries against tables you already know, call
+`use-semantius` directly — going through this skill adds nothing.
+
+**Auto-managed fields** (set by Semantius on every table; never include
+in POST/PATCH bodies): `id`, `created_at`, `updated_at`, and the
+`label` column derived from each entity's `label_column`.
 
 ---
 
@@ -166,7 +248,8 @@ directly — that's faster than going through this skill.
 <One short table. Pull `singular_label`s, table names, and a one-line
 "what it represents" for each entity. Group related entities together
 (e.g. "Pipeline: leads, opportunities, accounts"). Skip junction tables
-unless a job touches them directly.>
+unless a job touches them directly. Do not duplicate FK targets here —
+the FK cheatsheet is below.>
 
 | Concept | Table | Notes |
 |---|---|---|
@@ -186,11 +269,18 @@ table.column → values, with the typical lifecycle path marked.>
 ## Foreign-key cheatsheet
 
 <Only the FKs that JTBDs cross. Format: `child.field → parent.id`.
-Note any unique / 1:1 constraints that commonly cause 409s.>
+Note any unique / 1:1 constraints that commonly cause 409s, and any
+junctions whose `(parent_id, child_id)` pair lacks a DB-level unique
+constraint (those need read-before-insert in recipes).>
 
 - `opportunities.lead_id → leads.id`
 - `accounts.opportunity_id → opportunities.id` (unique — one account per
   closed-won opportunity)
+
+<List audit-logged tables here in one line so the calling agent knows
+audit rows write themselves. Example: "Audit-logged: `opportunities`,
+`accounts` — Semantius writes the audit rows; recipes don't manage
+them.">
 
 ---
 
@@ -245,8 +335,13 @@ semantius call crud postgrestRequest '{
 **Validation:** <2–3 short post-conditions, only the ones that have
 actually been broken in practice.>
 
-**Failure modes:** <2–3 most likely failures — FK violation, status not
-in allowed source set, uniqueness collision — and how to recover.>
+**Failure modes:** <2–3 most likely failures, each paired with a
+*recovery action* the calling agent can take — not just "this fails":
+
+- `409 on accounts.opportunity_id` (uniqueness) → an account already
+  exists for this opportunity; PATCH the existing row instead.
+- FK violation on `lead_id` → the lead was deleted; ask the user
+  whether to recreate it or abort the conversion.>
 
 ---
 
@@ -256,24 +351,56 @@ in allowed source set, uniqueness collision — and how to recover.>
 
 ---
 
+## Common queries
+
+<Optional appendix from Pattern I — pre-shaped cube queries for
+reporting tasks. These are *not* JTBDs; they're examples the calling
+agent can adapt. Open with one note, then 3–5 query blocks.>
+
+Always run `cube discover '{}'` first to refresh the schema. Match the
+dimension and measure names below against what `discover` returns —
+field names drift when the model is regenerated, and `discover` is the
+source of truth at query time.
+
+```bash
+# Pipeline by stage (count + total amount)
+semantius call cube load '{"query":{
+  "measures":["opportunities.count","opportunities.sum_amount"],
+  "dimensions":["opportunities.stage"],
+  "order":{"opportunities.sum_amount":"desc"}
+}}'
+```
+
+<…2–4 more representative queries, each with a one-line title comment.>
+
+---
+
 ## Guardrails
 
-<Domain-specific rules the calling model should never violate. Pull
-from §6 of the model and from the patterns above. Examples:
+<Domain-specific rules the calling model should never violate. Each rule
+should appear here *or* in the relevant JTBD's failure-modes — not both.
+Pull from §6.1 of the model (resolved blockers / explicit constraints)
+and from the merit signals that triggered each JTBD. Examples:
 
 - Never PATCH `opportunities.stage` directly to `closed_won` without
   setting `closed_date` and `won_amount` in the same call.
 - `accounts` rows are only created via the close-won flow — never
   insert directly.
-- `*_status` flips in this domain are not idempotent; always read
-  current status before writing.>
+- `*_status` flips in this domain are not DB-guarded; always read
+  current status before writing.
+- Junction labels are caller-populated — see each junction JTBD for the
+  composition convention.>
 
 ## What this skill does NOT do
 
 - Schema changes — use `use-semantius` directly.
 - RBAC / permissions — use `use-semantius` directly.
 - One-off seed data — write a script, don't bake it into a JTBD.
-- Anything in §6 "Future considerations" of the model.
+- <Inline the bullet list of unbuilt features here. Pull each item from
+  §6.2 "Future considerations" of the model at generation time and
+  write it as a plain bullet — do *not* cite "§6.2" in the SKILL.md,
+  the calling agent has no way to look it up. If §6.2 is empty or
+  missing, drop this bullet entirely.>
 ````
 
 #### What goes into each recipe — concretely
@@ -288,10 +415,19 @@ When you bake a recipe, **resolve every reference**:
 - **Required-on-create field sets** — the model's `Required` column is
   intent, not platform-enforced. Spell out the business-required fields
   per JTBD; they often differ from create vs update.
-- **Audit-logged entities** — Semantius handles audit rows automatically.
-  Mention only if the calling agent might worry the recipe is silent.
+- **Audit-logged entities** — Semantius handles audit rows automatically
+  on writes; recipes don't manage them. The non-obvious case is *reading*
+  the audit trail. If the merit test surfaced an audit-read JTBD, the
+  recipe is a single GET against the audit endpoint with the entity id —
+  see `use-semantius` `references/crud-tools.md` for the path shape.
 - **1:1 / unique constraints** — flag in **Failure modes** with the
-  exact 409 condition.
+  exact 409 condition *and* the recovery action (PATCH the existing row,
+  pick a different parent, etc.).
+- **Cube queries in the appendix** — always lead with
+  `cube discover '{}'` and tell the calling agent to *map* the
+  appendix's measure/dimension names against discover's output. Cube
+  schema names drift on regeneration; the appendix is a starting point,
+  not a contract.
 
 #### Trigger phrasing
 
@@ -310,10 +446,14 @@ Print to the user:
 
 - The folder created: `<skills-root>/<modelslug>/` (state which root was
   used — project or user).
-- The JTBD list (one bullet each).
-- Any patterns that fired but were skipped, with reasons (so the user
-  can ask for them if they disagree).
-- A one-line note: "If the JTBD count grows past ~12, switch to
+- The **sections written** (one bullet each, with the merit signal that
+  earned the spot, e.g. "Vote on a feature — junction without uniqueness
+  + caller-populated label").
+- The **Common queries** baked into the appendix (titles only).
+- The **dropped candidates** with reasons (e.g. "manage-tag — pure CRUD
+  on `tags`, no merit signal — calling agent uses use-semantius
+  directly"). The user may ask to add some back.
+- A one-line note: "If sections grow past ~10, switch to
   `semantius-agent-maker` for finer trigger granularity."
 
 ---
