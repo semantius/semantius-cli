@@ -246,6 +246,8 @@ If a question could work either way without breaking the model, it belongs in §
 
 Save the final file to the workspace folder as `{system_slug}-semantic-model.md` where `{system_slug}` is snake_case (e.g., `acme_crm`, `helpdesk`, `fieldforce_lms`).
 
+**Choosing the slug.** The slug becomes the literal Semantius module name and the prefix for `<slug>:read` / `<slug>:manage` permissions, and it shows up in generated skill folder names — so a descriptive snake_case form (`applicant_tracking`, `customer_relations`) carries more discovery signal than a bare lowercased acronym (`ats`, `crm`). When you're inferring the slug yourself from the conversation, prefer the descriptive form and avoid making it a duplicate of the `domain` tag in lowercase. **However, if the user explicitly asked for a specific slug (e.g. "call it `ats`"), use exactly what they asked for** — their naming preference wins over this guideline. Record the user's explicit ask as the deciding factor; don't second-guess it.
+
 When you share the file back, use a single `computer://` link and a one-sentence summary. No long post-amble.
 
 ---
@@ -281,6 +283,7 @@ After listing findings, give an overall summary: how many issues of each severit
 - `artifact` is `semantic-model`
 - `naming_mode` is either `template:<vendor>` or `agent-optimized`
 - `system_slug` is snake_case
+- 🟡 `system_slug` should not be a bare lowercased copy of `domain` when `domain` is an acronym (`ats` paired with `domain: ATS`, `crm` paired with `domain: CRM`, `erp` paired with `domain: ERP`). The slug becomes the module name and permission prefix, so a descriptive form (`applicant_tracking`, `customer_relations`) carries more discovery signal and doesn't duplicate the `domain` tag. Flag as 🟡 Warning with a proposed descriptive slug. **Suppress the warning if `initial_request` shows the user explicitly asked for that exact slug** (e.g. *"call it `ats`"*, *"the module name should be `crm`"*) — explicit user naming wins. Bare common-noun slugs that aren't acronym duplicates (`helpdesk`, `roadmap`) are fine and should not be flagged.
 - `created_at` is a valid date
 - 🟡 `domain`, when present, is **Title-case / acronym form**. Common preferred values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. Non-common Title-case values (e.g. `Talent Acquisition`, `EHR`, `Compliance`) are fine — the vocabulary is open. Two specific Warnings:
   - The literal string `custom` is **not allowed** — flag as 🟡 Warning and propose dropping the key (absence already means "uncategorized"; `custom` adds zero discovery signal).
