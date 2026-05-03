@@ -381,12 +381,29 @@ Print a final summary: "✅ Done. Created 1 module, 2 permissions, 5 entities, 4
 
 ---
 
+## Closing Contract — clean and sticky
+
+The final assistant message of a deployment session is a **call-to-action**, not a recap. It must contain exactly three things, in this order, and nothing else:
+
+1. One status line: `The <System Name> model is live in Semantius ✅`
+2. **Open in UI:** `https://tests.semantius.app/<module_name>` — module landing page, on its own line, prominent (use a markdown link so it's clickable, e.g. `[Open <System Name> in Semantius →](https://tests.semantius.app/<module_name>)`).
+3. The Stage 6 sample-data offer.
+
+Everything else — what was created, what was skipped, why built-ins were reused, counts, per-entity links, caveats, justifications — belongs in the Stage 5 verification summary **before** this closing block, separated by a horizontal rule (`---`). Do not mix the two. The closing must not contain reasoning, parentheticals, or "by the way" notes; those dilute the call to action.
+
+This block is **sticky**: if a follow-up turn (audit, "did I miss anything?", fix-up, clarification) interrupts before the user has answered the sample-data question, **re-emit the same three lines at the end of the follow-up reply**. Treat them as a footer that re-attaches itself until the user accepts sample data, declines it, or explicitly closes the session ("we're done", "thanks, that's all"). Before sending any assistant message that comes after Stage 4 writes have started, scan the draft: if it does not contain both the module landing-page link and the sample-data question, append the closing block.
+
+---
+
 ## Stage 6: Sample Data
 
-After verification, ask:
+After verification, the closing message asks:
 
-> "The `<SystemName>` model is live in Semantius ✅  
-> Would you like me to generate 10 realistic sample records for each newly-created entity?"
+> The `<System Name>` model is live in Semantius ✅
+>
+> [Open `<System Name>` in Semantius →](https://tests.semantius.app/<module_name>)
+>
+> Would you like me to generate 10 realistic sample records for each newly-created entity?
 
 ### Scope — whose tables get sample data
 
