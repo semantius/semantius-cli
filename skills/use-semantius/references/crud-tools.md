@@ -56,7 +56,8 @@ semantius call crud postgrestRequest '{"method":"PATCH","path":"/products?catego
 semantius call crud postgrestRequest '{"method":"DELETE","path":"/orders?id=eq.42"}'
 
 # Full-text search on a searchable entity
-semantius call crud postgrestRequest '{"method":"GET","path":"/contacts?search_vector=wfts.Monica"}'
+# Always use wfts(simple) — the `simple` text search configuration is language-agnostic and required for multilingual content
+semantius call crud postgrestRequest '{"method":"GET","path":"/contacts?search_vector=wfts(simple).Monica"}'
 
 # Complex filter: multiple conditions + ordering + pagination
 semantius call crud postgrestRequest '{"method":"GET","path":"/orders?status=eq.pending&total=gte.100&order=created_at.desc&limit=50"}'
@@ -105,7 +106,7 @@ Used in the `path` query string for all `postgrestRequest` calls:
 | `ilike` | Pattern (case-insensitive) | `name=ilike.*smith*` |
 | `in` | In list | `id=in.(1,2,3)` |
 | `is` | Null check | `deleted_at=is.null` |
-| `wfts` | Full-text search | `search_vector=wfts.Monica` |
+| `wfts(simple)` | Full-text search (multilingual; always use `simple`) | `search_vector=wfts(simple).Monica` |
 
 Combine with `&`: `status=eq.active&total=gte.100&order=created_at.desc`
 

@@ -87,6 +87,8 @@ semantius call crud create_entity '{
 | `view_permission` | Required — name string (e.g. `"catalog:read"`) |
 | `edit_permission` | Required — name string (e.g. `"catalog:manage"`) |
 | `icon_url` | Optional — URL to an icon representing this entity in the UI |
+| `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
+| `cube_mode` | Optional. OLAP cube generation: `disabled` (default) or `auto` (include in cube). Set to `auto` when the entity should be included in cube queries. |
 | `audit_log` | Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value. |
 
 ### Auto-Generated Fields — NEVER Create These Manually
@@ -103,7 +105,7 @@ When `create_entity` is called, the system automatically creates:
 
 > ⚠️ Calling `create_field` for any of these will fail or create duplicates.
 
-> ℹ️ `searchable` on the entity is **read-only** — computed automatically when any field has `searchable: true`. Do not try to set it directly on the entity.
+> ℹ️ `searchable` and `is_child` on the entity are **read-only** and computed automatically. `searchable` becomes `true` when any field has `searchable: true`; `is_child` becomes `true` when any field uses `format: "parent"`. Never set these manually.
 
 ### Customizing the `label` field's title
 
@@ -120,7 +122,7 @@ Choose `format` carefully — **it is immutable after creation**.
 | Category | `format` values |
 |----------|----------------|
 | Text | `string`, `text`, `html`, `code` |
-| Numbers | `integer`, `int32`, `int64`, `float`, `double` |
+| Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double` — use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money — set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding — only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
 | Choice | `enum` (also set `enum_values: ["a","b","c"]`) |
@@ -156,6 +158,63 @@ Set `unique_value: true` only when duplicates would cause data integrity issues 
 
 > ⚠️ Adding `unique_value: true` to an **existing** field is medium-risk — will fail if duplicates exist. Warn the user and suggest deduplication first.
 
+### `default_value` — auto-filled by the platform; authors only override
+
+The Semantius column-add trigger picks a sensible default automatically based on `format` and whether the field is required (`input_type: "required"`):
+
+| Format | PostgreSQL type | Auto-default when required |
+|---|---|---|
+| `string`, `text`, `email`, `url`, …  | `TEXT` | `''` |
+| `int32`, `int64`, `integer` | `INTEGER` / `BIGINT` | `0` |
+| `number`, `float`, `double` | `NUMERIC` / `REAL` | `0.0` |
+| `boolean` | `BOOLEAN` | `FALSE` |
+| `json`, `object`, `array` | `JSONB` | `'{}'` |
+| `date-time` | `TIMESTAMPTZ` | `CURRENT_TIMESTAMP` |
+| `date` | `DATE` | `CURRENT_DATE` |
+| `enum` | `TEXT` (with CHECK) | first value in `enum_values` |
+
+Nullability is also computed by format (via the platform's `is_nullable()` rule): **only `reference`, `date`, and `date-time` allow NULL**. Every other format is `NOT NULL` with the auto-default above when required. Non-required fields accept `''`/null as a backfill.
+
+**Rule:** you do **not** need to send `default_value` on `create_field`. Only set it explicitly when the auto-default is wrong for the domain — e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string.
+
+- **Enum lifecycle ordering matters.** The auto-default for a required enum is `enum_values[0]`, so list values in lifecycle order (`draft`, `pending`, `new`, `open`, `active` first). If the natural starting value isn't first, either reorder the list or pass `default_value` explicitly.
+- **`is_nullable: false` only changes DB behavior for `reference`, `date`, `date-time`.** For other formats the column is NOT NULL with the auto-default regardless of `input_type`; declaring the field optional doesn't make it nullable.
+
+```bash
+# Required enum on a possibly-non-empty entity — always include default_value
+semantius call crud create_field '{
+  "data": {
+    "table_name": "departments",
+    "field_name": "status",
+    "title": "Status",
+    "format": "enum",
+    "enum_values": ["active", "inactive"],
+    "default_value": "active",
+    "input_type": "required",
+    "width": "default",
+    "field_order": 5
+  }
+}'
+```
+
+### `cube_type` Values
+
+Controls how a field participates in OLAP cube generation (only relevant when the entity has `cube_mode: "auto"`).
+
+| Value | Meaning |
+|-------|---------|
+| `disabled` | Field excluded from cube |
+| `auto` | **Default.** System infers dimension or measure from `format` |
+| `dimension` | Explicit grouping axis (e.g. category, region, status) |
+| `measure` | Explicit numeric aggregation (e.g. revenue, count) |
+
+When to set `cube_type` explicitly:
+
+- `dimension`: categorical fields the user will group or filter by (status, country, product type)
+- `measure`: numeric fields the user will aggregate (amount, quantity, duration)
+- `disabled`: fields that should be excluded from cube queries even if `cube_mode: "auto"` is set on the entity (e.g. internal audit fields, raw foreign keys)
+- `auto`: default; leave unset unless the system inference is incorrect
+
 ### Example: Add Fields to an Entity
 
 ```bash
@@ -179,14 +238,15 @@ semantius call crud create_field '{
     "table_name": "products",
     "field_name": "price",
     "title": "Price",
-    "format": "float",
+    "format": "number",
+    "precision": 2,
     "width": "default",
     "input_type": "default",
     "field_order": 3
   }
 }'
 
-# Enum/dropdown
+# Enum/dropdown — required, so include default_value to backfill existing rows
 semantius call crud create_field '{
   "data": {
     "table_name": "products",
@@ -194,8 +254,9 @@ semantius call crud create_field '{
     "title": "Status",
     "format": "enum",
     "enum_values": ["draft", "active", "discontinued"],
+    "default_value": "draft",
     "width": "default",
-    "input_type": "default",
+    "input_type": "required",
     "field_order": 4
   }
 }'
@@ -216,8 +277,14 @@ semantius call crud create_field '{
 | `searchable` | boolean | Adds this field to the entity's full-text search index |
 | `unique_value` | boolean | Enforces uniqueness at database level |
 | `enum_values` | array | Required when `format: "enum"` — list of allowed values |
+| `precision` | integer (0–18) | For `format: "number"` only — number of digits after the decimal point in the generated `NUMERIC` column. Defaults to `2` (suits money and most measured quantities). Set higher (e.g. `4`–`6`) for tax rates, FX rates, or scientific values; `0` for integer-like counts that still want NUMERIC semantics. |
+| `default_value` | string | Override for the platform's auto-default. Only set when the auto-default is wrong for the domain. See `### default_value` below for the auto-default table per format. |
 | `reference_table` | string | Target entity's `table_name` for `reference`/`parent` fields |
 | `reference_delete_mode` | string | `restrict`, `clear`, or `cascade` |
+| `relationship_label` | string | Optional verb describing the relationship (e.g. `"employs"`, `"contains"`). Applies to `reference` and `parent` fields. Used as the edge label in ER diagrams and in navigation breadcrumbs. Always optional, omit when the direction is obvious from the field name. |
+| `singular_label_parent` | string | Optional override for the parent entity's singular label, used by `parent` fields only. Useful when one entity has multiple `parent` fields pointing at the same table (e.g. `billing_address_id` vs `shipping_address_id`, both → `addresses`) and the default labels are ambiguous. |
+| `plural_label_parent` | string | Optional override for the parent entity's plural label, used by `parent` fields only. Pair with `singular_label_parent`. |
+| `cube_type` | string | OLAP cube participation: `disabled`, `auto` (default), `dimension`, `measure`. See `### cube_type Values` below. |
 | `icon_url` | string | Optional icon URL for this field in the UI |
 
 ---
@@ -249,6 +316,7 @@ semantius call crud create_field '{
     "format": "reference",
     "reference_table": "users",
     "reference_delete_mode": "clear",
+    "relationship_label": "manages",
     "width": "default",
     "input_type": "default"
   }
@@ -269,6 +337,7 @@ semantius call crud create_field '{
     "format": "parent",
     "reference_table": "orders",
     "reference_delete_mode": "cascade",
+    "relationship_label": "contains",
     "width": "default",
     "input_type": "default"
   }
@@ -362,7 +431,7 @@ semantius call crud delete_entity '{"table_name": "<table_name>"}'
 7. **Suggest next steps** — After creating an entity, suggest related entities, missing fields, or useful roles.
 8. **Provide link to UI** — After creating or updating entities/fields, provide: `https://tests.semantius.app/{module_name}/{table_name}`
 
-Use `wfts` (web full-text search) on the `search_vector` column when the entity is searchable:
+Use `wfts(simple)` on the `search_vector` column when the entity is searchable:
 
 ```bash
 # Check if entity is searchable
@@ -372,11 +441,11 @@ semantius call crud read_entity '{"filters": "table_name=eq.contacts"}'
 # Full-text search
 semantius call crud postgrestRequest '{
   "method": "GET",
-  "path": "/contacts?search_vector=wfts.Monica"
+  "path": "/contacts?search_vector=wfts(simple).Monica"
 }'
 ```
 
-> Use `wfts`, never `fts`. Only use field-specific filters (`ilike`, `eq`) when the user specifies a particular column or when the table is not searchable.
+> Always use `wfts(simple)` — the `simple` text search configuration is language-agnostic and required for multilingual content. Never use bare `wfts` or `fts`. Only fall back to field-specific filters (`ilike`, `eq`) when the user specifies a particular column or when the table is not searchable.
 
 ---
 

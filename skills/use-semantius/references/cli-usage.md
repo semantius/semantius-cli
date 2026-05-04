@@ -159,7 +159,8 @@ semantius call crud create_field <<EOF
     "table_name": "products",
     "field_name": "price",
     "title": "Price",
-    "format": "float",
+    "format": "number",
+    "precision": 2,
     "width": "auto",
     "input_type": "default"
   }

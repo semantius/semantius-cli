@@ -437,7 +437,7 @@ Field-equality (`<column>=eq.<value>`) is the right tool for a
 *different* job: filtering on a known-exact value. Use it for UUIDs,
 FK ids, status enums, and unique columns whose values the caller
 already knows verbatim (`tag_name`, `user_email`, `release_name`).
-The two are not in competition, `wfts` resolves a fuzzy human input
+The two are not in competition, `wfts(simple)` resolves a fuzzy human input
 to a row; `eq` selects rows whose column exactly equals a known value.
 
 If a lookup returns more than one row, present the candidates and
@@ -657,26 +657,103 @@ this multiple times.
 
 #### Front-matter `description` rules
 
-The `description` is the single line a person reads when scanning the
-catalog. It must:
+The `description` is the **single line a non-technical person reads
+on the catalog card** before deciding whether to open the skill.
+It must follow the same audience and verb logic as the body's
+skill-explanation paragraph (Step 3.4 §3), compressed to one
+sentence.
 
-- Be **one** sentence, **≤140 characters**.
-- Be a **unique value proposition** for this skill, not a restatement
-  of what the system is. The title already conveys the domain. The
-  description says what becomes easier when the skill is loaded:
-  which mistakes are prevented, which multi-step jobs become one
-  step, which non-obvious invariants are baked in.
-- Not start with "This skill", "A skill for", "Domain skill for",
-  "Skill that", or any equivalent self-referential opener. Lead with
-  a verb phrase or a noun phrase that carries domain weight.
-- Not contain the substring "this skill" or em-dashes (see banned
-  list above).
+**Required shape (one sentence, ≤140 characters):**
 
-Examples (illustrative, regenerate from the actual model):
+> `<Extracted verb><s>` `<the domain object in user words>` `<list of lifecycle stages, operations, or capabilities in plain words>`.
 
-- BAD: `description: This skill helps with the Applicant Tracking System.`
-- BAD: `description: Domain skill for an in-house recruiting team, open requisitions, run candidates, hire.`
-- GOOD: `description: Bakes in the multi-step rules for moving a candidate from application to hire, including paired status fields and offer-acceptance ripples.`
+The description names what the skill actually does, by listing the
+real nouns of the domain (workflow stages, operations, artefacts).
+It does **not** include a "so [benefit]" clause. The benefit /
+value-prop lives in the body paragraph's failure-modes sentence,
+not on the catalog card. A reader of the catalog card wants to know
+what the skill *does*, not why it exists.
+
+- **Extracted verb** comes from the same three-tier verb-extraction
+  rule used in the body paragraph (Step 3.4 § "Verb-extraction
+  rule"). The description must use the **same verb** as paragraph 2,
+  resolved in this order:
+  - **Tier 1, suffix match.** `Tracking|Tracker → tracks`,
+    `Planning|Planner → plans`, `Management|Manager → manages`,
+    `Budgeting → budgets`, `Scheduling|Scheduler → schedules`,
+    `Forecasting → forecasts`, `Reporting → reports`,
+    `Monitoring → monitors`, `Routing → routes`, `Booking → books`,
+    `Provisioning → provisions`.
+  - **Tier 2, implied-domain-verb lookup.** If Tier 1 misses, check
+    the noun table: `Roadmap → plans`, `Inventory → tracks`,
+    `Ledger → records`, `Directory → lists`, `Registry → registers`,
+    `Pipeline → moves`, `Catalog → lists`, `Calendar → schedules`,
+    `Knowledge Base|KB → answers`, `Dashboard → surfaces`,
+    `CRM → tracks`, `Helpdesk|Service Desk → resolves`. Example:
+    `Product Roadmap` → "Plans how every idea moves from intake
+    to a shipped feature...".
+  - **Tier 3, fallback palette.** Only when neither tier fires:
+    `Captures`, `Holds`, `Describes`, `Maps`, `Organises`, or
+    `Helps an agent <verb-from-domain> ...`. Should be rare.
+- **Domain object** uses the model's user-facing labels, never
+  table names or schema-cased identifiers. "candidates", not
+  `candidates`; "headcount plans", not `headcount_plans`.
+- **Capability list** names the actual lifecycle stages, operations,
+  or artefacts the skill works with, in plain domain words from the
+  model. Examples: "from requisition through application, interview,
+  offer, and hire"; "subscriptions, license assignments, renewals,
+  and planned spend by cost center"; "with decision packages,
+  funding levels, ranking, and approval workflow"; "from intake
+  through RICE scoring, objective alignment, and release scheduling".
+  Pull these nouns from the model's entities, enums, and lifecycle
+  fields — they should be recognisable to an operator of the system.
+
+**Hard bans (zero tolerance):**
+
+- **"Bakes in", "baked in", "bakes the rules", "bakes the
+  invariants".** These read as internal implementation talk; the
+  catalog reader does not know or care that anything is being
+  baked. Use the extracted verb instead.
+- "Multi-step rules", "paired status fields", "paired writes",
+  "cascade", "invariants", "knock-on changes baked in", "the
+  multi-table cascade that fires when". All mechanics jargon.
+- Any snake_case or identifier-shaped token (regex
+  `\b[a-z][a-z0-9]*(_[a-z0-9]+)+\b`).
+- "This skill", "A skill for", "Domain skill for", "Skill that",
+  any self-referential opener.
+- Em-dashes (U+2014).
+- Engineer-coded LLM language ("non-deterministic", "stochastic",
+  "deterministic output").
+- Restating the system name itself ("The Applicant Tracking
+  System..."). The title already says it.
+
+**Coherence check:** the description's verb must match the body
+paragraph's verb (same verb-extraction tier). The description
+itself names *capabilities*, not benefits — the body paragraph's
+sentence 3 (failure modes) is where the value-prop lives. Do not
+paraphrase the body's "so X" clause into the description; that
+shape belongs in the body, not on the catalog card.
+
+**Examples (illustrative, regenerate from the actual model):**
+
+| `system_name` | Verb | GOOD description |
+|---|---|---|
+| Applicant Tracking System | tracks | `Tracks candidates through requisitions, applications, interviews, offers, and hires.` |
+| Workforce Planning | plans | `Plans headcount across scenarios, commits approved scenarios into positions, and opens requisitions for new seats.` |
+| Equipment Lease Management | manages | `Manages equipment leases through schedules, payments, renewals, and end-of-term disposition.` |
+| Zero-Based Budgeting | budgets | `Runs ZBB cycles with decision packages, funding levels, ranking, and approval workflow.` |
+| SaaS Expense Tracker & Budget | tracks | `Tracks SaaS subscriptions, license assignments, renewals, and planned spend by cost center.` |
+| Product Roadmap | plans (Tier 2: `Roadmap` → plans) | `Plans features through intake, RICE scoring, objective alignment, release scheduling, and ship.` |
+| Inventory Tracker | tracks (Tier 1) | `Tracks items, locations, movements, counts, and reorder points across warehouses.` |
+| General Ledger | records (Tier 2: `Ledger` → records) | `Records transactions across accounts, journals, and periods, and runs balanced period closes.` |
+| Service Desk | resolves (Tier 2: `Service Desk` → resolves) | `Resolves tickets through intake, triage, assignment, work, and follow-up.` |
+
+**BAD examples (do not produce):**
+
+- `Bakes in the multi-step rules for moving a candidate from application to hire, including paired status fields and offer-acceptance ripples.` (Bakes in, paired status fields, ripples, all jargon.)
+- `Tracks candidates from application to hire so the right pieces always get filled in in the right order.` (The "so [outcome]" clause is trigger-fodder; the description should name capabilities, not justify them.)
+- `Plans headcount across scenarios so an approved scenario walks into real seats with the right paperwork at every step.` (Same anti-pattern — "so [outcome]" clause replaces the capability list.)
+- `This skill helps with the Applicant Tracking System.` (Self-referential opener, restates the title.)
 
 #### Body structure (in this exact order)
 
@@ -743,33 +820,66 @@ add, rename, or rearrange.
    #### Verb-extraction rule (critical, prevents all paragraphs
    reading the same)
 
-   Most `system_name` values have an action verb hiding inside.
-   Extract it for sentence 1 (and optionally sentence 2):
+   Most `system_name` values either have an action verb hiding in a
+   suffix or **imply** one through a domain noun. Resolve in **three
+   tiers**, in order. Stop at the first tier that fires.
 
-   | `system_name` ends in / contains | Verb | Example |
+   **Tier 1: Suffix match.** If `system_name` ends in an `-ing`
+   gerund or an `-er`/`-or` agent noun from the table below, use the
+   bare verb form.
+
+   | Suffix | Verb | Example |
    |---|---|---|
-   | `Tracking`, `Tracker` | track | "The Applicant Tracking model **tracks** ..." |
-   | `Planning`, `Planner` | plan | "The Workforce Planning model **plans** ..." |
-   | `Management`, `Manager` | manage | "The Equipment Lease Management model **manages** ..." |
-   | `Budgeting` | budget | "The Zero-Based Budgeting model **budgets** ..." |
-   | `Scheduling`, `Scheduler` | schedule | |
-   | `Forecasting` | forecast | |
-   | `Reporting` | report | |
-   | `Monitoring` | monitor | |
-   | `Routing` | route | |
-   | `Booking` | book | |
-   | `Provisioning` | provision | |
+   | `Tracking`, `Tracker` | tracks | "The Applicant Tracking model **tracks** ..." |
+   | `Planning`, `Planner` | plans | "The Workforce Planning model **plans** ..." |
+   | `Management`, `Manager` | manages | "The Equipment Lease Management model **manages** ..." |
+   | `Budgeting` | budgets | "The Zero-Based Budgeting model **budgets** ..." |
+   | `Scheduling`, `Scheduler` | schedules | |
+   | `Forecasting` | forecasts | |
+   | `Reporting` | reports | |
+   | `Monitoring` | monitors | |
+   | `Routing` | routes | |
+   | `Booking` | books | |
+   | `Provisioning` | provisions | |
 
-   General rule: if the system name ends in an `-ing` gerund or an
-   `-er`/`-or` agent noun, the bare verb form is the right verb for
-   sentence 1. The skill in sentence 2 then teaches the agent "how
-   to **<verb>** [the domain]".
+   **Tier 2: Implied-domain-verb lookup.** If Tier 1 does not fire,
+   check whether `system_name` contains one of these domain nouns,
+   each of which implies a verb a user would actually say. Treat
+   this list as authoritative; extend it as new patterns appear.
 
-   **Fallback palette** (only when no verb is hiding in the name,
-   e.g. `Product Roadmap`, `Northwind`, `CDP`): pick from
-   `captures`, `holds`, `describes`, `lays out`, `organizes`,
-   `maps`. Six options so even fallback paragraphs do not all read
-   the same.
+   | Noun in `system_name` | Verb | Reasoning |
+   |---|---|---|
+   | `Roadmap` | plans | A roadmap is a planning artefact |
+   | `Inventory` | tracks | What you do with an inventory is track stock |
+   | `Ledger` | records | A ledger records transactions |
+   | `Directory` | lists | A directory lists entities |
+   | `Registry` | registers | A registry registers entries |
+   | `Pipeline` | moves | A pipeline moves work through stages |
+   | `Catalog` | lists | A catalogue lists items |
+   | `Calendar` | schedules | A calendar schedules events |
+   | `Knowledge Base`, `KB` | answers | A KB answers questions |
+   | `Dashboard` | surfaces | A dashboard surfaces metrics |
+   | `CRM` | tracks | Customer relationship tracking |
+   | `Helpdesk`, `Service Desk` | resolves | A helpdesk resolves tickets |
+
+   Example: `system_name = "Product Roadmap"` matches `Roadmap` in
+   Tier 2 → "The Product Roadmap model **plans** how every idea
+   moves from intake through scoring and release commitment to a
+   shipped feature ..."
+
+   **Tier 3: Fallback palette.** Only when neither Tier 1 nor Tier
+   2 fires, pick from `captures`, `holds`, `describes`, `lays out`,
+   `organises`, `maps`. The fallback should be **rare**. If you find
+   yourself reaching for it, pause and ask: "what does an operator
+   actually *do* with this thing?" If a single verb captures it
+   (even informally), prefer that verb and add it to the Tier 2
+   table for future runs. If neither tier fires and no domain verb
+   feels obvious, surface a one-line confirmation to the user
+   before writing files: `"No clear domain verb in '<system_name>';
+   using '<fallback>'. Override with a different verb, or proceed?"`
+
+   The Tier 3 fallback palette has six options so even genuinely
+   verbless system names do not all read the same.
 
    #### Worked examples (use as shape templates, not for verbatim
    copy)
@@ -812,12 +922,13 @@ add, rename, or rearrange.
    > last cycle can quietly carry over without being re-examined; a
    > cut can ship without naming who approved it.
 
-   **Product Roadmap** (no embedded verb, fallback used)
+   **Product Roadmap** (Tier 2: `Roadmap` → plans)
 
-   > The Product Roadmap model captures every idea, the rationale
-   > weighing it, and the release that ships it. The Product
-   > Roadmap Skill teaches an agent how to use that model to take
-   > an idea from intake through prioritization to a shipped
+   > The Product Roadmap model plans how every idea moves from
+   > intake through scoring and release commitment to a shipped
+   > feature, with the rationale weighing each one and the release
+   > it lands in. The Product Roadmap Skill teaches an agent how
+   > to use that model to plan a feature from intake through to a shipped
    > release reliably, without the handoffs between PM, design, and
    > engineering quietly going missing. Without it, an idea can get
    > scheduled with no recorded owner; a release can ship with
@@ -891,7 +1002,7 @@ add, rename, or rearrange.
 ````mdx
 ---
 title: <Heading text, see "Title grammar" below>
-description: <One sentence, ≤140 chars. Unique value-prop. Never starts with or contains "this skill". No em-dashes.>
+description: <One sentence, ≤140 chars. Shape: "<Extracted-verb>s <domain object> <list of lifecycle stages, operations, or artefacts in plain words>." Verb-led, names the actual nouns of the domain. No "so [benefit]" clause. No "Bakes in", no mechanics jargon, no snake_case, no "this skill", no em-dashes.>
 ---
 
 # <Heading text, same as front-matter title, must contain "Skill">
@@ -1150,14 +1261,24 @@ vibes. If any check fails, fix and re-scan before declaring done.
      as "teaches an agent how to use that model to <verb> <its
      jobs> reliably and the same way every time". The paragraph
      ends with two or three concrete failure modes.
-   - **Domain verb extracted from `system_name`.** If `system_name`
-     ends in `Tracking|Tracker|Planning|Planner|Management|Manager|Budgeting|Scheduling|Scheduler|Forecasting|Reporting|Monitoring|Routing|Booking|Provisioning`,
-     sentence 1 must use the bare verb form (track, plan, manage,
-     budget, schedule, forecast, report, monitor, route, book,
-     provision). Using a generic fallback verb when an embedded
-     verb was available is a fail. Fallback verbs (`captures`,
-     `holds`, `describes`, `lays out`, `organizes`, `maps`) are
-     only allowed when the system name has no embedded verb.
+   - **Domain verb extracted from `system_name` (three-tier).**
+     Run the three-tier resolution and verify the verb actually
+     used in sentence 1 matches.
+     - **Tier 1 fail:** if `system_name` ends in
+       `Tracking|Tracker|Planning|Planner|Management|Manager|Budgeting|Scheduling|Scheduler|Forecasting|Reporting|Monitoring|Routing|Booking|Provisioning`,
+       the bare verb (track, plan, manage, budget, schedule,
+       forecast, report, monitor, route, book, provision) must
+       appear in sentence 1.
+     - **Tier 2 fail:** if `system_name` contains
+       `Roadmap|Inventory|Ledger|Directory|Registry|Pipeline|Catalog|Calendar|Knowledge Base|KB|Dashboard|CRM|Helpdesk|Service Desk`,
+       the corresponding implied verb (plans, tracks, records,
+       lists, registers, moves, lists, schedules, answers,
+       surfaces, tracks, resolves) must appear in sentence 1.
+     - **Tier 3 misuse:** using a fallback verb (`captures`,
+       `holds`, `describes`, `lays out`, `organizes`, `maps`) when
+       Tier 1 or Tier 2 would have fired is a fail. Rewrite using
+       the matched verb. The verb in the front-matter `description`
+       must be the same.
    - **Pattern test (catalog uniqueness).** Mentally substitute
      "X" for the model name everywhere in the paragraph. The result
      must NOT read as something that could apply to any other skill
@@ -1200,11 +1321,44 @@ vibes. If any check fails, fix and re-scan before declaring done.
    - **Banned literal phrase: "lays out what the system can
      record".** That was an example, not a template. Paraphrase
      based on the model's actual flavor and the extracted verb.
-7. **`description` is unique value, not a domain restatement.** One
-   sentence, ≤140 characters, does not start with "This", "A skill",
-   "Domain skill", or "Skill that". Says what *new* value loading the
-   skill adds, not what the system is (the title already conveys
-   that).
+7. **`description` follows the verb-led capability shape.** One
+   sentence, ≤140 characters, written for a non-technical reader.
+   The description names *what the skill does* by listing the actual
+   capabilities/lifecycle stages of the domain, not by justifying
+   the skill with a "so [outcome]" benefit clause. Run these literal
+   scans:
+   - **Shape:** `<Verb><s> <domain object> <list of lifecycle
+     stages, operations, or artefacts>`. The verb is the same one
+     extracted for paragraph 2 (`tracks`, `plans`, `manages`,
+     `budgets`, `schedules`, `forecasts`, `reports`, `monitors`,
+     `routes`, `books`, `provisions`) or the fallback (`Captures`,
+     `Holds`, `Maps`, `Organises`, `Records`, `Resolves`).
+   - **Banned shape: "so [outcome]" clause.** If the description
+     contains ` so ` followed by a benefit/outcome clause (e.g. "so
+     the right pieces always get filled in in the right order", "so
+     renewals never fall off the calendar", "so two people never
+     end up on the same seat"), it is using the body paragraph's
+     value-prop shape instead of the catalog's capability shape.
+     Rewrite to list the actual capabilities (workflow stages,
+     operations, artefacts) instead. Also banned: ` while `, ` with
+     ` followed by an outcome clause.
+   - **Banned starters and substrings:** `Bakes in`, `bakes in`,
+     `baked in`, `Bakes the`. Catalog readers do not know or care
+     that anything is baked. Replace with the extracted verb.
+   - **No mechanics jargon** in the description: `multi-step rules`,
+     `paired status fields`, `paired writes`, `cascade`,
+     `invariants`, `knock-on changes`, `multi-table cascade`,
+     `seat-cascade`. Same ban list as paragraph 2.
+   - **No identifier-shaped tokens** (snake_case regex from item 6).
+   - **No "This skill", "A skill for", "Domain skill for", "Skill
+     that".** Lead with the verb.
+   - **No restatement of the system name.** "The Applicant
+     Tracking System ..." is bad; the title already says it.
+   - **Verb coherence with paragraph 2.** The description's verb
+     must match the verb extracted for paragraph 2 (same Tier 1/2/3
+     resolution). The description names the *capabilities* (catalog
+     card view); paragraph 2 carries the *value-prop* (failure
+     modes). They share the verb but not the shape.
 8. **No provenance keys in front matter.** Exactly two keys: `title`
    and `description`. No `generated_from`, no `semantic_model`, no
    other key.

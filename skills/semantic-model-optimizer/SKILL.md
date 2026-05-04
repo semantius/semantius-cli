@@ -88,8 +88,8 @@ semantius call crud read_field '{}'
 Build in memory:
 
 - **module** — `module_name`, `label`, `description`
-- **entities[]** — each with `table_name`, `singular`, `plural`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `module_id`
-- **fields_by_table** — map keyed by `table_name`, per field: `field_name`, `format`, `title`, `description`, `unique_value`, `reference_table`, `reference_delete_mode`, `enum_values`, `ctype`, `field_order`, `searchable`
+- **entities[]** — each with `table_name`, `singular`, `plural`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `edit_mode`, `cube_mode`, `module_id` (`searchable` and `is_child` are read-only / auto-computed and only used for sanity checks; do not round-trip them)
+- **fields_by_table** — map keyed by `table_name`, per field: `field_name`, `format`, `title`, `description`, `unique_value`, `reference_table`, `reference_delete_mode`, `relationship_label`, `singular_label_parent`, `plural_label_parent`, `cube_type`, `enum_values`, `default_value`, `ctype`, `field_order`, `searchable`
 
 **Strip auto-generated fields** before rendering. Do not render these in §3:
 
@@ -212,6 +212,10 @@ At Stage 4, do exactly this — no broader search:
 - `format: reference` → `→ <target> (N:1, <delete_mode>)`
 - `format: parent` → `↳ <target> (N:1, <delete_mode>)`
 - Self-reference (`reference_table == table_name`) → append `; self-ref for hierarchy` or similar
+- When the field carries a non-empty `relationship_label`, append `, relationship_label: "<verb>"` to the same Notes cell so the round-trip preserves it
+- For `parent` fields with non-empty `singular_label_parent` / `plural_label_parent`, append `, parent label: "<singular>" / "<plural>"` so the override is preserved on re-deploy
+- For fields with `cube_type` ∈ {`dimension`, `measure`, `disabled`} (i.e. anything other than the `auto` default), append `, cube_type: <value>`
+- When `default_value` is non-empty, append `, default: "<value>"` so the round-trip preserves it. The deployer relies on this annotation to satisfy Postgres' NOT NULL / CHECK constraint when the field gets re-added to a non-empty table.
 
 ### §4 Relationship summary
 
@@ -226,7 +230,17 @@ Follow the analyst's convention verbatim (`-->` = many, `---` = one, arrows poin
 - For every `reference` or `parent` FK: draw `<reference_table> --> <child_table>`. One edge per FK, not one per entity pair.
 - For junctions: draw each of the two parent entities `-->` into the junction entity. Never draw a direct edge between the two parents.
 - Self-references: draw `<entity> -->|parent of| <entity>` (self-loop).
-- Add a short verb label where it adds clarity (`|owns|`, `|has|`, `|funds|`). Unlabeled edges are fine when the relationship is obvious.
+- **Edge label comes verbatim from the field's `relationship_label`** — render it as `|<verb>|` exactly as stored in `fields_by_table[entity][field].relationship_label`. **Never invent, paraphrase, shorten, or "polish" the verb** — if live state says `"owns"`, the diagram says `|owns|`, not `|has many|` or `|holds|`. When `relationship_label` is empty/null, leave the edge unlabeled. The Stage 5 audit will flag empty values; this stage's job is to surface live state truthfully, not to fill gaps with guesses. Self-reference fallback (`|parent of|`) is the one exception, used only when no `relationship_label` is set on the self-reference field.
+- Also persist the same verb on the FK row in §3 Notes as `relationship_label: "<verb>"` so the round-trip preserves it. The §3 annotation and the diagram label must agree byte-for-byte.
+
+**Build-then-verify procedure (mandatory):**
+
+1. **Build mechanically from `fields_by_table`.** For every FK with a non-empty `reference_table`, emit one edge labeled with the literal `relationship_label` value from live state — or no label if the value is empty/null. Do not consult your intuition about what a "good" verb would be; the platform owns that string now.
+2. **Self-verify before saving.** After the Mermaid block is drafted, walk every edge and confirm three things:
+   - it corresponds to a real FK row in §3
+   - the edge label, when present, equals the field's `relationship_label` byte-for-byte (no hallucinated, paraphrased, or "improved" verbs)
+   - the same verb is also written to that FK's §3 Notes as `relationship_label: "<verb>"`
+   If any mismatch is found, regenerate the affected edge from live state. The Stage 5 audit treats hallucinated verbs as data corruption — do not save a file that fails this check.
 - `flowchart LR` is the default; switch to `flowchart TB` if the graph is wider than tall.
 
 Regenerate the diagram from the field data every run. Never reuse a diagram from a prior `.md` — that is exactly what would go stale.
@@ -280,6 +294,8 @@ Checks that are most useful when the source is live state, not a greenfield draf
 - **Missing descriptions** — entities or fields with empty `description` suggest the spec drifted during live customization. **🟢 Suggestion.**
 - **Entities with no incoming or outgoing FKs** — an isolated entity is sometimes a real root (e.g. `users`) and sometimes an oversight. **🟡 Warning** unless it's clearly a root.
 - **Likely missing junction** — two entities that look like they should have an M:N link (based on naming heuristics) but don't. **🟢 Suggestion.** Be conservative — false positives here are noise.
+- **Missing or weak `relationship_label`** — any FK field with empty `relationship_label`, or a filler verb (`"has"`, `"references"`, `"belongs to"`, `"relates to"`). The verb is now managed metadata that drives the §2 Mermaid diagram, navigation breadcrumbs, and ER docs in the Semantius UI — empty or generic values reproduce on every UI surface. **🟡 Warning.** Propose a domain-specific verb in the parent's voice (e.g. `accounts → opportunities` is `"owns"`, `users → tasks` is `"manages"`). When live state has many empty values (a module that predates the field), offer one batch sweep that proposes verbs across all FKs in one pass — do not turn it into a per-FK Q&A.
+- **Same-parent FKs with identical / missing `relationship_label`** — e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users` with the same or empty verb. The verbs must differentiate. **🔴 Blocker.**
 
 After presenting the report, ask:
 

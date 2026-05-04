@@ -170,10 +170,10 @@ For each confirmed entity, draft a field list. Present each entity as its own ta
 **Field format vocabulary** — use these Semantius values (never invent new ones):
 
 - Text: `string`, `text`, `html`, `code`
-- Numbers: `integer`, `int32`, `int64`, `float`, `double`
+- Numbers: `integer`, `int32`, `int64`, `number`, `float`, `double` — use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for any field that stores money, prices, amounts, totals, balances, revenue, fees, rates, salaries, budgets, or discounts. Pair with `precision` (digits after the decimal; default `2` suits money — most monetary fields don't need to set it explicitly. Set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding; pick them only when the user explicitly asks for them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates). Field names like `price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount` are monetary by default and must resolve to `number`.
 - Date/time: `date`, `time`, `date-time`, `duration`
 - Boolean: `boolean`
-- Choice: `enum` (always state the allowed values in the Notes column)
+- Choice: `enum` (always state the allowed values in the Notes column; the platform auto-defaults required enums to the **first value**, so list `enum_values` in lifecycle order. Only add a `default: "<value>"` annotation when the auto-default is wrong for the domain)
 - Structured: `json`, `object`, `array`
 - Identifier: `uuid`, `email`, `uri`, `url`
 - Relationship, independent lifecycle: `reference` (+ target table)
@@ -184,6 +184,26 @@ For each confirmed entity, draft a field list. Present each entity as its own ta
 > **⚠️ label_column must be a string field — never a FK.** When `create_entity` runs, Semantius auto-creates a field whose `field_name` equals the `label_column` value. If `label_column` is set to a `reference` or `parent` FK field name (e.g. `tag_id`), the platform auto-creates `tag_id` as a label field and the implementing agent then tries to create `tag_id` again as a FK — causing a conflict that blocks implementation. **Junction tables** are the most common trap: they have no obvious string identifier, so it is tempting to use one of the FK columns as the label. Instead, always add a dedicated `string` field (e.g. `product_tag_label`) to serve as the `label_column`, and note in the PRD that the caller must populate it on record creation (e.g. `"{product_name} / {tag_name}"`). This rule applies to all entities, not just junctions.
 
 **Naming a field that holds a relationship:** the convention is `<target_singular>_id` for references/parents (`account_id`, `assigned_user_id`, `parent_case_id`). The Reference column expresses the target and cardinality, e.g. `→ accounts (N:1)` for a many-to-one link where many contacts belong to one account.
+
+**Defaults — the platform auto-fills, authors only override.** The Semantius column-add trigger assigns sensible defaults automatically based on format and `Required`:
+
+- **Required scalar** → `''` for strings/text/email/url, `0` for `integer`/`int32`/`int64`, `0.0` for `number`/`float`/`double`, `FALSE` for `boolean`, `'{}'` for `json`/`object`/`array`, `CURRENT_TIMESTAMP` for `date-time`, `CURRENT_DATE` for `date`.
+- **Required enum** → first value in `enum_values` (so list `enum_values` in lifecycle order: `draft`, `pending`, `new`, `open`, `active` first).
+- **Not required (any format)** → empty/null backfill is fine.
+
+Authors do **not** need to declare defaults. Only add a `default: "<value>"` annotation when the auto-default is wrong for the domain — e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string. Otherwise leave it off.
+
+**Nullability is computed from format.** The platform's `is_nullable()` rule makes only `reference`, `date`, and `date-time` formats nullable at the DB level; every other format is NOT NULL with the auto-default above. Marking a `reference`/`date`/`date-time` field as `Required = "yes"` means UI-required, not DB-NOT-NULL — be explicit in the Notes if the distinction matters for the domain.
+
+Example §3 row: `| status | enum | yes | Status | values: draft, active, discontinued |` (no explicit default needed — `draft` is auto-picked as the first value).
+
+**Set a `relationship_label` for every FK field — not just diagram-worthy ones.** `relationship_label` is now managed Semantius metadata; it powers the §2 Mermaid edge label, navigation breadcrumbs in the UI, and any ER-diagram surface the platform renders later — well beyond the model document itself. Treat it as a first-class part of every `reference` and `parent` field, not a diagram afterthought:
+
+- Pick a **specific verb in the parent's voice** (the parent is the entity the FK *points to*). Examples: `accounts → opportunities` is `"owns"`; `users → tasks` (where `tasks.owner_id → users`) is `"manages"`; `departments → users` is `"employs"`; `meetings → meeting_attendees` is `"includes"`; `contracts → contract_lines` is `"contains"`. The verb fills the sentence "an account ___ many opportunities".
+- **Avoid filler verbs** (`"has"`, `"references"`, `"belongs to"`, `"relates to"`) — they reproduce in every UI breadcrumb and add no information. Reach for the domain verb instead. Generic verbs are tolerated only when no specific verb genuinely applies.
+- **Self-references** get a hierarchy verb (`"parent of"`, `"manages"`, `"reports to"`, `"replies to"`) — pick the one that matches the model.
+- When the same parent has multiple FKs from the same child (e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users`), the verbs must differentiate them (`"created"` vs `"assigned"`) — that's the whole point of having per-FK metadata instead of a per-entity-pair label.
+- Annotate the verb in the §3 Notes column as `relationship_label: "<verb>"` so the deployer persists it (e.g. `→ accounts (N:1), relationship_label: "owns"`). The §2 Mermaid edge label and this annotation must agree byte-for-byte.
 
 After the field tables, present for each entity a short **Relationships** section that restates all links in prose + a cardinality table. This section is for humans — the field tables are for the agent. Example:
 
@@ -205,7 +225,16 @@ The §2 Entity summary includes a Mermaid **flowchart** that visualises every en
 - Cardinality convention: **arrows `-->` mean "many"**, **flat connectors `---` mean "one"**. The arrow/connector points from the parent to the related side. So 1:N `accounts → contacts` is `accounts --> contacts` ("an account has many contacts"); 1:1 `users → user_profiles` is `users --- user_profiles` ("a user has one profile").
 - For M:N junctions, draw the junction entity explicitly with two `-->` edges in from its parents (e.g. `contacts --> campaign_members` and `campaigns --> campaign_members`). Never draw a direct edge between two parents of an M:N relationship.
 - Use the full conventions table in `references/semantic-model-template.md`.
-- Label edges with a short verb phrase where it aids clarity: `A -->|verb| B` or `A ---|verb| B` (e.g. `accounts -->|owns| opportunities`). Unlabeled edges are allowed when the relationship is obvious but the audit will flag them as 🟡.
+- **Every edge gets a labeled verb, copied verbatim from the FK field's `relationship_label`** — `A -->|verb| B` or `A ---|verb| B` (e.g. `accounts -->|owns| opportunities`). The verb is **read straight from the §3 `relationship_label: "<verb>"` annotation**; this stage just renders what's already there. **Never invent a verb that doesn't appear in §3, and never paraphrase, shorten, or "polish" the §3 verb when copying it into the diagram** — `|owns|` stays `|owns|`, not `|has_one_or_more|`. Unlabeled edges mean a missing `relationship_label` and the audit will flag them as 🟡 (or 🔴 if the FK names alone are too generic to disambiguate).
+- The §2 Mermaid edge label and the §3 `relationship_label: "<verb>"` annotation must agree byte-for-byte. The downstream deployer persists the field annotation; the optimizer reads it back from live state when it regenerates the model. A diagram label that disagrees with the §3 annotation will not survive the round-trip.
+
+**Build-then-verify procedure (mandatory):**
+
+1. **Build the diagram mechanically.** Walk the FK fields in order; for each FK, emit one edge whose label is the literal `relationship_label` value from §3. No paraphrase, no synthesis, no "let me pick a clearer verb."
+2. **Self-verify before showing the user.** After the block is drafted, walk every edge in the rendered Mermaid and confirm two things for each:
+   - the source/target node names match a real FK in §3 (no orphan edges from invented relationships)
+   - the edge label, if present, equals the §3 `relationship_label` of that FK byte-for-byte (no hallucinated, paraphrased, or "improved" verbs)
+   If any mismatch is found, fix the diagram (or fix the §3 annotation if the §3 value is the wrong one) and run the check again. Do not show the user a diagram that fails this check.
 
 Show the drafted diagram to the user alongside the field tables and ask for confirmation. If the user changes entities or relationships later in this stage, regenerate the diagram — do not carry forward a stale one.
 
@@ -307,16 +336,24 @@ After listing findings, give an overall summary: how many issues of each severit
 - M:N relationships are drawn via the junction entity explicitly (two `-->` edges from the parents into the junction). A direct edge between the two parents of an M:N relationship (e.g. `contacts --> campaigns` when the junction is `campaign_members`) is a 🔴 Blocker.
 - No node in the diagram is missing from §2 (a diagram-only entity is a 🔴 Blocker)
 - No edge in the diagram contradicts §4 (a diagram edge with the wrong cardinality or reversed direction is a 🔴 Blocker)
-- Edge labels, where present, are short verb phrases using the `-->|verb|` or `---|verb|` syntax (`"has"`, `"belongs to"`, `"assigned to"`); unlabeled edges are allowed but 🟡 Warning when the relationship is non-obvious
+- Edge labels are short verb phrases using the `-->|verb|` or `---|verb|` syntax. Every edge **should** carry a verb, because the verb is now managed Semantius metadata (`relationship_label` on the FK field) used by navigation and ER docs — not just diagram garnish.
+- 🟡 An unlabeled edge is a Warning unless the verb is genuinely encoded in the FK name itself (e.g. a self-reference `parent_X_id` where omitting `|parent of|` is borderline acceptable).
+- 🟡 A filler verb (`"has"`, `"references"`, `"belongs to"`, `"relates to"`) is a Warning — these reproduce on every UI breadcrumb and add no information. Propose a domain-specific verb in the parent's voice.
+- 🔴 An edge label that disagrees with the FK row's `relationship_label: "<verb>"` annotation in §3 is a Blocker — the diagram and the field metadata must agree byte-for-byte or the deployer/optimizer round-trip drops the verb.
+- 🔴 Two FKs from the same child to the same parent (e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users`) where the two `relationship_label` values are identical or one is missing — they must differentiate (`"created"` vs `"assigned"`).
 
 **Entity health (for each entity in §3)**
 - A `label_column` field is declared (notes say it's the entity's label)
 - 🔴 **`label_column` is a `string` (or other scalar) field — never a `reference` or `parent` FK.** Semantius auto-creates a field with the same name as `label_column`; if that name belongs to a FK field the agent will try to create it twice, causing a platform conflict. For junction tables specifically, verify a dedicated scalar label field exists (e.g. `product_tag_label`) — do not accept a FK column as the label_column.
 - No auto-fields declared (`id`, `created_at`, `updated_at`, label)
 - Every `enum` field has its allowed values listed in the Notes column
+- **Required fields do not need explicit defaults** — the platform auto-fills them: scalars get `''`/`0`/`0.0`/`FALSE`/`'{}'`/`CURRENT_DATE`/`CURRENT_TIMESTAMP` per format; required enums get the first value in `enum_values`. Do **not** flag missing defaults as a warning. Only flag (🟢 Suggestion) when the auto-default is clearly wrong for the domain — a balance that shouldn't start at `0`, an enum whose first value is the wrong starting state, a string that shouldn't default to `''`.
+- 🟡 When a `default: "<value>"` annotation **is** present on an enum, the value must be one of the listed `enum_values`. A typo or unlisted value is a Warning.
+- **Nullability check.** Only `reference`, `date`, `date-time` allow NULL at the DB level; everything else is NOT NULL regardless of `Required`. A `Required = "no"` on any other format is misleading — the column will still be NOT NULL with the auto-default. 🟡 Warning when the §3 table marks a non-(`reference`/`date`/`date-time`) field as `Required = "no"` and the domain expects nullable behavior — the model author has misunderstood the platform.
 - Every `reference` or `parent` field has a target table in the Notes column, with cardinality (e.g., `→ accounts (N:1)`)
 - Field names are snake_case
 - All Format values are from the valid Semantius vocabulary (see Mode A Stage 4)
+- 🔴 **Monetary fields use `format: number`.** Any field that stores money, prices, amounts, totals, balances, revenue, fees, rates, salaries, budgets, or discounts (or whose name matches `price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`) declared as `float` or `double` is a Blocker — binary IEEE-754 floats lose cents on rounding. Use `number` (arbitrary-precision, maps to Postgres `numeric`). `float`/`double` are only valid when the user explicitly asked for them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates); flag those cases as 🟢 Suggestion to confirm intent.
 - Relationship field names follow the `<target_singular>_id` convention
 
 **Naming consistency**
@@ -326,6 +363,7 @@ After listing findings, give an overall summary: how many issues of each severit
 
 **Relationship integrity**
 - Every `reference`/`parent` field in §3 has a corresponding row in the §4 relationship summary table
+- 🟡 Every `reference`/`parent` field row in §3 carries a non-empty `relationship_label: "<verb>"` annotation. Missing or filler verbs (`"has"`, `"references"`, `"belongs to"`, `"relates to"`) are 🟡 — propose a domain-specific verb in the parent's voice (e.g. `accounts → opportunities` is `"owns"`, `users → tasks` is `"manages"`). Models that predate this rule will commonly miss labels everywhere; offer a sweep that proposes a verb per FK in one pass rather than turn-by-turn.
 - Every junction table (for M:N relationships) is listed as its own entity in §2 and §3
 - Cardinality (N:1, 1:N, M:N, 1:1) is stated consistently between §3 and §4
 - Delete behavior is specified in §4 for every parent/reference
@@ -411,7 +449,7 @@ For new entities: follow Stage 3 from Mode A — propose a table list, confirm, 
 
 For new fields on existing entities: present a field table for just the affected entity showing only the new rows (clearly labeled "New fields" so it's obvious what's being added).
 
-For new relationships: show the updated relationship prose and add the row(s) to the §4 summary table.
+For new relationships: show the updated relationship prose and add the row(s) to the §4 summary table. **Every new `reference`/`parent` field must carry a `relationship_label: "<verb>"` annotation in §3 Notes** — propose a domain-specific verb in the parent's voice (the same rule the Create flow uses) and use that exact verb as the §2 Mermaid edge label. Do not introduce filler verbs (`"has"`, `"references"`); the verb shows up in UI breadcrumbs and ER docs once deployed.
 
 Make sure every addition is consistent with the existing `naming_mode`. If the existing model is Zendesk-template, new entities should use Zendesk-style names where they exist; if agent-optimized, new names should be self-describing.
 

@@ -50,6 +50,8 @@ flowchart LR
     {{TABLE_D}} --> {{JUNCTION}}
 ```
 
+**Edge labels are managed metadata, not free guesses.** When an FK field carries a `relationship_label` (the verb describing the relationship, e.g. `"owns"`, `"employs"`), that string is the edge label and goes into the diagram verbatim. The downstream deployer reads it from §3 (annotated as `relationship_label: "<verb>"` on the FK row) and persists it on the field; the optimizer reads it back from live state when it regenerates the model. Do not invent a verb for the diagram that isn't also captured on the field.
+
 **Mermaid flowchart cardinality conventions** (use these exactly):
 
 The convention: **arrows (`-->`) mean "many"**, **flat connectors (`---`) mean "one"**. The arrow/connector points *from the parent to the related side* and describes how many of the related side the parent has.
@@ -78,7 +80,7 @@ For each entity, repeat the following sub-structure.
 
 | Field name | Format | Required | Label | Reference / Notes |
 |---|---|---|---|---|
-| `{{field_name}}` | `{{format}}` | {{yes \| no}} | {{Human Label}} | {{e.g., → `accounts` (N:1), unique, enum values: [a,b,c], searchable}} |
+| `{{field_name}}` | `{{format}}` | {{yes \| no}} | {{Human Label}} | {{e.g., → `accounts` (N:1), unique, enum values: [a,b,c], searchable; for FK fields optionally append `relationship_label: "owns"` to set the ER-diagram edge verb}} |
 | … | … | … | … | … |
 
 > Do not include `id`, `created_at`, `updated_at`, or the auto-generated `label` field — Semantius creates these automatically.
