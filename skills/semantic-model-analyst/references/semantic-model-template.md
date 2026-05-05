@@ -17,6 +17,9 @@ created_at: {{YYYY-MM-DD}}
 entities:
   - {{table_name_1}}
   - {{table_name_2}}
+related_models:
+  - {{sibling_module_slug_1}}
+  - {{sibling_module_slug_2}}
 departments:
   - {{department_name}}
 industries:
@@ -141,7 +144,36 @@ A short checklist for the agent who will materialise this model in Semantius (or
 4. For each field in §3: pass `table_name`, `field_name`, `format`, `title` (the Label column), and for `reference`/`parent` fields also `reference_table` and a `reference_delete_mode` consistent with §4. (The §3 `Required` column is analyst intent; the platform manages nullability internally and does not need a per-field flag.)
 5. **Fix up each entity's auto-created label-column field title.** `create_entity` auto-creates a field whose `field_name` equals the entity's `label_column`, and its `title` defaults to `singular_label` (e.g. entity `vendors` with `singular_label: "Vendor"` and `label_column: "vendor_name"` yields an auto-field `vendors.vendor_name` with title `"Vendor"`). If the §3 field table specifies a different Label for the label_column row (e.g. `"Vendor Name"` instead of `"Vendor"`), follow up with `update_field` to set the correct title. The `update_field` `id` is the **composite string** `"{table_name}.{field_name}"` (e.g. `"vendors.vendor_name"`) — **pass it as a string, not an integer**, or the update will fail.
 6. **Deduplicate against Semantius built-in tables.** This model is self-contained and may declare entities (e.g. `users`, `roles`, `permissions`) that already exist in Semantius as built-ins. For each declared entity, read Semantius first: if a built-in already covers it, **skip the create** and reuse the built-in as the `reference_table` target — do not attempt to recreate. Optionally add missing fields to the built-in only if the model requires them (additive, low-risk changes only).
-7. After creation, spot-check that `label_column` on each entity resolves to a real field and that all `reference_table` targets exist.
+7. **Reconcile against related modules (§8).** After the model's own creates and the built-in dedup pass, walk the front-matter `related_models` array. For each sibling slug already deployed, walk its §8 sub-section: apply **Defers to sibling** entries the same way as built-in dedup (skip the local create and rewire FKs), and propose **Expects on sibling** entries as additive FKs on the sibling's tables (always user-confirmed, never auto-applied). **Exposes** entries are informational and indexed for future sibling deploys. All cross-module changes are additive only; declines persist on sibling module metadata so the same proposal does not reappear on every redeploy.
+8. After creation, spot-check that `label_column` on each entity resolves to a real field and that all `reference_table` targets exist.
+
+## 8. Related domains
+
+This model is one atomic piece of a broader enterprise model. The entries below tell the deployer which sibling modules to look for, what entities are shared with each, and what cross-module FKs to propose so the deployed schema closes silos instead of duplicating master data. Each sub-section uses three keys:
+
+- **Exposes** — entities owned by this model that siblings are expected to reference (informational; deployer indexes them for reciprocity).
+- **Expects on sibling** — FKs the deployer should propose adding to the sibling's tables when the sibling is (or becomes) live (additive, user-confirmed).
+- **Defers to sibling** — entities this model declares for self-containment but whose canonical owner is the sibling if deployed (deployer reuses sibling's table, skips the local create, rewires FKs).
+
+All cross-module changes are additive and user-confirmed (see §7 step 7). If a sibling slug listed in `related_models` is not deployed, its §8 sub-section is dormant; the deployer indexes it so a future sibling deploy can reciprocate.
+
+If this model has no related siblings, write "No related domains identified." under §8 and leave `related_models` out of the front-matter (do not write an empty list).
+
+### 8.{{N}} `{{sibling_module_slug}}` — {{Sibling Module Display Name}}
+
+**Relationship:** {{peer | upstream | downstream}} ({{one-line context, e.g. "downstream consumer of CMDB data" or "canonical owner of vendor master data when deployed"}}).
+
+**Exposes:** {{`entity_a`, `entity_b` — entities this model owns that the sibling is expected to reference. List `none` if this model exposes nothing to this sibling.}}
+
+**Expects on sibling:**
+- `{{sibling_slug}}.{{table}}.{{fk_field}} → {{this_slug}}.{{exposed_table}}` (N:1, {{restrict | clear | cascade}}) {{; one-line rationale if non-obvious}}
+- {{additional expected FKs, or write "none" as a single-line list when nothing is expected}}
+
+**Defers to sibling:**
+- `{{this_slug}}.{{local_table}}` should be reused from `{{sibling_slug}}.{{sibling_table}}` if that module is deployed. The deployer should skip creating the local table and rewire every FK in this model that points at it. {{One-line note on which fields, if any, this model adds that the sibling lacks and should be proposed as additive extensions.}}
+- {{additional defers entries, or "none"}}
+
+_(repeat 8.1, 8.2, … per related sibling. Keep entries tight. If a key is genuinely empty for a sibling, write "none" rather than omitting the line, so the deployer can tell "explicitly nothing" from "author forgot".)_
 ```
 
 ## Template ends above this line
@@ -165,3 +197,10 @@ A short checklist for the agent who will materialise this model in Semantius (or
   - `industries` is **optional**: list the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when the model is industry-agnostic; do not write an empty list.
 - `initial_request` is **immutable**. It captures the user's verbatim opening ask from the Create session. Audit and Extend modes must preserve it exactly — never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
 - If the system has no enums, §5 can read "No enumerations defined." — don't omit the section; keeping section numbers stable helps humans navigate multiple models.
+- **§8 Related domains is the federation contract.** The semantic model is atomic by design (it covers one bounded domain), but Semantius is a unified catalog where many such models coexist. §8 is how each atomic model declares its links to the rest of the enterprise model so the deployer can close silos automatically. Three keys per related sibling, all required (use `none` for empty entries so "explicitly nothing" is distinguishable from "author forgot"):
+  - **Exposes** — entities this model owns that siblings reference. Informational; the deployer indexes them so a future sibling deploy can reciprocate.
+  - **Expects on sibling** — concrete FK fields (with target table and cardinality) the deployer should propose adding to the sibling's tables when the sibling is live. Always additive, always user-confirmed; declines persist on the sibling module's metadata so the proposal does not nag on every redeploy.
+  - **Defers to sibling** — entities this model declares for self-containment but whose canonical owner is the sibling if deployed. Treated by the deployer like Semantius built-in dedup: skip the local create, rewire local FKs to the sibling's table, and propose any non-overlapping fields as additive extensions on the sibling.
+  Cross-module changes from §8 are strictly additive (new optional FKs, new fields on existing tables). Renames, type changes, and deletions across module boundaries are out of scope and must be raised with the user as separate work.
+- **`related_models` front-matter** mirrors §8: list the slug of every sibling that has at least one §8 sub-section. Each entry is **lowercase**, byte-for-byte equal to the target model's `system_slug` (e.g. `cdp`, `itsm`, `acme_crm`). Never use the Title-case `domain` form (`CDP`, `ITSM`) here — that's a different field with a different job; mixing casings here is a deployer-blocker. The deployer uses this list as a fast index ("am I a sibling of any deployed module?") before reading §8 in detail. **Omit the key entirely** when the model has no related siblings (do not write an empty list); §8 then reads "No related domains identified."
+- **When inferring related siblings,** look at: (a) what entities you deferred to other modules during Stage 4 (e.g. "no `change_requests` here, that lives in `change_management`"), (b) what shared concepts exist in your `*_id` FKs that point at master-data tables likely to be canonically owned elsewhere (`vendors`, `users`, `cost_centers`, `departments`), and (c) what downstream modules will plausibly need an FK back into this model (a CMDB exposes `configuration_items` to ITSM, change management, software asset management, etc.). The §6.2 future considerations are the natural seed list — anything the model defers to "a separate module" probably wants a §8 entry.

@@ -79,7 +79,7 @@ semantius call crud create_entity '{
 
 | Field | Notes |
 |-------|-------|
-| `table_name` | **Plural** snake_case, stable — **never change after creation** |
+| `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. |
 | `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label` — if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
 | `plural_label` | e.g. "Products" |
 | `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title |
@@ -267,10 +267,10 @@ semantius call crud create_field '{
 | Property | Type | Notes |
 |----------|------|-------|
 | `table_name` | string | Target entity — required |
-| `field_name` | string | Snake_case identifier — stable, **never change after creation** |
+| `field_name` | string | Snake_case identifier. Renaming is supported but think twice: views, integrations, and saved queries reference the field by name. |
 | `title` | string | Human-readable label shown in UI |
 | `description` | string | Explains what the field represents |
-| `format` | string | **Immutable after creation** — see format table above |
+| `format` | string | Changeable only within the same underlying database base type (e.g., one string format can swap to another string format). Cannot cross base-type families (string, number, date, boolean, reference). See format table above. |
 | `width` | string | `default` (default), `s`, `m`, `w` |
 | `input_type` | string | `default`, `required`, `readonly`, `disabled`, `hidden` |
 | `field_order` | integer | Controls display order in the UI |

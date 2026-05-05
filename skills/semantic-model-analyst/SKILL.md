@@ -173,7 +173,7 @@ For each confirmed entity, draft a field list. Present each entity as its own ta
 - Numbers: `integer`, `int32`, `int64`, `number`, `float`, `double` — use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for any field that stores money, prices, amounts, totals, balances, revenue, fees, rates, salaries, budgets, or discounts. Pair with `precision` (digits after the decimal; default `2` suits money — most monetary fields don't need to set it explicitly. Set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding; pick them only when the user explicitly asks for them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates). Field names like `price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount` are monetary by default and must resolve to `number`.
 - Date/time: `date`, `time`, `date-time`, `duration`
 - Boolean: `boolean`
-- Choice: `enum` (always state the allowed values in the Notes column; the platform auto-defaults required enums to the **first value**, so list `enum_values` in lifecycle order. Only add a `default: "<value>"` annotation when the auto-default is wrong for the domain)
+- Choice: `enum` (always state the allowed values in the Notes column; declare an explicit `default: "<value>"` annotation for required enums to document analyst intent — preferred over relying on the platform's `enum_values[0]` auto-fallback. Still list `enum_values` in lifecycle order so the auto-fallback is correct if the explicit default ever gets dropped during edits)
 - Structured: `json`, `object`, `array`
 - Identifier: `uuid`, `email`, `uri`, `url`
 - Relationship, independent lifecycle: `reference` (+ target table)
@@ -185,17 +185,17 @@ For each confirmed entity, draft a field list. Present each entity as its own ta
 
 **Naming a field that holds a relationship:** the convention is `<target_singular>_id` for references/parents (`account_id`, `assigned_user_id`, `parent_case_id`). The Reference column expresses the target and cardinality, e.g. `→ accounts (N:1)` for a many-to-one link where many contacts belong to one account.
 
-**Defaults — the platform auto-fills, authors only override.** The Semantius column-add trigger assigns sensible defaults automatically based on format and `Required`:
+**Defaults — the platform auto-fills as a fallback; explicit defaults are preferred for enums.** The Semantius column-add trigger assigns sensible defaults automatically based on format and `Required`:
 
 - **Required scalar** → `''` for strings/text/email/url, `0` for `integer`/`int32`/`int64`, `0.0` for `number`/`float`/`double`, `FALSE` for `boolean`, `'{}'` for `json`/`object`/`array`, `CURRENT_TIMESTAMP` for `date-time`, `CURRENT_DATE` for `date`.
 - **Required enum** → first value in `enum_values` (so list `enum_values` in lifecycle order: `draft`, `pending`, `new`, `open`, `active` first).
 - **Not required (any format)** → empty/null backfill is fine.
 
-Authors do **not** need to declare defaults. Only add a `default: "<value>"` annotation when the auto-default is wrong for the domain — e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string. Otherwise leave it off.
+**Required enums: declare `default: "<value>"` explicitly — even when it equals `enum_values[0]`.** The annotation documents analyst intent (so a reader doesn't have to infer "first listed = chosen starting state" from list order alone) and survives `enum_values` reordering during edits. Treat the auto-fallback as a safety net, not the recommended path. For other formats, only add an explicit `default: "<value>"` when the auto-default would be wrong for the domain (a non-zero starting balance, a non-default boolean, a specific seed string); otherwise leave it off.
 
 **Nullability is computed from format.** The platform's `is_nullable()` rule makes only `reference`, `date`, and `date-time` formats nullable at the DB level; every other format is NOT NULL with the auto-default above. Marking a `reference`/`date`/`date-time` field as `Required = "yes"` means UI-required, not DB-NOT-NULL — be explicit in the Notes if the distinction matters for the domain.
 
-Example §3 row: `| status | enum | yes | Status | values: draft, active, discontinued |` (no explicit default needed — `draft` is auto-picked as the first value).
+Example §3 row: `| status | enum | yes | Status | values: draft, active, discontinued; default: "draft" |` (explicit default documents intent even when it matches the first listed value).
 
 **Set a `relationship_label` for every FK field — not just diagram-worthy ones.** `relationship_label` is now managed Semantius metadata; it powers the §2 Mermaid edge label, navigation breadcrumbs in the UI, and any ER-diagram surface the platform renders later — well beyond the model document itself. Treat it as a first-class part of every `reference` and `parent` field, not a diagram afterthought:
 
@@ -238,6 +238,32 @@ The §2 Entity summary includes a Mermaid **flowchart** that visualises every en
 
 Show the drafted diagram to the user alongside the field tables and ask for confirmation. If the user changes entities or relationships later in this stage, regenerate the diagram — do not carry forward a stale one.
 
+### Stage 4c — Identify related domains (federation contract)
+
+The model is atomic by design (one bounded domain), but Semantius is a unified catalog where many such models coexist. **Every model that ships must declare its links to the rest of the enterprise model** so the deployer can close silos automatically instead of letting two modules each create their own `vendors`, `users`, or `cost_centers`.
+
+> **🛑 Reason from analyst domain knowledge, not from the workspace.** §8 enumerates sibling modules that *plausibly exist in this organization's enterprise architecture* — whether or not their semantic-model files are sitting next to this one today. The catalog is being built; most siblings will not exist yet. **Do not** `ls` the workspace, glob for `*-semantic-model.md` files, or use file presence as evidence of a sibling. The opposite trap also applies: do not omit a plausible sibling just because no file for it exists yet. Federation is a forward-looking declaration; the deployer reciprocates whenever a matching sibling later arrives.
+
+Walk back through what you just modeled and look for three signals:
+
+1. **Anything you deliberately deferred to "another module"** during Stage 3 or Stage 4. If §6.2 says *"`change_requests` belong in `change_management`, out of scope here"*, that is the seed of an §8.2 entry: change_management exists (or will exist), it will need an FK back to your entities, declare it.
+2. **FK fields pointing at master-data tables likely owned canonically elsewhere.** A CMDB declares `vendors` for self-containment, but if a `vendor_management` module is also deployed it owns the canonical vendor master. That is a "Defers to" entry.
+3. **Downstream consumers that will plausibly link back into this model.** A CMDB exposes `configuration_items` to ITSM, change management, and software asset management. Even if those modules are not deployed today, declaring "I expose `configuration_items`" lets the deployer reciprocate when they arrive later.
+
+Common sibling slugs to consider (not exhaustive, and use the slug your installation actually uses): `itsm`, `change_management`, `software_asset_management`, `vendor_management`, `identity_and_access`, `org_management`, `crm`, `hris`, `procurement`, `finance`, `support`. Pick the ones that genuinely apply; do not pad the list.
+
+Present a short proposal to the user:
+
+> **Related domains.** I'll declare the following sibling modules in §8 so the deployer can reconcile across them:
+>
+> - `change_management` (peer): expects `change_requests.affected_ci_id → configuration_items` when deployed.
+> - `vendor_management` (upstream): defers `vendors` to it if deployed; rewires CI vendor FKs.
+> - `identity_and_access` (upstream): defers `users` and `teams` if deployed.
+>
+> Should I add or drop any of these?
+
+After the user confirms, the §8 entries (and the `related_models` front-matter array) will be written in Stage 5. If the user says "none", §8 reads "No related domains identified." and `related_models` is omitted from the front-matter.
+
 ### Stage 5 — Write the semantic-model file
 
 Use the template in `references/semantic-model-template.md` — it has the exact section order, front-matter block, and rendering conventions that work for both human review and agent ingestion. Keep the file self-contained (a downstream agent should not need any prior conversation to implement the model).
@@ -254,6 +280,7 @@ Detail per key:
 - `entities` (**required**) — the complete list of `table_name` values from the §2 entity summary, in §2 order. Mechanical to populate from the confirmed entity list.
 - `departments` (**optional**) — the department(s) where this system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments; cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant — do not write an empty list.
 - `industries` (**optional**) — the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when industry-agnostic — do not write an empty list.
+- `related_models` (**optional**) — the slug of every sibling module declared in §8. Each entry is **lowercase**, byte-for-byte equal to the target model's `system_slug` (e.g. `cdp`, `itsm`, `acme_crm`). Never use the Title-case `domain` form here (`CDP`, `ITSM`) — that's a different field with a different job. The deployer uses this as a fast index before reading §8 in detail. **Omit the key entirely** when the model has no related siblings (do not write an empty list); §8 then reads "No related domains identified." Order is conventional: peers first (downstream consumers and producers), then upstream master-data owners.
 
 Infer `departments` and `industries` the same way you infer `domain` — from everything captured in Stage 1 (the full conversation by the end of capture, not just the verbatim `initial_request`). The opening ask is rarely enough on its own; the org-size cues, sector hints, and follow-up clarifications gathered through Stage 1 are what make the call reliable. If you can confidently propose a value from those signals, include it; if you have low or no confidence, omit the key — don't ask the user a separate question just to tag the file.
 
@@ -275,7 +302,24 @@ If a question could work either way without breaking the model, it belongs in §
 
 Save the final file to the workspace folder as `{system_slug}-semantic-model.md` where `{system_slug}` is snake_case (e.g., `acme_crm`, `helpdesk`, `fieldforce_lms`).
 
-**Choosing the slug.** The slug becomes the literal Semantius module name and the prefix for `<slug>:read` / `<slug>:manage` permissions, and it shows up in generated skill folder names — so a descriptive snake_case form (`applicant_tracking`, `customer_relations`) carries more discovery signal than a bare lowercased acronym (`ats`, `crm`). When you're inferring the slug yourself from the conversation, prefer the descriptive form and avoid making it a duplicate of the `domain` tag in lowercase. **However, if the user explicitly asked for a specific slug (e.g. "call it `ats`"), use exactly what they asked for** — their naming preference wins over this guideline. Record the user's explicit ask as the deciding factor; don't second-guess it.
+**Choosing the slug.** The slug is the immutable identifier used in URLs, permissions (`<slug>:read` / `<slug>:manage`), the Semantius module name, and the `related_models` references that other models use to point at this one. Short matters here: the slug is what users and operators type and read every day, while the long form lives on `system_name`.
+
+For domains that have a well-known industry-standard acronym, **prefer the lowercase acronym as the slug**: `crm`, `itsm`, `itam`, `hris`, `lms`, `erp`, `pim`, `cms`, `sam`, `mdm`, `ats`, `cdp`, `ehr`, `mes`. The acronym is short, unambiguous in its domain, what practitioners actually say, and reads cleanly in URLs and permission strings. The casing difference between `domain: ITAM` (Title-case / acronym, discovery vocabulary) and `system_slug: itam` (lowercase, technical id) is intentional — they have different jobs, even when they share letters.
+
+Use a **verbose snake_case form** (`applicant_tracking`, `customer_relations`, `field_service_dispatch`) only when:
+- the domain has no clean industry-standard acronym (a niche internal tool, a novel category), or
+- the org runs multiple variants of the same domain and needs to disambiguate (`acme_crm` alongside a vendor-supplied `salesforce_clone`), or
+- the user explicitly asks for the verbose form.
+
+**If the user explicitly asks for a specific slug** (e.g. "call it `ats`", "the module name should be `customer_data_platform`"), use exactly what they asked for — their naming preference wins over this guideline. Record the user's explicit ask as the deciding factor; don't second-guess it.
+
+**Casing reference for the three "CDP-shaped" fields** (so the analyst doesn't conflate them):
+
+| Field | Casing | Example | Job |
+|---|---|---|---|
+| `domain` | Title-case / acronym | `CDP` | Discovery vocabulary tag — "what kind of system is this" |
+| `system_slug` | lowercase | `cdp` | Technical id — URLs, permissions, modules, file names |
+| `related_models[*]` | lowercase | `cdp` | FK-like reference to another model's `system_slug` (byte-for-byte match) |
 
 When you share the file back, use a single `computer://` link and a one-sentence summary. No long post-amble.
 
@@ -312,7 +356,7 @@ After listing findings, give an overall summary: how many issues of each severit
 - `artifact` is `semantic-model`
 - `naming_mode` is either `template:<vendor>` or `agent-optimized`
 - `system_slug` is snake_case
-- 🟡 `system_slug` should not be a bare lowercased copy of `domain` when `domain` is an acronym (`ats` paired with `domain: ATS`, `crm` paired with `domain: CRM`, `erp` paired with `domain: ERP`). The slug becomes the module name and permission prefix, so a descriptive form (`applicant_tracking`, `customer_relations`) carries more discovery signal and doesn't duplicate the `domain` tag. Flag as 🟡 Warning with a proposed descriptive slug. **Suppress the warning if `initial_request` shows the user explicitly asked for that exact slug** (e.g. *"call it `ats`"*, *"the module name should be `crm`"*) — explicit user naming wins. Bare common-noun slugs that aren't acronym duplicates (`helpdesk`, `roadmap`) are fine and should not be flagged.
+- 🟡 `system_slug` is **verbose** when a clean industry-standard acronym would do (e.g. `customer_data_platform` when `cdp` is the obvious form; `it_asset_management` when `itam` is; `it_service_management` when `itsm` is; `applicant_tracking_system` when `ats` is). The slug shows up in URLs, permissions, and `related_models` references — short matters there, and the long form already lives on `system_name`. Flag as 🟡 Warning with a proposed acronym slug. **Suppress the warning if `initial_request` shows the user explicitly asked for the verbose form** — explicit user naming wins. Bare common-noun slugs that aren't acronym candidates (`helpdesk`, `roadmap`) are fine and should not be flagged. Multi-variant orgs that need to disambiguate (`acme_crm` next to a sibling `salesforce_clone`) are also fine.
 - `created_at` is a valid date
 - 🟡 `domain`, when present, is **Title-case / acronym form**. Common preferred values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. Non-common Title-case values (e.g. `Talent Acquisition`, `EHR`, `Compliance`) are fine — the vocabulary is open. Two specific Warnings:
   - The literal string `custom` is **not allowed** — flag as 🟡 Warning and propose dropping the key (absence already means "uncategorized"; `custom` adds zero discovery signal).
@@ -324,9 +368,10 @@ After listing findings, give an overall summary: how many issues of each severit
 - `initial_request` is a non-empty string (YAML literal block preferred) — **do not evaluate the wording or suggest rewording it**; this field is an immutable historical record of the user's opening ask. A file missing this key predates the rule; flag as 🟡 Warning, not 🔴 Blocker, and only backfill if the user explicitly asks.
 
 **Document structure**
-- All seven sections present (§1 Overview through §7 Implementation notes)
+- All eight sections present (§1 Overview through §8 Related domains)
 - Section numbers are sequential and match the template
 - §2 Entity summary contains a Mermaid flowchart sub-section immediately after the entity table
+- 🟡 Files that predate §8 (only seven sections, ending at §7) are 🟡 Warning. Offer to add §8; if the model has no related siblings, write "No related domains identified." under §8 and leave `related_models` out of the front-matter.
 
 **Mermaid entity-relationship diagram (§2)** _(treat missing/incorrect as 🔴 Blocker)_
 - The diagram is present and wrapped in a ```` ```mermaid ```` fenced block with `flowchart LR` (or `flowchart TB`) as the first line.
@@ -347,9 +392,9 @@ After listing findings, give an overall summary: how many issues of each severit
 - 🔴 **`label_column` is a `string` (or other scalar) field — never a `reference` or `parent` FK.** Semantius auto-creates a field with the same name as `label_column`; if that name belongs to a FK field the agent will try to create it twice, causing a platform conflict. For junction tables specifically, verify a dedicated scalar label field exists (e.g. `product_tag_label`) — do not accept a FK column as the label_column.
 - No auto-fields declared (`id`, `created_at`, `updated_at`, label)
 - Every `enum` field has its allowed values listed in the Notes column
-- **Required fields do not need explicit defaults** — the platform auto-fills them: scalars get `''`/`0`/`0.0`/`FALSE`/`'{}'`/`CURRENT_DATE`/`CURRENT_TIMESTAMP` per format; required enums get the first value in `enum_values`. Do **not** flag missing defaults as a warning. Only flag (🟢 Suggestion) when the auto-default is clearly wrong for the domain — a balance that shouldn't start at `0`, an enum whose first value is the wrong starting state, a string that shouldn't default to `''`.
+- **Defaults are an analyst-intent signal — never noise.** Explicit `default: "<value>"` annotations on required enums (and any other field where the starting value matters) are the **preferred** form because they document analyst intent and survive `enum_values` reordering during edits. **Never flag an explicit default as "redundant"** even when the value matches `enum_values[0]` — the explicit form is the recommended one and the auto-fallback is a safety net, not the desired state. **Do not flag missing defaults as a warning either** — the platform auto-fills them. Only flag (🟢 Suggestion) when the value the field will end up with (whether explicit or auto) is clearly wrong for the domain — e.g. a balance that shouldn't start at `0`, an enum whose effective starting value is wrong for the lifecycle, a string that shouldn't default to `''`.
 - 🟡 When a `default: "<value>"` annotation **is** present on an enum, the value must be one of the listed `enum_values`. A typo or unlisted value is a Warning.
-- **Nullability check.** Only `reference`, `date`, `date-time` allow NULL at the DB level; everything else is NOT NULL regardless of `Required`. A `Required = "no"` on any other format is misleading — the column will still be NOT NULL with the auto-default. 🟡 Warning when the §3 table marks a non-(`reference`/`date`/`date-time`) field as `Required = "no"` and the domain expects nullable behavior — the model author has misunderstood the platform.
+- **Nullability check.** Only `reference`, `date`, `date-time` allow NULL at the DB level; every other format is NOT NULL with an auto-default. **`Required = "no"` on a string / text / enum / boolean / json / numeric field is normal**, not a misunderstanding: it is the UI-optional affordance, and the platform's auto-default (`''`, `enum_values[0]`, `FALSE`, `0`, `'{}'`) is the canonical "unset" representation. **Do not flag this as a misunderstanding by default.** Only fire 🟡 when the auto-default would collide with a meaningful real value in the domain, and you can name the collision: e.g. an `account_balance` integer where `0` is a valid balance distinct from "unknown", or an enum where `enum_values[0]` is a real lifecycle state (`active`, `paid`) that would silently apply to records the user meant to leave unset. If you cannot name the colliding domain value, do not flag. (This rule mirrors the 🟢 Suggestion at the previous bullet for required fields; severity differs because optional fields rely on the auto-default implicitly.)
 - Every `reference` or `parent` field has a target table in the Notes column, with cardinality (e.g., `→ accounts (N:1)`)
 - Field names are snake_case
 - All Format values are from the valid Semantius vocabulary (see Mode A Stage 4)
@@ -378,6 +423,16 @@ After listing findings, give an overall summary: how many issues of each severit
 **Enumeration completeness**
 - Every `enum` field across all entities has a sub-section in §5
 - No enum values are defined in §5 that don't correspond to a field in §3
+
+**Federation contract (§8 + `related_models` front-matter)**
+- §8 Related domains is present. Files predating this section are 🟡 Warning; offer to backfill.
+- `related_models` front-matter, when present, is a YAML list of **lowercase** slugs (the `system_slug` form, e.g. `cdp`, `itsm`, `acme_crm`) and matches the §8 sub-section slugs exactly. Mismatch (slug in front-matter with no §8 entry, or §8 entry with no front-matter slug) is 🔴 Blocker — the deployer scans front-matter first and skips models whose §8 it can't find. Empty list (`related_models: []`) is 🟡 Warning — omit the key instead.
+- 🔴 An entry in `related_models` that uses Title-case / acronym form (`CDP`, `ITSM`, `Customer Data Platform`) is a Blocker — that's the `domain` casing, not the slug casing. The deployer matches against sibling `system_slug` values byte-for-byte. Propose the lowercase form (`cdp`, `itsm`, `customer_data_platform`) and verify it equals a real sibling slug if one exists.
+- Every §8 sub-section carries the three keys **Exposes**, **Expects on sibling**, **Defers to sibling**. A missing key is 🟡 Warning; the convention is to write `none` rather than omit, so "explicitly nothing" is distinguishable from "author forgot".
+- 🟡 **Re-evaluate `related_models` against the model content — using analyst domain knowledge, not workspace presence.** Look for FK fields pointing at master-data entities (`vendors`, `users`, `cost_centers`, `departments`, `customers`) whose canonical owner is plausibly elsewhere — those are candidate "Defers to" entries. Look for §6.2 future-considerations that name "another module" by category — those are candidate sibling entries. Look for entities the model exposes that downstream consumer modules will plausibly FK back into. Missing-but-inferable siblings are 🟡 Warning with a concrete proposed sub-section. Do not flag genuine judgment calls where the author legitimately decided no federation applies. **🛑 Do NOT base proposals on which `*-semantic-model.md` files happen to sit next to this one in the workspace** — the catalog is being built and most siblings will not exist yet. File presence is not evidence of a sibling, and file absence is not evidence against one. Reason about which sibling modules *plausibly exist in this organization's enterprise architecture* whenever they later arrive.
+- 🔴 An **Expects on sibling** entry whose target table is not actually exposed by this model's §3 entities (e.g. expecting `change_management.change_requests.affected_ci_id → cmdb.configuration_items` but `configuration_items` is not in §3) is a Blocker — the FK target doesn't exist. Either add the entity to §3 or remove the §8 entry.
+- 🟡 A **Defers to sibling** entry whose local table is not actually declared in §3 is a Warning — there's nothing to defer. Either add the entity (recommended for self-containment) or remove the §8 entry.
+- 🟡 An **Expects on sibling** FK target table that exists in §3 but is never exposed via the §8 **Exposes** key on the same sibling sub-section is a Warning — Exposes and Expects-on-sibling targets should be consistent within one sibling entry.
 
 **Scope cleanliness**
 - No UI content (forms, layout, field widths, page structure)
@@ -466,6 +521,7 @@ Update the file in place:
 - Update `created_at` in the front-matter to today's date
 - **Refresh the `entities` front-matter list** to match the new §2 entity summary (in §2 order, lowercase snake_case). A stale `entities` tag breaks discovery — never skip this step when entities are added, removed, or renamed.
 - **Re-evaluate `departments` and `industries`** against the post-extension model — the new entities, fields, and any scope cues from the extension request can shift these tags (e.g. adding HR entities to a finance system → add `hr` to `departments`; adding patient-record entities to a generic CRM → add `healthcare` to `industries`). If the inference is now confident where it wasn't before, add the key; if a previously-valid value is no longer accurate, change or drop it. Mention any change in the summary so the user can push back. If the extension doesn't shift scope, leave the existing values as-is.
+- **Re-evaluate `related_models` and §8** against the post-extension model. New entities frequently introduce new federation surface — a CMDB extended with `software_installs` now exposes a host CI to a sibling SAM module that didn't matter before; a CRM extended with `tickets` now overlaps with an ITSM sibling. Walk the new entities and FKs and consider: (a) does the extension introduce a new sibling slug that should be added to `related_models` and §8; (b) does it expand the **Exposes** key on an existing sibling sub-section; (c) does it introduce a new **Expects on sibling** FK proposal; (d) does it create a new **Defers to sibling** opportunity (e.g. a new master-data entity whose canonical owner is plausibly elsewhere). Mention any change in the summary so the user can push back; if the extension is purely internal and does not shift federation surface, leave §8 and `related_models` as-is.
 - Add any new questions surfaced during the extension to the appropriate §6 bucket — **§6.1 🔴 Decisions needed** if the extension introduces ambiguity that blocks implementation, **§6.2 🟡 Future considerations** if it's deferred-scope or extensibility. Phrase every entry as a forward-looking question — never as a decision log. Do not move existing questions between buckets unless the extension genuinely changes their severity.
 
 **Before saving, run a self-audit pass on the updated draft.** Work through every 🔴 Blocker check from the Audit checklist (Mode B) — including the Mermaid diagram checks — and fix any issues before writing. Do not save a file that would fail its own audit.

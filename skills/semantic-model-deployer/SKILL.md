@@ -17,6 +17,8 @@ Semantius is a **unified platform — a universal system of records**. It is **n
 
 **Two entities called `contracts` owned by two different modules is exactly the kind of drift that makes the platform unusable for both humans and agents.** The moment the catalog contains ambiguous names, downstream reasoning falls apart: users don't know which table to use, agents pick the wrong one, reports double-count, and FK references point to the wrong concept.
 
+**The federation contract.** Closing silos goes beyond name-collision policing. Each model declares its links to neighboring modules in §8 Related domains and the front-matter `related_models` array. When a related sibling is already deployed, the deployer must (a) reuse the sibling's tables for any **Defers to sibling** entries (same machinery as built-in dedup), and (b) propose additive FK extensions to the sibling's tables for any **Expects on sibling** entries (always user-confirmed; declines persist on sibling module metadata so the proposal does not nag on every redeploy). Cross-module changes are strictly additive — new optional FKs and new fields on existing tables — never renames, type changes, or deletions. See Stage 2g and Stage 4f.
+
 Your job as the implementer is to **refuse to introduce ambiguity**. Before creating any entity you must:
 
 1. Check whether it already exists as a built-in (see Stage 2b) — never replace, may extend additively.
@@ -77,6 +79,7 @@ Locate the `*-semantic-model.md` file. Extract:
 - **§2 Mermaid diagram** — sanity-check it agrees with §3/§4 (the model's own audit should have caught mismatches; if it disagrees here, flag for the user before proceeding rather than silently picking one side)
 - **§6 Open questions** — scan both sub-sections. **§6.1 🔴 Decisions needed is a gate**: if any entry is present and unresolved, stop before Stage 4 and list the blockers to the user; ask them to either (a) answer each question so the model can be updated first via the semantic-model-analyst skill, or (b) explicitly waive and proceed at their own risk. Do not make up answers, and do not silently proceed. **§6.2 🟡 Future considerations is informational only** — note them for the user but do not block. Models that predate the two-bucket format (flat §6 list) should be treated conservatively: surface every flat entry as a potential blocker and ask the user to classify each before proceeding.
 - **Implementation notes** (§7) — always follow these
+- **`related_models` front-matter and §8 Related domains** — extract the array of sibling slugs from front-matter, then parse §8 sub-sections into a per-sibling structure carrying `{relationship, exposes: [tables], expects_on_sibling: [{sibling_table, fk_field, target_table, cardinality, delete_mode, rationale}], defers_to_sibling: [{local_table, sibling_table, additive_fields}]}`. If `related_models` is absent and §8 is empty (or reads "No related domains identified."), the model has no federation surface and Stages 2g and 4f are no-ops. **Mismatch between front-matter and §8** (slug in front-matter with no §8 entry, or §8 entry with no front-matter slug) is a 🔴 — stop before Stage 2g and ask the user to fix the model via the analyst skill, since the deployer cannot guess which is authoritative. Files that predate §8 (only seven sections) skip Stages 2g/4f silently.
 
 ### Model-to-Entity Mapping
 
@@ -229,6 +232,26 @@ This comparison goes into the Stage 3 plan so the user can decide on informed gr
 | Entity labels, descriptions | ✅ Low | Safely updatable |
 | Field `title`, `description` | ✅ Low | Safely updatable |
 
+### 2g. Inspect related modules (federation surface)
+
+Read every slug in the model's `related_models` front-matter array. For each one, check whether the sibling module is deployed:
+
+```bash
+semantius call crud read_module '{"filters": "module_name=eq.<sibling_slug>"}'
+```
+
+Build a `siblings_live` map keyed by slug: `{module_id, module_name, decline_metadata}`. The decline metadata captures previous user-confirmed declines so Stage 4f does not nag — read it from the sibling module's `description` field or a dedicated metadata field if the platform exposes one. Format convention: `cross_module_declines: [<sibling_slug>:<sibling_table>.<fk_field>, ...]` appended to the sibling module's metadata so the deployer can recognize which extension proposals the user already turned down.
+
+For each live sibling, walk its §8 sub-section and pre-compute:
+
+- **Defers-to dedup actions.** For each `Defers to sibling` entry whose local table is in this model's §3, mark the local entity as 🔒 **Deferred to sibling** and record the rewire mapping `{local_table → sibling_table}`. From here on, treat the local table the same way Stage 2b treats Semantius built-ins: skip `create_entity`, reuse the sibling's table as `reference_table` for all FK targets, and propose any non-overlapping fields the sibling lacks as additive extensions on the sibling's table.
+- **Expects-on-sibling extension proposals.** For each `Expects on sibling` FK, look up the sibling table in the live catalog (loaded in 2c). If the FK already exists, mark it ✅ Already in place. If the FK is missing, mark it ✨ Proposed and stash the spec for Stage 3 to present and Stage 4f to execute. If the user previously declined this exact FK (per `cross_module_declines`), mark it 🔇 Suppressed and skip silently.
+- **Ownership conflicts.** If two siblings both claim canonical ownership of the same local entity via competing `Defers to` entries (e.g. both `identity_and_access` and `org_management` declare ownership of `teams`), mark a 🛑 federation gate. Stage 3 must surface this for explicit user resolution before any rewires happen.
+
+Dormant siblings (slug listed in `related_models` but module not deployed) require no action this run — their `Exposes` entries get indexed for future reciprocity but produce no plan items now.
+
+Carry the federation summary into Stage 3 so the user sees the cross-module impact alongside the in-module plan.
+
 ---
 
 ## Stage 3: Plan and Present (and resolve ambiguity)
@@ -253,6 +276,13 @@ Before running any writes, show the user a clear plan. The plan must have two pa
 
 Total to create: 1 module, 2 permissions, 6 entities, ~58 fields
 Plus: 3 additive fields on built-in `users` (pending confirmation)
+
+🔗 Federation (from §8 + `related_models`):
+  🔒 vendors — deferred to live `vendor_management` module; skipping local create, rewiring 2 FKs
+  ✨ Propose on live `change_management.change_requests`: + `affected_ci_id → configuration_items` (clear) — pending confirmation
+  ✨ Propose on live `itsm.incidents`: + `affected_ci_id → configuration_items` (clear) — pending confirmation
+  💤 Dormant siblings (indexed for future deploys): `software_asset_management`, `org_management`
+  🔇 Suppressed (previously declined): none
 ```
 
 If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12) — will update module metadata from the new model; will diff entities and apply only changes`.
@@ -383,6 +413,36 @@ For ♻️ same-module matches and 🛑 merges, only create fields that don't al
 
 After each entity's fields are done, share the UI link:
 `https://tests.semantius.app/<module_name>/<table_name>`
+
+**4f. Cross-module extensions (federation)** — After all in-module creates and built-in extensions are done, walk the federation plan from Stage 2g and apply confirmed cross-module changes. Two flavors:
+
+- **Defers-to rewires** are already applied implicitly: the local entity was skipped in 4c, and FKs were pointed at the sibling's table in 4d. Nothing more to do here other than logging which locals were deferred to which siblings (for the verification summary). If the local table was created in a previous run before §8 was added, do not delete it — surface it to the user as a manual cleanup decision.
+- **Expects-on-sibling proposals confirmed in Stage 3** are executed now as additive `create_field` calls against the sibling's table. Always include `width: "default"` and `input_type: "default"`. The new FK's `format` is `reference` (not `parent` — cross-module ownership is not allowed; an `Expects on sibling` entry must never be cascade-delete because the sibling does not own the local table). Use `reference_delete_mode: "clear"` unless the §8 entry explicitly specifies `restrict`. Set `relationship_label` from the §8 rationale when present, or leave it for the sibling's analyst to fill in later.
+
+```bash
+# Example: this model is `cmdb`; sibling `change_management` is live and the user confirmed
+# the §8 proposal "change_management.change_requests.affected_ci_id → cmdb.configuration_items"
+semantius call crud create_field '{
+  "data": {
+    "table_name": "change_requests",
+    "field_name": "affected_ci_id",
+    "title": "Affected CI",
+    "format": "reference",
+    "reference_table": "configuration_items",
+    "reference_delete_mode": "clear",
+    "relationship_label": "affects",
+    "width": "default",
+    "input_type": "default"
+  }
+}'
+```
+
+For each confirmed extension, also share the UI link to the sibling table so the user can inspect:
+`https://tests.semantius.app/<sibling_module_name>/<sibling_table_name>`
+
+**Persist declines.** For every Stage-3 federation proposal the user declined, append the entry to the sibling module's `cross_module_declines` metadata via `update_module` so the next deploy of this model does not re-prompt. Format: `<this_slug>:<sibling_table>.<fk_field>`. The sticky-decline mechanism is what keeps federation reconciliation feeling like a one-time cleanup rather than a recurring nag.
+
+**Skip silently** for any Stage-3 proposal the user accepted but the platform rejected (e.g. the sibling's table was renamed between Stage 2g inspection and 4f write). Surface the failure in the verification summary; do not retry.
 
 ---
 
@@ -534,3 +594,9 @@ Run the complete script in one bash call and report the final output summary.
 | **Similar-name collision** (root, synonym, qualifier, prefix/suffix) | 🛑 High — ambiguity gate | Same dialog as above. User may decline, in which case record the decision and proceed. |
 | Merge requires changing an immutable field format | 🛑 High | Merge is impossible — fall back to a rename option. |
 | Existing-entity rename rejected by platform | 🛑 High | Stop. Offer "rename incoming" or "rename both" as fallback. Never continue silently. |
+| §8 sibling slug listed in `related_models` is deployed and declares **Defers to sibling** for a local entity | ✅ Low | Skip local create, rewire FKs to sibling's table (same machinery as built-in dedup). Propose any non-overlapping local fields as additive extensions on the sibling. |
+| §8 sibling is deployed and **Expects on sibling** FK is missing on its table | ⚠️ Medium | Stage 3 user-confirmed proposal; Stage 4f executes as `create_field` on the sibling. Decline persists in sibling module metadata. |
+| Two siblings both claim **Defers to** ownership of the same local entity | 🛑 High — federation gate | Stage 3 dialog asks the user which sibling owns it. Never silently pick. |
+| `related_models` slug listed but sibling module not deployed | ✅ Low | Dormant. No action this run; sibling's `Exposes` entries indexed for future reciprocity. |
+| `related_models` and §8 disagree (slug missing one side) | 🛑 High | Stop before Stage 2g. Ask the user to fix the model via the analyst skill; deployer cannot pick which is authoritative. |
+| Cross-module rename, type change, or deletion proposed by §8 | 🛑 High | Out of scope. §8 changes are additive only. Surface as a separate manual task. |
