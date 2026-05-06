@@ -14,7 +14,8 @@ When tagging a release, always create a dedicated release commit first, then tag
 ```
 git commit --allow-empty -m "Release v0.x.x"
 git tag v0.x.x
-git push origin main --follow-tags
+git push origin main
+git push origin v0.x.x
 ```
 
 Do NOT tag an existing commit directly — prior releases (v0.1.0, v0.1.1) all have a dedicated "Release v0.x.x" commit that the tag points to.
