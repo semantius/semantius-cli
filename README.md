@@ -22,6 +22,8 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
 ```
 
+The Linux/macOS installer places `semantius` in `/usr/local/bin` (if writable), otherwise `~/.local/bin`, and adds it to your PATH automatically.
+
 **Windows (PowerShell):**
 
 ```powershell

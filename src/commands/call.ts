@@ -29,12 +29,13 @@ import {
   toolExecutionError,
   toolNotFoundError,
 } from '../errors.js';
-import { formatJson, formatToolResult } from '../output.js';
+import { McpToolError, formatJson, formatToolResult } from '../output.js';
 
 export interface CallOptions {
   target: string; // "server/tool"
   args?: string; // JSON arguments
   configPath?: string;
+  diag?: boolean; // When true, output full JSON instead of just response.data
 }
 
 /**
@@ -160,14 +161,10 @@ export async function callCommand(options: CallOptions): Promise<void> {
     process.exit(ErrorCode.NETWORK_ERROR);
   }
 
+  let result: unknown;
   try {
-    const result = await connection.callTool(toolName, args);
-
-    // Extract text content from MCP response for CLI-friendly output
-    // Uses formatToolResult which extracts text from MCP content array
-    console.log(formatToolResult(result));
+    result = await connection.callTool(toolName, args);
   } catch (error) {
-    // Try to get available tools for better error message
     let availableTools: string[] | undefined;
     try {
       const tools = await connection.listTools();
@@ -177,7 +174,6 @@ export async function callCommand(options: CallOptions): Promise<void> {
     }
 
     const errMsg = (error as Error).message;
-    // Check if it's a "tool not found" type error
     if (errMsg.includes('not found') || errMsg.includes('unknown tool')) {
       console.error(
         formatCliError(toolNotFoundError(toolName, serverName, availableTools)),
@@ -187,8 +183,20 @@ export async function callCommand(options: CallOptions): Promise<void> {
         formatCliError(toolExecutionError(toolName, serverName, errMsg)),
       );
     }
-    process.exit(ErrorCode.SERVER_ERROR);
-  } finally {
     await safeClose(connection.close);
+    process.exit(ErrorCode.SERVER_ERROR);
   }
+
+  try {
+    console.log(formatToolResult(result, options.diag));
+  } catch (error) {
+    if (options.diag && error instanceof McpToolError) {
+      console.log(JSON.stringify(error.rawResult, null, 2));
+    }
+    console.error((error as Error).message);
+    await safeClose(connection.close);
+    process.exit(ErrorCode.SERVER_ERROR);
+  }
+
+  await safeClose(connection.close);
 }

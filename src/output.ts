@@ -193,20 +193,78 @@ export function formatToolSchema(serverName: string, tool: ToolInfo): string {
 }
 
 /**
- * Format tool call result
+ * Thrown when the tool call returns an MCP-level error (isError: true).
+ * Carries the raw result so callers can print it in --diag mode.
  */
-export function formatToolResult(result: unknown): string {
+export class McpToolError extends Error {
+  constructor(
+    message: string,
+    public readonly rawResult: unknown,
+  ) {
+    super(message);
+    this.name = 'McpToolError';
+  }
+}
+
+/**
+ * Format tool call result
+ *
+ * @param result - Raw MCP tool result
+ * @param diag - When true, return the full JSON; when false (default), return only the `data` field
+ */
+export function formatToolResult(result: unknown, diag = false): string {
   if (typeof result === 'object' && result !== null) {
-    const r = result as { content?: Array<{ type: string; text?: string }> };
+    const r = result as {
+      content?: Array<{ type: string; text?: string }>;
+      isError?: boolean;
+    };
 
     // Handle MCP tool result format
     if (r.content && Array.isArray(r.content)) {
       const textParts = r.content
         .filter((c) => c.type === 'text' && c.text)
-        .map((c) => c.text);
+        .map((c) => c.text as string);
 
       if (textParts.length > 0) {
-        return textParts.join('\n');
+        const text = textParts.join('\n');
+
+        // Surface MCP-level errors (tool not found, execution errors, etc.)
+        // Carry the raw result so --diag can print it before exiting.
+        if (r.isError) {
+          throw new McpToolError(text, result);
+        }
+
+        if (diag) {
+          return text;
+        }
+
+        // Try to extract response.data from the response JSON
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new Error(
+            `Unexpected tool response: not valid JSON. Use --diag to see the raw output.\n${text}`,
+          );
+        }
+
+        if (
+          parsed !== null &&
+          typeof parsed === 'object' &&
+          (parsed as Record<string, unknown>).response !== null &&
+          typeof (parsed as Record<string, unknown>).response === 'object' &&
+          'data' in ((parsed as Record<string, unknown>).response as Record<string, unknown>)
+        ) {
+          return JSON.stringify(
+            ((parsed as Record<string, unknown>).response as Record<string, unknown>).data,
+            null,
+            2,
+          );
+        }
+
+        throw new Error(
+          `Unexpected tool response: missing response.data. Use --diag to see the raw output.\n${text}`,
+        );
       }
     }
   }

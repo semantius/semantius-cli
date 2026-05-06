@@ -45,6 +45,7 @@ interface ParsedArgs {
   withDescriptions: boolean;
   withMarkdown: boolean;
   configPath?: string;
+  diag: boolean;
 }
 
 /**
@@ -115,6 +116,7 @@ function parseArgs(args: string[]): ParsedArgs {
     command: 'info',
     withDescriptions: false,
     withMarkdown: false,
+    diag: false,
   };
 
   const positional: string[] = [];
@@ -141,6 +143,10 @@ function parseArgs(args: string[]): ParsedArgs {
       case '-md':
       case '--markdown':
         result.withMarkdown = true;
+        break;
+
+      case '--diag':
+        result.diag = true;
         break;
 
       case '-c':
@@ -345,10 +351,11 @@ Options:
   -v, --version            Show version number
   -d, --with-descriptions  Include tool descriptions
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
+  --diag                   (call only) Output full JSON response instead of just response.data
 
 Output:
   semantius/info/grep      Human-readable text to stdout
-  call                     Raw JSON to stdout (for piping)
+  call                     response.data JSON to stdout (use --diag for full response)
   Errors                   Always to stderr
 
 Examples:
@@ -473,6 +480,7 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
         target: buildTarget(args.server, args.tool),
         args: args.args,
         configPath: args.configPath,
+        diag: args.diag,
       });
       break;
   }
