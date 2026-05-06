@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { version as VERSION } from '../package.json' with { type: 'json' };
 import {
   type HttpServerConfig,
   type ServerConfig,
@@ -25,7 +26,6 @@ import {
   cleanupOrphanedDaemons,
   getDaemonConnection,
 } from './daemon-client.js';
-import { VERSION } from './version.js';
 
 // Re-export config utilities for convenience
 export { debug, getTimeoutMs, getConcurrencyLimit };

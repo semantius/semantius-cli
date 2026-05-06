@@ -11,6 +11,7 @@
  *   semantius call <server> <tool> {}  Call tool with JSON args
  */
 
+import { version as VERSION } from '../package.json' with { type: 'json' };
 import { callCommand } from './commands/call.js';
 import { grepCommand } from './commands/grep.js';
 import { infoCommand } from './commands/info.js';
@@ -34,7 +35,6 @@ import {
   unknownOptionError,
   unknownSubcommandError,
 } from './errors.js';
-import { VERSION } from './version.js';
 
 interface ParsedArgs {
   command: 'list' | 'info' | 'grep' | 'call' | 'help' | 'version' | 'markdown';

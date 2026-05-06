@@ -63,16 +63,6 @@ else
     rm -f package.json.bak
 fi
 
-# Update version in src/version.ts (used by compiled binary)
-echo "Updating src/version.ts..."
-cat > src/version.ts << EOF
-/**
- * Version constant - single source of truth
- * This file is auto-updated by scripts/release.sh
- */
-export const VERSION = '$VERSION';
-EOF
-
 # Run tests before releasing
 echo "Running tests..."
 bun run typecheck
@@ -83,7 +73,7 @@ echo -e "${GREEN}Tests passed!${NC}"
 
 # Commit version bump
 echo "Committing version bump..."
-git add package.json src/version.ts
+git add package.json
 git commit -m "Release v$VERSION"
 
 # Create tag
