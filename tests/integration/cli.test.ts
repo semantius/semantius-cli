@@ -207,6 +207,7 @@ describe('CLI Integration Tests', () => {
   describe('call command', () => {
     test('calls read_file tool', async () => {
       const result = await runCli([
+        '--diag',
         'call',
         'filesystem',
         'read_file',
@@ -219,6 +220,7 @@ describe('CLI Integration Tests', () => {
 
     test('calls list_directory tool', async () => {
       const result = await runCli([
+        '--diag',
         'call',
         'filesystem',
         'list_directory',
@@ -264,10 +266,10 @@ describe('CLI Integration Tests', () => {
     });
 
     test('outputs raw text content, not MCP envelope (issue #25)', async () => {
-      // This test ensures the call command outputs raw text content
-      // instead of the full MCP protocol envelope like:
-      // { "content": [{ "type": "text", "text": "..." }] }
+      // --diag bypasses JSON extraction for servers that return plain text.
+      // Verifies the MCP protocol envelope is never surfaced in output.
       const result = await runCli([
+        '--diag',
         'call',
         'filesystem',
         'read_file',

@@ -124,16 +124,17 @@ describe('output', () => {
   });
 
   describe('formatToolResult', () => {
-    test('extracts text content from MCP result', () => {
+    test('extracts response.data from JSON text content', () => {
+      const data = { message: 'Hello, world!' };
       const result = {
-        content: [{ type: 'text', text: 'Hello, world!' }],
+        content: [{ type: 'text', text: JSON.stringify({ response: { data } }) }],
       };
 
       const output = formatToolResult(result);
-      expect(output).toBe('Hello, world!');
+      expect(output).toBe(JSON.stringify(data, null, 2));
     });
 
-    test('handles multiple text parts', () => {
+    test('returns raw joined text in diag mode', () => {
       const result = {
         content: [
           { type: 'text', text: 'Part 1' },
@@ -141,9 +142,25 @@ describe('output', () => {
         ],
       };
 
-      const output = formatToolResult(result);
+      const output = formatToolResult(result, true);
       expect(output).toContain('Part 1');
       expect(output).toContain('Part 2');
+    });
+
+    test('throws when text content is not valid JSON', () => {
+      const result = {
+        content: [{ type: 'text', text: 'Hello, world!' }],
+      };
+
+      expect(() => formatToolResult(result)).toThrow('not valid JSON');
+    });
+
+    test('throws when JSON response has no response.data', () => {
+      const result = {
+        content: [{ type: 'text', text: JSON.stringify({ something: 'else' }) }],
+      };
+
+      expect(() => formatToolResult(result)).toThrow('missing response.data');
     });
 
     test('falls back to JSON for non-text content', () => {
