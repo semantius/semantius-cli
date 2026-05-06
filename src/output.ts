@@ -253,10 +253,19 @@ export function formatToolResult(result: unknown, diag = false): string {
           typeof parsed === 'object' &&
           (parsed as Record<string, unknown>).response !== null &&
           typeof (parsed as Record<string, unknown>).response === 'object' &&
-          'data' in ((parsed as Record<string, unknown>).response as Record<string, unknown>)
+          'data' in
+            ((parsed as Record<string, unknown>).response as Record<
+              string,
+              unknown
+            >)
         ) {
           return JSON.stringify(
-            ((parsed as Record<string, unknown>).response as Record<string, unknown>).data,
+            (
+              (parsed as Record<string, unknown>).response as Record<
+                string,
+                unknown
+              >
+            ).data,
             null,
             2,
           );
