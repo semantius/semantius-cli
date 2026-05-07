@@ -249,10 +249,10 @@ interpretation depends on emptiness:
 rows=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<filter>&select=id\"}") \
   || { echo "step N (<what>) failed" >&2; exit 2; }
 if ! printf '%s' "$rows" | grep -q '"id"'; then
-  # zero rows - the recipe's "go ahead and create / no duplicate" branch
+  # zero rows, the recipe's "go ahead and create / no duplicate" branch
   ...
 else
-  # one or more rows - the recipe's "already exists / use existing" branch
+  # one or more rows, the recipe's "already exists / use existing" branch
   ...
 fi
 ```

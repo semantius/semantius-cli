@@ -57,7 +57,7 @@ semantius call crud create_entity '{"data": {...}}'
 ## High-Level Workflow
 
 ```
-1. Parse PRD  →  2. Inspect Semantius  →  3. Plan & Present  →  4. Execute  →  5. Verify  →  6. Hand-off  →  7. Seed (if accepted)
+1. Parse PRD  →  2. Inspect Semantius  →  3. Plan & Present  →  4. Execute  →  5. Verify  →  6. Sample Data?
 ```
 
 Work through each stage in order. Narrate what you're doing at each step.
@@ -79,7 +79,7 @@ Locate the `*-semantic-model.md` file. Extract:
 - **§2 Mermaid diagram** — sanity-check it agrees with §3/§4 (the model's own audit should have caught mismatches; if it disagrees here, flag for the user before proceeding rather than silently picking one side)
 - **§6 Open questions** — scan both sub-sections. **§6.1 🔴 Decisions needed is a gate**: if any entry is present and unresolved, stop before Stage 4 and list the blockers to the user; ask them to either (a) answer each question so the model can be updated first via the semantic-model-analyst skill, or (b) explicitly waive and proceed at their own risk. Do not make up answers, and do not silently proceed. **§6.2 🟡 Future considerations is informational only** — note them for the user but do not block. Models that predate the two-bucket format (flat §6 list) should be treated conservatively: surface every flat entry as a potential blocker and ask the user to classify each before proceeding.
 - **Implementation notes** (§7) — always follow these
-- **`related_models` front-matter and §8 Related domains** — extract the array of sibling slugs from front-matter, then parse §8 sub-sections into a per-sibling structure carrying `{relationship, exposes: [tables], expects_on_sibling: [{sibling_table, fk_field, target_table, cardinality, delete_mode, rationale}], defers_to_sibling: [{local_table, sibling_table, additive_fields}]}`. If `related_models` is absent and §8 is empty (or reads "No related domains identified."), the model has no federation surface and Stages 2g and 4f are no-ops. **Mismatch between front-matter and §8** (slug in front-matter with no §8 entry, or §8 entry with no front-matter slug) is a 🔴 — stop before Stage 2g and ask the user to fix the model via the analyst skill, since the deployer cannot guess which is authoritative. Files that predate §8 (only seven sections) skip Stages 2g/4f silently.
+- **`related_models` front-matter and §8 Related domains** — extract the array of sibling slugs from front-matter, then parse §8 sub-sections into a per-sibling structure carrying `{relationship, exposes: [tables], expects_on_sibling: [{source_module, source_table, fk_field, target_module, target_table, cardinality, delete_mode, rationale}], defers_to_sibling: [{local_table, sibling_table, additive_fields}]}`. The Expects-on-sibling spec must be **fully qualified on both ends**: the source side (where the FK column will live) carries an explicit module prefix, as does the target. The source module may be the sibling (the common case — the sibling adds an FK back into this module's exposed tables) or this module's own slug (the opt-in cross-link case from analyst pattern (d) — this module adds an FK pointing at the sibling). The deployer determines which table to add the column to from `source_module.source_table`. If the source prefix is missing in the parsed §8 prose, surface as a 🟡 and ask the user to update via the analyst skill before proceeding. If `related_models` is absent and §8 is empty (or reads "No related domains identified."), the model has no federation surface and Stages 2g and 4f are no-ops. **Mismatch between front-matter and §8** (slug in front-matter with no §8 entry, or §8 entry with no front-matter slug) is a 🔴 — stop before Stage 2g and ask the user to fix the model via the analyst skill, since the deployer cannot guess which is authoritative. Files that predate §8 (only seven sections) skip Stages 2g/4f silently.
 
 ### Model-to-Entity Mapping
 
@@ -234,23 +234,104 @@ This comparison goes into the Stage 3 plan so the user can decide on informed gr
 
 ### 2g. Inspect related modules (federation surface)
 
-Read every slug in the model's `related_models` front-matter array. For each one, check whether the sibling module is deployed:
+Read every slug in the model's `related_models` front-matter array. For each one, resolve the sibling module via the **three-layer resolver** below. Exact-slug match is brittle in real catalogs — `ats` vs `applicant_tracking`, `cdp` vs `customer_data_platform`, `helpdesk` vs `support`, `acme_crm` vs `crm` are all the same domain semantically but the slugs differ. Without fuzzy fallback, federation contracts silently drop to the floor and recreate the silos §8 is meant to prevent.
+
+#### Resolver
+
+**Layer 1 — exact slug match** (fastest path, no ambiguity):
 
 ```bash
 semantius call crud read_module '{"filters": "module_name=eq.<sibling_slug>"}'
 ```
 
-Build a `siblings_live` map keyed by slug: `{module_id, module_name, decline_metadata}`. The decline metadata captures previous user-confirmed declines so Stage 4f does not nag — read it from the sibling module's `description` field or a dedicated metadata field if the platform exposes one. Format convention: `cross_module_declines: [<sibling_slug>:<sibling_table>.<fk_field>, ...]` appended to the sibling module's metadata so the deployer can recognize which extension proposals the user already turned down.
+If a hit, record the resolution and proceed.
+
+**Layer 2 — known acronym/verbose alias pairs** (deterministic, zero false positives within the well-known list). When Layer 1 misses, expand the slug through this alias table and retry exact match for each expansion:
+
+| Canonical pair |
+|---|
+| `ats` ↔ `applicant_tracking` ↔ `talent_acquisition` |
+| `cdp` ↔ `customer_data_platform` |
+| `crm` (often prefixed: `acme_crm`, `salesforce_clone`) |
+| `itsm` ↔ `it_service_management` |
+| `itam` ↔ `it_asset_management` |
+| `cmdb` ↔ `configuration_management_database` |
+| `sam` ↔ `software_asset_management` |
+| `lms` ↔ `learning_management` ↔ `learning_management_system` |
+| `clm` ↔ `contract_lifecycle_management` ↔ `contract_management` |
+| `hris` ↔ `human_resources_information_system` |
+| `wfp` ↔ `workforce_planning` |
+| `gl` ↔ `general_ledger` |
+| `ap` ↔ `accounts_payable` |
+| `ar` ↔ `accounts_receivable` |
+| `mes` ↔ `manufacturing_execution_system` |
+| `ehr` ↔ `electronic_health_record` |
+| `pim` ↔ `product_information_management` |
+
+Also check the deployed module's own `slug_aliases` metadata (written on prior fuzzy-match resolutions, see persistence below) — a module previously confirmed as the sibling for `ats` carries `slug_aliases: ["ats"]` so future deploys hit Layer 2 deterministically.
+
+**Layer 3 — fuzzy candidate match** (surfaces for confirmation, never auto-applied). When Layers 1 and 2 both miss, query the catalog for plausible candidates using two heuristics in parallel:
+
+```bash
+# Description text heuristic — module description mentions the slug or its expansion
+semantius call crud read_module '{"filters": "description=ilike.*<sibling_slug>*"}'
+
+# Domain-tag heuristic — if the model's `domain` front-matter is set, find modules
+# whose stored `domain` metadata matches (deployed modules carry the analyst's
+# `domain` value as part of their description or a dedicated tag field)
+semantius call crud read_module '{"filters": "description=ilike.*domain: <model_domain>*"}'
+```
+
+Each Layer 3 hit becomes a 🟡 **candidate sibling** plan item carried into Stage 3, *not* an automatic resolution. Stage 3 surfaces them via `AskUserQuestion`:
+
+> *"Slug `ats` declared in §8 not found in the catalog. Module `applicant_tracking` looks like the same domain (description: 'Applicant Tracking System for in-house recruiting…', `domain: ATS`). Treat as the declared sibling?"*
+>
+> Options: ✅ *Yes, apply for this deploy and remember* / 🔇 *No, skip this time* / 🚫 *No, and remember as not-a-sibling*.
+
+Skip a Layer 3 candidate silently if the deployed module's `slug_not_aliases` metadata already lists the deploying slug.
+
+#### Persistence — both directions
+
+When the user confirms a Layer 3 match, write the alias on **both sides** so the next deploy resolves via Layer 2:
+
+- On the deployed module's metadata: append the analyst-declared slug to `slug_aliases`. So if `applicant_tracking` is confirmed as the sibling for the analyst's `ats`, write `slug_aliases: ["ats", ...]` on `applicant_tracking`.
+- On the deploying module's metadata (same run, after creation): append the resolved canonical slug to `slug_aliases` symmetrically. So the deploying model also carries an alias pointer back to its peer's chosen name.
+
+When the user picks "No, and remember as not-a-sibling", append the deploying slug to the deployed module's `slug_not_aliases` so future deploys silently skip the candidacy.
+
+#### Build the siblings map
+
+Build a `siblings_live` map keyed by the **analyst-declared slug** (not the resolved name) so the rest of Stage 2g can address sibling sub-sections in §8 by their declared name: `{declared_slug: <analyst_slug>, resolved_slug, module_id, module_name, resolution_layer: 1|2|3, decline_metadata}`. The decline metadata captures previous user-confirmed declines so Stage 4f does not nag — read it from the resolved module's `cross_module_declines` field. Format convention: `cross_module_declines: [<sibling_slug>:<sibling_table>.<fk_field>, ...]` appended to the resolved module's metadata so the deployer can recognize which extension proposals the user already turned down.
 
 For each live sibling, walk its §8 sub-section and pre-compute:
 
 - **Defers-to dedup actions.** For each `Defers to sibling` entry whose local table is in this model's §3, mark the local entity as 🔒 **Deferred to sibling** and record the rewire mapping `{local_table → sibling_table}`. From here on, treat the local table the same way Stage 2b treats Semantius built-ins: skip `create_entity`, reuse the sibling's table as `reference_table` for all FK targets, and propose any non-overlapping fields the sibling lacks as additive extensions on the sibling's table.
-- **Expects-on-sibling extension proposals.** For each `Expects on sibling` FK, look up the sibling table in the live catalog (loaded in 2c). If the FK already exists, mark it ✅ Already in place. If the FK is missing, mark it ✨ Proposed and stash the spec for Stage 3 to present and Stage 4f to execute. If the user previously declined this exact FK (per `cross_module_declines`), mark it 🔇 Suppressed and skip silently.
+- **Expects-on-sibling extension proposals.** For each `Expects on sibling` FK, look up the **source table** (from `source_module.source_table` in the parsed spec — this is the side that will host the FK column, which may be on the sibling's tables or on this module's own tables) in the live catalog (loaded in 2c). If the FK column already exists on the source table, mark it ✅ Already in place. If the FK is missing, mark it ✨ Proposed and stash the spec for Stage 3 to present and Stage 4f to execute. If the user previously declined this exact FK (per `cross_module_declines`), mark it 🔇 Suppressed and skip silently. Most Expects-on-sibling entries put the FK on the sibling's table (the sibling consumes from this module's exposed tables), but pattern (d) opt-in cross-links sometimes have the FK on this module's own side — the parser does not assume one or the other.
 - **Ownership conflicts.** If two siblings both claim canonical ownership of the same local entity via competing `Defers to` entries (e.g. both `identity_and_access` and `org_management` declare ownership of `teams`), mark a 🛑 federation gate. Stage 3 must surface this for explicit user resolution before any rewires happen.
 
 Dormant siblings (slug listed in `related_models` but module not deployed) require no action this run — their `Exposes` entries get indexed for future reciprocity but produce no plan items now.
 
-Carry the federation summary into Stage 3 so the user sees the cross-module impact alongside the in-module plan.
+**Reverse-scan: catch §8 entries that reference *this* model from already-deployed neighbors.** The forward walk above only covers what the deploying model declared. With the analyst skill's wider radius and bidirectional-reasoning rules, asymmetric declarations are common: an already-deployed module M1 may have declared the model now deploying as a sibling, while the new model's §8 may have missed declaring M1 (the analyst caught the outbound direction but missed the inbound one). Without a reverse-scan, M1's Expects-on-sibling FK proposals would be silently dropped, recreating the silo the federation contract is meant to prevent.
+
+After the forward walk, query every deployed module that is **not** already in `siblings_live`, looking for `related_models` references to the deploying model's `system_slug` **or any of its known aliases**. The reverse-scan must honour the same three-layer resolver as the forward walk — otherwise a deployed module that declared the deploying slug under an alias (`itsm` when this model is `it_service_management`) is missed and the silo is recreated in mirror.
+
+Compute the reverse-lookup key set as: `{<deploying_slug>} ∪ Layer 2 aliases(deploying_slug) ∪ <deploying_slug>'s own slug_aliases metadata if present`. Then query for each:
+
+```bash
+# Run for every key in the reverse-lookup set
+semantius call crud read_module '{"filters": "related_models=cs.{<key>}"}'
+```
+
+For deployed modules whose `related_models` does not contain any exact key but whose **description or `domain` matches** the deploying model's `system_name` / `domain`, surface as 🟡 reverse-fuzzy candidates the same way Layer 3 forward-fuzzy did — Stage 3 confirms, persistence writes the alias for next time.
+
+For each hit, parse the deployed module's §8 sub-section addressed at the deploying slug and process it as **inbound federation surface**:
+
+- **Inbound Defers-to** (the deployed module declared "I defer X to <deploying_slug>"): if the deploying model's §3 includes that table, the deployed module's local copy was created as a placeholder before the deploying model was authored. Surface as a 🟡 **Inbound dedup** plan item — the deployed module's local table can now be retired in favor of the deploying model's, but only with explicit user confirmation since data may already exist there.
+- **Inbound Expects-on-sibling** FKs: if `source_module` resolves to the already-deployed module, the FK column lives on the deployed module's table and points at the deploying model. Add to the federation plan with `source_module` set to the deployed module — Stage 4f's `create_field` will land on the right table. Honour the deployed module's own `cross_module_declines` metadata so prior user choices on that module survive the reverse-scan.
+
+Persist a deploying-model-side decline marker too: format `cross_module_declines: [<deployed_module_slug>:<sibling_table>.<fk_field>, ...]` on the deploying module's metadata so a later redeploy of the deployed module re-suppresses the same proposal.
+
+Carry the federation summary (forward + reverse) into Stage 3 so the user sees the cross-module impact alongside the in-module plan.
 
 ---
 
@@ -286,6 +367,39 @@ Plus: 3 additive fields on built-in `users` (pending confirmation)
 ```
 
 If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12) — will update module metadata from the new model; will diff entities and apply only changes`.
+
+### Federation decisions (fast lane — anti-silo default)
+
+**Phase 1 — resolve Layer 3 candidate siblings first.** Any 🟡 candidate-sibling hits from Stage 2g's three-layer resolver (forward or reverse) gate which federation proposals exist downstream. Send all candidate questions in **one** `AskUserQuestion` call, batched, before computing the federation fast-lane proposal count. Each candidate is a separate question with three options: ✅ *Yes, apply for this deploy and remember*, 🔇 *No, skip this time*, 🚫 *No, and remember as not-a-sibling*. Persist `slug_aliases` / `slug_not_aliases` per Stage 2g rules based on the answers, then recompute the federation plan with confirmed candidates promoted into `siblings_live` and rejected candidates dropped.
+
+**Phase 2 — federation cross-link approvals.** Federation proposals (Defers-to dedup, Expects-on-sibling FKs from forward and reverse scans) are **additive and reversible** — adding an optional cross-module FK never breaks the local module, never deletes data, and can be removed later. Because of that, the deployer's posture is *err toward implementing* — failing to wire up a cross-link recreates the silo that §8 was designed to prevent. Don't drag the user through individual confirmation when the analyst already declared the contract.
+
+**Branch on proposal count.**
+
+- **0 federation proposals** — skip this section entirely; nothing to ask.
+- **1–3 proposals** — present each inline in the plan with a single combined confirmation: *"Apply these N cross-module changes? [yes / review each / skip all]"*. Default branch on `yes` is "apply all".
+- **4 or more proposals** — call `AskUserQuestion` with this exact shape:
+
+  - **question**: `"Found N federation enhancements that would link this model into the catalog. How should I handle them?"`
+  - **header**: `"Federation"`
+  - **multiSelect**: `false`
+  - **options** (in this order — recommended first):
+    1. label `"Apply all (recommended)"`, description `"Implement every Defers-to dedup and every Expects-on-sibling FK in one pass. Each is additive — optional FK columns and reused tables. Reversible later by dropping the FK or recreating the local table. Best default for a connected catalog; declining everything by default is what creates silos."`
+    2. label `"Review each one"`, description `"Walk through each proposal individually with full context. Use when the catalog is unfamiliar, when several proposals are unexpected, or when one of them touches a sensitive shared table."`
+    3. label `"Defer all to a separate run"`, description `"Land the in-module changes now and skip every cross-module proposal. The proposals re-surface on the next deploy of either side; no decline is persisted. Use when you want to land the model first and revisit federation as a focused task."`
+    4. label `"Decline all and remember"`, description `"Skip every proposal AND persist the decline on each affected module so future deploys do not re-prompt. Rarely the right answer — only pick this if you've consciously decided this model should stay isolated from the catalog."`
+
+**Print the federation summary as prose first** (the same `🔗 Federation` block from the normal plan), so the user has the list of proposals in front of them before the widget appears.
+
+**On `Apply all`** — Stage 4f executes every proposal without further prompts. Persist no declines.
+
+**On `Review each one`** — fall back to the per-proposal confirmation flow: one Stage-4f execution per accepted proposal, persist a decline on each rejected one. Use a single `AskUserQuestion` call with one question per proposal (batched, not turn-by-turn) so the review still feels like one decision pass rather than a drip.
+
+**On `Defer all to a separate run`** — write a session-scoped marker (do not persist on module metadata, since that would re-suppress on the next run too). Print a one-line reminder in the verification summary: *"N federation proposals deferred — re-deploy this model or any sibling to revisit."*
+
+**On `Decline all and remember`** — append every proposal to the appropriate module's `cross_module_declines` metadata. Confirm in the verification summary which modules were touched.
+
+This federation flow is **distinct from the 🛑 ambiguity protocol below**. Ambiguity gates are blockers — a name collision must be resolved before any writes. Federation proposals are not blockers — declining them lets the deploy proceed unchanged. Keep the two flows separate; never bundle a federation proposal into an ambiguity widget.
 
 ### Ambiguity decisions (required when any 🛑 was raised)
 
@@ -417,7 +531,7 @@ After each entity's fields are done, share the UI link:
 **4f. Cross-module extensions (federation)** — After all in-module creates and built-in extensions are done, walk the federation plan from Stage 2g and apply confirmed cross-module changes. Two flavors:
 
 - **Defers-to rewires** are already applied implicitly: the local entity was skipped in 4c, and FKs were pointed at the sibling's table in 4d. Nothing more to do here other than logging which locals were deferred to which siblings (for the verification summary). If the local table was created in a previous run before §8 was added, do not delete it — surface it to the user as a manual cleanup decision.
-- **Expects-on-sibling proposals confirmed in Stage 3** are executed now as additive `create_field` calls against the sibling's table. Always include `width: "default"` and `input_type: "default"`. The new FK's `format` is `reference` (not `parent` — cross-module ownership is not allowed; an `Expects on sibling` entry must never be cascade-delete because the sibling does not own the local table). Use `reference_delete_mode: "clear"` unless the §8 entry explicitly specifies `restrict`. Set `relationship_label` from the §8 rationale when present, or leave it for the sibling's analyst to fill in later.
+- **Expects-on-sibling proposals confirmed in Stage 3** are executed now as additive `create_field` calls. **The target of the `create_field` call is the source table — `source_module.source_table` from the parsed spec — which is whichever side hosts the FK column**, not always the sibling. The common case is that the sibling hosts the FK (e.g. `itsm.incidents.affected_asset_id → itam.hardware_assets` adds `affected_asset_id` on `itsm.incidents`); but pattern (d) opt-in cross-links sometimes put the FK on this module's own table (e.g. `applicant_tracking.job_openings.position_id → workforce_planning.positions` adds `position_id` on `applicant_tracking.job_openings`). Always include `width: "default"` and `input_type: "default"`. The new FK's `format` is `reference` (not `parent` — cross-module ownership is not allowed; an `Expects on sibling` entry must never be cascade-delete because neither side owns the other). Use `reference_delete_mode: "clear"` unless the §8 entry explicitly specifies `restrict`. Set `relationship_label` from the §8 rationale when present, or leave it for the analyst to fill in later.
 
 ```bash
 # Example: this model is `cmdb`; sibling `change_management` is live and the user confirmed
@@ -446,7 +560,7 @@ For each confirmed extension, also share the UI link to the sibling table so the
 
 ---
 
-## Stage 5: Verify (catalog only — not the finish line)
+## Stage 5: Verify
 
 After all creates are done:
 
@@ -454,31 +568,17 @@ After all creates are done:
 2. `read_field` per entity — confirm field count matches the model (minus auto-generated)
 3. Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`)
 
-Print a verification summary: "✅ Catalog verified. Created 1 module, 2 permissions, 5 entities, 47 fields. Reused built-ins: users. Additive fields on built-ins: 2."
-
-**Do not say "done" here.** This stage proves the writes landed; it is *not* the closing message. The deploy is not finished until Stage 6 hand-off has been delivered and the Stage 7 sample-data question has been answered (or explicitly waived). If your draft of this stage's reply contains the word "done", rewrite it before sending.
+Print a final summary: "✅ Done. Created 1 module, 2 permissions, 5 entities, 47 fields. Reused built-ins: users. Additive fields on built-ins: 2."
 
 ---
 
-## Stage 6: Hand-off (clean and sticky closing)
+## Closing Contract — clean and sticky
 
-Stage 5 verified the catalog. This stage is the actual closing of the deploy — without it, the user is left looking at "✅ Catalog verified" with no UI link and no offer of demo data, and the session feels half-finished. **You do not get to call the deploy done until you have delivered this hand-off message.**
-
-The hand-off message is a **call-to-action**, not a recap. It must contain exactly three things, in this order, and nothing else:
+The final assistant message of a deployment session is a **call-to-action**, not a recap. It must contain exactly three things, in this order, and nothing else:
 
 1. One status line: `The <System Name> model is live in Semantius ✅`
 2. **Open in UI:** `https://tests.semantius.app/<module_name>` — module landing page, on its own line, prominent (use a markdown link so it's clickable, e.g. `[Open <System Name> in Semantius →](https://tests.semantius.app/<module_name>)`).
-3. The sample-data offer — verbatim: `Would you like me to generate 10 realistic sample records for each newly-created entity?`
-
-Full template:
-
-> The `<System Name>` model is live in Semantius ✅
->
-> [Open `<System Name>` in Semantius →](https://tests.semantius.app/<module_name>)
->
-> Would you like me to generate 10 realistic sample records for each newly-created entity?
-
-If the user accepts, proceed to Stage 7. If they decline, stop cleanly. If they don't answer (e.g. they ask a follow-up question instead), the sticky rule below applies.
+3. The Stage 6 sample-data offer.
 
 Everything else — what was created, what was skipped, why built-ins were reused, counts, per-entity links, caveats, justifications — belongs in the Stage 5 verification summary **before** this closing block, separated by a horizontal rule (`---`). Do not mix the two. The closing must not contain reasoning, parentheticals, or "by the way" notes; those dilute the call to action.
 
@@ -486,9 +586,15 @@ This block is **sticky**: if a follow-up turn (audit, "did I miss anything?", fi
 
 ---
 
-## Stage 7: Seed sample data (only if accepted)
+## Stage 6: Sample Data
 
-Reached only when the user accepts the offer made in Stage 6. If they decline, skip this stage entirely.
+After verification, the closing message asks:
+
+> The `<System Name>` model is live in Semantius ✅
+>
+> [Open `<System Name>` in Semantius →](https://tests.semantius.app/<module_name>)
+>
+> Would you like me to generate 10 realistic sample records for each newly-created entity?
 
 ### Scope — whose tables get sample data
 

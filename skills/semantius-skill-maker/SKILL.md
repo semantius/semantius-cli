@@ -43,7 +43,7 @@ any agent harness that loads Agent Skills, including Claude Code.
 
 A single folder under the user's Claude skills root. Two top-level
 files are always written; `references/` and `scripts/` subfolders are
-written only when the JTBD classifier in Step 2 (Pass 3) puts work
+written only when the JTBD classifier in Step 3 (Pass 3) puts work
 there.
 
 ```
@@ -69,7 +69,7 @@ a reference file is loaded only when the agent enters that specific
 JTBD; a script is never loaded, the agent invokes it. A 400-line
 SKILL.md plus a handful of focused 80-line reference files costs less
 per trigger than a 900-line monolith, because the agent typically
-engages one JTBD at a time. The classifier in Step 2 (Pass 3) decides
+engages one JTBD at a time. The classifier in Step 3 (Pass 3) decides
 which JTBD belongs in which file.
 
 `<modelslug>` is the model's `system_slug` converted to kebab-case ,
@@ -121,7 +121,7 @@ directory, so the slug is sufficient.
 
 ## Workflow
 
-### Step 0, Load the Semantius reference
+### Step 1, Load the Semantius reference
 
 Before writing recipes, read the `use-semantius` skill so the JTBD recipes
 use the right CLI patterns:
@@ -137,7 +137,7 @@ You will not run `semantius` yourself in this skill, but the recipes you
 bake in must be valid CLI invocations. If `use-semantius` cannot be located,
 stop and ask the user.
 
-### Step 1, Parse the model
+### Step 2, Parse the model
 
 Read `MODEL_PATH` and extract:
 
@@ -151,7 +151,7 @@ Compute `modelslug = system_slug.replace(/_/g, "-")`.
 Refuse if §6.1 lists open blockers, the model is not finished and the
 skill would bake in wrong recipes.
 
-### Step 2, Reason about jobs to be done
+### Step 3, Plan jobs to be done
 
 JTBD discovery is a two-pass process: **nominate** broadly with the
 pattern catalog below, then **filter** with the merit test. The merit
@@ -363,7 +363,7 @@ A JTBD's classification controls the SKILL.md template body for that
 section: inline carries the full recipe; reference and script carry
 only Triggers, Inputs, a one-line Recipe pointer, Validation, and a
 terse Failure-modes summary, with the long body living in the linked
-file. The classification belongs in the Step 4 summary so the user
+file. The classification belongs in the Step 10 summary so the user
 can sanity-check it.
 
 **Pass 3 is mandatory. "Inline" is a rare exception, not a default.**
@@ -436,10 +436,116 @@ Present three lists to the user:
 Wait for confirmation before writing files. This is the only human
 checkpoint.
 
-### Step 3, Write the consolidated SKILL.md
+### Step 4, Audit existing artifacts
+
+If `<skills-root>/<modelslug>/` already exists from a prior generation,
+read every file under it and check for **drift** against the current
+generation's plan and the current platform conventions. The audit is
+**read-only**; nothing is rewritten in this step. Findings go into the
+Step 10 summary, and the user decides whether to regenerate flagged
+files in Step 5–7.
+
+Skip this step entirely on a fresh generation (target folder does not
+exist or contains only a stale `SKILL.md` with no `references/` or
+`scripts/`). On a fresh run, there is nothing to audit; everything
+gets written in Steps 5–8.
+
+#### What to check
+
+Walk both `references/*.md` and `scripts/*.sh` and apply the same
+checks the self-review (Step 9, Principle 0) applies to freshly
+written files. The point is symmetry: if Principle 0 would reject a
+file the generator just wrote, it should also flag the same file
+sitting on disk from a prior run. Concretely:
+
+- **Read patterns.** Every `semantius call ... GET ...` is either
+  `--single` (one row required) or array-default (zero or many rows
+  acceptable). The flag must be present iff the lookup is by `id`,
+  unique column, or composite-unique key. A unique-key read missing
+  `--single` is non-canonical (still works, but uses the legacy
+  two-guard pattern).
+- **Guard patterns** (scripts only). `--single` reads need only the
+  exit-code guard; array reads need exit-code AND body inspection.
+  A `--single` read with a redundant `grep -q '"id"'` follow-up is
+  non-canonical. An array read with no body inspection is a defect.
+- **Response parsing** (scripts only). `--single` responses are bare
+  objects (`grep -oE '"id":"..."'`, no `head -n1`, no `[0]`); array
+  responses need `head -n1` or `[0]` indexing. A mismatch silently
+  produces empty strings; flag it.
+- **`# expect:` annotations** (references only). Every GET, POST,
+  PATCH, DELETE in the recipe carries an `# expect:` line naming
+  the pattern (`--single` or array) and the action on failure.
+  Missing annotations are defects.
+- **Cross-reference integrity.** Every
+  `references/<slug>.md` linked from SKILL.md must exist on disk;
+  every `scripts/<slug>.sh` mentioned in a SKILL.md `Recipe:` line
+  must exist. Files on disk that aren't linked from SKILL.md are
+  orphans (left over from a JTBD that no longer exists or was
+  reclassified).
+- **Pass 3 alignment.** For each JTBD in the current generation's
+  plan, the file on disk should match the new classification. A
+  JTBD now classified `script` whose existing artifact is
+  `references/<slug>.md` (or vice versa) needs migration; the audit
+  flags the pair, the user picks the direction.
+- **Hardcoded literals.** Search every file for ISO timestamps,
+  ISO dates, baked-in ids, and the generation year. These rot and
+  should be placeholders. Same scan the self-review's Principle 1
+  runs on a fresh write.
+
+#### What to report (handed to Step 10)
+
+For each file with findings, produce one bullet:
+
+- `cast-vote.sh: 4 reads use legacy two-guard pattern; --single would
+  collapse each to one guard. Working but non-canonical.`
+- `triage-feature.md: 2 GETs missing # expect: annotations.`
+- `score-rice.md: classified `script` in current plan but exists as
+  reference; needs migration.`
+- `tag-feature.md: orphan; no JTBD with this slug in current plan.`
+- `ship-release.sh: contains hardcoded date "2026-05-04"; should be a
+  placeholder.`
+
+Group findings by file and by severity ("defect" = the file is
+broken; "non-canonical" = works but uses an outdated pattern;
+"orphan" = no longer referenced). The Step 10 summary surfaces these
+and asks the user how to proceed; **do not auto-rewrite in Step 4**.
+
+#### What the user can choose in Step 10
+
+Three options the summary should offer:
+
+1. *Regenerate flagged files* (Steps 5–7 rewrite them). Default for
+   defects.
+2. *Leave as-is*. Default for non-canonical findings on a file the
+   user may have hand-edited.
+3. *Per-file decision*. The user accepts some, rejects others.
+
+If the user opts to regenerate, the affected files are rewritten in
+Steps 6 (references) and 7 (scripts). Files not flagged for
+regeneration stay untouched even if their JTBD is in the current
+plan; the audit is what gates the rewrite, not the plan alone.
+
+#### Hand-edits
+
+The audit is conservative about hand-edited prose. References in
+particular get hand-edited (failure-mode wording, user-prompt
+phrasing). The audit flags non-canonical patterns but does NOT mark
+the file for forced rewrite; the user keeps custody. The defect
+categories that DO warrant a forced rewrite recommendation
+(prefixed "defect" in the summary) are:
+
+- A reference linked from SKILL.md that doesn't exist on disk
+- A script file that fails the structural shape check (empty,
+  wrong shebang, missing `set -euo pipefail`)
+- Cross-FK invariants that contradict the current model (e.g. a
+  reference recipe writes a column that no longer exists)
+
+Everything else is "non-canonical" and the user decides.
+
+### Step 5, Write the consolidated SKILL.md
 
 The folder gets two files written in sequence: the agent-facing
-`SKILL.md` (this step) and the human-facing `README.mdx` (Step 3.4).
+`SKILL.md` (this step) and the human-facing `README.mdx` (Step 8).
 Both are required output. Write the SKILL.md first because the README
 pulls its trigger phrases and JTBD titles from it.
 
@@ -474,7 +580,7 @@ the heading is noise. Examples: `# Applicant Tracking System`,
 `# Workforce Planning`, `# Customer Relations`.
 
 (The README.mdx H1 follows a different rule, the Title grammar in
-Step 3.4, because the catalog needs the "Skill" suffix to
+Step 8, because the catalog needs the "Skill" suffix to
 disambiguate cards. Do not confuse the two.)
 
 This skill carries the domain map and the jobs-to-be-done for
@@ -604,7 +710,7 @@ elsewhere, drop it from this table.
 **Recipe:** see [`references/<jtbd-slug>.md`](references/<jtbd-slug>.md).
 
 *(Reference shape, used when the JTBD was classified `reference` in
-Step 2 Pass 3. The full recipe body, lookup-then-compose-then-write,
+Step 3 Pass 3. The full recipe body, lookup-then-compose-then-write,
 including any branching, label composition, and computed-value
 recompute, lives in the linked file. Do not paste it here.)*
 
@@ -755,7 +861,7 @@ skill at all. Make it slightly pushy:
   ("close this deal" alongside "set opportunity to closed_won").
 - Mention `use-semantius` so the matcher learns the two skills compose.
 
-### Step 3.2, Write the reference files (one per JTBD classified `reference`)
+### Step 6, Write the reference files (one per JTBD classified `reference`)
 
 For every JTBD that Pass 3 classified as `reference`, write a sibling
 file at `<skills-root>/<modelslug>/references/<jtbd-slug>.md`. The
@@ -805,82 +911,29 @@ append an ellipsis, how to round.>
 ## Recipe
 
 ```bash
-# Step 1: parallel-fetch (no dependency between these reads).
-# Both reads use --single because the agent passed a unique key
-# (id, email, code); zero rows or multiple rows is a domain error.
-# expect: --single, exit 0 returns one row as a bare object {...};
-# exit 1 = not found (refuse and tell the user "<entity> '<value>'
-# not found"); exit 2 = ambiguous (rare, surface as a model bug).
-semantius call crud postgrestRequest --single '{"method":"GET","path":"/<table>?<unique-filter>&select=<cols>"}'
-semantius call crud postgrestRequest --single '{"method":"GET","path":"/<other>?<unique-filter>&select=<cols>"}'
+# Step 1: parallel-fetch (no dependency between these reads)
+semantius call crud postgrestRequest '{"method":"GET","path":"/<table>?<filter>&select=<cols>"}'
+semantius call crud postgrestRequest '{"method":"GET","path":"/<other>?<filter>&select=<cols>"}'
 
-# Step 2: dedupe check on a junction without DB-level uniqueness.
-# Drop --single because zero rows is the legitimate "go ahead and
-# POST" branch.
-# expect: array; [] means "no duplicate, proceed to step 3"; one
-# row means "already exists, PATCH instead or do nothing".
-semantius call crud postgrestRequest '{"method":"GET","path":"/<junction>?<parent-a>=eq.<a>&<parent-b>=eq.<b>&select=id"}'
-
-# Step 3: <branch / compute / refuse logic with explicit conditions,
+# Step 2: <branch / compute / refuse logic with explicit conditions,
 #         e.g. "if release_status in (released, cancelled), refuse">
 
-# Step 4: <write> (paired fields go in one call, never split).
-# Use --single when the write must affect exactly one row (POST a
-# new row; PATCH by id). The response is the bare object on success.
-# expect: --single, exit 0 returns the inserted/updated object;
-# exit 2 = the filter matched zero rows or many, the write did not
-# take effect.
-semantius call crud postgrestRequest --single '{
+# Step 3: <write> (paired fields go in one call, never split)
+semantius call crud postgrestRequest '{
   "method":"<POST|PATCH>",
-  "path":"/<table>[?id=eq.<id>]",
+  "path":"/<table>[?<filter>]",
   "body":{<resolved body>}
 }'
 
-# Step 5: <verify the post-condition the validation block claims>.
-# --single asserts the row exists post-write.
-# expect: --single, the row's <field> equals <expected value>; if
-# the value is wrong, the write did not take what we sent (rare;
-# investigate before declaring success).
-semantius call crud postgrestRequest --single '{"method":"GET","path":"/<table>?id=eq.<id>&select=id,<field>"}'
+# Step 4: <verify the post-condition the validation block claims>
 ```
 
 Annotate each recipe step's leading comment with **what the step
-depends on** AND **what the agent should expect from the response**.
-
-- Independent reads carry the leading comment "parallel-fetch (no
-  dependency)" so the agent runs them in one round trip.
-- Dependent steps name what they consume from earlier steps.
-- Every `GET` is tagged either `--single` (assert exactly one row,
-  bare object response, exit 1 = not found, exit 2 = ambiguous) or
-  array-default (drop the flag, response is `[...]`, may be empty;
-  the dedupe / list / count case). The `# expect:` line names which
-  pattern is in use AND the action on failure:
-  - `--single`: exit 1 => refuse and tell the user "<entity> not found";
-    exit 2 => surface as a model bug (a unique-key lookup should never
-    return many).
-  - array: state explicitly what `[]` means in this recipe (usually
-    "go ahead" for dedupe, "no rows match" for lists). The action on
-    `[]` is part of the recipe's branch logic, not an error path.
-- Every `POST` / `PATCH` / `DELETE` whose effect is supposed to
-  change exactly one row uses `--single` and the `# expect:` line
-  names the field that confirms the change. Bulk operations (cascade
-  sweeps, multi-row PATCH) drop `--single`; the `# expect:` line
-  names the residual-count check that follows.
-
-**Default to `--single` for unique-key reads.** If the recipe writes
-the lookup as `?<col>=eq.<value>` against a `unique` column, an
-`id`, or a composite key the recipe has already proven unique, use
-`--single`. Drop it only when zero or many rows is a normal branch.
-This is the single most common defect in generated recipes: leaving
-off `--single` on a unique-key read, then having to follow up with a
-manual empty-result check that the agent forgets.
-
-The semantics of `--single` and the array-default pattern, plus the
-exit codes, live in `use-semantius`'s "Response handling: exit code
-is not enough" section. The reference does not re-explain them; the
-per-step `# expect:` annotations exist so the agent does not have
-to consult that section mid-recipe to remember which pattern this
-call uses.
+depends on**: independent reads carry the leading comment
+"parallel-fetch (no dependency)" so the agent runs them in one round
+trip; dependent steps name what they consume from earlier steps.
+Without the explicit hint, the agent treats numbered lists as
+sequential.
 
 ## Validation
 
@@ -919,7 +972,7 @@ overhead (an extra read). A reference file growing past ~120 lines
 means either the JTBD is doing two jobs (split it) or the reference
 is restating SKILL.md material (delete the duplicates).
 
-### Step 3.3, Write the script files (one per JTBD classified `script`)
+### Step 7, Write the script files (one per JTBD classified `script`)
 
 For every JTBD that Pass 3 classified as `script`, write a sibling
 file at `<skills-root>/<modelslug>/scripts/<op-slug>.sh`. Mark it
@@ -956,93 +1009,20 @@ fi
 arg1="$1"
 arg2="$2"
 
-# Step 1: read by unique key or id - canonical --single pattern.
-# `--single` makes the CLI assert exactly one row: exit 1 on zero,
-# exit 2 on many, and the response is the bare object (no [0] index).
-# One guard now does the work of two.
-row=$(semantius call crud postgrestRequest --single "{\"method\":\"GET\",\"path\":\"/<table>?<unique-filter>\"}") \
-  || { echo "step 1: <entity> '<lookup-value>' not found or ambiguous" >&2; exit 1; }
-# Optional further precondition checks on parsed fields. The response
-# is a bare object, so use grep without `head -n1` and without [0]:
-status=$(printf '%s' "$row" | grep -oE '"<col>":"[^"]+"' | sed 's/.*:"\(.*\)"/\1/')
-if [ "$status" = "<bad-value>" ]; then
-  echo "step 1: <entity> in $status state, refusing" >&2; exit 1
-fi
+# Step 1: read; refuse if precondition fails.
+result=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<filter>&select=<cols>\"}") \
+  || { echo "step 1 (read <table>) failed" >&2; exit 2; }
+# parse result, check precondition; bail with a clear message if not met.
 
-# Step 2..N: write. Use --single on a POST/PATCH/DELETE that must
-# affect exactly one row; the assertion AND the response shape match
-# the read pattern above.
-semantius call crud postgrestRequest --single "{\"method\":\"PATCH\",\"path\":\"/<table>?id=eq.<id>\",\"body\":{...}}" \
-  >/dev/null \
-  || { echo "step 2 (PATCH <table>) failed; row not found or write rejected" >&2; exit 2; }
+# Step 2..N: write, then verify.
+semantius call crud postgrestRequest "{...}" \
+  || { echo "step 2 (write <table>) failed" >&2; exit 2; }
 
-# Bulk writes that legitimately affect 0..N rows (cascade sweeps,
-# dedupe POSTs that may match nothing) DROP --single. Exit-code
-# guard alone is fine; the empty result is part of the contract.
-semantius call crud postgrestRequest "{\"method\":\"PATCH\",\"path\":\"/<table>?<bulk-filter>\",\"body\":{...}}" \
-  >/dev/null \
-  || { echo "step 3 (sweep <child>) failed; partial state possible, see above" >&2; exit 2; }
+semantius call crud postgrestRequest "{...}" \
+  || { echo "step 3 (sweep <child>) failed; release row already updated, retry will be a no-op for already-shipped rows" >&2; exit 2; }
 
 echo "<op-slug>: ok"
 ```
-
-#### Two read patterns, pick by intent
-
-Every `semantius call ... GET ...` in a script falls into one of two
-patterns. The choice depends on whether zero rows is a domain error
-or a normal branch.
-
-**Pattern A: `--single`** for any read that **must** resolve to
-exactly one row (lookup by `id`, by a unique column, by a composite
-key the recipe has already proven unique). The CLI asserts the count
-and returns the bare object. One guard is enough:
-
-```bash
-row=$(semantius call crud postgrestRequest --single "{...GET by unique key...}") \
-  || { echo "step N: <entity> '<value>' not found or ambiguous" >&2; exit 1; }
-# $row is {"id":"...", ...}; parse with jq '.id' or
-# grep -oE '"id":"[^"]+"' (no head -n1, no [0]).
-```
-
-**Pattern B: array (drop `--single`)** for reads where the count is
-the answer (dedupe checks, list queries, residual-rows counts). The
-response is an array; the script must inspect emptiness and act on
-it:
-
-```bash
-rows=$(semantius call crud postgrestRequest "{...GET that may return 0..N...}") \
-  || { echo "step N (<what>) failed" >&2; exit 2; }
-if ! printf '%s' "$rows" | grep -q '"id"'; then
-  # zero rows - dedupe says "go ahead and create"
-  ...
-else
-  # one or more rows - "already exists / use existing"
-  ...
-fi
-```
-
-**Choosing per call:** if zero rows means "the user named something
-that doesn't exist, refuse," use `--single`. If zero rows means "no
-duplicate, continue with the create," drop `--single`. Never use
-`--single` on a dedupe check; never drop it on a unique-key lookup.
-
-A canonical residual-count check (after a cascade sweep, verifying
-that no rows are left in the source state) stays as Pattern B; the
-intent is to count, and zero is the success case:
-
-```bash
-remaining=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<source-state-filter>&select=id\"}") \
-  || { echo "step N (verify sweep) failed" >&2; exit 2; }
-count=$(printf '%s' "$remaining" | grep -oE '"id"' | wc -l | tr -d ' ')
-if [ "$count" != "0" ]; then
-  echo "step N: $count row(s) still in source state after sweep; rerun" >&2; exit 2
-fi
-```
-
-Use `jq` if it is available (the platform mostly assumes it isn't);
-the `grep -oE` patterns above work without `jq`. Note that `jq` paths
-differ between the two patterns: `--single` returns `{...}` so use
-`.id`; the array form returns `[{...}]` so use `.[0].id`.
 
 #### Conventions every script follows
 
@@ -1064,7 +1044,7 @@ differ between the two patterns: `--single` returns `{...}` so use
   If the operation needs a user confirmation, the JTBD is a
   `reference`, not a `script`.
 
-### Step 3.4 (Write the README.mdx, human-facing catalog entry)
+### Step 8, Write the README.mdx (human-facing catalog entry)
 
 After the SKILL.md is written, generate a sibling `README.mdx` in the
 same folder. This file is **not** loaded by any agent harness; it
@@ -1074,7 +1054,7 @@ skim, not agent triggering.
 
 This step is **not optional**. A run that produces only `SKILL.md` is
 incomplete; the catalog system depends on the README being there. If
-you find yourself about to print the Step 4 summary without having
+you find yourself about to print the Step 10 summary without having
 written `README.mdx`, stop and write it now.
 
 #### Audience and tone
@@ -1123,7 +1103,7 @@ this multiple times.
 The `description` is the **single line a non-technical person reads
 on the catalog card** before deciding whether to open the skill.
 It must follow the same audience and verb logic as the body's
-skill-explanation paragraph (Step 3.4 §3), compressed to one
+skill-explanation paragraph (Step 8 §3), compressed to one
 sentence.
 
 **Required shape (one sentence, ≤140 characters):**
@@ -1138,7 +1118,7 @@ not on the catalog card. A reader of the catalog card wants to know
 what the skill *does*, not why it exists.
 
 - **Extracted verb** comes from the same three-tier verb-extraction
-  rule used in the body paragraph (Step 3.4 § "Verb-extraction
+  rule used in the body paragraph (Step 8 § "Verb-extraction
   rule"). The description must use the **same verb** as paragraph 2,
   resolved in this order:
   - **Tier 1, suffix match.** `Tracking|Tracker → tracks`,
@@ -1561,17 +1541,17 @@ from the model the next time someone updates the model file.
 
 If the model file has no mermaid block at all (rare; flag this to the
 user as a model defect), omit the `## Semantic model` section entirely
-and note in the Step 4 summary: `Model file has no mermaid block;
+and note in the Step 10 summary: `Model file has no mermaid block;
 omitted Semantic model section. Ask <semantic-model-analyst> to add one.`
 
-### Step 3.5, Self-review pass
+### Step 9, Self-review pass
 
 Before printing the summary, re-read the SKILL.md you just wrote with
 fresh eyes, as if a colleague were going to use it tomorrow against a
 different model. The point is not a checklist; it is that small
 drafting errors here scale, because every future invocation of the
 generated skill pays the cost. Fix issues in place; surface anything
-you can't fix without a design change in the Step 4 summary as a
+you can't fix without a design change in the Step 10 summary as a
 known limitation.
 
 Run the pass against the principles below. Principle 0 is a
@@ -1630,69 +1610,6 @@ shape check:
   count as user-prompt branches; they are mechanical and belong in
   scripts. Cascade flows almost always belong in scripts.
 
-**Empty-result handling, in scripts and references.** This is the
-third structural check, applied per file. The CLI offers two read
-patterns; every read must commit to one. `--single` asserts exactly
-one row (exit 1 = not found, exit 2 = ambiguous, bare-object
-response); the array default returns `[...]` and may be empty (used
-for dedupe, list, count).
-
-For each `<op>.sh` in `scripts/`:
-
-1. Walk every `semantius call ... GET` invocation.
-2. For each one, classify it as **`--single`** (the flag is
-   present) or **array** (no flag).
-3. Verify the surrounding code matches the pattern:
-   - `--single` reads need only the exit-code guard
-     `|| { echo "...not found or ambiguous"; exit 1; }`. They
-     should NOT have a follow-up `grep -q '"id"'` block; that
-     would be redundant.
-   - array reads need the exit-code guard `|| { ...; exit 2; }`
-     PLUS an explicit body check (`grep -q '"id"'`,
-     `if [ -z "$<var>" ]`, `[ "$count" = "0" ]`, or equivalent).
-     The two together cover transport failure and empty-result.
-4. Verify the classification matches intent: a read by `id`,
-   unique column, or composite-unique key SHOULD use `--single`;
-   a dedupe check, list query, or residual-count check SHOULD NOT.
-   A unique-key read without `--single` is a defect even if the
-   exit-code + grep pattern is correct, because the assertion
-   belongs at the protocol level.
-5. Verify the response parsing matches the pattern: `--single`
-   responses are bare objects (`grep -oE '"id":"[^"]+"'` without
-   `head -n1`, `jq '.id'` not `jq '.[0].id'`); array responses
-   need `head -n1` or `[0]`. A mismatch silently produces empty
-   strings and corrupts downstream steps.
-
-For each `<jtbd>.md` in `references/`:
-
-1. Count `semantius call ... GET` invocations in the `## Recipe`
-   block (call this `R`).
-2. Count `# expect:` annotations on those invocations.
-3. Annotations must equal `R`. If a GET has no `# expect:` line,
-   add one. The annotation must name which pattern the call uses:
-   - `--single`: "exit 0 returns one row as `{...}`; exit 1 = not
-     found, refuse and tell the user '<entity> not found'."
-   - array: "response is `[...]`; `[]` means <branch action>; one
-     or more rows means <branch action>."
-4. Verify the call itself matches the annotation: `--single` is
-   present iff the annotation says `--single`. A unique-key lookup
-   without `--single` in the call (even if the annotation is
-   present) is a defect; fix the call.
-5. Repeat for every `POST`, `PATCH`, `DELETE` in the recipe whose
-   effect is supposed to change state: each needs an `# expect:`
-   line describing the response that confirms the change. Use
-   `--single` on writes that target exactly one row; the
-   annotation says so, the call carries the flag.
-
-If the JTBD is so simple that no GET has a meaningful "not found"
-case (e.g. the only read is by a UUID the agent just created), the
-`# expect:` annotation can say so explicitly: `# expect: --single,
-row exists because we just POSTed it; exit 1 means a concurrent
-delete happened, abort and tell the user`. The annotation still
-appears; it cannot be omitted just because the failure case is
-rare. Use `--single` here too; the assertion is part of the
-intent.
-
 **1. Self-contained at runtime.** The calling agent should never need
 to consult the **source model file** or a deployment-specific config
 to execute a recipe, the whole point of generating this skill is to
@@ -1724,7 +1641,7 @@ Two things to scan for:
   references) or, if it truly isn't knowable at generation time, keep
   the punt explicit and reconsider whether the JTBD passes the Step-2
   merit test. A JTBD that just redirects fails the test, drop it and
-  say why in the Step 4 summary.
+  say why in the Step 10 summary.
 
 **2. Each fact lives in one place.** Restating the same rule in two
 sections doesn't reinforce it; it creates drift. Re-read the SKILL.md
@@ -2029,7 +1946,7 @@ vibes. If any check fails, fix and re-scan before declaring done.
     anywhere in the README.
 
 **Output of the self-review.** If you found nothing, write one line in
-the Step 4 summary: "Self-review pass, no issues found." If you fixed
+the Step 10 summary: "Self-review pass, no issues found." If you fixed
 things, list the principles you touched and a one-phrase description
 per fix (e.g. "Principle 1: replaced 3 hardcoded timestamps with
 placeholders; Principle 2: collapsed a duplicate guardrail into one
@@ -2038,7 +1955,7 @@ helps them spot drift if they regenerate later.
 
 ---
 
-### Step 4, Summarize
+### Step 10, Summarize
 
 Print to the user:
 
@@ -2057,7 +1974,7 @@ Print to the user:
 - The **dropped candidates** with reasons (e.g. "manage-tag, pure CRUD
   on `tags`, no merit signal, calling agent uses use-semantius
   directly"). The user may ask to add some back.
-- The **self-review result** from Step 3.5, either "no issues found"
+- The **self-review result** from Step 9, either "no issues found"
   or the principles you touched and what you changed (e.g.
   "Principle 1: replaced 2 hardcoded timestamps with placeholders;
   Principle 3: surfaced `tag_name` uniqueness in the glossary;
@@ -2071,6 +1988,21 @@ Print to the user:
   whether the split landed in a reasonable place; a 700-line SKILL.md
   with empty `references/` is a signal the classifier was too
   conservative.
+- The **audit findings** from Step 4 (skip this bullet on a fresh
+  generation). Group by file and severity:
+  - **Defects** (file is broken; rewrite recommended): e.g.
+    "`references/score-rice.md`: linked from SKILL.md but missing
+    on disk."
+  - **Non-canonical** (works but uses an outdated pattern; user
+    decides): e.g. "`cast-vote.sh`: 4 reads use legacy two-guard
+    pattern, `--single` would simplify."
+  - **Orphans** (no JTBD with this slug in current plan): e.g.
+    "`tag-feature.md`: orphan; consider removing or restoring the
+    JTBD."
+  After listing, ask: *"Regenerate flagged files? (all-defects /
+  all-flagged / per-file / none)"*, default `all-defects`. The user
+  picks; Steps 5–7 rerun for the chosen subset, files outside the
+  subset stay untouched.
 
 ---
 
@@ -2082,21 +2014,30 @@ Print to the user:
 
 ## Re-running on an updated model
 
-Regenerate into the same target folder. `SKILL.md` and `README.mdx`
-are overwritten in place. The `references/` and `scripts/` folders
-need a small extra step: a JTBD that existed in the previous run but
-no longer earns a Pass-3 spot leaves an orphan file behind. Before
-writing, list the existing `references/*.md` and `scripts/*.sh`,
-diff against the new generation's output, and **ask the user** before
-deleting any orphan: it may have been hand-edited or referenced
-externally. Default to keeping orphans and noting them in the Step 4
-summary as "stale, not regenerated, consider removing".
+Regenerate into the same target folder. The flow is:
 
-If the user has hand-edited any file, ask before overwriting, diff
-first, then merge or replace. The `README.mdx` is the most likely
-candidate for hand-editing (humans tweak narrative copy more often
-than agents tweak recipes); reference files are a close second
-(domain experts often refine the failure-mode prose).
+1. **Step 4 audits the existing artifacts** (read-only) and produces
+   a findings list grouped by defect / non-canonical / orphan. See
+   Step 4 for the checks it runs.
+2. **Step 10 surfaces the findings to the user** and asks which
+   flagged files to regenerate (default: defects only).
+3. **Steps 5–7 write the chosen subset.** `SKILL.md` and
+   `README.mdx` are always rewritten because they always need to
+   reflect the current generation's plan; references and scripts
+   are rewritten only for files the user opted to regenerate. Files
+   outside that subset stay untouched, including hand-edited ones.
+
+Orphans (files for JTBDs that no longer exist in the current plan)
+are surfaced in the audit but not auto-deleted. The user may have
+referenced them externally or be mid-edit. The Step 10 summary names
+each orphan and asks; default is to keep.
+
+Hand-edits stay safe by default. The `README.mdx` and reference
+files attract domain-expert hand-edits (narrative copy, failure-mode
+wording, user-prompt phrasing); the audit treats those edits as
+authoritative unless the file has a real defect (broken link,
+missing required field, contradicts the model). For non-canonical
+patterns alone, the user decides whether to take the upgrade.
 
 ## Failure modes
 
