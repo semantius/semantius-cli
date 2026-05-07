@@ -138,7 +138,9 @@ async function handleSingleResult(
       await safeClose(connection.close);
       process.exit(SINGLE_NO_ROWS);
     } else {
-      console.error('Error [SINGLE_MULTIPLE_ROWS]: Query returned multiple rows');
+      console.error(
+        'Error [SINGLE_MULTIPLE_ROWS]: Query returned multiple rows',
+      );
       await safeClose(connection.close);
       process.exit(SINGLE_MULTIPLE_ROWS);
     }
