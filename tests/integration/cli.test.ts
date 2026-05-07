@@ -440,3 +440,126 @@ describe('HTTP Transport Integration Tests', () => {
     });
   });
 });
+
+/**
+ * --single flag integration tests
+ *
+ * Tests the --single flag against the real Semantius CRUD server.
+ * Skipped when SEMANTIUS_API_KEY or SEMANTIUS_ORG are not set.
+ */
+describe('--single flag Integration Tests', () => {
+  let serverReachable = false;
+
+  beforeAll(async () => {
+    const apiKey = process.env.SEMANTIUS_API_KEY;
+    const org = process.env.SEMANTIUS_ORG;
+    if (!apiKey || !org) return;
+
+    try {
+      const response = await fetch(`https://${org}.semantius.ai/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        signal: AbortSignal.timeout(5000),
+      });
+      serverReachable = response.status < 500;
+    } catch {
+      serverReachable = false;
+    }
+  });
+
+  // Runs CLI without a config file — uses built-in default (crud + cube)
+  async function runCli(
+    args: string[]
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const cliPath = join(import.meta.dir, '..', '..', 'src', 'index.ts');
+    const proc = Bun.spawn(['bun', 'run', cliPath, ...args], {
+      env: { ...process.env, MCP_NO_DAEMON: '1' },
+      stdin: null,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const exitCode = await proc.exited;
+    const stdout = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
+    return { stdout, stderr, exitCode };
+  }
+
+  test('--single with exactly 1 row returns object and exits 0', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    // id=eq.2 is the _public module — guaranteed to exist and be unique
+    const result = await runCli([
+      '--single',
+      'call', 'crud', 'read_module',
+      JSON.stringify({ filters: 'id=eq.2' }),
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    // Response is a single JSON object (not an array)
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({ id: 2, module_name: '_public' });
+    expect(Array.isArray(parsed)).toBe(false);
+  });
+
+  test('--single with 0 rows exits 1 and reports error', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    const result = await runCli([
+      '--single',
+      'call', 'crud', 'read_module',
+      JSON.stringify({ filters: 'id=eq.99999' }),
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('SINGLE_NO_ROWS');
+  });
+
+  test('without --single returns array normally (--diag)', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    // CRUD server returns plain JSON (no response.data wrapper), so --diag is needed
+    const result = await runCli([
+      '--diag',
+      'call', 'crud', 'read_module',
+      JSON.stringify({ filters: 'id=eq.2' }),
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toHaveLength(1);
+  });
+
+  test('--single returns object while --diag without --single returns array', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    const withSingle = await runCli([
+      '--single',
+      'call', 'crud', 'read_module',
+      JSON.stringify({ filters: 'id=eq.1001' }),
+    ]);
+    const withoutSingle = await runCli([
+      '--diag',
+      'call', 'crud', 'read_module',
+      JSON.stringify({ filters: 'id=eq.1001' }),
+    ]);
+
+    expect(withSingle.exitCode).toBe(0);
+    expect(withoutSingle.exitCode).toBe(0);
+
+    const singleParsed = JSON.parse(withSingle.stdout);
+    const normalParsed = JSON.parse(withoutSingle.stdout);
+
+    expect(Array.isArray(singleParsed)).toBe(false);
+    expect(Array.isArray(normalParsed)).toBe(true);
+    expect(singleParsed.id).toBe(normalParsed[0].id);
+  });
+});

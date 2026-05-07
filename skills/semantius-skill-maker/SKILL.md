@@ -806,52 +806,81 @@ append an ellipsis, how to round.>
 
 ```bash
 # Step 1: parallel-fetch (no dependency between these reads).
-# expect: each response is a non-empty JSON array with an "id" field.
-# If either is empty, refuse and tell the user "<entity> '<value>'
-# not found"; the next step depends on these ids.
-semantius call crud postgrestRequest '{"method":"GET","path":"/<table>?<filter>&select=<cols>"}'
-semantius call crud postgrestRequest '{"method":"GET","path":"/<other>?<filter>&select=<cols>"}'
+# Both reads use --single because the agent passed a unique key
+# (id, email, code); zero rows or multiple rows is a domain error.
+# expect: --single, exit 0 returns one row as a bare object {...};
+# exit 1 = not found (refuse and tell the user "<entity> '<value>'
+# not found"); exit 2 = ambiguous (rare, surface as a model bug).
+semantius call crud postgrestRequest --single '{"method":"GET","path":"/<table>?<unique-filter>&select=<cols>"}'
+semantius call crud postgrestRequest --single '{"method":"GET","path":"/<other>?<unique-filter>&select=<cols>"}'
 
-# Step 2: <branch / compute / refuse logic with explicit conditions,
+# Step 2: dedupe check on a junction without DB-level uniqueness.
+# Drop --single because zero rows is the legitimate "go ahead and
+# POST" branch.
+# expect: array; [] means "no duplicate, proceed to step 3"; one
+# row means "already exists, PATCH instead or do nothing".
+semantius call crud postgrestRequest '{"method":"GET","path":"/<junction>?<parent-a>=eq.<a>&<parent-b>=eq.<b>&select=id"}'
+
+# Step 3: <branch / compute / refuse logic with explicit conditions,
 #         e.g. "if release_status in (released, cancelled), refuse">
 
-# Step 3: <write> (paired fields go in one call, never split).
-# expect: response echoes the inserted/updated row(s); if [], the
-# filter matched zero rows and the write was a no-op. Surface that
-# to the user instead of silently continuing.
-semantius call crud postgrestRequest '{
+# Step 4: <write> (paired fields go in one call, never split).
+# Use --single when the write must affect exactly one row (POST a
+# new row; PATCH by id). The response is the bare object on success.
+# expect: --single, exit 0 returns the inserted/updated object;
+# exit 2 = the filter matched zero rows or many, the write did not
+# take effect.
+semantius call crud postgrestRequest --single '{
   "method":"<POST|PATCH>",
-  "path":"/<table>[?<filter>]",
+  "path":"/<table>[?id=eq.<id>]",
   "body":{<resolved body>}
 }'
 
-# Step 4: <verify the post-condition the validation block claims>.
-# expect: the row's <field> equals <expected value>; if not, the
-# write did not take effect. Investigate before declaring success.
+# Step 5: <verify the post-condition the validation block claims>.
+# --single asserts the row exists post-write.
+# expect: --single, the row's <field> equals <expected value>; if
+# the value is wrong, the write did not take what we sent (rare;
+# investigate before declaring success).
+semantius call crud postgrestRequest --single '{"method":"GET","path":"/<table>?id=eq.<id>&select=id,<field>"}'
 ```
 
 Annotate each recipe step's leading comment with **what the step
 depends on** AND **what the agent should expect from the response**.
+
 - Independent reads carry the leading comment "parallel-fetch (no
   dependency)" so the agent runs them in one round trip.
 - Dependent steps name what they consume from earlier steps.
-- Every `GET` carries an `# expect:` line naming the field that must
-  be present and the action to take if it is absent. The default
-  failure shape is "refuse and tell the user '<entity> not found'";
-  the recipe overrides only when the JTBD has a specific recovery.
+- Every `GET` is tagged either `--single` (assert exactly one row,
+  bare object response, exit 1 = not found, exit 2 = ambiguous) or
+  array-default (drop the flag, response is `[...]`, may be empty;
+  the dedupe / list / count case). The `# expect:` line names which
+  pattern is in use AND the action on failure:
+  - `--single`: exit 1 => refuse and tell the user "<entity> not found";
+    exit 2 => surface as a model bug (a unique-key lookup should never
+    return many).
+  - array: state explicitly what `[]` means in this recipe (usually
+    "go ahead" for dedupe, "no rows match" for lists). The action on
+    `[]` is part of the recipe's branch logic, not an error path.
 - Every `POST` / `PATCH` / `DELETE` whose effect is supposed to
-  change state carries an `# expect:` line describing the response
-  that confirms the change. A PATCH that filters zero rows succeeds
-  silently (exit 0, body `[]`); the recipe must instruct the agent
-  to read back and verify, or the silent no-op corrupts downstream
-  reasoning.
+  change exactly one row uses `--single` and the `# expect:` line
+  names the field that confirms the change. Bulk operations (cascade
+  sweeps, multi-row PATCH) drop `--single`; the `# expect:` line
+  names the residual-count check that follows.
 
-The semantics of "exit 0 with empty body means the lookup found
-nothing" is described once in `use-semantius`, in the "Response
-handling: exit code is not enough" section. The reference does not
-re-explain it; the per-step `# expect:` annotations exist so the
-agent does not have to consult that section mid-recipe to remember
-to check.
+**Default to `--single` for unique-key reads.** If the recipe writes
+the lookup as `?<col>=eq.<value>` against a `unique` column, an
+`id`, or a composite key the recipe has already proven unique, use
+`--single`. Drop it only when zero or many rows is a normal branch.
+This is the single most common defect in generated recipes: leaving
+off `--single` on a unique-key read, then having to follow up with a
+manual empty-result check that the agent forgets.
+
+The semantics of `--single` and the array-default pattern, plus the
+exit codes, live in `use-semantius`'s "Response handling: exit code
+is not enough" section. The reference does not re-explain them; the
+per-step `# expect:` annotations exist so the agent does not have
+to consult that section mid-recipe to remember which pattern this
+call uses.
 
 ## Validation
 
@@ -927,68 +956,93 @@ fi
 arg1="$1"
 arg2="$2"
 
-# Step 1: read.
-# Two checks are MANDATORY after every read:
-#   (a) exit-code guard: catches transport failure (semantius exit 1/2/3)
-#   (b) empty-result guard: catches "exit 0 + body []" (PostgREST returns
-#       an empty array for a GET that finds zero rows; that is success at
-#       the protocol layer and "not found" at the domain layer)
-result=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<filter>&select=<cols>\"}") \
-  || { echo "step 1 (read <table>) failed" >&2; exit 2; }
-if ! printf '%s' "$result" | grep -q '"id"'; then
-  echo "step 1: <entity> '<lookup-value>' not found; ask the user for the correct <field>" >&2
-  exit 1
+# Step 1: read by unique key or id - canonical --single pattern.
+# `--single` makes the CLI assert exactly one row: exit 1 on zero,
+# exit 2 on many, and the response is the bare object (no [0] index).
+# One guard now does the work of two.
+row=$(semantius call crud postgrestRequest --single "{\"method\":\"GET\",\"path\":\"/<table>?<unique-filter>\"}") \
+  || { echo "step 1: <entity> '<lookup-value>' not found or ambiguous" >&2; exit 1; }
+# Optional further precondition checks on parsed fields. The response
+# is a bare object, so use grep without `head -n1` and without [0]:
+status=$(printf '%s' "$row" | grep -oE '"<col>":"[^"]+"' | sed 's/.*:"\(.*\)"/\1/')
+if [ "$status" = "<bad-value>" ]; then
+  echo "step 1: <entity> in $status state, refusing" >&2; exit 1
 fi
-# Optional further precondition checks on parsed fields (status, etc.)
-# follow the same shape: extract, test, exit 1 with a diagnostic.
 
-# Step 2..N: write, then verify.
-semantius call crud postgrestRequest "{...}" \
-  || { echo "step 2 (write <table>) failed" >&2; exit 2; }
-# A PATCH with a filter that hits zero rows succeeds silently (exit 0,
-# body []). When step 2 is a stateful change, follow with a verify-read
-# that re-fetches the row and checks the expected post-condition.
+# Step 2..N: write. Use --single on a POST/PATCH/DELETE that must
+# affect exactly one row; the assertion AND the response shape match
+# the read pattern above.
+semantius call crud postgrestRequest --single "{\"method\":\"PATCH\",\"path\":\"/<table>?id=eq.<id>\",\"body\":{...}}" \
+  >/dev/null \
+  || { echo "step 2 (PATCH <table>) failed; row not found or write rejected" >&2; exit 2; }
 
-semantius call crud postgrestRequest "{...}" \
-  || { echo "step 3 (sweep <child>) failed; release row already updated, retry will be a no-op for already-shipped rows" >&2; exit 2; }
+# Bulk writes that legitimately affect 0..N rows (cascade sweeps,
+# dedupe POSTs that may match nothing) DROP --single. Exit-code
+# guard alone is fine; the empty result is part of the contract.
+semantius call crud postgrestRequest "{\"method\":\"PATCH\",\"path\":\"/<table>?<bulk-filter>\",\"body\":{...}}" \
+  >/dev/null \
+  || { echo "step 3 (sweep <child>) failed; partial state possible, see above" >&2; exit 2; }
 
 echo "<op-slug>: ok"
 ```
 
-#### Empty-result handling is not optional
+#### Two read patterns, pick by intent
 
-Every `semantius call ... GET ...` in a script must be paired with
-**both** an exit-code guard **and** an empty-result guard. The exit
-code catches transport-level problems (bad args, server error,
-network); the empty-result check catches the most common silent
-failure (the lookup returned no rows, which is exit 0 + body `[]`).
-Neither subsumes the other. A script that has only the exit-code
-guard will pass an empty `id` to the next step and either crash
-opaquely or PATCH zero rows silently.
+Every `semantius call ... GET ...` in a script falls into one of two
+patterns. The choice depends on whether zero rows is a domain error
+or a normal branch.
 
-Canonical empty-result patterns:
+**Pattern A: `--single`** for any read that **must** resolve to
+exactly one row (lookup by `id`, by a unique column, by a composite
+key the recipe has already proven unique). The CLI asserts the count
+and returns the bare object. One guard is enough:
 
 ```bash
-# After a GET that should return one row by id or unique key
-if ! printf '%s' "$row" | grep -q '"id"'; then
-  echo "step N: <entity> '<value>' not found" >&2; exit 1
-fi
+row=$(semantius call crud postgrestRequest --single "{...GET by unique key...}") \
+  || { echo "step N: <entity> '<value>' not found or ambiguous" >&2; exit 1; }
+# $row is {"id":"...", ...}; parse with jq '.id' or
+# grep -oE '"id":"[^"]+"' (no head -n1, no [0]).
+```
 
-# After a GET that extracts a specific field and tests its value
-status=$(printf '%s' "$row" | grep -oE '"<col>":"[^"]+"' | head -n1 | sed 's/.*:"\(.*\)"/\1/')
-if [ -z "$status" ]; then
-  echo "step N: <entity> '<value>' not found" >&2; exit 1
-fi
+**Pattern B: array (drop `--single`)** for reads where the count is
+the answer (dedupe checks, list queries, residual-rows counts). The
+response is an array; the script must inspect emptiness and act on
+it:
 
-# After a GET that should return a count of rows still matching a state
-count=$(printf '%s' "$rows" | grep -oE '"id"' | wc -l | tr -d ' ')
+```bash
+rows=$(semantius call crud postgrestRequest "{...GET that may return 0..N...}") \
+  || { echo "step N (<what>) failed" >&2; exit 2; }
+if ! printf '%s' "$rows" | grep -q '"id"'; then
+  # zero rows - dedupe says "go ahead and create"
+  ...
+else
+  # one or more rows - "already exists / use existing"
+  ...
+fi
+```
+
+**Choosing per call:** if zero rows means "the user named something
+that doesn't exist, refuse," use `--single`. If zero rows means "no
+duplicate, continue with the create," drop `--single`. Never use
+`--single` on a dedupe check; never drop it on a unique-key lookup.
+
+A canonical residual-count check (after a cascade sweep, verifying
+that no rows are left in the source state) stays as Pattern B; the
+intent is to count, and zero is the success case:
+
+```bash
+remaining=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<source-state-filter>&select=id\"}") \
+  || { echo "step N (verify sweep) failed" >&2; exit 2; }
+count=$(printf '%s' "$remaining" | grep -oE '"id"' | wc -l | tr -d ' ')
 if [ "$count" != "0" ]; then
-  echo "step N: <description of what is still wrong>" >&2; exit 2
+  echo "step N: $count row(s) still in source state after sweep; rerun" >&2; exit 2
 fi
 ```
 
 Use `jq` if it is available (the platform mostly assumes it isn't);
-the `grep -oE` patterns above work without `jq`.
+the `grep -oE` patterns above work without `jq`. Note that `jq` paths
+differ between the two patterns: `--single` returns `{...}` so use
+`.id`; the array form returns `[{...}]` so use `.[0].id`.
 
 #### Conventions every script follows
 
@@ -1577,21 +1631,37 @@ shape check:
   scripts. Cascade flows almost always belong in scripts.
 
 **Empty-result handling, in scripts and references.** This is the
-third structural check, applied per file. The semantius CLI returns
-exit 0 with body `[]` for any GET that finds zero rows; the exit
-code does not catch this. Every `semantius call ... GET ...` in
-either a script or a reference must be paired with an explicit
-empty-result check.
+third structural check, applied per file. The CLI offers two read
+patterns; every read must commit to one. `--single` asserts exactly
+one row (exit 1 = not found, exit 2 = ambiguous, bare-object
+response); the array default returns `[...]` and may be empty (used
+for dedupe, list, count).
 
 For each `<op>.sh` in `scripts/`:
 
-1. Count `semantius call ... GET` invocations (call this `R`).
-2. Count empty-result guards immediately following them: any of
-   `if ! ... grep -q '"id"'`, `if [ -z "$<var>" ]`, `[ "$count" =
-   "0" ]`, or equivalent. (The exit-code guard `|| { ...; exit 2;
-   }` does NOT count for this check; it is a separate guarantee.)
-3. Empty-result guards must equal `R`. If they don't, the script
-   is incomplete; add the missing guards.
+1. Walk every `semantius call ... GET` invocation.
+2. For each one, classify it as **`--single`** (the flag is
+   present) or **array** (no flag).
+3. Verify the surrounding code matches the pattern:
+   - `--single` reads need only the exit-code guard
+     `|| { echo "...not found or ambiguous"; exit 1; }`. They
+     should NOT have a follow-up `grep -q '"id"'` block; that
+     would be redundant.
+   - array reads need the exit-code guard `|| { ...; exit 2; }`
+     PLUS an explicit body check (`grep -q '"id"'`,
+     `if [ -z "$<var>" ]`, `[ "$count" = "0" ]`, or equivalent).
+     The two together cover transport failure and empty-result.
+4. Verify the classification matches intent: a read by `id`,
+   unique column, or composite-unique key SHOULD use `--single`;
+   a dedupe check, list query, or residual-count check SHOULD NOT.
+   A unique-key read without `--single` is a defect even if the
+   exit-code + grep pattern is correct, because the assertion
+   belongs at the protocol level.
+5. Verify the response parsing matches the pattern: `--single`
+   responses are bare objects (`grep -oE '"id":"[^"]+"'` without
+   `head -n1`, `jq '.id'` not `jq '.[0].id'`); array responses
+   need `head -n1` or `[0]`. A mismatch silently produces empty
+   strings and corrupts downstream steps.
 
 For each `<jtbd>.md` in `references/`:
 
@@ -1599,22 +1669,29 @@ For each `<jtbd>.md` in `references/`:
    block (call this `R`).
 2. Count `# expect:` annotations on those invocations.
 3. Annotations must equal `R`. If a GET has no `# expect:` line,
-   add one naming the field that must be present and the action
-   to take if it is absent. The default action is "refuse and tell
-   the user '<entity> not found'".
-4. Repeat for every `POST`, `PATCH`, `DELETE` in the recipe whose
+   add one. The annotation must name which pattern the call uses:
+   - `--single`: "exit 0 returns one row as `{...}`; exit 1 = not
+     found, refuse and tell the user '<entity> not found'."
+   - array: "response is `[...]`; `[]` means <branch action>; one
+     or more rows means <branch action>."
+4. Verify the call itself matches the annotation: `--single` is
+   present iff the annotation says `--single`. A unique-key lookup
+   without `--single` in the call (even if the annotation is
+   present) is a defect; fix the call.
+5. Repeat for every `POST`, `PATCH`, `DELETE` in the recipe whose
    effect is supposed to change state: each needs an `# expect:`
-   line describing the response that confirms the change. A PATCH
-   with a filter that hits zero rows succeeds silently (exit 0,
-   body `[]`); without the verify step, the no-op corrupts
-   downstream reasoning.
+   line describing the response that confirms the change. Use
+   `--single` on writes that target exactly one row; the
+   annotation says so, the call carries the flag.
 
 If the JTBD is so simple that no GET has a meaningful "not found"
 case (e.g. the only read is by a UUID the agent just created), the
-`# expect:` annotation can say so explicitly: `# expect: row exists
-because we just POSTed it; if [], a concurrent delete happened,
-abort and tell the user`. The annotation still appears; it cannot
-be omitted just because the failure case is rare.
+`# expect:` annotation can say so explicitly: `# expect: --single,
+row exists because we just POSTed it; exit 1 means a concurrent
+delete happened, abort and tell the user`. The annotation still
+appears; it cannot be omitted just because the failure case is
+rare. Use `--single` here too; the assertion is part of the
+intent.
 
 **1. Self-contained at runtime.** The calling agent should never need
 to consult the **source model file** or a deployment-specific config

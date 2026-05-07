@@ -9,7 +9,6 @@
 
 import {
   type McpConnection,
-  debug,
   getConnection,
   getTimeoutMs,
   safeClose,
@@ -29,13 +28,14 @@ import {
   toolExecutionError,
   toolNotFoundError,
 } from '../errors.js';
-import { McpToolError, formatJson, formatToolResult } from '../output.js';
+import { McpToolError, formatToolResult } from '../output.js';
 
 export interface CallOptions {
   target: string; // "server/tool"
   args?: string; // JSON arguments
   configPath?: string;
   diag?: boolean; // When true, output full JSON instead of just response.data
+  single?: boolean; // When true, inject accept: application/vnd.pgrst.object+json; exit 1 on 0 rows, exit 2 on 2+ rows
 }
 
 /**
@@ -105,6 +105,54 @@ async function parseArgs(
   }
 }
 
+// Exit codes for --single mode
+const SINGLE_NO_ROWS = 1;
+const SINGLE_MULTIPLE_ROWS = 2;
+
+/**
+ * Handle --single response: extract text, detect 0-row and multi-row cases.
+ * Exits the process directly with the appropriate code.
+ */
+async function handleSingleResult(
+  result: unknown,
+  connection: McpConnection,
+): Promise<void> {
+  const r = result as {
+    content?: Array<{ type: string; text?: string }>;
+    isError?: boolean;
+  };
+
+  let text = '';
+  if (r.content && Array.isArray(r.content)) {
+    text = r.content
+      .filter((c) => c.type === 'text' && c.text)
+      .map((c) => c.text as string)
+      .join('\n');
+  }
+
+  if (r.isError) {
+    // Server signalled an error — distinguish 0 vs 2+ rows by message content
+    const isZeroRows = /\b0\s+rows?\b/i.test(text);
+    if (isZeroRows) {
+      console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
+      await safeClose(connection.close);
+      process.exit(SINGLE_NO_ROWS);
+    } else {
+      console.error('Error [SINGLE_MULTIPLE_ROWS]: Query returned multiple rows');
+      await safeClose(connection.close);
+      process.exit(SINGLE_MULTIPLE_ROWS);
+    }
+  }
+
+  if (text === 'null') {
+    console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
+    await safeClose(connection.close);
+    process.exit(SINGLE_NO_ROWS);
+  }
+
+  console.log(text);
+}
+
 /**
  * Execute the call command
  */
@@ -117,6 +165,10 @@ export async function callCommand(options: CallOptions): Promise<void> {
   } catch (error) {
     console.error((error as Error).message);
     process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  if (options.single) {
+    args = { ...args, accept: 'application/vnd.pgrst.object+json' };
   }
 
   let config: McpServersConfig;
@@ -185,6 +237,12 @@ export async function callCommand(options: CallOptions): Promise<void> {
     }
     await safeClose(connection.close);
     process.exit(ErrorCode.SERVER_ERROR);
+  }
+
+  if (options.single) {
+    await handleSingleResult(result, connection);
+    await safeClose(connection.close);
+    return;
   }
 
   try {

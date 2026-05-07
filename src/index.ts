@@ -49,6 +49,7 @@ interface ParsedArgs {
   withMarkdown: boolean;
   configPath?: string;
   diag: boolean;
+  single: boolean;
   envPrefix: string;
 }
 
@@ -121,6 +122,7 @@ function parseArgs(args: string[]): ParsedArgs {
     withDescriptions: false,
     withMarkdown: false,
     diag: false,
+    single: false,
     envPrefix: 'SEMANTIUS',
   };
 
@@ -152,6 +154,10 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--diag':
         result.diag = true;
+        break;
+
+      case '--single':
+        result.single = true;
         break;
 
       case '-c':
@@ -369,6 +375,7 @@ Options:
   -d, --with-descriptions  Include tool descriptions
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
   --diag                   (call only) Output full JSON response instead of just response.data
+  --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
 
 Output:
@@ -502,6 +509,7 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
         args: args.args,
         configPath: args.configPath,
         diag: args.diag,
+        single: args.single,
       });
       break;
   }

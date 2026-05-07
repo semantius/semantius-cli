@@ -183,43 +183,99 @@ Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 
 ## Response handling: exit code is not enough
 
-A semantius `call` exits non-zero only on **transport-level** problems
-(bad args, network failure, server error). The most common
-business-level outcome (a `GET` that finds zero rows) exits **0**
-with body `[]`. That is success at the protocol layer and "not found"
-at the domain layer. Treating exit code alone as the success signal
-silently passes empty results downstream and corrupts every dependent
-write.
+The `crud` server returns a JSON array by default, even for queries
+that match exactly one row. A `GET` that finds zero rows returns
+exit **0** with body `[]`. That is success at the protocol layer
+and "not found" at the domain layer. Treating exit code alone as
+the success signal silently passes empty results downstream and
+corrupts every dependent write.
+
+There are **two ways** to read against `crud`. Pick the one that
+matches the intent of the call:
+
+### Pattern A: `--single`, when you expect exactly one row
+
+Pass `--single` to `postgrestRequest` for any read that **must**
+resolve to exactly one row (lookup by `id`, by a unique column, or
+by a composite key the recipe has already proven unique). The CLI
+sets PostgREST's `Accept: application/vnd.pgrst.object+json` header
+under the hood and translates the response to the agent's shell
+contract:
+
+| Outcome | Exit | stdout |
+|---|---|---|
+| Exactly one row | 0 | `{"id":"...", ...}` (bare object, **not** an array) |
+| Zero rows | 1 | error on stderr |
+| Two or more rows | 2 | error on stderr |
+| Bad args, missing config | 1 | error message on stderr |
+| Server / tool error | 2 | error message on stderr |
+| Network error | 3 | error message on stderr |
+
+The exit code now carries the not-found case directly. The
+canonical script pattern collapses to one guard:
+
+```bash
+row=$(semantius call crud postgrestRequest --single "{\"method\":\"GET\",\"path\":\"/<table>?<unique-filter>\"}") \
+  || { echo "step N: <entity> '<value>' not found or ambiguous" >&2; exit 1; }
+# $row is the bare object: {"id":"...", ...}
+# Parse with jq '.id' or grep -oE '"id":"[^"]+"' (no head -n1, no [0] index).
+```
+
+`--single` is the right pattern for the vast majority of reads in a
+domain skill: every "look up by `id`", every `eq.<unique-column>`
+resolution, every parent-row read in a junction recipe. Use it
+whenever a zero-row or many-row result would be a domain error, not
+a normal branch.
+
+### Pattern B: array (default), when zero or many rows is expected
+
+Drop `--single` for reads where the count itself is the answer:
+dedupe checks ("does this junction row already exist?"), list
+queries, batch reads. In that case the response is an array and
+the agent has to inspect the body to know what came back.
 
 | Outcome | Exit | stdout | What to do |
 |---|---|---|---|
 | Row(s) found | 0 | `[{...}, ...]` | Use the row(s) |
-| **No rows found (the most common silent failure)** | **0** | **`[]`** | **Refuse the dependent write; tell the user "<entity> '<value>' not found"** |
+| No rows found | 0 | `[]` | The dedupe/list answer is "none"; act accordingly |
 | Bad args, missing config | 1 | error message on stderr | Fix args; do not retry |
 | Server / tool error | 2 | error message on stderr | Surface to user; usually a real bug |
 | Network error | 3 | error message on stderr | Retry once, then surface |
 
-**Always inspect the body after a read.** Either parse the JSON and
-check the array is non-empty, or grep for the field you expect. In
-shell scripts, the canonical pattern is:
+The canonical pattern for an array read whose business
+interpretation depends on emptiness:
 
 ```bash
-row=$(semantius call crud postgrestRequest "{...GET...}") \
+rows=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<filter>&select=id\"}") \
   || { echo "step N (<what>) failed" >&2; exit 2; }
-if ! printf '%s' "$row" | grep -q '"id"'; then
-  echo "step N: <entity> '<value>' not found" >&2
-  exit 1
+if ! printf '%s' "$rows" | grep -q '"id"'; then
+  # zero rows - the recipe's "go ahead and create / no duplicate" branch
+  ...
+else
+  # one or more rows - the recipe's "already exists / use existing" branch
+  ...
 fi
 ```
 
-The exit-code guard catches transport failures (exit 2). The
-`grep -q` catches the empty-result business failure (exit 0 + `[]`).
-Both are needed; neither subsumes the other.
+### Choosing between them
+
+| Read intent | Pattern |
+|---|---|
+| Resolve `<title>` to a feature row | `--single` (the title must exist or the recipe cannot proceed) |
+| Read a parent row by `id` | `--single` |
+| Check whether a `(feature_id, user_id)` junction row exists | array (zero rows is the normal "create" branch) |
+| List all features in a status | array |
+| Verify a write took effect | `--single` (the row must exist; we just wrote it) |
+| Check that a sweep is complete (zero residual rows) | array (you're counting rows, not asserting one) |
+
+### Writes (POST / PATCH / DELETE)
 
 A `POST` or `PATCH` that succeeds returns the inserted/updated rows
 (or `[]` if `Prefer: return=minimal` was set, but the platform does
-not set that by default). A `DELETE` returns the deleted rows. So the
-same "exit 0 + `[]` means did-nothing" rule applies to writes that
-match zero rows: a PATCH with a filter that hits no rows succeeds
-silently. Always read back to verify when the operation is supposed
-to change state.
+not set that by default). A `DELETE` returns the deleted rows. So
+the same "exit 0 + `[]` means did-nothing" rule applies to writes
+that match zero rows: a PATCH with a filter that hits no rows
+succeeds silently. `--single` works on writes too (POST/PATCH that
+must affect exactly one row), and is the cleanest way to assert
+the change took effect. Always read back to verify when the
+operation is supposed to change state.
