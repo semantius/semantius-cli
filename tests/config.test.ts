@@ -12,7 +12,11 @@ import {
   listServerNames,
   isHttpServer,
   isStdioServer,
-  DEFAULT_CONFIG,
+  getDefaultConfig,
+  setEnvPrefix,
+  getEnvPrefix,
+  getRequiredEnvVarNames,
+  getUserConfigDir,
 } from '../src/config';
 
 describe('config', () => {
@@ -274,29 +278,90 @@ describe('config', () => {
     });
   });
 
-  describe('DEFAULT_CONFIG', () => {
+  describe('getDefaultConfig', () => {
+    beforeEach(() => setEnvPrefix('SEMANTIUS'));
+    afterEach(() => setEnvPrefix('SEMANTIUS'));
+
     test('has crud and cube servers', () => {
-      expect(DEFAULT_CONFIG.mcpServers.crud).toBeDefined();
-      expect(DEFAULT_CONFIG.mcpServers.cube).toBeDefined();
+      const config = getDefaultConfig();
+      expect(config.mcpServers.crud).toBeDefined();
+      expect(config.mcpServers.cube).toBeDefined();
     });
 
     test('crud server is HTTP with correct URL template', () => {
-      const crud = DEFAULT_CONFIG.mcpServers.crud as any;
+      const crud = getDefaultConfig().mcpServers.crud as any;
       expect(crud.url).toContain('${SEMANTIUS_ORG}');
       expect(crud.url).toContain('semantius.ai');
     });
 
     test('cube server is HTTP with correct URL template', () => {
-      const cube = DEFAULT_CONFIG.mcpServers.cube as any;
+      const cube = getDefaultConfig().mcpServers.cube as any;
       expect(cube.url).toContain('${SEMANTIUS_ORG}');
       expect(cube.url).toContain('semantius.io');
     });
 
     test('both servers use SEMANTIUS_API_KEY in headers', () => {
-      const crud = DEFAULT_CONFIG.mcpServers.crud as any;
-      const cube = DEFAULT_CONFIG.mcpServers.cube as any;
+      const crud = getDefaultConfig().mcpServers.crud as any;
+      const cube = getDefaultConfig().mcpServers.cube as any;
       expect(crud.headers['x-api-key']).toBe('${SEMANTIUS_API_KEY}');
       expect(cube.headers['x-api-key']).toBe('${SEMANTIUS_API_KEY}');
+    });
+
+    test('respects custom env prefix', () => {
+      setEnvPrefix('PROD');
+      const config = getDefaultConfig();
+      const crud = config.mcpServers.crud as any;
+      const cube = config.mcpServers.cube as any;
+      expect(crud.url).toContain('${PROD_ORG}');
+      expect(crud.headers['x-api-key']).toBe('${PROD_API_KEY}');
+      expect(cube.url).toContain('${PROD_ORG}');
+      expect(cube.headers['x-api-key']).toBe('${PROD_API_KEY}');
+    });
+  });
+
+  describe('env prefix state', () => {
+    afterEach(() => setEnvPrefix('SEMANTIUS'));
+
+    test('getEnvPrefix returns SEMANTIUS by default', () => {
+      setEnvPrefix('SEMANTIUS');
+      expect(getEnvPrefix()).toBe('SEMANTIUS');
+    });
+
+    test('setEnvPrefix uppercases the prefix', () => {
+      setEnvPrefix('prod');
+      expect(getEnvPrefix()).toBe('PROD');
+    });
+
+    test('getRequiredEnvVarNames returns vars with default prefix', () => {
+      setEnvPrefix('SEMANTIUS');
+      expect(getRequiredEnvVarNames()).toEqual(['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG']);
+    });
+
+    test('getRequiredEnvVarNames reflects custom prefix', () => {
+      setEnvPrefix('STAGING');
+      expect(getRequiredEnvVarNames()).toEqual(['STAGING_API_KEY', 'STAGING_ORG']);
+    });
+  });
+
+  describe('getUserConfigDir', () => {
+    test('returns a non-empty string', () => {
+      const dir = getUserConfigDir();
+      expect(typeof dir).toBe('string');
+      expect(dir.length).toBeGreaterThan(0);
+    });
+
+    test('includes "semantius" in the path', () => {
+      expect(getUserConfigDir().toLowerCase()).toContain('semantius');
+    });
+
+    test('returns platform-appropriate path', () => {
+      const dir = getUserConfigDir();
+      if (process.platform === 'win32') {
+        // Should be under AppData\Roaming or USERPROFILE
+        expect(dir).toMatch(/[Ss]emantius/);
+      } else {
+        expect(dir).toContain('.config/semantius');
+      }
     });
   });
 });

@@ -41,13 +41,19 @@ any agent harness that loads Agent Skills, including Claude Code.
 
 ## Output
 
-A single folder under the user's Claude skills root containing **two
-files**:
+A single folder under the user's Claude skills root. Two top-level
+files are always written; `references/` and `scripts/` subfolders are
+written only when the JTBD classifier in Step 2 (Pass 3) puts work
+there.
 
 ```
 <skills-root>/<modelslug>/
-├── SKILL.md     # for the calling agent, terse, recipe-dense
-└── README.mdx   # for humans browsing a skill catalog, narrative + diagram
+├── SKILL.md          # for the calling agent: glossary, JTBD outlines, guardrails
+├── README.mdx        # for humans browsing a catalog: narrative + diagram
+├── references/       # optional, per-JTBD detail, loaded on demand
+│   └── <jtbd-slug>.md
+└── scripts/          # optional, deterministic ops, invoked not loaded
+    └── <op-slug>.sh
 ```
 
 `SKILL.md` is what an agent harness loads at runtime. `README.mdx` is a
@@ -56,6 +62,15 @@ gallery so a person can browse available skills, understand each one's
 purpose at a glance, and decide whether to install it. The two files
 share a folder, but their audiences and formats are different, do not
 collapse them, and do not skip the README.
+
+The `references/` and `scripts/` subfolders exist to keep SKILL.md
+small. SKILL.md is loaded into context *every* time the skill triggers;
+a reference file is loaded only when the agent enters that specific
+JTBD; a script is never loaded, the agent invokes it. A 400-line
+SKILL.md plus a handful of focused 80-line reference files costs less
+per trigger than a 900-line monolith, because the agent typically
+engages one JTBD at a time. The classifier in Step 2 (Pass 3) decides
+which JTBD belongs in which file.
 
 `<modelslug>` is the model's `system_slug` converted to kebab-case ,
 **underscores become dashes** (e.g. `customer_relations` →
@@ -269,6 +284,131 @@ defaults (no merit signals), drop it. List dropped candidates in the Step
 4 summary as `skipped: pure CRUD against <table>, calling agent uses
 use-semantius directly`. This is not a failure; it is the design.
 
+#### Pass 3, Classify each surviving JTBD into a file
+
+For each JTBD that passed the merit test, decide where its body lives.
+The default is **reference**. Inline and script are exceptions earned
+by specific shape.
+
+**Inline (kept in SKILL.md body).** Reserve for JTBDs whose entire
+recipe is one POST or PATCH with no read-first, no client-side
+composition, no branching. Rare; most JTBDs that earned a merit signal
+have at least one of these. If the inline body would exceed ~5 lines
+of recipe, promote to reference.
+
+**Script (`scripts/<op-slug>.sh`).** The decision rule for "script vs
+reference" is **one** test, not a checklist:
+
+> Does any branch in this recipe require the **agent** to ask the
+> **user** something before continuing?
+
+If no, it's a script. The script reads its parents, composes any
+labels internally, recomputes any stored values internally, validates
+preconditions, and either succeeds (exit 0) or refuses with a
+diagnostic message and non-zero exit. The agent invokes it with a
+small set of arguments (titles, emails, codes, dates) and checks the
+exit code; the script body never loads into context.
+
+What is *not* a judgment branch (these all stay in scripts):
+
+- Label composition. `feature_vote_label = "{user_full_name} -> {feature_title}"`
+  is mechanical: read the parents, format the string, no agent
+  involvement. The script reads the rows it composes from.
+- Computed values. `rice_score = (reach * impact * confidence) / effort`
+  is mechanical: read current values, overlay caller's deltas,
+  arithmetic, PATCH the result. Round to the column scale; if the
+  inputs make the result undefined (effort null/zero), set the
+  computed field to null and exit 0 with a diagnostic, do not exit
+  non-zero.
+- Mechanical preconditions ("refuse if release_status is `released`
+  or `cancelled`", "refuse if effort_score is null"). The script
+  checks, exits 1 with a clear message, and the agent surfaces the
+  message to the user. That is *not* the agent asking the user
+  something; that is the script telling the agent it cannot proceed.
+- Dedupe-on-junction. "PATCH if the row exists, POST if not" is a
+  fixed branch on what the read returned; the agent does not
+  intervene.
+
+What *is* a judgment branch (these belong in references):
+
+- "Ask the user before rewriting a committed row's history."
+- "Ask the user before charging this work to an inactive cost
+  center."
+- "Ask the user whether to abort or recreate when the parent was
+  deleted."
+
+Anything that needs a yes/no from the user **mid-operation** is a
+reference. Everything else is a script.
+
+The script must also satisfy two structural requirements that follow
+from being callable by the agent:
+
+- Idempotent: re-running with the same inputs is safe. Filter writes
+  to "rows that still need the change", not "all rows in the parent
+  set"; running twice is then a deterministic no-op on the second
+  run.
+- Failure messages are diagnostic: name the step that failed and
+  what the agent should tell the user (e.g. "step 1: feature
+  '<title>' not found, ask the user for the correct title"), so the
+  agent can recover or escalate without re-reading the script body.
+
+**Reference (`references/<jtbd-slug>.md`).** Use this when the recipe
+has a judgment branch that needs the agent to mediate a user
+confirmation (the test above). The reference file owns the
+read-first calls, the branching prose, the user-prompt phrasing, and
+the long failure-mode discussion. The agent loads the reference only
+when it enters the JTBD; reading it is part of the operation.
+
+A JTBD's classification controls the SKILL.md template body for that
+section: inline carries the full recipe; reference and script carry
+only Triggers, Inputs, a one-line Recipe pointer, Validation, and a
+terse Failure-modes summary, with the long body living in the linked
+file. The classification belongs in the Step 4 summary so the user
+can sanity-check it.
+
+**Pass 3 is mandatory. "Inline" is a rare exception, not a default.**
+Every merit signal that earned a JTBD a section in Pass 2
+(caller-populated label, computed field, DB-unguarded lifecycle gate,
+cascade flow, junction without uniqueness, materialization handoff,
+side-effect fields on transition) is *also* a reason the JTBD belongs
+in `references/` rather than inline. If you find yourself classifying
+every surviving JTBD as inline, you have not classified, you have
+skipped Pass 3. Re-read the merit table: each signal's recipe needs
+read-first, branch, compose, recompute, or cascade logic that runs to
+~30+ lines including comments. None of that fits the inline criterion
+(≤5 lines, no branching, no composition).
+
+Concrete shape of a healthy classification, derived from prior
+generations applied with the sharpened "user-prompt branch" rule:
+
+- A skill with 5–10 JTBDs typically produces 3–5 reference files,
+  3–5 script files, and 0–2 inline JTBDs. A run that produces zero
+  reference files is suspicious (most domains have at least one
+  user-confirmation branch); a run that produces zero script files
+  is almost always a misclassification (most domains have at least
+  one cascade or pure-mechanical operation).
+- The ratio of reference + script to inline should be at least 3:1.
+  If your classification gives you 7 inline + 1 reference, walk back
+  through the merit table and force yourself to name, for each inline
+  JTBD, why it has *zero* of: read-first, label composition, computed
+  recompute, cascade, branching. If you cannot, the JTBD is at least
+  a reference, possibly a script.
+- Cascade-shaped JTBDs (Pattern A side effects + Pattern C
+  materialization, e.g. "ship the release" with a feature-status
+  sweep) are scripts, unless they carry a user-confirmation branch.
+- Dedupe-on-junction JTBDs (Pattern junction-without-uniqueness, e.g.
+  "vote on a feature", "tag a feature") are scripts. The label
+  composition is mechanical and the script reads the parents to
+  compose; do not promote to reference just because the label is
+  caller-populated.
+- Computed-field recompute JTBDs (e.g. "score with RICE",
+  "recalculate total amount") are scripts. The arithmetic is
+  mechanical; the script reads current values and writes the new
+  ones in one PATCH.
+- Lifecycle-gate JTBDs (Pattern A, e.g. "triage", "schedule",
+  "approve") are references when at least one transition needs a
+  user confirmation, scripts otherwise.
+
 #### Sizing
 
 After filtering, aim for **5–10 sections** plus the optional `Common
@@ -396,6 +536,48 @@ audit rows write themselves. Example: "Audit-logged: `opportunities`,
 `accounts`, Semantius writes the audit rows; recipes don't manage
 them.">
 
+## Lookup convention
+
+<This block lives at the SKILL.md top level, not per-JTBD, so the
+agent reads it once per trigger and applies it everywhere. The recipe
+files under `references/` may name the column they resolve, but they
+do not re-explain `wfts` vs `eq`.>
+
+Semantius adds a `search_vector` column to searchable entities for
+full-text search across all text fields. Use it whenever the user
+passes a name, title, email, or description, not a UUID:
+
+```bash
+semantius call crud postgrestRequest '{"method":"GET","path":"/<table>?search_vector=wfts(simple).<term>&select=id,<label_column>"}'
+```
+
+Use `wfts(simple).<term>` for fuzzy text searches; never `ilike` and
+never `fts`, they bypass the search index and mismatch the platform
+convention.
+
+Field-equality (`<column>=eq.<value>`) is the right tool for a
+*different* job: filtering on a known-exact value. Use it for UUIDs,
+FK ids, status enums, and unique columns whose values the caller
+already knows verbatim (e.g. `tag_name`, `user_email`, `release_name`,
+`cost_center_code`). The two patterns are not in competition:
+`wfts(simple)` resolves a fuzzy human input to a row; `eq` selects
+rows whose column exactly equals a known value.
+
+If a lookup returns more than one row, present the candidates and
+ask. If zero, ask the user to clarify rather than guessing.
+
+## Timestamps in recipe bodies
+
+<Top-level rule, named once here, never restated per JTBD.>
+
+Every `*_at` field, `*_date` field, or other moment-of-action value in
+a recipe body is a placeholder the calling agent fills at call time,
+not a literal copied from the example. The Recipe templates use
+`<current ISO timestamp>` and `<today's date, YYYY-MM-DD>`; do not
+copy those strings into a real call. This applies in SKILL.md, in
+every reference file, in the Common queries appendix, and in any
+script the calling agent invokes.
+
 ---
 
 ## Jobs to be done
@@ -412,75 +594,47 @@ not alphabetically.>
 
 | Name | Required | Notes |
 |---|---|---|
-| `<input>` | yes/no | <where it comes from> |
+| `<input>` | yes/no | <where it comes from; resolved by `<column>=eq.<value>` if exact, `search_vector=wfts(simple).<term>` if fuzzy> |
 
-If a required input is missing, look it up first via `postgrestRequest`
-against the relevant table, don't ask the user unless the lookup is
-ambiguous.
+The Inputs table must be **internally consistent with the routing
+rules below**: do not list a status value as an accepted input here
+and then say "for that value, route to JTBD Y". If a value belongs
+elsewhere, drop it from this table.
 
-**Lookup convention (bake one example into every JTBD that takes a
-human-friendly identifier):** Semantius adds a `search_vector` column
-to searchable entities for full-text search across all text fields.
-Use it whenever the user passes a name, title, email, code, etc., not
-a UUID:
+**Recipe:** see [`references/<jtbd-slug>.md`](references/<jtbd-slug>.md).
 
-```bash
-# Resolve a feature by anything the user typed (title, description, etc.)
-semantius call crud postgrestRequest '{"method":"GET","path":"/features?search_vector=wfts(simple).<term>&select=id,feature_title"}'
-```
+*(Reference shape, used when the JTBD was classified `reference` in
+Step 2 Pass 3. The full recipe body, lookup-then-compose-then-write,
+including any branching, label composition, and computed-value
+recompute, lives in the linked file. Do not paste it here.)*
 
-Use `wfts(simple).<term>` for fuzzy text searches, never `ilike` and
-never `fts`, they bypass the search index and mismatch the platform
-convention.
+*(Script shape, used when the JTBD was classified `script`:)*
+**Recipe:** run `scripts/<op-slug>.sh <arg1> <arg2>`. The agent
+invokes; do not paste the script body here. Exit `0` on success,
+non-zero with the failed step on error.
 
-Field-equality (`<column>=eq.<value>`) is the right tool for a
-*different* job: filtering on a known-exact value. Use it for UUIDs,
-FK ids, status enums, and unique columns whose values the caller
-already knows verbatim (`tag_name`, `user_email`, `release_name`).
-The two are not in competition, `wfts(simple)` resolves a fuzzy human input
-to a row; `eq` selects rows whose column exactly equals a known value.
-
-If a lookup returns more than one row, present the candidates and
-ask; if zero, ask the user to clarify rather than guessing.
-
+*(Inline shape, only when classified `inline` in Pass 3, ≤5 lines of
+recipe, no branching:)*
 **Recipe:**
 
 ```bash
-# 1. Look up the lead
-semantius call crud postgrestRequest '{"method":"GET","path":"/leads?email=eq.foo@bar.com&select=id,lead_status"}'
-
-# 2. Verify status is `qualified`
-
-# 3. Create the opportunity
-semantius call crud postgrestRequest '{
-  "method":"POST",
-  "path":"/opportunities",
-  "body":{
-    "lead_id":"<id from step 1>",
-    "stage":"prospecting",
-    "amount":50000,
-    "owner_employee_id":"<owner>"
-  }
-}'
-
-# 4. Mark the lead as converted
-semantius call crud postgrestRequest '{
-  "method":"PATCH",
-  "path":"/leads?id=eq.<id>",
-  "body":{"lead_status":"converted"}
-}'
+semantius call crud postgrestRequest '{"method":"POST","path":"/<table>","body":{...}}'
 ```
 
 **Validation:** <2–3 short post-conditions, only the ones that have
-actually been broken in practice.>
+actually been broken in practice. The reference file may carry deeper
+validation; this list is what an agent skimming the SKILL.md needs to
+sanity-check the call.>
 
-**Failure modes:** <2–3 most likely failures, each paired with a
-*recovery action* the calling agent can take, not just "this fails":
+**Failure modes:** <1–2 most-likely failures, each paired with a
+*recovery action*. Long lists belong in the reference file's extended
+failure-modes section; here, surface only what an agent needs to bail
+out cleanly. Examples:
 
-- `409 on accounts.opportunity_id` (uniqueness) → an account already
-  exists for this opportunity; PATCH the existing row instead.
-- FK violation on `lead_id` → the lead was deleted; ask the user
-  whether to recreate it or abort the conversion.>
+- `409 on <table>.<column>` (uniqueness) → row already exists; PATCH
+  the existing row instead.
+- FK violation on `<column>` → the parent was deleted; ask the user
+  whether to recreate or abort.>
 
 ---
 
@@ -600,6 +754,261 @@ skill at all. Make it slightly pushy:
 - List 4–6 verb-phrasings spanning the JTBDs, including informal forms
   ("close this deal" alongside "set opportunity to closed_won").
 - Mention `use-semantius` so the matcher learns the two skills compose.
+
+### Step 3.2, Write the reference files (one per JTBD classified `reference`)
+
+For every JTBD that Pass 3 classified as `reference`, write a sibling
+file at `<skills-root>/<modelslug>/references/<jtbd-slug>.md`. The
+slug matches the SKILL.md `<jtbd-slug>` link target byte-for-byte, the
+agent will fail to load the file if the link drifts. Use a short
+verb-phrase slug (`schedule-feature.md`, `cast-vote.md`,
+`ship-release.md`), not a full sentence.
+
+The reference file is loaded by the calling agent **only** when it
+enters that specific JTBD. SKILL.md has already been read by then, so
+the agent knows the glossary, enums, FK cheatsheet, lookup
+convention, timestamp rule, and guardrails. Do not restate any of
+those. The reference file owns the recipe body and any rules that
+only matter inside this JTBD.
+
+#### Reference file template
+
+```markdown
+# <Job title (matches SKILL.md ### heading verbatim)>
+
+<One opening sentence: what this recipe does and the most
+load-bearing invariant. No marketing, no value-prop, the agent has
+already chosen this recipe. Example: "Cast or update a vote on a
+feature. The `(feature_id, user_id)` junction has no DB-level
+uniqueness, so the recipe must read first.">
+
+## Composition rules
+
+<Required only when this JTBD composes a caller-populated label or
+recomputes a stored field. Spell out the algorithm so two callers
+given the same inputs produce byte-identical output. "If possible",
+"approximately", and "around N characters" are banned, replace with
+deterministic rules: where to cut, what separator, whether to
+append an ellipsis, how to round.>
+
+- `<feature_vote_label>`: composed as
+  `"{user.user_full_name} -> {feature.feature_title}"`. ASCII arrow
+  ` -> ` (space-hyphen-greater-space). The values come from the
+  read-first calls in step 1; do not invent.
+- `<rice_score>`: computed as
+  `(reach * impact * confidence) / effort`. Round to <N> decimals
+  to match the `numeric(<precision>, <scale>)` column scale, no
+  truncation, no implicit float drift. If `effort` is null or zero
+  after the patch, write `rice_score: null` rather than a
+  placeholder.
+
+## Recipe
+
+```bash
+# Step 1: parallel-fetch (no dependency between these reads).
+# expect: each response is a non-empty JSON array with an "id" field.
+# If either is empty, refuse and tell the user "<entity> '<value>'
+# not found"; the next step depends on these ids.
+semantius call crud postgrestRequest '{"method":"GET","path":"/<table>?<filter>&select=<cols>"}'
+semantius call crud postgrestRequest '{"method":"GET","path":"/<other>?<filter>&select=<cols>"}'
+
+# Step 2: <branch / compute / refuse logic with explicit conditions,
+#         e.g. "if release_status in (released, cancelled), refuse">
+
+# Step 3: <write> (paired fields go in one call, never split).
+# expect: response echoes the inserted/updated row(s); if [], the
+# filter matched zero rows and the write was a no-op. Surface that
+# to the user instead of silently continuing.
+semantius call crud postgrestRequest '{
+  "method":"<POST|PATCH>",
+  "path":"/<table>[?<filter>]",
+  "body":{<resolved body>}
+}'
+
+# Step 4: <verify the post-condition the validation block claims>.
+# expect: the row's <field> equals <expected value>; if not, the
+# write did not take effect. Investigate before declaring success.
+```
+
+Annotate each recipe step's leading comment with **what the step
+depends on** AND **what the agent should expect from the response**.
+- Independent reads carry the leading comment "parallel-fetch (no
+  dependency)" so the agent runs them in one round trip.
+- Dependent steps name what they consume from earlier steps.
+- Every `GET` carries an `# expect:` line naming the field that must
+  be present and the action to take if it is absent. The default
+  failure shape is "refuse and tell the user '<entity> not found'";
+  the recipe overrides only when the JTBD has a specific recovery.
+- Every `POST` / `PATCH` / `DELETE` whose effect is supposed to
+  change state carries an `# expect:` line describing the response
+  that confirms the change. A PATCH that filters zero rows succeeds
+  silently (exit 0, body `[]`); the recipe must instruct the agent
+  to read back and verify, or the silent no-op corrupts downstream
+  reasoning.
+
+The semantics of "exit 0 with empty body means the lookup found
+nothing" is described once in `use-semantius`, in the "Response
+handling: exit code is not enough" section. The reference does not
+re-explain it; the per-step `# expect:` annotations exist so the
+agent does not have to consult that section mid-recipe to remember
+to check.
+
+## Validation
+
+<Three or four post-conditions, including any deeper invariants the
+SKILL.md outline only summarised. Each one must be checkable from a
+single GET; if you cannot, fix the recipe so it can.>
+
+## Failure modes (extended)
+
+<Long-form discussion of every failure that matters: triggering
+condition, why it happens, the exact recovery procedure (often a
+follow-up call), how to detect after-the-fact that this failure
+happened, and whether the recovery is safe to run blindly or needs a
+user confirmation. Pair every failure with a recovery, not just a
+description.>
+```
+
+#### What goes into a reference file, vs what stays in SKILL.md
+
+The split exists so SKILL.md stays small. Apply the test for each
+piece of content:
+
+- *Every JTBD touches it* (lookup convention, timestamp rule,
+  glossary, enums, FK cheatsheet, guardrails) → SKILL.md only.
+- *Only this JTBD touches it* (recipe body, JTBD-specific
+  composition rules, extended failure modes, computed-field rounding)
+  → reference file.
+- *Some JTBDs touch it, others don't* (e.g. junction-without-uniqueness
+  warning) → SKILL.md FK cheatsheet calls it out at the entity level
+  (the cheap-to-read part); the affected reference files name the
+  exact recovery action.
+
+A reference file aimed at fewer than ~40 lines means the JTBD
+probably belongs inline in SKILL.md after all, the file split has
+overhead (an extra read). A reference file growing past ~120 lines
+means either the JTBD is doing two jobs (split it) or the reference
+is restating SKILL.md material (delete the duplicates).
+
+### Step 3.3, Write the script files (one per JTBD classified `script`)
+
+For every JTBD that Pass 3 classified as `script`, write a sibling
+file at `<skills-root>/<modelslug>/scripts/<op-slug>.sh`. Mark it
+executable in the comment header; the calling agent invokes the
+script through the shell rather than reading it into context.
+
+The script's contract is its **inputs**, **exit codes**, and **stdout
+on success**. The agent never reads the body, so the body must be
+self-defending: validate args, refuse on bad preconditions, never
+silently leave half-state.
+
+#### Script file template
+
+```bash
+#!/usr/bin/env bash
+# <op-slug>.sh: <one-line purpose, e.g. "Ship a release: PATCH the
+# release row, sweep its planned/in_progress features to shipped,
+# verify the sweep is complete.">
+#
+# Usage: <op-slug>.sh <arg1> <arg2> [optional]
+# Exit:  0 on success
+#        1 on usage/validation failure (bad args, precondition not met)
+#        2 on platform error (semantius call failed)
+#
+# Idempotent: re-running with the same inputs is safe. Partial-state
+# recovery: on failure, print the failed step and exit non-zero; the
+# next run resumes from where it left off.
+set -euo pipefail
+
+if [ "$#" -lt <N> ]; then
+  echo "Usage: $(basename "$0") <arg1> <arg2> [optional]" >&2
+  exit 1
+fi
+arg1="$1"
+arg2="$2"
+
+# Step 1: read.
+# Two checks are MANDATORY after every read:
+#   (a) exit-code guard: catches transport failure (semantius exit 1/2/3)
+#   (b) empty-result guard: catches "exit 0 + body []" (PostgREST returns
+#       an empty array for a GET that finds zero rows; that is success at
+#       the protocol layer and "not found" at the domain layer)
+result=$(semantius call crud postgrestRequest "{\"method\":\"GET\",\"path\":\"/<table>?<filter>&select=<cols>\"}") \
+  || { echo "step 1 (read <table>) failed" >&2; exit 2; }
+if ! printf '%s' "$result" | grep -q '"id"'; then
+  echo "step 1: <entity> '<lookup-value>' not found; ask the user for the correct <field>" >&2
+  exit 1
+fi
+# Optional further precondition checks on parsed fields (status, etc.)
+# follow the same shape: extract, test, exit 1 with a diagnostic.
+
+# Step 2..N: write, then verify.
+semantius call crud postgrestRequest "{...}" \
+  || { echo "step 2 (write <table>) failed" >&2; exit 2; }
+# A PATCH with a filter that hits zero rows succeeds silently (exit 0,
+# body []). When step 2 is a stateful change, follow with a verify-read
+# that re-fetches the row and checks the expected post-condition.
+
+semantius call crud postgrestRequest "{...}" \
+  || { echo "step 3 (sweep <child>) failed; release row already updated, retry will be a no-op for already-shipped rows" >&2; exit 2; }
+
+echo "<op-slug>: ok"
+```
+
+#### Empty-result handling is not optional
+
+Every `semantius call ... GET ...` in a script must be paired with
+**both** an exit-code guard **and** an empty-result guard. The exit
+code catches transport-level problems (bad args, server error,
+network); the empty-result check catches the most common silent
+failure (the lookup returned no rows, which is exit 0 + body `[]`).
+Neither subsumes the other. A script that has only the exit-code
+guard will pass an empty `id` to the next step and either crash
+opaquely or PATCH zero rows silently.
+
+Canonical empty-result patterns:
+
+```bash
+# After a GET that should return one row by id or unique key
+if ! printf '%s' "$row" | grep -q '"id"'; then
+  echo "step N: <entity> '<value>' not found" >&2; exit 1
+fi
+
+# After a GET that extracts a specific field and tests its value
+status=$(printf '%s' "$row" | grep -oE '"<col>":"[^"]+"' | head -n1 | sed 's/.*:"\(.*\)"/\1/')
+if [ -z "$status" ]; then
+  echo "step N: <entity> '<value>' not found" >&2; exit 1
+fi
+
+# After a GET that should return a count of rows still matching a state
+count=$(printf '%s' "$rows" | grep -oE '"id"' | wc -l | tr -d ' ')
+if [ "$count" != "0" ]; then
+  echo "step N: <description of what is still wrong>" >&2; exit 2
+fi
+```
+
+Use `jq` if it is available (the platform mostly assumes it isn't);
+the `grep -oE` patterns above work without `jq`.
+
+#### Conventions every script follows
+
+- **First-line shebang `#!/usr/bin/env bash`**, `set -euo pipefail`
+  immediately after, no exceptions. Silent failures in shell are how
+  cascade scripts leave half-state.
+- **Validate args before any platform call.** Print usage to stderr,
+  exit 1. The agent reads stderr to recover.
+- **Exit codes are part of the contract.** 0 = ok, 1 = bad inputs,
+  2 = platform error. Don't invent more codes; the agent only
+  branches on these three.
+- **Failure messages name the failed step.** `step 3 (sweep
+  <child>) failed` is recoverable; `error` is not.
+- **Idempotent.** A repeat run on partially-applied state must
+  either complete or be a deterministic no-op. For cascade scripts,
+  filter writes to "rows still in the source state", not "all rows
+  in the parent set"; running twice then becomes safe.
+- **No interactive prompts.** The agent invokes non-interactively.
+  If the operation needs a user confirmation, the JTBD is a
+  `reference`, not a `script`.
 
 ### Step 3.4 (Write the README.mdx, human-facing catalog entry)
 
@@ -1111,11 +1520,101 @@ generated skill pays the cost. Fix issues in place; surface anything
 you can't fix without a design change in the Step 4 summary as a
 known limitation.
 
-Run the pass against four general principles. The bullets under each
+Run the pass against the principles below. Principle 0 is a
+structural-compliance check that runs **first** because it catches
+the single most common defect from prior generations: skipping Pass 3
+entirely and emitting a monolithic SKILL.md. The remaining principles
 are *examples* of what to look for, drawn from defects observed in
 prior generations, they are not exhaustive, and the principle is
 what should drive the review on a new model where the specific defects
 may be different.
+
+**0. Pass 3 was actually applied (structural compliance).** Run this
+check **before** anything else. It is mechanical and detects the
+"agent skimmed past the classification step" failure mode that has
+caused more re-runs than every other defect combined.
+
+Walk every `### <JTBD>` heading in the SKILL.md body. For each one,
+locate its `**Recipe:**` block and apply this rule:
+
+- *Pointer form is one line.* The acceptable shapes are exactly:
+  `**Recipe:** see [`references/<slug>.md`](references/<slug>.md).`
+  or `**Recipe:** run \`scripts/<slug>.sh <args>\`.` plus optional
+  one-sentence elaboration about exit codes.
+- *Inline form is ≤5 lines of bash inside a single fenced code block,
+  no `# Step N:` comments, no branching prose between steps.* If the
+  recipe block has step comments, multiple `semantius call`
+  invocations in sequence, or paragraphs of "if X, refuse" between
+  bash lines, it is **not** inline. It belongs in
+  `references/<slug>.md` and the SKILL.md body must shrink to the
+  pointer form.
+
+Count the JTBDs that violate one of those shapes (call this `V`) and
+the JTBDs Pass 3 classified as `inline` (call this `I_classified`).
+If `V > 0` **or** `V != I_classified`, Pass 3 was bypassed. Stop the
+self-review. Go back, re-classify the violating JTBDs as `reference`
+or `script`, write the corresponding files in `references/` or
+`scripts/`, and replace the inline body in SKILL.md with the pointer
+form. Then re-run this check from the top. Do not advance to
+Principle 1 until `V == I_classified`.
+
+Two separate count-based enforcements, applied after the per-JTBD
+shape check:
+
+- *Zero `references/` files with 5+ JTBDs:* unusual but not
+  automatically wrong. Verify by walking each JTBD's body and
+  confirming none of them carries a "ask the user before X"
+  branch. Most domains have at least one such branch (charging to
+  an inactive cost center, rewriting committed history, deleting
+  with cascade). If you find one, it is a reference; promote it.
+- *Zero `scripts/` files with 5+ JTBDs:* almost certainly a
+  misclassification. Walk each reference and apply the
+  "user-prompt branch" test from Pass 3: does this recipe actually
+  need the *agent* to ask the *user* something, or does it just
+  read, compute, validate, and write? If the latter, demote it to
+  a script. Composition rules and computed-value recompute do not
+  count as user-prompt branches; they are mechanical and belong in
+  scripts. Cascade flows almost always belong in scripts.
+
+**Empty-result handling, in scripts and references.** This is the
+third structural check, applied per file. The semantius CLI returns
+exit 0 with body `[]` for any GET that finds zero rows; the exit
+code does not catch this. Every `semantius call ... GET ...` in
+either a script or a reference must be paired with an explicit
+empty-result check.
+
+For each `<op>.sh` in `scripts/`:
+
+1. Count `semantius call ... GET` invocations (call this `R`).
+2. Count empty-result guards immediately following them: any of
+   `if ! ... grep -q '"id"'`, `if [ -z "$<var>" ]`, `[ "$count" =
+   "0" ]`, or equivalent. (The exit-code guard `|| { ...; exit 2;
+   }` does NOT count for this check; it is a separate guarantee.)
+3. Empty-result guards must equal `R`. If they don't, the script
+   is incomplete; add the missing guards.
+
+For each `<jtbd>.md` in `references/`:
+
+1. Count `semantius call ... GET` invocations in the `## Recipe`
+   block (call this `R`).
+2. Count `# expect:` annotations on those invocations.
+3. Annotations must equal `R`. If a GET has no `# expect:` line,
+   add one naming the field that must be present and the action
+   to take if it is absent. The default action is "refuse and tell
+   the user '<entity> not found'".
+4. Repeat for every `POST`, `PATCH`, `DELETE` in the recipe whose
+   effect is supposed to change state: each needs an `# expect:`
+   line describing the response that confirms the change. A PATCH
+   with a filter that hits zero rows succeeds silently (exit 0,
+   body `[]`); without the verify step, the no-op corrupts
+   downstream reasoning.
+
+If the JTBD is so simple that no GET has a meaningful "not found"
+case (e.g. the only read is by a UUID the agent just created), the
+`# expect:` annotation can say so explicitly: `# expect: row exists
+because we just POSTed it; if [], a concurrent delete happened,
+abort and tell the user`. The annotation still appears; it cannot
+be omitted just because the failure case is rare.
 
 **1. Self-contained at runtime.** The calling agent should never need
 to consult the **source model file** or a deployment-specific config
@@ -1200,6 +1699,83 @@ If a new platform convention shows up in the use-semantius references
 that this list doesn't mention, treat the principle ("match the
 platform") as the authority and add the new convention to the recipes ,
 the bullets above will lag.
+
+**5. Recipes are reproducible.** Two callers given the same inputs
+must produce byte-identical output. Most "weird drift" bugs in
+generated skills trace to phrases that *seem* deterministic but are
+not.
+
+- *Composition rules are exact.* For every caller-populated label
+  field (`*_label` on a junction or sub-entity), the rule names a
+  precise algorithm: separator characters (with whitespace),
+  cut points (column counts on which side of which boundary),
+  fallback when the input is shorter than the cut, casing.
+  Phrases like "first ~80 characters", "trim at a word boundary
+  if possible", "approximately N", "around" are bans, replace with
+  rules a script could implement: "first 80 chars of `comment_body`;
+  if char 80 falls mid-word, cut at the last space at or before
+  position 80; if the body was longer than the cut, append the
+  literal `…` (U+2026), no trailing space."
+- *Symbols are consistent across the file tree.* If the composition
+  uses ` -> ` (ASCII), every example, every guardrail, every
+  validation note uses ` -> `; do not mix ASCII and Unicode arrows
+  (`→`), do not switch separators between examples
+  (` / `, ` | `, ` -> `). Pick one set per skill and apply.
+- *Computed values specify rounding.* A formula like
+  `(reach * impact * confidence) / effort` over a `numeric(p, s)`
+  column with `s = 2` requires the recipe to round to 2 decimals
+  before the PATCH; otherwise the float-to-stored cast truncates
+  the value and the `Validation` post-condition ("`rice_score`
+  equals the formula") fails on a tiny rounding diff. Name the
+  scale and the rounding behavior in the recipe.
+- *Side-effect timestamps are placeholders.* Every `*_at`,
+  `*_date`, `submitted_at`, `voted_at`, `posted_at`,
+  `actual_release_date` field in a recipe body is a placeholder, the
+  rule lives once at the SKILL.md top level, the per-JTBD reminder
+  has been deleted. Re-search the file tree for hardcoded ISO dates
+  and ISO timestamps; any hit is a defect.
+
+**6. Cross-section coherence.** Each fact stated in one place must
+not be silently contradicted in another.
+
+- *Inputs tables match routing rules.* If a JTBD's prose says "for
+  status X, route to JTBD Y instead", then X must not appear in
+  this JTBD's `Inputs` table as a valid value. The contradiction
+  forces the agent to guess. Drop X from the table and say outright
+  which targets this JTBD owns.
+- *Cube queries reference columns the glossary names.* If `Common
+  queries` uses `<Entity>.sum_<column>` or `<Entity>.<dimension>`,
+  the underlying column must appear in the glossary, FK cheatsheet,
+  or "what the entity carries" line. A query mentioning
+  `Features.sum_estimated_cost` with no `estimated_cost` named
+  anywhere else in SKILL.md leaves the agent unable to verify the
+  field exists; it will guess and write a query that 500s.
+- *SKILL.md outlines and reference files agree on the recipe shape.*
+  Open the reference file and read its `## Recipe`. The steps,
+  the writes, and the validation must match what SKILL.md's
+  `Validation` and `Failure modes` summary claim. If the SKILL.md
+  failure-modes mentions a `409 on <column>` and the reference
+  recipe never POSTs to that column, one of them drifted; fix.
+- *Reference-file slugs match SKILL.md links.* For every
+  `references/<jtbd-slug>.md` link in SKILL.md, the file exists at
+  that exact path. For every reference file written, the SKILL.md
+  links to it. List both sets and diff.
+- *Script names match SKILL.md invocations.* For every
+  `scripts/<op-slug>.sh` mentioned in a SKILL.md `Recipe:` line,
+  the script exists, and its `Usage:` comment matches the args the
+  SKILL.md tells the agent to pass.
+
+**Final pass: read it cold.** After applying principles 1–6, set the
+files aside for a moment, then read SKILL.md top-to-bottom as if
+encountering it for the first time, and skim each reference file
+once. Where you backtrack, re-read, or pause to figure out what a
+sentence means, the writing is doing more work than it should. The
+specific defects that show up here are usually patterns the earlier
+principles missed because they were too local: a glossary that
+introduces a term still used unexplained in a JTBD three sections
+later, a guardrail that contradicts a JTBD's failure-mode recovery,
+a "see X" pointer where X never quite delivers what the pointer
+promises. Tighten in place.
 
 ---
 
@@ -1390,11 +1966,16 @@ helps them spot drift if they regenerate later.
 Print to the user:
 
 - The folder created: `<skills-root>/<modelslug>/` (state which root was
-  used, project or user) and the two files inside it (`SKILL.md` and
-  `README.mdx`). If only one file is present, the run is incomplete.
-- The **sections written** (one bullet each, with the merit signal that
-  earned the spot, e.g. "Vote on a feature, junction without uniqueness
-  + caller-populated label").
+  used, project or user) and the files inside it. The two top-level
+  files (`SKILL.md`, `README.mdx`) are required, missing either means
+  the run is incomplete. List `references/` and `scripts/` contents
+  if any were written.
+- The **sections written** (one bullet each), with the merit signal
+  that earned the spot **and** the Pass-3 classification, e.g.
+  - "Vote on a feature, junction without uniqueness + caller-populated
+    label, **reference** (`references/cast-vote.md`)"
+  - "Ship a release, cascade flow, **script** (`scripts/ship-release.sh`)"
+  - "Capture a feature, simple POST with no branching, **inline**"
 - The **Common queries** baked into the appendix (titles only).
 - The **dropped candidates** with reasons (e.g. "manage-tag, pure CRUD
   on `tags`, no merit signal, calling agent uses use-semantius
@@ -1402,8 +1983,17 @@ Print to the user:
 - The **self-review result** from Step 3.5, either "no issues found"
   or the principles you touched and what you changed (e.g.
   "Principle 1: replaced 2 hardcoded timestamps with placeholders;
-  Principle 3: surfaced `tag_name` uniqueness in the glossary"). This
-  gives the user a quick audit trail.
+  Principle 3: surfaced `tag_name` uniqueness in the glossary;
+  Principle 5: tightened `comment_label` cut-rule to a deterministic
+  algorithm; Principle 6: dropped `planned` from the Triage Inputs
+  table to remove a contradiction with the Schedule routing rule").
+  This gives the user a quick audit trail.
+- The **file-tree size profile**, one line:
+  `SKILL.md <N> lines, references/ <M> files (<lo>-<hi> lines each),
+  scripts/ <K> files`. Surfacing this gives the user a feel for
+  whether the split landed in a reasonable place; a 700-line SKILL.md
+  with empty `references/` is a signal the classifier was too
+  conservative.
 
 ---
 
@@ -1415,14 +2005,21 @@ Print to the user:
 
 ## Re-running on an updated model
 
-Safe by design: regenerate into the same target folder. Both
-`SKILL.md` and `README.mdx` are overwritten in place, there are no
-orphan files to clean up because the output is exactly two files.
+Regenerate into the same target folder. `SKILL.md` and `README.mdx`
+are overwritten in place. The `references/` and `scripts/` folders
+need a small extra step: a JTBD that existed in the previous run but
+no longer earns a Pass-3 spot leaves an orphan file behind. Before
+writing, list the existing `references/*.md` and `scripts/*.sh`,
+diff against the new generation's output, and **ask the user** before
+deleting any orphan: it may have been hand-edited or referenced
+externally. Default to keeping orphans and noting them in the Step 4
+summary as "stale, not regenerated, consider removing".
 
-If the user has hand-edited either file, ask before overwriting, diff
-first, then merge or replace. The `README.mdx` is the more likely
+If the user has hand-edited any file, ask before overwriting, diff
+first, then merge or replace. The `README.mdx` is the most likely
 candidate for hand-editing (humans tweak narrative copy more often
-than agents tweak recipes), so check it specifically.
+than agents tweak recipes); reference files are a close second
+(domain experts often refine the failure-mode prose).
 
 ## Failure modes
 

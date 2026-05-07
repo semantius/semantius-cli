@@ -22,9 +22,12 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_SECONDS,
+  getRequiredEnvVarNames,
+  getUserConfigDir,
   listServerNames,
   loadConfig,
   loadDotEnv,
+  setEnvPrefix,
 } from './config.js';
 import {
   ErrorCode,
@@ -46,6 +49,7 @@ interface ParsedArgs {
   withMarkdown: boolean;
   configPath?: string;
   diag: boolean;
+  envPrefix: string;
 }
 
 /**
@@ -117,6 +121,7 @@ function parseArgs(args: string[]): ParsedArgs {
     withDescriptions: false,
     withMarkdown: false,
     diag: false,
+    envPrefix: 'SEMANTIUS',
   };
 
   const positional: string[] = [];
@@ -159,6 +164,18 @@ function parseArgs(args: string[]): ParsedArgs {
           process.exit(ErrorCode.CLIENT_ERROR);
         }
         break;
+
+      case '--env': {
+        const prefix = args[++i];
+        if (!prefix) {
+          console.error(
+            formatCliError(missingArgumentError('--env', 'prefix')),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        result.envPrefix = prefix.toUpperCase();
+        break;
+      }
 
       default:
         // Single '-' is allowed (stdin indicator), but other dash-prefixed args are options
@@ -325,9 +342,9 @@ function parseArgs(args: string[]): ParsedArgs {
  * Print help message
  */
 function printHelp(): void {
-  const missingVars = ['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG'].filter(
-    (v) => !process.env[v],
-  );
+  const requiredVars = getRequiredEnvVarNames();
+  const missingVars = requiredVars.filter((v) => !process.env[v]);
+  const configDir = getUserConfigDir();
 
   console.log(`
 semantius v${VERSION} - CLI for the Semantius platform
@@ -352,6 +369,7 @@ Options:
   -d, --with-descriptions  Include tool descriptions
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
   --diag                   (call only) Output full JSON response instead of just response.data
+  --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
 
 Output:
   semantius/info/grep      Human-readable text to stdout
@@ -366,19 +384,22 @@ Examples:
   semantius info crud create_record                # Show tool schema
   semantius call crud create_record '{}'           # Call tool
   cat input.json | semantius call crud create_record  # Read from stdin (no '-' needed)
+  semantius --env PROD info crud                   # Use PROD_API_KEY / PROD_ORG
 
 Environment Variables:
-  SEMANTIUS_API_KEY      API key for Semantius (required)
-  SEMANTIUS_ORG          Organization name for Semantius (required)
+  ${requiredVars[0].padEnd(22)} API key for Semantius (required)
+  ${requiredVars[1].padEnd(22)} Organization name for Semantius (required)
   MCP_NO_DAEMON=1        Disable connection caching (force fresh connections)
   MCP_DAEMON_TIMEOUT=N   Set daemon idle timeout in seconds (default: 60)
 
+Config file location:
+  ${configDir}${configDir.endsWith('\\') || configDir.endsWith('/') ? '' : '/'}  (.env or mcp_servers.json)
 ${
   missingVars.length > 0
     ? `
 ⚠  Missing required environment variables:
 ${missingVars.map((v) => `   ${v}`).join('\n')}
-   Set these in a .env file next to the executable or export them in your shell.`
+   Set these in ${configDir}/.env or export them in your shell.`
     : ''
 }`);
 }
@@ -388,8 +409,7 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
  * Exits with an error listing each missing variable by name.
  */
 function checkRequiredEnvVars(): void {
-  const required = ['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG'];
-  const missing = required.filter((v) => !process.env[v]);
+  const missing = getRequiredEnvVarNames().filter((v) => !process.env[v]);
 
   if (missing.length > 0) {
     for (const v of missing) {
@@ -416,6 +436,9 @@ function buildTarget(server?: string, tool?: string): string {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
+  // Apply env prefix before anything that reads env vars
+  setEnvPrefix(args.envPrefix);
+
   if (args.command === 'help') {
     // Load .env early so help can reflect actual missing vars
     await loadDotEnv();
@@ -426,14 +449,12 @@ async function main(): Promise<void> {
   if (args.command === 'version') {
     await loadDotEnv();
     console.log(`semantius v${VERSION}`);
-    const missingVars = ['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG'].filter(
-      (v) => !process.env[v],
-    );
+    const missingVars = getRequiredEnvVarNames().filter((v) => !process.env[v]);
     if (missingVars.length > 0) {
       console.log(`
 ⚠  Missing required environment variables:
 ${missingVars.map((v) => `   ${v}`).join('\n')}
-   Set these in a .env file next to the executable or export them in your shell.`);
+   Set these in ${getUserConfigDir()}/.env or export them in your shell.`);
     }
     return;
   }

@@ -180,3 +180,46 @@ Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 4. **`reference_table` mandates relational format** — Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
 5. **Warn before risky changes** — Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
 6. **Link after schema changes** — Provide the UI link: `https://tests.semantius.app/{module_name}/{table_name}`
+
+## Response handling: exit code is not enough
+
+A semantius `call` exits non-zero only on **transport-level** problems
+(bad args, network failure, server error). The most common
+business-level outcome (a `GET` that finds zero rows) exits **0**
+with body `[]`. That is success at the protocol layer and "not found"
+at the domain layer. Treating exit code alone as the success signal
+silently passes empty results downstream and corrupts every dependent
+write.
+
+| Outcome | Exit | stdout | What to do |
+|---|---|---|---|
+| Row(s) found | 0 | `[{...}, ...]` | Use the row(s) |
+| **No rows found (the most common silent failure)** | **0** | **`[]`** | **Refuse the dependent write; tell the user "<entity> '<value>' not found"** |
+| Bad args, missing config | 1 | error message on stderr | Fix args; do not retry |
+| Server / tool error | 2 | error message on stderr | Surface to user; usually a real bug |
+| Network error | 3 | error message on stderr | Retry once, then surface |
+
+**Always inspect the body after a read.** Either parse the JSON and
+check the array is non-empty, or grep for the field you expect. In
+shell scripts, the canonical pattern is:
+
+```bash
+row=$(semantius call crud postgrestRequest "{...GET...}") \
+  || { echo "step N (<what>) failed" >&2; exit 2; }
+if ! printf '%s' "$row" | grep -q '"id"'; then
+  echo "step N: <entity> '<value>' not found" >&2
+  exit 1
+fi
+```
+
+The exit-code guard catches transport failures (exit 2). The
+`grep -q` catches the empty-result business failure (exit 0 + `[]`).
+Both are needed; neither subsumes the other.
+
+A `POST` or `PATCH` that succeeds returns the inserted/updated rows
+(or `[]` if `Prefer: return=minimal` was set, but the platform does
+not set that by default). A `DELETE` returns the deleted rows. So the
+same "exit 0 + `[]` means did-nothing" rule applies to writes that
+match zero rows: a PATCH with a filter that hits no rows succeeds
+silently. Always read back to verify when the operation is supposed
+to change state.

@@ -102,4 +102,55 @@ describe('Startup env variable validation', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain('MISSING_ENV_VAR');
   });
+
+  describe('--env prefix flag', () => {
+    test('--env PROD requires PROD_API_KEY instead of SEMANTIUS_API_KEY', async () => {
+      const result = await runCliWithEnv(['--env', 'PROD', 'grep', '*'], {
+        PROD_ORG: 'test-org',
+        // PROD_API_KEY intentionally omitted
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('MISSING_ENV_VAR');
+      expect(result.stderr).toContain('PROD_API_KEY');
+      expect(result.stderr).not.toContain('SEMANTIUS_API_KEY');
+    });
+
+    test('--env PROD requires PROD_ORG instead of SEMANTIUS_ORG', async () => {
+      const result = await runCliWithEnv(['--env', 'PROD', 'grep', '*'], {
+        PROD_API_KEY: 'test-key',
+        // PROD_ORG intentionally omitted
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('MISSING_ENV_VAR');
+      expect(result.stderr).toContain('PROD_ORG');
+      expect(result.stderr).not.toContain('SEMANTIUS_ORG');
+    });
+
+    test('--env prefix is case-insensitive (lowercased prefix is uppercased)', async () => {
+      const result = await runCliWithEnv(['--env', 'prod', 'grep', '*'], {
+        PROD_API_KEY: 'test-key',
+        // PROD_ORG intentionally omitted
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('PROD_ORG');
+    });
+
+    test('--env PROD passes env check when PROD vars are set', async () => {
+      const result = await runCliWithEnv(['--env', 'PROD', 'grep', 'nonexistent-tool-xyz'], {
+        PROD_API_KEY: 'test-key',
+        PROD_ORG: 'test-org',
+      });
+      expect(result.stderr).not.toContain('MISSING_ENV_VAR');
+    });
+
+    test('SEMANTIUS vars do not satisfy --env PROD check', async () => {
+      const result = await runCliWithEnv(['--env', 'PROD', 'grep', '*'], {
+        SEMANTIUS_API_KEY: 'test-key',
+        SEMANTIUS_ORG: 'test-org',
+        // PROD_* intentionally not set
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('MISSING_ENV_VAR');
+    });
+  });
 });

@@ -57,7 +57,7 @@ semantius call crud create_entity '{"data": {...}}'
 ## High-Level Workflow
 
 ```
-1. Parse PRD  →  2. Inspect Semantius  →  3. Plan & Present  →  4. Execute  →  5. Verify  →  6. Sample Data?
+1. Parse PRD  →  2. Inspect Semantius  →  3. Plan & Present  →  4. Execute  →  5. Verify  →  6. Hand-off  →  7. Seed (if accepted)
 ```
 
 Work through each stage in order. Narrate what you're doing at each step.
@@ -446,7 +446,7 @@ For each confirmed extension, also share the UI link to the sibling table so the
 
 ---
 
-## Stage 5: Verify
+## Stage 5: Verify (catalog only — not the finish line)
 
 After all creates are done:
 
@@ -454,17 +454,31 @@ After all creates are done:
 2. `read_field` per entity — confirm field count matches the model (minus auto-generated)
 3. Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`)
 
-Print a final summary: "✅ Done. Created 1 module, 2 permissions, 5 entities, 47 fields. Reused built-ins: users. Additive fields on built-ins: 2."
+Print a verification summary: "✅ Catalog verified. Created 1 module, 2 permissions, 5 entities, 47 fields. Reused built-ins: users. Additive fields on built-ins: 2."
+
+**Do not say "done" here.** This stage proves the writes landed; it is *not* the closing message. The deploy is not finished until Stage 6 hand-off has been delivered and the Stage 7 sample-data question has been answered (or explicitly waived). If your draft of this stage's reply contains the word "done", rewrite it before sending.
 
 ---
 
-## Closing Contract — clean and sticky
+## Stage 6: Hand-off (clean and sticky closing)
 
-The final assistant message of a deployment session is a **call-to-action**, not a recap. It must contain exactly three things, in this order, and nothing else:
+Stage 5 verified the catalog. This stage is the actual closing of the deploy — without it, the user is left looking at "✅ Catalog verified" with no UI link and no offer of demo data, and the session feels half-finished. **You do not get to call the deploy done until you have delivered this hand-off message.**
+
+The hand-off message is a **call-to-action**, not a recap. It must contain exactly three things, in this order, and nothing else:
 
 1. One status line: `The <System Name> model is live in Semantius ✅`
 2. **Open in UI:** `https://tests.semantius.app/<module_name>` — module landing page, on its own line, prominent (use a markdown link so it's clickable, e.g. `[Open <System Name> in Semantius →](https://tests.semantius.app/<module_name>)`).
-3. The Stage 6 sample-data offer.
+3. The sample-data offer — verbatim: `Would you like me to generate 10 realistic sample records for each newly-created entity?`
+
+Full template:
+
+> The `<System Name>` model is live in Semantius ✅
+>
+> [Open `<System Name>` in Semantius →](https://tests.semantius.app/<module_name>)
+>
+> Would you like me to generate 10 realistic sample records for each newly-created entity?
+
+If the user accepts, proceed to Stage 7. If they decline, stop cleanly. If they don't answer (e.g. they ask a follow-up question instead), the sticky rule below applies.
 
 Everything else — what was created, what was skipped, why built-ins were reused, counts, per-entity links, caveats, justifications — belongs in the Stage 5 verification summary **before** this closing block, separated by a horizontal rule (`---`). Do not mix the two. The closing must not contain reasoning, parentheticals, or "by the way" notes; those dilute the call to action.
 
@@ -472,15 +486,9 @@ This block is **sticky**: if a follow-up turn (audit, "did I miss anything?", fi
 
 ---
 
-## Stage 6: Sample Data
+## Stage 7: Seed sample data (only if accepted)
 
-After verification, the closing message asks:
-
-> The `<System Name>` model is live in Semantius ✅
->
-> [Open `<System Name>` in Semantius →](https://tests.semantius.app/<module_name>)
->
-> Would you like me to generate 10 realistic sample records for each newly-created entity?
+Reached only when the user accepts the offer made in Stage 6. If they decline, skip this stage entirely.
 
 ### Scope — whose tables get sample data
 

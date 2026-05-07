@@ -1,7 +1,7 @@
 /**
  * Markdown dump command - Output full documentation as markdown
  *
- * Shows README.md, SKILL.md, then all servers with all tools and descriptions.
+ * Shows README.md, then all servers with their instructions and tool schemas.
  * Useful for LLMs to get a complete picture of the CLI and available tools.
  */
 
@@ -200,10 +200,7 @@ export async function markdownCommand(options: MarkdownOptions): Promise<void> {
   // 1. README.md
   sections.push(readDocFile('README.md'));
 
-  // 2. SKILL.md
-  sections.push(readDocFile('SKILL.md'));
-
-  // 3. All servers with all tools and descriptions
+  // 2. All servers with all tools and descriptions
   let config: McpServersConfig;
   try {
     config = await loadConfig(options.configPath);

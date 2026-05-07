@@ -52,7 +52,7 @@ jobs:
         run: bun install --frozen-lockfile
       
       - name: Run unit tests
-        run: bun test tests/config.test.ts tests/output.test.ts tests/client.test.ts tests/errors.test.ts tests/grep.test.ts
+        run: bun test tests/*.test.ts
       
       - name: Pre-cache MCP filesystem server
         run: npx --yes --package=@modelcontextprotocol/server-filesystem -- node -e "0"

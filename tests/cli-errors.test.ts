@@ -248,12 +248,6 @@ describe('CLI Error Handling Tests', () => {
       expect(result.stdout).toContain('semantius');
     }, 10000);
 
-    test('-md outputs SKILL.md content', async () => {
-      const result = await runCli(['-md']);
-      expect(result.exitCode).toBe(0);
-      // SKILL.md contains skill front matter with 'name: semantius'
-      expect(result.stdout).toContain('name: semantius');
-    }, 10000);
   });
 
   describe('Invalid JSON arguments (LLM mistakes)', () => {

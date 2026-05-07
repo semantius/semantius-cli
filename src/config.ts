@@ -160,6 +160,42 @@ export function isStdioServer(
 }
 
 // ============================================================================
+// Env Prefix State
+// ============================================================================
+
+let _envPrefix = 'SEMANTIUS';
+
+export function setEnvPrefix(prefix: string): void {
+  _envPrefix = prefix.toUpperCase();
+}
+
+export function getEnvPrefix(): string {
+  return _envPrefix;
+}
+
+export function getRequiredEnvVarNames(): string[] {
+  return [`${_envPrefix}_API_KEY`, `${_envPrefix}_ORG`];
+}
+
+// ============================================================================
+// User Config Directory
+// ============================================================================
+
+/**
+ * Returns the platform-appropriate user config directory for semantius.
+ * Windows: %APPDATA%\semantius
+ * Linux/macOS: ~/.config/semantius
+ */
+export function getUserConfigDir(): string {
+  const home = homedir();
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+    return join(appData, 'semantius');
+  }
+  return join(home, '.config', 'semantius');
+}
+
+// ============================================================================
 // .env File Loading
 // ============================================================================
 
@@ -210,36 +246,57 @@ function parseDotEnv(content: string): Record<string, string> {
 }
 
 /**
- * Load a .env file and populate process.env.
+ * Load a single .env file into process.env.
  * Shell environment takes precedence — existing vars are never overwritten.
- * Searches for .env in the given directory, the executable directory, and cwd.
+ * Returns true if the file was found and read.
+ */
+async function loadEnvFile(envPath: string): Promise<boolean> {
+  if (!existsSync(envPath)) return false;
+
+  const content = await Bun.file(envPath).text();
+  const vars = parseDotEnv(content);
+
+  let loaded = 0;
+  for (const [key, value] of Object.entries(vars)) {
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+      loaded++;
+    }
+  }
+
+  debug(`Loaded ${loaded} variable(s) from ${envPath}`);
+  return true;
+}
+
+/**
+ * Load .env files and populate process.env.
+ * Shell environment takes precedence — existing vars are never overwritten.
+ *
+ * Search order (first local .env found wins; user config dir always checked as fallback):
+ *   1. searchDir (config file's directory or user-specified)
+ *   2. Executable directory (for installs where binary lives next to .env)
+ *   3. Current working directory
+ *   4. User config dir (~/.config/semantius on Linux/macOS, %APPDATA%\semantius on Windows)
  */
 export async function loadDotEnv(searchDir?: string): Promise<void> {
-  // Also search the directory containing the executable (for Windows installs)
   const execDir = dirname(process.execPath);
-  const dirs = [searchDir, execDir, process.cwd()].filter(Boolean) as string[];
+  const localDirs = [searchDir, execDir, process.cwd()].filter(
+    Boolean,
+  ) as string[];
   const seen = new Set<string>();
 
-  for (const dir of dirs) {
+  // Load the first local .env found (project/install-specific takes precedence)
+  for (const dir of localDirs) {
     const envPath = join(dir, '.env');
     if (seen.has(envPath)) continue;
     seen.add(envPath);
+    if (await loadEnvFile(envPath)) break;
+  }
 
-    if (!existsSync(envPath)) continue;
-
-    const content = await Bun.file(envPath).text();
-    const vars = parseDotEnv(content);
-
-    let loaded = 0;
-    for (const [key, value] of Object.entries(vars)) {
-      if (process.env[key] === undefined) {
-        process.env[key] = value;
-        loaded++;
-      }
-    }
-
-    debug(`Loaded ${loaded} variable(s) from ${envPath}`);
-    return; // Stop after first .env found
+  // Always try user config dir as global fallback for any unset vars
+  const userConfigEnvPath = join(getUserConfigDir(), '.env');
+  if (!seen.has(userConfigEnvPath)) {
+    await loadEnvFile(userConfigEnvPath);
   }
 }
 
@@ -462,25 +519,27 @@ function substituteEnvVarsInObject<T>(obj: T): T {
 
 /**
  * Built-in default configuration used when no mcp_servers.json is found.
- * References ${SEMANTIUS_API_KEY} and ${SEMANTIUS_ORG} which are substituted
- * from environment variables at load time.
+ * References env vars based on the current env prefix (default: SEMANTIUS).
  */
-export const DEFAULT_CONFIG: McpServersConfig = {
-  mcpServers: {
-    crud: {
-      url: 'https://${SEMANTIUS_ORG}.semantius.ai/mcp',
-      headers: {
-        'x-api-key': '${SEMANTIUS_API_KEY}',
-      },
-    } as HttpServerConfig,
-    cube: {
-      url: 'https://${SEMANTIUS_ORG}.semantius.io/mcp',
-      headers: {
-        'x-api-key': '${SEMANTIUS_API_KEY}',
-      },
-    } as HttpServerConfig,
-  },
-};
+export function getDefaultConfig(): McpServersConfig {
+  const prefix = _envPrefix;
+  return {
+    mcpServers: {
+      crud: {
+        url: `https://\${${prefix}_ORG}.semantius.ai/mcp`,
+        headers: {
+          'x-api-key': `\${${prefix}_API_KEY}`,
+        },
+      } as HttpServerConfig,
+      cube: {
+        url: `https://\${${prefix}_ORG}.semantius.io/mcp`,
+        headers: {
+          'x-api-key': `\${${prefix}_API_KEY}`,
+        },
+      } as HttpServerConfig,
+    },
+  };
+}
 
 /**
  * Get default config search paths
@@ -533,7 +592,7 @@ export async function loadConfig(
       // No config file found — use built-in default config
       debug('No config file found; using built-in default config');
       await loadDotEnv();
-      return substituteEnvVarsInObject(DEFAULT_CONFIG);
+      return substituteEnvVarsInObject(getDefaultConfig());
     }
   }
 
