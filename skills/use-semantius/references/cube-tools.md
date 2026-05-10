@@ -1,6 +1,6 @@
 # Cube Tool Reference
 
-The `cube` server exposes 4 tools implementing a **CubeJS-compatible API**. Queries follow the standard CubeJS JSON query format — measures, dimensions, filters, timeDimensions, and analysis modes (funnel, flow, retention). Always call `discover` first in every session to get the current schema and the authoritative query language reference.
+The `cube` server exposes 4 tools implementing a **CubeJS-compatible API**. Queries follow the standard CubeJS JSON query format, measures, dimensions, filters, timeDimensions, and analysis modes (funnel, flow, retention). Always call `discover` first in every session to get the current schema and the authoritative query language reference.
 
 ---
 
@@ -15,15 +15,15 @@ The `cube` server exposes 4 tools implementing a **CubeJS-compatible API**. Quer
 | `limit` | number | no | Max results to return. Default: `10` |
 | `minScore` | number | no | Minimum relevance score 0–1. Default: `0.1` |
 
-**Returns three things — read all before writing any query:**
+**Returns three things, read all before writing any query:**
 
 | Key | What it contains |
 |-----|-----------------|
 | `cubes` | Available cubes with measures, dimensions, join relationships, and metadata hints (`eventStream` flag for funnels, etc.) |
-| `queryLanguageReference` | **Complete** TypeScript DSL: field naming, filter operators, time dimensions, analysis modes (funnel/flow/retention). This is the authoritative source — do not construct queries from memory. |
+| `queryLanguageReference` | **Complete** TypeScript DSL: field naming, filter operators, time dimensions, analysis modes (funnel/flow/retention). This is the authoritative source, do not construct queries from memory. |
 | `dateFilteringGuide` | Decision tree for date filtering vs time grouping. Read this whenever the user mentions any time period. |
 
-The `joins` property on each cube shows related cubes. You can include dimensions from **any** related cube in your query — the system auto-joins them.
+The `joins` property on each cube shows related cubes. You can include dimensions from **any** related cube in your query, the system auto-joins them.
 
 ```bash
 # Broad discover
@@ -68,7 +68,7 @@ Executes a semantic query and returns data. Requires `discover` to have been cal
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | object | yes | Semantic query object — see cube-queries.md for full DSL |
+| `query` | object | yes | Semantic query object, see cube-queries.md for full DSL |
 
 Supports regular queries (measures/dimensions), funnel, flow, and retention analysis modes.
 
@@ -93,7 +93,7 @@ Same as `load` but renders an interactive chart in the UI. Takes an additional o
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | object | yes | Same format as `load` |
-| `chart` | object | no | Chart configuration — type, axis config, display options |
+| `chart` | object | no | Chart configuration, type, axis config, display options |
 
 **Chart configuration:**
 

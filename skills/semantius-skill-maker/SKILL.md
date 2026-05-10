@@ -31,6 +31,38 @@ The generated skill is plain Agent Skills format, a `SKILL.md` with
 YAML frontmatter under a folder named after the model, and works in
 any agent harness that loads Agent Skills, including Claude Code.
 
+## Writing conventions (apply to every file and message this skill produces)
+
+These rules apply to chat output, the generated SKILL.md, the generated README.mdx, every reference file, and every script this skill writes.
+
+**1. US English spellings, always.** Never British English. Examples (left = correct US form, right in backticks = banned British form): optimize (not `optimise`), behavior (not `behaviour`), modeling (not `modelling`), customize (not `customise`), recognize (not `recognise`), labeled (not `labelled`), materialize (not `materialise`), organization (not `organisation`), summarize (not `summarise`), categorize (not `categorise`), uncategorized (not `uncategorised`), normalize (not `normalise`), harmonize (not `harmonise`), analyze (not `analyse`). When in doubt between two spellings, pick the `-ize` / `-or` / `-er` form.
+
+**2. No em-dashes (`—`, U+2014).** Banned everywhere this skill writes: SKILL.md, README.mdx, semantic-model citations, references, scripts, and chat output. **This propagates.** LLMs mirror the style of their context, so an em-dash inside generator prose causes generated skills to emit em-dashes too. Replace with: `X — Y` parenthetical → `X (Y)` or `X, Y`; `X — but Y` contrast → `X. But Y.` or `X; Y`; `A — B — C` triplet → split into two sentences. The en-dash (`–`) and hyphen (`-`) are fine in number ranges and compound words; the ban is on `—` used as punctuation. Before writing any file, literal-search for `—` and convert each instance.
+
+**3. Singular-subject grammar in confirmation prompts.** "Looks good?" not "Look good?"; "Sounds right?" not "Sound right?". Use the form that agrees with the singular implicit subject.
+
+**4. README.mdx catalog-description rules.** The README.mdx this skill generates is rendered side-by-side with other skills in a catalog gallery. These are hard constraints for catalog readability:
+
+- **Front-matter `description`**: one sentence, ≤140 characters, unique value-prop for *this* skill. **Never** starts with "This skill" and **never** contains the substring "this skill". Do not just restate the domain. **Shape: verb-led, names actual capabilities** (e.g. "Manages the recruiting funnel from requisition through application, interview, offer, and hire."). Do **not** use the "[verb] [object] so [outcome]" shape; the "so..." clause reads as trigger-fodder, not a capability list.
+- **Front-matter `title` and the `#` heading**: must always contain the word "Skill", and must read as natural English. If the source `system_name` ends in "System" (e.g. "Applicant Tracking System"), drop "System" and append "Skill" → "Applicant Tracking Skill". Otherwise append "Skill" directly: "Workforce Planning Skill", "Product Roadmap Skill", "Customer Relations Skill".
+- **Body, immediately after heading**: repeat the *model's* domain description verbatim (or near-verbatim), pulled from the model file's `domain` front-matter or §1 narrative. The body describes the SYSTEM, not the skill. The skill's unique angle lives only in the front-matter `description`.
+- **No `generated_from` key** in README front-matter.
+- Validate before declaring done: literal-search for "this skill" (must be zero hits) and `—` (must be zero hits), and check the heading contains "Skill".
+
+**5. Semantius entity-label symmetry (when the generated SKILL.md cites entity labels).** `singular_label` is the bare singular noun matching `plural_label`. ✅ `Product` / `Products`. ❌ `Product Name` / `Products`. The skill-maker reads these from the source model file; if the source has an asymmetric pair, treat the source as buggy and ask the user to fix the model via the analyst before re-running the skill-maker (do not paper over it in generated output).
+
+---
+
+## Schema compatibility: `EXPECTED_MAJOR = 1`
+
+This skill expects model files written by `semantic-model-analyst` major `1`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Step 2. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected; the resulting per-domain skill would bake in stale recipes. Three cases:
+
+- **Older major**, the file was written using a structure this skill no longer understands (different section numbering, different table shapes, missing fields). Tell the user to run `semantic-model-analyst`; its archived-knowledge mode reads the older file and re-authors a current-major file from the same semantic content. Re-run skill-maker against the new file.
+- **Newer major**, the file was written by a newer analyst than this skill knows. Tell the user to update `semantius-skill-maker` before retrying.
+- **Missing `version` key** (legacy, pre-versioning), treat as major `0`; same response as older-major.
+
+When the analyst's major bumps, this skill's `EXPECTED_MAJOR` must be bumped in lock-step (same commit when feasible). The trio of analyst, deployer, and skill-maker share the major.
+
 ---
 
 ## Inputs
@@ -94,9 +126,12 @@ neither exists, ask before creating one.
 
 ### Source-of-truth and the model reference
 
-The generated SKILL.md is **self-contained at runtime**, its glossary,
-enums, FK cheatsheet, and recipes resolve every value at generation time so
-the calling agent never needs to open the model file to act.
+The generated SKILL.md is **self-contained at runtime** for the
+cross-cutting facts (glossary, enums, recipes resolve every value
+at generation time so the calling agent never needs to open the
+model file to act). FK shape and audit-logging detail live with the
+JTBD that uses them, not in SKILL.md, see "Where FK detail lives"
+below.
 
 The model file is still referenced, but only as **provenance metadata in
 frontmatter** (`semantic_model:` key, see the template below), not as a
@@ -139,16 +174,21 @@ stop and ask the user.
 
 ### Step 2, Parse the model
 
-Read `MODEL_PATH` and extract:
+Read `MODEL_PATH` and **gate on the version first** before extracting anything else. Compare the file's front-matter `version` major against this skill's `EXPECTED_MAJOR` (see "Schema compatibility" near the top). Major equal → continue. Major older or missing → stop with a message naming the file's version, this skill's expected major, and the recommended fix (run the analyst's audit to migrate). Major newer → stop and ask the user to update this skill. Do not parse anything else when the gate fails; the file's structure may not match what the rest of Step 2 assumes.
+
+Once the version gate passes, extract:
 
 - `system_slug`, `system_name`, `domain` from frontmatter.
 - Entity list with `singular_label`, `label_column`, fields (name, format,
   required), enum values (§5), FK relationships (§4), parent/cascade-child
-  flags, `audit_log`.
+  flags, `audit_log`, **`computed_fields`** array, and **`validation_rules`**
+  array. The two latter blocks are platform-enforced JsonLogic — they change
+  what the calling agent must do and what the calling agent must NOT do.
+  See "Pass 2" merit-test adjustments below.
 
 Compute `modelslug = system_slug.replace(/_/g, "-")`.
 
-Refuse if §6.1 lists open blockers, the model is not finished and the
+Refuse if §7.1 lists open blockers, the model is not finished and the
 skill would bake in wrong recipes.
 
 ### Step 3, Plan jobs to be done
@@ -233,7 +273,7 @@ Do **not** nominate any of the following, they fall outside the
   `use-semantius` directly; an extra section is just noise.
 - **Seed / sample / test-data population.** One-off developer work,
   not a recurring job. If the user wants a seed script, ask separately.
-- **Entities listed in §6.2 "Future considerations"**, they don't
+- **Entities listed in §7.2 "Future considerations"**, they don't
   exist yet.
 - **Pure read-by-id lookups**, the calling agent uses
   `postgrestRequest` directly.
@@ -270,9 +310,9 @@ of the following:
 | Merit signal | What to check in the model |
 |---|---|
 | **Caller-populated label** | Junction or sub-entity has a required `*_label` column distinct from any `label_column`, with no DB-level default. The recipe must compose the label client-side, not obvious from the schema alone. |
-| **Computed field** | A stored numeric/derived field (e.g. `rice_score`, `total_amount`, `days_open`) whose value depends on sibling fields. The recipe must recompute on every relevant PATCH. |
-| **DB-unguarded lifecycle gate** | Status enum where some transitions are valid and others aren't, but the DB accepts any value. The recipe must read-before-write. |
-| **DB-unguarded invariant across FKs** | E.g. `features.release_id` and `features.product_id` must agree on product. The recipe must read both rows and check before patching. |
+| **Computed field (NOT platform-managed)** | A stored numeric/derived field (e.g. `rice_score`, `total_amount`, `days_open`) whose value depends on sibling fields **and is NOT covered by the entity's `computed_fields` JsonLogic block**. The recipe must recompute on every relevant PATCH. **If the model's `computed_fields` already derives the value, this signal is suppressed** — the platform overwrites caller payloads on every write, so the recipe must NOT include the derived field in POST/PATCH bodies (callers cannot set it; the platform owns it). Document the field as platform-derived in the JTBD prose instead. **Gap-tracking:** when this signal fires AND the model's entity carries no matching `computed_fields[].name`, record the candidate in a `platform_enforceable_gaps` list (see "Track platform-enforceable gaps" below) for the Step 3 confirmation checkpoint. The merit signal still earns the JTBD a section (the recipe is still needed as a stopgap), but the human gets one more chance to push the rule into the model. |
+| **DB-unguarded lifecycle gate** | Status enum where some transitions are valid and others aren't, but the DB accepts any value, **and the entity's `validation_rules` block does NOT enforce the gate**. The recipe must read-before-write. **If a `validation_rules` entry already gates the transition, this signal is suppressed** — the platform rejects the bad write with a structured error and the recipe just needs to surface that error to the user, not pre-validate. Reference the platform error's `code` in the JTBD's failure-modes block. **Gap-tracking:** when this signal fires AND no `validation_rules` entry on the entity gates the transition, record the candidate in `platform_enforceable_gaps`. Same logic as the computed-field row above: the JTBD still earns a section (the recipe enforces the rule client-side as a stopgap), and the human is told. |
+| **DB-unguarded invariant across FKs** | E.g. `features.release_id` and `features.product_id` must agree on product. The recipe must read both rows and check before patching. Cross-row constraints are out of scope for `validation_rules` (entity-level only), so this signal is **not** suppressed by the platform. |
 | **Cascade flow** | Flipping one parent row should flip a filtered set of children in the same logical operation (e.g. release-shipped → its planned/in-progress features → shipped). |
 | **Junction without uniqueness** | M:N junction without a DB-level unique constraint on the natural key. The recipe must dedupe-before-insert. |
 | **Materialization / handoff** | One entity row spawns rows in a different table (Pattern C). The order, FK back-pointers, and source-status flip are easy to get wrong. |
@@ -283,6 +323,37 @@ If the only thing a candidate does is single-table CRUD with the platform
 defaults (no merit signals), drop it. List dropped candidates in the Step
 4 summary as `skipped: pure CRUD against <table>, calling agent uses
 use-semantius directly`. This is not a failure; it is the design.
+
+##### Track platform-enforceable gaps
+
+While walking the merit table, maintain a side list `platform_enforceable_gaps`
+keyed by entity. Append an entry whenever the **Computed field** or
+**DB-unguarded lifecycle gate** signal fires **and** the entity's model
+block does not already capture the rule:
+
+- **Computed-field gap.** A field's §3 prose names a derivation
+  (`(reach × impact × confidence) / effort`, "subtotal of line amounts",
+  "days between open_date and close_date") and the entity's
+  `computed_fields` array carries no entry whose `name` matches that
+  field. Record `{entity, field, kind: "computed_field", evidence:
+  "<the §3 prose snippet>"}`.
+- **Lifecycle-gate gap.** The §3 prose for a status enum (or any
+  field-level invariant) names a constraint ("only set X once Y is
+  committed", "X cannot decrease", "X required when Y is `paid`")
+  and no `validation_rules` entry on the entity encodes it. Record
+  `{entity, field, kind: "validation_rule", evidence: "<the §3 prose
+  snippet>"}`.
+
+The detection is **conservative**: only fire when the §3 prose names the
+derivation or constraint explicitly. Do not infer rules the analyst did
+not write down — that is the analyst's job, not the skill-maker's.
+
+This list does **not** suppress JTBD generation. The merit signal still
+earns the JTBD a section (the recipe enforces the rule client-side as a
+stopgap, see the "Gap-tracking" notes in the merit table). The list is
+purely for the Step 3 confirmation checkpoint, so the human can decide
+whether to pause and add the rule to the model via the analyst skill, or
+accept the stopgap recipe.
 
 #### Pass 3, Classify each surviving JTBD into a file
 
@@ -419,19 +490,165 @@ queries` appendix.
   or extend `use-semantius` with a glossary file instead.
 - More than ~10 sections after filtering: a single skill that long
   under-triggers, the description gets diluted and the matcher loses
-  signal. Push back: ask the user whether the lower-merit candidates
-  can drop, or whether the model is really two domains stitched into
-  one (suggest splitting the model file). Proceed only if they confirm.
+  signal. Run Step 3.5 (Cluster check) below; it inspects the entity
+  graph for natural cut points and proposes a split when one exists.
+  If no clean split surfaces, push back to the user: drop the
+  lower-merit candidates, or split the model file itself. Proceed
+  with one oversized skill only if the user confirms.
+
+### Step 3.5, Cluster check
+
+After Pass 3 classifies every JTBD, before presenting the
+confirmation checkpoint, inspect the model for natural sub-domain
+cuts. Most models generate cleanly as one skill; a minority
+(typically ITIL-shaped or multi-process domains) read as two or
+three loosely coupled sub-domains stitched into one model file.
+A skill that spans loose sub-domains under-triggers for the same
+reason an oversized skill does, the description has to cover too
+many vocabularies and the matcher loses signal.
+
+Run this step on **every** generation, regardless of JTBD count.
+The size-based threshold in Sizing is one trigger for splitting,
+not the only one; a 7-JTBD model split into two clear clusters
+of 4 and 3 still benefits from being two skills.
+
+#### Compute the cluster signal
+
+1. **Build an undirected graph.** Nodes are the model's entities
+   (§3). Edges are FK relationships from §4, weighted by count
+   (multi-FK pairs get higher weight). Skip edges to ubiquitous
+   hub entities, `users`, `departments`, and any §6 cross-model
+   targets, they connect to almost everything and obscure the
+   real clustering.
+2. **Find candidate clusters.** A simple greedy modularity walk
+   is enough; you do not need a full community-detection library
+   here. Start with each entity in its own cluster and merge the
+   pair whose merger most improves the within/cross edge ratio
+   until further merges stop improving it. Aim for 2–4 clusters;
+   stop merging when only one cluster remains or when the next
+   merge would drop the ratio.
+3. **Assign each JTBD to a cluster.** A JTBD lives in the cluster
+   that owns the majority of its touched entities (parents,
+   children, joined targets in lookups). JTBDs that span clusters
+   (e.g. one that joins entities from both) count as cross-cluster
+   and are flagged separately.
+4. **Compute the cut score.** `cross_edges / (within_edges +
+   cross_edges)`. Lower is better, a model with two genuine
+   sub-domains scores < 0.20; a tightly interlocked single-domain
+   model scores > 0.40.
+
+#### Surface a split proposal only when all of these hold
+
+- ≥ 2 clusters with ≥ 3 JTBDs each. (Smaller clusters are not
+  skill-shaped; fold them into the larger neighbor.)
+- Cut score < 0.25.
+- ≤ 2 cross-cluster JTBDs. More than that means the recipes
+  routinely span both halves and splitting forces the calling
+  agent to load both skills anyway, defeating the point.
+- Each cluster has its own distinct trigger vocabulary (the
+  cluster's JTBD verb-phrases would not naturally appear in the
+  other cluster's description). If the same verbs (`approve`,
+  `assign`, `close`) dominate both clusters, the matcher will
+  thrash even with a split.
+
+If any condition fails, the model generates as one skill and
+Step 3.5 produces no extra prompt.
+
+#### When all conditions hold, propose the split
+
+Add this to the Step 3 confirmation checkpoint as a fourth list,
+**before** writing files. Example shape:
+
+> The entity graph splits cleanly into two clusters:
+>
+> **Cluster A: `<slug>-incidents`** (entities: incidents,
+> incident_comments, incident_categories; JTBDs: log incident,
+> resolve incident, link to problem, post comment).
+>
+> **Cluster B: `<slug>-changes`** (entities: changes, change_tasks,
+> change_approvals; JTBDs: submit change, approve change, schedule
+> change, execute change).
+>
+> Cross-cluster: 1 JTBD (problem-resolved-by-change) would need
+> both skills loaded.
+>
+> Cut score: 0.12. Each half has its own trigger vocabulary
+> ("incident / ticket / outage" vs "change / deployment /
+> maintenance window").
+>
+> **Generate as one skill `<slug>` (default), or split into
+> `<slug>-incidents` and `<slug>-changes`?**
+
+The default is **one skill** even when the proposal fires.
+Splitting fragments shared cross-cutting rules, doubles the
+README/glossary maintenance burden, and surprises users who
+installed "the X skill" and find half their work routes
+elsewhere. Only split when the user explicitly confirms.
+
+#### What changes when the user accepts a split
+
+- Each cluster becomes its own folder under `<skills-root>/`,
+  with its own SKILL.md, README.mdx, references/, and scripts/.
+- Each SKILL.md's description mentions the sibling skill ("loads
+  alongside `<sibling-slug>` for cross-process work like X")
+  so the matcher knows the pair composes.
+- Cross-cluster JTBDs go in **whichever cluster owns the action's
+  primary verb**, not duplicated. If "resolve a problem with a
+  change" lives in `<slug>-problems` (because the verb is
+  "resolve"), `<slug>-changes` only needs a one-line note that
+  problem-resolution writes to changes; the recipe lives in the
+  problems skill.
+- The `semantic_model:` provenance key on every generated SKILL.md
+  still points to the same source slug (e.g. `itsm`); the model
+  file is shared, the skills are split.
 
 #### Confirmation checkpoint
 
-Present three lists to the user:
+Present three lists to the user (four when Step 3.5 fired a split
+proposal; five when `platform_enforceable_gaps` is non-empty):
 
 1. **Sections**, the JTBDs that earned a place (one bullet each, with
    the merit signals that justified them).
 2. **Common queries**, the cube queries that go in the appendix.
 3. **Skipped**, Pass-1 candidates that failed the merit test, with the
    reason. The user may disagree and ask to add some back.
+4. **Split proposal** (only when Step 3.5's conditions all held),
+   the cluster breakdown and the one-skill-vs-split question. Default
+   to one skill; only split when the user explicitly confirms.
+5. **⚠️ Platform-enforceable gaps detected** (only when
+   `platform_enforceable_gaps` is non-empty), one bullet per gap
+   listing the entity, the field, the kind (`computed_field` or
+   `validation_rule`), and a short quote of the §3 prose evidence.
+   Frame as a question, not a command:
+
+   > The model documents these rules in §3 prose, but the entity's
+   > `computed_fields` / `validation_rules` blocks do not encode them.
+   > A recipe-level stopgap will be baked into the generated skill,
+   > but the platform will not enforce the rule on writes that bypass
+   > the skill (direct CLI calls, other skills, future migrations).
+   >
+   > - **`features.rice_score`** (computed_field): §3 says
+   >   *"(reach × impact × confidence) / effort"*. No
+   >   `computed_fields` entry derives `rice_score`.
+   > - **`features.release_id`** (validation_rule): §3 says
+   >   *"null until scheduled, …commitment is derived (status ∈
+   >   {planned, in_progress, shipped} ⇒ committed)"*. No
+   >   `validation_rules` entry gates `release_id` against status.
+   >
+   > **Recommended:** pause this skill-maker run, route to the
+   > `semantic-model-analyst` skill (Audit / Extend mode) to add the
+   > matching `computed_fields` / `validation_rules` blocks, redeploy
+   > via `semantic-model-deployer`, then re-run skill-maker. The
+   > regenerated skill will surface the platform-derived fields and
+   > error codes instead of baking client-side recipes for them.
+   >
+   > **Or:** proceed and accept the stopgap recipes. Pick a route.
+
+   Default is to surface the gap and let the user decide; do not
+   silently proceed past the checkpoint when this list is non-empty.
+   If the user picks "proceed", the run continues to Step 4 with
+   the JTBDs intact; if they pick "pause", stop the run and tell
+   them which skill to invoke next.
 
 Wait for confirmation before writing files. This is the only human
 checkpoint.
@@ -439,24 +656,85 @@ checkpoint.
 ### Step 4, Audit existing artifacts
 
 If `<skills-root>/<modelslug>/` already exists from a prior generation,
-read every file under it and check for **drift** against the current
-generation's plan and the current platform conventions. The audit is
-**read-only**; nothing is rewritten in this step. Findings go into the
-Step 10 summary, and the user decides whether to regenerate flagged
-files in Step 5–7.
+read every file under it and check for **drift** against (1) the
+current source model, (2) the current generation's plan, and (3) the
+current platform conventions. The audit is **read-only**; nothing is
+rewritten in this step. Findings go into the Step 10 summary, and the
+user decides whether to regenerate flagged files in Step 5–7.
 
 Skip this step entirely on a fresh generation (target folder does not
 exist or contains only a stale `SKILL.md` with no `references/` or
 `scripts/`). On a fresh run, there is nothing to audit; everything
 gets written in Steps 5–8.
 
-#### What to check
+#### Model drift is the first thing to check
 
-Walk both `references/*.md` and `scripts/*.sh` and apply the same
-checks the self-review (Step 9, Principle 0) applies to freshly
-written files. The point is symmetry: if Principle 0 would reject a
-file the generator just wrote, it should also flag the same file
-sitting on disk from a prior run. Concretely:
+The generated skill is a frozen snapshot of the source model at
+generation time. The model can move between generations, an analyst
+can rename a `singular_label`, swap an enum value, add a
+`computed_field`, simplify the §1 narrative, redraw the mermaid
+diagram, or close out a §7.2 future-consideration. Any of those
+changes leaves baked content stale. Detect drift **before** running
+the artifact-shape checks below; a stale glossary or recipe is
+worse than a non-canonical script.
+
+The audit re-parses the source model file at `MODEL_PATH` (same
+parse Step 2 does) and diffs the resulting facts against what is
+baked into the generated files:
+
+- **README `## Semantic model` mermaid block**: byte-diff against
+  the model's §2 mermaid block. Any difference is a defect.
+- **README body §1 paragraph(s)**: byte-diff against the model's
+  §1 narrative. The README copies §1 verbatim; a mismatch means
+  the analyst rewrote §1 (or the generator paraphrased instead of
+  copying). Defect.
+- **SKILL.md domain glossary**: every entity in §2 / §3 should
+  appear in the glossary table with its current `singular_label`,
+  and no extra entities should appear. Add / remove / rename =
+  defect.
+- **SKILL.md "Key enums"**: every enum the model declares
+  (§5 plus per-entity `enum` fields) and every value within each
+  enum should appear; no extras. Defect on any add / remove /
+  rename / reordering of values that recipes branch on.
+- **SKILL.md "Platform-derived fields" preamble block**: must
+  match the union of `computed_fields[].name` across every
+  entity, with the model's `description` text intact. Defect on
+  any add / remove / rename.
+- **SKILL.md "Platform-enforced invariants" preamble block**:
+  must match the union of `validation_rules[].code` across every
+  entity, with the model's `message` and `description` intact.
+  Defect on any add / remove / rename.
+- **SKILL.md "What this skill does NOT do" inlined §7.2 list**:
+  must match the model's current §7.2 bullets. Defect on any add
+  / remove / rename. (Bullets the user has paraphrased for
+  readability are non-canonical, not defect; flag separately.)
+- **JTBD recipe field references**: every column a recipe writes
+  (in inline bodies, references' Recipe blocks, or scripts) must
+  exist on the entity in the current §3. A recipe writing a
+  removed or renamed column is a defect.
+- **Audit-log mentions**: every entity SKILL.md / a reference
+  claims is `audit_log: yes` (or `: no`) must agree with the
+  current §3 entity declaration. Defect on mismatch.
+- **§6 cross-model hints**: every cross-model hint named in
+  generated content (Guardrails, "What this skill does NOT do")
+  should still be present in the model's §6. Defect on stale
+  references.
+
+The drift check has its own severity row in "What to report"
+below. It runs **regardless** of whether the user invoked the
+skill-maker for a regeneration or a review, the model is the
+contract, and a review that does not re-resolve to the contract
+is incomplete. (The "review skill" call is exactly Step 4.)
+
+#### Artifact-shape checks (post-drift)
+
+After the drift check, walk every file in the skill folder
+(`SKILL.md`, `README.mdx`, `references/*.md`, `scripts/*.sh`) and
+apply the same checks the self-review (Step 9, Principle 0)
+applies to freshly written files. The point is symmetry: if
+Principle 0 would reject a file the generator just wrote, it
+should also flag the same file sitting on disk from a prior run.
+Concretely:
 
 - **Read patterns.** Every `semantius call ... GET ...` is either
   `--single` (one row required) or array-default (zero or many rows
@@ -496,19 +774,39 @@ sitting on disk from a prior run. Concretely:
 
 For each file with findings, produce one bullet:
 
-- `cast-vote.sh: 4 reads use legacy two-guard pattern; --single would
-  collapse each to one guard. Working but non-canonical.`
+- `README.mdx: drift, body §1 paragraph mismatches the model's
+  current §1 narrative. The analyst rewrote §1 to drop backticked
+  identifiers; the README still has the old verbatim copy.`
+- `SKILL.md: drift, "Platform-derived fields" preamble lists 1
+  field; model's computed_fields union now has 2 (added
+  features.days_open). Recipes will not warn against writing the
+  new field.`
+- `SKILL.md: drift, "Key enums" lists feature_status values
+  including 'parked'; model's §5 no longer declares 'parked'.
+  Triage's Inputs table accepts a value that no longer exists.`
+- `cast-vote.sh: 4 reads use legacy two-guard pattern; --single
+  would collapse each to one guard. Working but non-canonical.`
 - `triage-feature.md: 2 GETs missing # expect: annotations.`
-- `score-rice.md: classified `script` in current plan but exists as
-  reference; needs migration.`
+- `score-rice.md: classified `script` in current plan but exists
+  as reference; needs migration.`
 - `tag-feature.md: orphan; no JTBD with this slug in current plan.`
-- `ship-release.sh: contains hardcoded date "2026-05-04"; should be a
-  placeholder.`
+- `ship-release.sh: contains hardcoded date "2026-05-04"; should be
+  a placeholder.`
 
-Group findings by file and by severity ("defect" = the file is
-broken; "non-canonical" = works but uses an outdated pattern;
-"orphan" = no longer referenced). The Step 10 summary surfaces these
-and asks the user how to proceed; **do not auto-rewrite in Step 4**.
+Group findings by file and by severity:
+- **"drift"** = the file no longer matches the source model; baked
+  content is stale. Always recommend regenerating.
+- **"defect"** = the file is broken on its own terms (missing link
+  target, structural shape failure, recipe writes a removed column).
+  Recommend regenerating.
+- **"non-canonical"** = the file works but uses an outdated
+  pattern; user decides whether to take the upgrade.
+- **"orphan"** = the file is no longer referenced from SKILL.md
+  (its JTBD was reclassified or removed). User decides whether to
+  delete or restore.
+
+The Step 10 summary surfaces these and asks the user how to
+proceed; **do not auto-rewrite in Step 4**.
 
 #### What the user can choose in Step 10
 
@@ -566,8 +864,7 @@ description: >-
   realistic trigger phrases users might say, mixing entity names and
   task verbs (e.g. "create a lead", "convert opportunity to account",
   "report pipeline by stage"). Be slightly pushy, skills under-trigger
-  by default. Mention that the skill delegates platform mechanics to
-  `use-semantius` so the model knows both can load together.>
+  by default.>
 semantic_model: <system_slug, e.g. product_roadmap (no path, no .md extension)>
 ---
 
@@ -601,6 +898,27 @@ this includes junction tables like `<junction>` and sub-entities like
 `<sub-entity>`, where the recipe must compose the value (see each
 JTBD for the composition rule). Do not omit `*_label` from POST bodies.
 
+**Platform-derived fields** (set by the platform's per-entity
+`computed_fields` triggers on every INSERT/UPDATE; **never include in
+POST/PATCH bodies, the platform overwrites caller payloads**):
+<list each `computed_fields[].name` from the model, grouped by table
+and one-line description copied from `computed_fields[].description`.
+Skip the section entirely when no entity in the model declares
+`computed_fields`.>
+
+- `<table>.<field>`: <description from the model's `computed_fields[].description`>
+
+**Platform-enforced invariants** (entity-level `validation_rules`
+triggered on every INSERT/UPDATE; the platform rejects writes that
+violate them with `{ "errors": [{ "code", "message" }, ...] }`. The
+recipes here do NOT pre-validate these; they surface the platform's
+error to the user verbatim if the write fails):
+<list each `validation_rules[].code` from the model, grouped by table,
+with the `message` and (if present) `description`. Skip the section
+entirely when no entity in the model declares `validation_rules`.>
+
+- `<table>` rule `<code>`: <message>. Why: <description, when present>.
+
 ---
 
 ## Domain glossary
@@ -609,7 +927,7 @@ JTBD for the composition rule). Do not omit `*_label` from POST bodies.
 "what it represents" for each entity. Group related entities together
 (e.g. "Pipeline: leads, opportunities, accounts"). Skip junction tables
 unless a job touches them directly. Do not duplicate FK targets here ,
-the FK cheatsheet is below.>
+each JTBD's reference file owns its own FK assumptions.>
 
 | Concept | Table | Notes |
 |---|---|---|
@@ -626,21 +944,50 @@ table.column → values, with the typical lifecycle path marked.>
 - `opportunities.stage`: `prospecting` → `proposal` → `negotiation` →
   `closed_won` | `closed_lost`
 
-## Foreign-key cheatsheet
+## Cross-cutting data rules
 
-<Only the FKs that JTBDs cross. Format: `child.field → parent.id`.
-Note any unique / 1:1 constraints that commonly cause 409s, and any
-junctions whose `(parent_id, child_id)` pair lacks a DB-level unique
-constraint (those need read-before-insert in recipes).>
+<Only facts that span 2+ JTBDs in load-bearing ways belong here.
+Per-FK shape, per-junction uniqueness, and audit-logging notes go
+in the JTBD's reference file, not here. This section is often empty
+or just 1–2 lines; that is correct, not a sign of incompleteness.
 
-- `opportunities.lead_id → leads.id`
-- `accounts.opportunity_id → opportunities.id` (unique, one account per
-  closed-won opportunity)
+Examples of facts that *do* belong here:
+- A naming convention several recipes rely on (e.g. "all `*_at`
+  fields are server-set on insert; never include them in POST bodies").
+- A platform-wide constraint that constrains every recipe's write
+  pattern (e.g. "rows soft-deleted via `is_active=false` are still
+  visible to `read_*`; recipes filter on `is_active=eq.true` unless
+  the JTBD explicitly wants the full history").
 
-<List audit-logged tables here in one line so the calling agent knows
-audit rows write themselves. Example: "Audit-logged: `opportunities`,
-`accounts`, Semantius writes the audit rows; recipes don't manage
-them.">
+If you have nothing to put here, omit the section.>
+
+## When the runtime disagrees with the recipe
+
+The FK shape and audit-logging facts in each JTBD's reference file
+are baked in at skill-generation time. The live schema can drift,
+admins can add a unique index, drop an FK, or toggle audit-logging
+on a table without regenerating this skill. The recipes are not
+self-correcting on their own, but the agent has an escape hatch.
+
+When a recipe gets a `409 Conflict`, `422 Unprocessable Entity`, or
+any other write failure the JTBD's reference file did not predict,
+the recovery move is **read the live schema, then decide**:
+
+```bash
+# What FKs does this entity actually have right now?
+semantius call crud read_field '{"filters": "entity=eq.<entity_id>"}'
+
+# Or, more targeted, what does field <name> reference today?
+semantius call crud read_field '{"filters": "entity=eq.<entity_id>,name=eq.<field_name>"}'
+```
+
+If the live shape contradicts the recipe's assumption (e.g. a unique
+constraint exists where the recipe expected a free-form junction),
+abort with a clear stderr message naming the drift, do not silently
+"fix it up" with extra writes. Then surface to the user that the
+skill is out of date and recommend regenerating via
+`semantius-skill-maker`. Drift recovery is the user's call, not
+the agent's.
 
 ## Lookup convention
 
@@ -778,7 +1125,7 @@ semantius call cube load '{"query":{
 
 <Domain-specific rules the calling model should never violate. Each rule
 should appear here *or* in the relevant JTBD's failure-modes, not both.
-Pull from §6.1 of the model (resolved blockers / explicit constraints)
+Pull from §7.1 of the model (resolved blockers / explicit constraints)
 and from the merit signals that triggered each JTBD. Examples:
 
 - Never PATCH `opportunities.stage` directly to `closed_won` without
@@ -796,9 +1143,9 @@ and from the merit signals that triggered each JTBD. Examples:
 - RBAC / permissions, use `use-semantius` directly.
 - One-off seed data, write a script, don't bake it into a JTBD.
 - <Inline the bullet list of unbuilt features here. Pull each item from
-  §6.2 "Future considerations" of the model at generation time and
-  write it as a plain bullet, do *not* cite "§6.2" in the SKILL.md,
-  the calling agent has no way to look it up. If §6.2 is empty or
+  §7.2 "Future considerations" of the model at generation time and
+  write it as a plain bullet, do *not* cite "§7.2" in the SKILL.md,
+  the calling agent has no way to look it up. If §7.2 is empty or
   missing, drop this bullet entirely.>
 ````
 
@@ -841,6 +1188,25 @@ When you bake a recipe, **resolve every reference**:
   the audit trail. If the merit test surfaced an audit-read JTBD, the
   recipe is a single GET against the audit endpoint with the entity id ,
   see `use-semantius` `references/crud-tools.md` for the path shape.
+- **Platform-derived fields (`computed_fields`)**, the platform writes
+  these on every INSERT/UPDATE and overwrites whatever the caller sent.
+  Recipes must **never include them in POST/PATCH bodies**, and must
+  not re-derive them client-side. After a write that touches the inputs
+  (`reach_score`, `impact_score`, `confidence_score`, `effort_score` for
+  a RICE-derived `rice_score`), the recipe's "Validation" block should
+  **read back** the row and assert the derived field has the expected
+  value, that's the only place the formula is restated, and only to
+  spot-check that the trigger fired.
+- **Platform-enforced invariants (`validation_rules`)**, the platform
+  rejects bad writes with a structured `{ "errors": [...] }` body and a
+  4xx status. Recipes must **not pre-validate** these — duplicating the
+  rule client-side is brittle (the rule can change in the platform without
+  a recipe regen) and surfaces the same error twice on bad input. Instead,
+  the JTBD's `Failure modes` block names each platform `code` the user
+  is likely to hit and the recovery action: *"`code: release_only_when_committed`,
+  the user tried to attach a release before the feature is committed; tell
+  them to triage the feature to `planned` first, then retry."* The
+  `code` is the i18n binding key, never paraphrase it.
 - **1:1 / unique constraints**, flag in **Failure modes** with the
   exact 409 condition *and* the recovery action (PATCH the existing row,
   pick a different parent, etc.).
@@ -852,14 +1218,109 @@ When you bake a recipe, **resolve every reference**:
 
 #### Trigger phrasing
 
-The frontmatter `description` decides whether Claude Code consults the
-skill at all. Make it slightly pushy:
+The trigger language lives on **two distinct surfaces** that serve
+different audiences and take different shapes. They are NOT copies
+of each other; they overlap only in what they describe (the
+domain), not in their wording.
 
-- Lead with the domain noun ("CRM", "workforce planning") so domain-level
-  asks trigger.
-- List 4–6 verb-phrasings spanning the JTBDs, including informal forms
-  ("close this deal" alongside "set opportunity to closed_won").
-- Mention `use-semantius` so the matcher learns the two skills compose.
+**Surface 1: SKILL.md frontmatter `description`.** Matcher fuel,
+read by Claude Code's skill router to decide whether to load this
+skill for a given user prompt. The matcher works on semantic
+similarity between the description and the user's prompt, so the
+description should describe the **intent classes** the skill
+handles, not list literal user phrasings. Concrete user-voice
+sentences over-fit to specific wordings; abstract intent
+enumeration generalizes across the thousands of phrasings real
+users actually produce.
+
+This pattern matches how Anthropic's own skills are authored
+(`pdf`, `docx`, `xlsx`, `pptx`): their descriptions are intent
+enumerations, not lists of quoted user sentences. Follow that
+convention.
+
+**Surface 2: README.mdx `## Sample prompts`.** Catalog display,
+read by humans browsing a skill list. Its job is to show the
+**breadth** of what users can ask of this domain in literal
+phrasings the reader recognizes ("yes, I'd say something like
+that"). Concrete user-voice sentences belong here, in volume.
+
+##### How to author the SKILL.md description
+
+Two parts, in this order:
+
+1. **Domain noun + scope** (1 sentence). Lead with the domain
+   ("CRM", "ITAM", "workforce planning") and the entities or
+   capabilities it covers in plain words. Example: "Use this
+   skill for anything involving ITAM (IT Asset Management), the
+   in-house domain that tracks hardware assets, software products
+   and licenses, installations, asset assignments, contracts, and
+   purchase orders, plus the cost-center and chargeback rollup
+   that links them."
+
+2. **Action intent enumeration** (one sentence, verb-phrase list).
+   List the JTBDs as abstract verb-phrase intents, comma-separated
+   inside a single sentence introduced by "Trigger when the user
+   wants to ...". Each intent corresponds to one JTBD section in
+   the body; the matcher generalizes from these phrasings to
+   varied user wording. Example: "Trigger when the user wants to
+   deploy a hardware asset to a user, return or unassign an asset,
+   retire or decommission equipment, install software on an asset
+   with optional license seat tracking, uninstall software, mark a
+   purchase order received, or renew a contract."
+
+   - Aim for 6–10 intent phrases (one per JTBD; bundle close
+     siblings if needed). Each phrase 4–10 words.
+   - Lead each with an active verb. Cover the primary verb plus
+     one common informal synonym where natural ("retire or
+     decommission"), so the matcher hears both vocabularies.
+   - **Do not** quote literal user sentences ("Bob is leaving,
+     return his laptop"). The matcher generalizes better from
+     intent phrases.
+   - **Do not** include discovery intents (lookups, reports).
+     Those are handled by `use-semantius` alone in most cases;
+     loading the full domain skill for "who has asset X" wastes
+     context. Discovery triggers belong in the README only.
+
+**Do not** add a "Loads alongside `use-semantius`..." compose
+hint to the description. The description is matcher fuel, and a
+sentence about which sibling skill owns CLI install / PostgREST
+encoding / cube mechanics does not help the router map a user
+prompt to this skill (users do not type "I need PostgREST
+encoding"). Compose-metadata is the harness's concern, not the
+matcher's. The compose-hint already lives in the SKILL.md body's
+opening paragraph ("Platform mechanics ... live in
+`use-semantius`. Assume it loads alongside"), where the calling
+agent reads it after the skill has loaded; that is the right
+place for it.
+
+##### How to author the README sample prompts
+
+A bulleted list of **concrete user-voice sentences**, the kind of
+thing a real person types into chat. Volume matters here; the
+reader is browsing.
+
+- 12–17 prompts total.
+- **8–11 action prompts**: concrete sentences for the JTBDs.
+  Multiple synonymous phrasings for high-traffic JTBDs are
+  welcome and useful, "Bob is leaving, return his laptop" and
+  "I need to take back Sarah's MacBook" both map to Return and
+  both belong in the catalog because real users say both.
+- **4–6 discovery prompts**: concrete lookup or report questions.
+  "Who has asset SN-12345 right now", "which contracts expire next
+  quarter", "show license utilization for Microsoft 365". These
+  are NOT in the description (per surface-1 rules) but ARE in the
+  README, because the catalog reader benefits from seeing them.
+
+##### The relationship between the two surfaces
+
+The description and the sample-prompts list overlap only in what
+they describe (the same domain, the same JTBDs). They do **not**
+share wording: the description has abstract verb-phrase intents,
+the README has concrete user-voice sentences. Each README sample
+prompt should map cleanly to either an intent in the description
+(action prompts) or a Common-queries example or lookup-convention
+pattern (discovery prompts). Principle 6 (Step 9) gates that
+mapping.
 
 ### Step 6, Write the reference files (one per JTBD classified `reference`)
 
@@ -872,10 +1333,10 @@ verb-phrase slug (`schedule-feature.md`, `cast-vote.md`,
 
 The reference file is loaded by the calling agent **only** when it
 enters that specific JTBD. SKILL.md has already been read by then, so
-the agent knows the glossary, enums, FK cheatsheet, lookup
-convention, timestamp rule, and guardrails. Do not restate any of
-those. The reference file owns the recipe body and any rules that
-only matter inside this JTBD.
+the agent knows the glossary, enums, lookup convention, timestamp
+rule, and guardrails. Do not restate any of those. The reference
+file owns the recipe body, the FK / shape assumptions the recipe
+relies on, and any rules that only matter inside this JTBD.
 
 #### Reference file template
 
@@ -887,6 +1348,30 @@ load-bearing invariant. No marketing, no value-prop, the agent has
 already chosen this recipe. Example: "Cast or update a vote on a
 feature. The `(feature_id, user_id)` junction has no DB-level
 uniqueness, so the recipe must read first.">
+
+## FK & shape assumptions
+
+<List only the FK / uniqueness / audit-logging facts THIS recipe
+relies on. One line per fact, in the form
+`<child>.<col> -> <parent>.id` plus a short note on uniqueness or
+junction shape. Skip anything the recipe doesn't actually depend on,
+this is an assumption ledger, not a schema dump.
+
+If any of these turn out to be wrong at runtime (a 409 / 422 the
+recipe didn't predict), the agent follows the SKILL.md "When the
+runtime disagrees with the recipe" escape hatch: query
+`read_field`, surface the drift, abort cleanly. Do not silently
+adapt.
+
+Audit-logging notes belong here only if the recipe's correctness
+depends on whether audit rows are written; otherwise omit, audit
+rows are Semantius's concern, not the recipe's.>
+
+- `feature_votes.feature_id -> features.id`
+- `feature_votes.user_id -> users.id`
+- `(feature_id, user_id)` junction has **no DB-level unique
+  constraint**, recipe MUST read-first before insert to avoid
+  duplicate vote rows.
 
 ## Composition rules
 
@@ -951,20 +1436,32 @@ user confirmation. Pair every failure with a recovery, not just a
 description.>
 ```
 
-#### What goes into a reference file, vs what stays in SKILL.md
+#### Where FK detail lives, and why
 
-The split exists so SKILL.md stays small. Apply the test for each
-piece of content:
+The split exists so SKILL.md stays small *and* tolerates live-schema
+drift. Apply the test for each piece of content:
 
 - *Every JTBD touches it* (lookup convention, timestamp rule,
-  glossary, enums, FK cheatsheet, guardrails) → SKILL.md only.
+  glossary, enums, guardrails) → SKILL.md only.
 - *Only this JTBD touches it* (recipe body, JTBD-specific
-  composition rules, extended failure modes, computed-field rounding)
-  → reference file.
-- *Some JTBDs touch it, others don't* (e.g. junction-without-uniqueness
-  warning) → SKILL.md FK cheatsheet calls it out at the entity level
-  (the cheap-to-read part); the affected reference files name the
-  exact recovery action.
+  composition rules, FK / uniqueness assumptions, audit-logging
+  facts the recipe depends on, extended failure modes,
+  computed-field rounding) → reference file's "FK & shape
+  assumptions" section.
+- *Genuinely cross-cutting fact 2+ JTBDs depend on in load-bearing
+  ways* (rare, often empty in practice) → SKILL.md "Cross-cutting
+  data rules" section. Default is "doesn't qualify"; promote
+  reluctantly.
+
+Per-FK shape used to live in a SKILL.md cheatsheet. It moved to the
+reference files because (1) most FKs are touched by only the one
+JTBD that mutates them, so the SKILL.md slot was paid by every
+trigger but consumed by one, and (2) live schema can drift between
+generation and call (admins toggling unique indexes, audit-logging,
+FKs); colocating the assumption with the recipe that depends on it
+makes regeneration and drift-recovery localised. The runtime escape
+hatch in SKILL.md ("When the runtime disagrees with the recipe")
+covers the drift case.
 
 A reference file aimed at fewer than ~40 lines means the JTBD
 probably belongs inline in SKILL.md after all, the file split has
@@ -993,6 +1490,13 @@ silently leave half-state.
 # verify the sweep is complete.">
 #
 # Usage: <op-slug>.sh <arg1> <arg2> [optional]
+#
+# <Optional per-mode / per-subcommand detail block goes HERE, AFTER
+# Usage, never before. For a single-mode script omit this block
+# entirely. Example for a two-mode script:
+#   Add:    read-first dedupe; if row exists active, no-op; ...
+#   Remove: soft-deactivate (is_active=false) so history survives.>
+#
 # Exit:  0 on success
 #        1 on usage/validation failure (bad args, precondition not met)
 #        2 on platform error (semantius call failed)
@@ -1029,6 +1533,12 @@ echo "<op-slug>: ok"
 - **First-line shebang `#!/usr/bin/env bash`**, `set -euo pipefail`
   immediately after, no exceptions. Silent failures in shell are how
   cascade scripts leave half-state.
+- **Header section order is fixed**: purpose one-liner, Usage, optional
+  per-mode detail, Exit, Idempotent. Usage comes immediately after the
+  purpose line so a human auditor sees "how do I call this" before any
+  prose. Per-mode behavior detail (e.g. `Add:` / `Remove:`) goes *after*
+  Usage, never between purpose and Usage; the synopsis introduces the
+  modes, then the detail explains them.
 - **Validate args before any platform call.** Print usage to stderr,
   exit 1. The agent reads stderr to recover.
 - **Exit codes are part of the contract.** 0 = ok, 1 = bad inputs,
@@ -1149,7 +1659,7 @@ what the skill *does*, not why it exists.
   funding levels, ranking, and approval workflow"; "from intake
   through RICE scoring, objective alignment, and release scheduling".
   Pull these nouns from the model's entities, enums, and lifecycle
-  fields — they should be recognisable to an operator of the system.
+  fields, they should be recognisable to an operator of the system.
 
 **Hard bans (zero tolerance):**
 
@@ -1172,7 +1682,7 @@ what the skill *does*, not why it exists.
 
 **Coherence check:** the description's verb must match the body
 paragraph's verb (same verb-extraction tier). The description
-itself names *capabilities*, not benefits — the body paragraph's
+itself names *capabilities*, not benefits, the body paragraph's
 sentence 3 (failure modes) is where the value-prop lives. Do not
 paraphrase the body's "so X" clause into the description; that
 shape belongs in the body, not on the catalog card.
@@ -1195,12 +1705,12 @@ shape belongs in the body, not on the catalog card.
 
 - `Bakes in the multi-step rules for moving a candidate from application to hire, including paired status fields and offer-acceptance ripples.` (Bakes in, paired status fields, ripples, all jargon.)
 - `Tracks candidates from application to hire so the right pieces always get filled in in the right order.` (The "so [outcome]" clause is trigger-fodder; the description should name capabilities, not justify them.)
-- `Plans headcount across scenarios so an approved scenario walks into real seats with the right paperwork at every step.` (Same anti-pattern — "so [outcome]" clause replaces the capability list.)
+- `Plans headcount across scenarios so an approved scenario walks into real seats with the right paperwork at every step.` (Same anti-pattern, "so [outcome]" clause replaces the capability list.)
 - `This skill helps with the Applicant Tracking System.` (Self-referential opener, restates the title.)
 
 #### Body structure (in this exact order)
 
-The body has exactly **four** sections after the heading. Do not
+The body has exactly **five** sections after the heading. Do not
 add, rename, or rearrange.
 
 1. **Heading.** See "Title grammar" below.
@@ -1436,8 +1946,23 @@ add, rename, or rearrange.
    from the SKILL.md frontmatter `description`, verbatim and quoted,
    one per bullet, in the same order they appear in the description.
    Do not pick a subset. Do not paraphrase. If the description has
-   ten quoted phrases, the bullet list has ten bullets.
-5. **Semantic model.** A Mermaid diagram copied verbatim from the model
+   ten quoted phrases, the bullet list has ten bullets. Sample
+   prompts come **before** the capability list because catalog
+   readers recognize and resonate with user-voice phrasing faster
+   than verb-phrase capability bullets; the prompts pull the
+   reader in, and the capability list gives them the scope check
+   they want next.
+5. **What it covers.** A short bulleted list (5–7 bullets, each a
+   verb phrase under ~12 words) summarizing the capability scope
+   of the skill. Pulled from the JTBD section titles plus the
+   Common-queries appendix, grouped and condensed. Each bullet
+   names a capability in plain domain words, no script names, no
+   file paths, no jargon. The list functions as the catalog
+   reader's scope check after the sample prompts hook them: "the
+   prompts feel right, but does it actually do what I'd want?"
+   See "What it covers, content rules" below for shaping
+   guidance.
+6. **Semantic model.** A Mermaid diagram copied verbatim from the model
    (see Mermaid section below).
 
 #### README.mdx template
@@ -1469,6 +1994,13 @@ system the previous paragraph described.>
 - "<phrase 3 from SKILL.md description, verbatim>"
 - ... (one bullet per quoted phrase in the SKILL.md description, no subset)
 
+## What it covers
+
+- <verb-phrase capability 1, e.g. "Move candidates through requisitions, applications, interviews, offers, and hires">
+- <verb-phrase capability 2>
+- <verb-phrase capability 3>
+- ... (5–7 bullets total, see "What it covers, content rules" below)
+
 ## Semantic model
 
 ```mermaid
@@ -1476,12 +2008,53 @@ system the previous paragraph described.>
 ```
 ````
 
-That is the entire README. Five elements only: front-matter, heading,
+That is the entire README. Six elements only: front-matter, heading,
 model description (verbatim from §1), skill explanation paragraph
-(prose expansion of the front-matter description), sample triggers,
-mermaid diagram. **Do not add** any other section, including "What
-this skill helps with", "When to use it", "What's inside", "Generated
-from", or "About".
+(prose expansion of the front-matter description), sample prompts,
+what it covers, mermaid diagram. **Do not add** any other section,
+including "When to use it", "What's inside", "Generated from", or
+"About".
+
+#### What it covers, content rules
+
+The `## What it covers` section is the catalog reader's scope check.
+It comes **after** the sample prompts (which hook recognition) and
+**before** the diagram (which is the visual model). Five rules
+shape it:
+
+1. **5–7 bullets.** Fewer reads as too thin; more reads as a
+   feature dump and starts to compete with the prompts for
+   attention. If the source has 10+ JTBDs, group them.
+2. **Each bullet is a verb phrase under ~12 words.** Lead with a
+   verb in the same Tier 1 / 2 / 3 family as the front-matter
+   description's verb (no need to repeat the exact verb on every
+   bullet, but stay in the family of action verbs the domain
+   uses). Examples: "Deploy, return, and retire hardware
+   assets"; "Install and uninstall software with license seat
+   tracking"; "Receive purchase orders"; "Renew contracts".
+3. **Group related JTBDs into single bullets when natural.**
+   Deploy + return + retire collapse to one bullet ("Deploy,
+   return, and retire hardware assets"); install + uninstall
+   collapse to one ("Install and uninstall software with license
+   seat tracking"). Do not split for the sake of bullet count.
+4. **Common queries get one rolled-up bullet at the end.**
+   Format: "Common reports: <list 3–5 query themes in plain
+   words>". Example: "Common reports: asset count by status,
+   contracts expiring, license utilization, spend by cost
+   center". Do not list each query separately; that bloats the
+   list and competes with the JTBDs for attention.
+5. **No script names, no file paths, no jargon.** "Renew
+   contracts" is good; "renew-contract.sh" is bad; "materialize
+   the renewal handoff" is bad. The reader is non-technical;
+   they care about what the skill *does*, not how the generator
+   classified it.
+
+The list is sourced from the JTBD section titles plus the Common-queries
+appendix. Walk the JTBDs in the order they appear in the SKILL.md, group
+adjacent related ones, render each group as a verb-phrase bullet, then
+append the rolled-up "Common reports" bullet last. Keep the order from
+the SKILL.md so the catalog list and the SKILL.md sections agree on
+narrative flow.
 
 #### Title grammar
 
@@ -1626,7 +2199,7 @@ is correct and not a punt. Pointing to it for *domain* facts the
 generator should have resolved (an enum value, a FK target, a
 required-on-create field set) is a punt, fix those.
 
-Two things to scan for:
+Three things to scan for:
 
 - *Hardcoded literals that will rot.* Dates, timestamps, ids, the
   generation year, anything that was correct only at write time.
@@ -1635,6 +2208,15 @@ Two things to scan for:
   `<feature_id>`) with a one-line note telling the agent to fill it
   at call time. Hardcoded timestamps are the most common offender ,
   search for them explicitly even if you don't think you wrote any.
+- *Verbatim-copied content matches the source.* The README's body
+  §1 paragraph(s) and the `## Semantic model` mermaid block are
+  byte-copied from the model. Re-open the model file and diff
+  these two regions against the README; any difference means the
+  generator paraphrased instead of copying (defect, fix in place).
+  This is the same check Step 4's drift pass runs on
+  already-generated skills; on a fresh write it catches the
+  generator paraphrasing through habit even though Step 2 had the
+  source loaded.
 - *Recipes that punt.* If a JTBD ends with "see `use-semantius` for
   the path" or "look up X in references/Y.md", the bake-in failed.
   Either resolve the value now (re-read the model and the use-semantius
@@ -1658,17 +2240,21 @@ The answer should be one.
   out-of-domain tasks), not correct usage. If a bullet there overlaps
   with a guardrail, trim whichever side restates the other.
 
-**3. No surprises in the cheap-to-read parts.** The glossary and FK
-cheatsheet are skimmed first; what is buried in JTBD failure-modes is
-read last, if ever. Anything that will *surprise* the calling agent
-at write time should surface in the cheap-to-read parts.
+**3. No surprises in the cheap-to-read parts.** The glossary, enums,
+and Cross-cutting data rules are skimmed first; the per-JTBD
+reference files (with their FK & shape assumptions and extended
+failure modes) are read on demand. Anything that will *surprise*
+the calling agent at write time should surface in whichever layer
+the agent reads before the surprise can bite, cross-cutting
+surprises in SKILL.md, JTBD-local surprises at the top of the
+reference file's recipe.
 
 - Unique constraints on natural keys (e.g. `tag_name` unique).
 - Delete behaviors that block writes (e.g. `restrict` on `author_id`
   means deleting a user with comments fails).
 - Required caller-populated labels on junction or sub-entities.
 - Built-in Semantius tables that overlap with declared entities (the
-  model's §7 flags this, commonly `users`). The calling agent must
+  model's §8 flags this, commonly `users`). The calling agent must
   not POST to a duplicate table.
 - Internal contradictions: re-read the "auto-managed fields"
   paragraph against every POST recipe. If any recipe POSTs a `*_label`
@@ -1688,6 +2274,19 @@ skill should follow the same patterns so it composes cleanly.
 - Read-before-write on junctions without DB-level uniqueness.
 - Audit-logged tables don't need explicit audit writes; recipes don't
   manage them.
+- **No recipe re-derives a `computed_fields[].name`.** Walk every
+  POST/PATCH body in every reference and inline recipe; if any of them
+  writes a column listed under "Platform-derived fields" in the SKILL.md
+  preamble, the recipe is wrong (the platform overwrites it). Drop the
+  field from the body. The post-write read-back is fine and encouraged.
+- **No recipe pre-validates a `validation_rules[].code`.** Walk every
+  reference's branching prose; if it duplicates a check the platform
+  already enforces (e.g. "refuse to attach a release_id when status
+  isn't planned/in_progress/shipped" when `release_only_when_committed`
+  is in the model), drop the client-side check and rewrite the JTBD's
+  Failure modes block to name the platform `code` and the recovery
+  action instead. Duplicated checks are brittle and confuse the agent
+  about who owns the rule.
 
 If a new platform convention shows up in the use-semantius references
 that this list doesn't mention, treat the principle ("match the
@@ -1739,8 +2338,9 @@ not be silently contradicted in another.
   which targets this JTBD owns.
 - *Cube queries reference columns the glossary names.* If `Common
   queries` uses `<Entity>.sum_<column>` or `<Entity>.<dimension>`,
-  the underlying column must appear in the glossary, FK cheatsheet,
-  or "what the entity carries" line. A query mentioning
+  the underlying column must appear in the glossary, in some
+  reference file's FK & shape assumptions, or in the "what the
+  entity carries" line. A query mentioning
   `Features.sum_estimated_cost` with no `estimated_cost` named
   anywhere else in SKILL.md leaves the agent unable to verify the
   field exists; it will guess and write a query that 500s.
@@ -1758,6 +2358,40 @@ not be silently contradicted in another.
   `scripts/<op-slug>.sh` mentioned in a SKILL.md `Recipe:` line,
   the script exists, and its `Usage:` comment matches the args the
   SKILL.md tells the agent to pass.
+- *Every trigger phrase in the description is answerable from
+  what the skill already provides.* For every quoted phrase in
+  the SKILL.md frontmatter `description`, the agent must be able
+  to fulfill it from one of:
+  (1) a JTBD section in `## Jobs to be done` (the trigger maps to
+  a recipe),
+  (2) a literal example in the `## Common queries` appendix (the
+  trigger is essentially that query),
+  (3) the established pattern in the Common-queries appendix the
+  agent can adapt (e.g. swap a measure or filter; appendix
+  examples are intentionally pattern-establishing, not exhaustive),
+  (4) the `## Lookup convention` block (e.g. "who has asset X" →
+  `serial_number=eq.X&select=current_user_id`; this works as
+  long as the convention block names the column).
+  Each backing type is legitimate; the goal is not 1:1 recipe
+  coverage, it is that an agent with the skill loaded does not
+  have to guess column names, FK shapes, or query shapes from
+  outside the skill. Triggers backed by (2)–(4) are not a
+  fallback; they are an **encouraged** pattern. See Step 5
+  "Trigger phrasing" for the action-vs-discovery split: a healthy
+  description carries both, because discovery triggers (lookups
+  and reports) are how the catalog reader sees the breadth of the
+  model, and they are how the skill makes those queries
+  deterministic for users who install it.
+  A trigger fails this check only when none of (1)–(4) applies:
+  the agent would have to invent a recipe, infer a relationship
+  the skill never names, or look up enum values not in the
+  glossary. In that case the fix is one of two things: (a) drop
+  the trigger from the description and the README's sample
+  prompts; (b) add the missing backing (usually one new
+  Common-queries example, occasionally a new JTBD if the merit
+  test passes, or a one-line addition to the lookup convention).
+  Run this check **before** the README cross-check so the catalog
+  list inherits a clean trigger set.
 
 **Final pass: read it cold.** After applying principles 1–6, set the
 files aside for a moment, then read SKILL.md top-to-bottom as if
@@ -1936,13 +2570,68 @@ vibes. If any check fails, fix and re-scan before declaring done.
    ```` ```mermaid ```` block in the README against the one in the
    source model file. They are identical. Any difference means the
    diagram was regenerated instead of copied.
-10. **Sample prompts are verbatim AND complete.** Count the quoted
-    phrases in the SKILL.md frontmatter `description`. The README's
-    `## Sample prompts` list must have **exactly that many** bullets,
-    in the same order, each bullet quoting one phrase verbatim. No
-    subset, no paraphrase, no reordering. If the description has 10
-    quoted phrases, the bullet list has 10 bullets.
-11. **No `use-semantius` mentions** and no agent-harness jargon
+10. **Sample prompts: concrete user-voice sentences, mapped to
+    backings.** The README's `## Sample prompts` list and the
+    SKILL.md frontmatter `description` are **independently
+    authored** with different shapes: the description carries
+    abstract verb-phrase intents, the README carries concrete
+    user-voice sentences. They do not share wording. Run these
+    checks on the README's sample-prompts list:
+    - **Volume.** 12–17 bullets. Below 12 the catalog list looks
+      thin; above 17 it dominates the page.
+    - **Concrete user-voice phrasing.** Each bullet is a sentence
+      a real person would type, in casual or natural register.
+      Reject bullets that read as abstract intent phrases (e.g.
+      `"return a hardware asset"` is wrong; `"Bob is leaving,
+      return his laptop"` is right). The description is where
+      intent phrases belong, not the README.
+    - **Action vs discovery split.** 8–11 action prompts (concrete
+      phrasings of JTBD intents, multiple synonyms welcome) plus
+      4–6 discovery prompts (concrete lookup or report questions).
+    - **Backing per Principle 6.** Each action prompt maps to a
+      JTBD section; each discovery prompt maps to a Common-queries
+      example, its adaptable pattern, or the lookup convention.
+      Unbacked prompts are leaks: drop or back.
+    - **No literal user-voice quotes appear in the SKILL.md
+      description.** Run a separate scan on the description: if
+      it contains quoted full-sentence user phrasings (e.g.
+      `"Bob is leaving, return his laptop"`), that is matcher
+      signal pollution. The description should enumerate intent
+      classes ("return or unassign a hardware asset"), not list
+      literal phrasings. Strip the quoted sentences from the
+      description; the equivalent concrete phrasings stay in the
+      README sample prompts.
+11. **`## What it covers` is present, ordered, and well-shaped.**
+    The section sits between `## Sample prompts` and `## Semantic
+    model` (this order is load-bearing: prompts hook the reader,
+    capabilities anchor the scope check, the diagram closes with
+    the visual). Run these literal scans:
+    - Section heading is exactly `## What it covers`.
+    - Bullet count is in `[5, 7]`. Fewer reads as thin; more reads
+      as a feature dump.
+    - Each JTBD bullet leads with a verb and is under ~12 words.
+      The trailing `Common reports: ...` bullet is the one
+      structural exception, it leads with the noun phrase
+      "Common reports:" and may run longer (it lists 3–5 themes
+      separated by commas); apply only the no-jargon and
+      no-identifier scans to it.
+    - No script names (regex `\.sh\b`), no file paths (regex `/`
+      followed by lowercase), no snake_case identifiers (regex
+      `\b[a-z][a-z0-9]*(_[a-z0-9]+)+\b`), no jargon from the
+      banned mechanics list (Principle 6's body-paragraph bans
+      apply here too: writes, rows, calls, PATCH, POST, FK,
+      cascade, etc.). This applies to every bullet, including the
+      Common reports bullet.
+    - The bullets cover, in order, the same JTBDs the SKILL.md's
+      `## Jobs to be done` lists, with adjacent related JTBDs
+      grouped into single bullets where natural (e.g. deploy +
+      return + retire collapse to one bullet about hardware
+      lifecycle). The Common-queries appendix is summarized in a
+      single trailing "Common reports: ..." bullet, not split.
+    - No bullet duplicates a sample prompt. The prompt list is
+      user-voice phrasing; the capability list is action scope.
+      Overlap means the capability list isn't earning its place.
+12. **No `use-semantius` mentions** and no agent-harness jargon
     anywhere in the README.
 
 **Output of the self-review.** If you found nothing, write one line in
@@ -1974,6 +2663,13 @@ Print to the user:
 - The **dropped candidates** with reasons (e.g. "manage-tag, pure CRUD
   on `tags`, no merit signal, calling agent uses use-semantius
   directly"). The user may ask to add some back.
+- The **platform-enforceable gaps** from Pass 2's tracking, when any.
+  One bullet per gap (entity, field, kind, §3-prose evidence), and
+  whether the user chose to proceed with the stopgap recipe or
+  paused to fix the model. This survives in the user's audit trail
+  so a later regeneration can confirm the gap was either closed
+  (model now carries the rule, no gap reported) or knowingly accepted
+  again.
 - The **self-review result** from Step 9, either "no issues found"
   or the principles you touched and what you changed (e.g.
   "Principle 1: replaced 2 hardcoded timestamps with placeholders;
@@ -2041,17 +2737,21 @@ patterns alone, the user decides whether to take the upgrade.
 
 ## Failure modes
 
+- **Model file's `version` major differs from `EXPECTED_MAJOR`** (or `version` is missing), refuse. The model is from a different schema era and recipes would bake in stale patterns. Tell the user to run `semantic-model-analyst` to re-author the model at current major (archived-knowledge mode handles older files), then re-run skill-maker against the new file.
 - **Model file missing required frontmatter**, stop and ask. Don't
   guess `system_slug`.
-- **Model file has open §6.1 blockers**, refuse. Tell the user to
+- **Model file has open §7.1 blockers**, refuse. Tell the user to
   resolve blockers in `semantic-model-analyst` first.
 - **Conflicting target folder**, if `<skills-root>/<modelslug>/`
   already exists and the SKILL.md was not generated by this skill
   (no link back to the model file in its header), stop and ask before
   overwriting.
-- **JTBD count > ~12 after filtering**, warn the user that the
-  resulting skill will under-trigger because its description tries to
-  cover too many shapes. Ask whether lower-merit candidates can drop,
-  or whether the model itself is two domains stitched together
-  (in which case the cleaner fix is to split the
-  `*-semantic-model.md`). Proceed only if the user confirms.
+- **JTBD count > ~12 after filtering**, Step 3.5 (Cluster check)
+  runs and may surface a clean two-skill split. If it does, the
+  Confirmation checkpoint already presents the split as a fourth
+  list; no separate warning needed. If Step 3.5 finds no clean cut
+  (the model really is one tightly-coupled big domain), warn the
+  user that the resulting one-skill description will under-trigger
+  and ask whether to drop lower-merit candidates or split the model
+  file itself. Proceed with one oversized skill only if the user
+  confirms.

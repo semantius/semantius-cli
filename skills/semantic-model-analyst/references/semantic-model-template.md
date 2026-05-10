@@ -1,6 +1,6 @@
 # Semantic Model Template
 
-Use this template verbatim for the final semantic-model output in Stage 5. Each `{{placeholder}}` gets replaced with the value gathered during the workflow. Keep the section order and the table columns identical — downstream agents rely on the structure to parse entities and fields deterministically.
+Use this template verbatim for the final semantic-model output in Stage 5. Each `{{placeholder}}` gets replaced with the value gathered during the workflow. Keep the section order and the table columns identical, downstream agents rely on the structure to parse entities and fields deterministically.
 
 ---
 
@@ -9,7 +9,9 @@ Use this template verbatim for the final semantic-model output in Stage 5. Each 
 ```markdown
 ---
 artifact: semantic-model
-system_name: {{System display name}}
+version: "{{analyst_skill_version}}"
+system_name: {{System display name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
+system_description: {{Compact tagline ≤40 chars shown beside system_name in the UI module selector and landing page. For acronyms use the plain English expansion (CRM → "Customer Relationship Management"). For non-acronym names use a 2-4 word disambiguating phrase.}}
 system_slug: {{system_slug}}
 domain: {{System category, e.g. CRM, ITSM, HRIS, LMS, ERP, PIM, Project Management, Field Service, Subscription Billing, CMS}}
 naming_mode: {{template:<vendor> | agent-optimized}}
@@ -17,9 +19,9 @@ created_at: {{YYYY-MM-DD}}
 entities:
   - {{table_name_1}}
   - {{table_name_2}}
-related_models:
-  - {{sibling_module_slug_1}}
-  - {{sibling_module_slug_2}}
+related_domains:
+  - {{Title-case domain or acronym, e.g. ITAM, CMDB, Change Management}}
+  - {{...}}
 departments:
   - {{department_name}}
 industries:
@@ -92,6 +94,35 @@ For each entity, repeat the following sub-structure.
 
 - {{Prose description of each relationship this entity participates in, including cardinality and ownership. Example: "A `{{this}}` belongs to one `{{parent}}` (N:1, required, cascade on delete)." / "A `{{this}}` may have many `{{child}}` records (1:N, via `{{child}}.{{this}}_id`)." / "`{{this}}` ↔ `{{other}}` is many-to-many through the `{{junction}}` junction table."}}
 
+**Computed fields** _(optional; omit the heading entirely when none)_
+
+A JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc.
+
+```json
+[
+  {
+    "name": "<existing-scalar-field>",
+    "description": "<one-line human note>",
+    "jsonlogic": { /* JsonLogic expression */ }
+  }
+]
+```
+
+**Validation rules** _(optional; omit the heading entirely when none)_
+
+A JSON array of record-level invariants. Each rule must evaluate truthy for the write to succeed; failures are returned as `{ "errors": [{ "code", "message" }, ...] }`. Codes are snake_case and unique within the entity. The platform collects all failing rules without short-circuiting.
+
+```json
+[
+  {
+    "code": "<snake_case_unique_within_entity>",
+    "message": "<default English message returned to the caller>",
+    "description": "<one-line human note explaining why this rule exists>",
+    "jsonlogic": { /* JsonLogic expression that must be truthy */ }
+  }
+]
+```
+
 ---
 
 _(repeat section 3 per entity, numbered 3.1, 3.2, …)_
@@ -114,27 +145,48 @@ Collect every `enum` field's allowed values here, one sub-section per enum. If t
 - `{{value_2}}`
 - `{{value_3}}`
 
-## 6. Open questions
+## 6. Cross-model link suggestions
+
+Hints for the deployer about FKs that would add value when the named target entity exists in the catalog. The deployer resolves each `To` against the live catalog using its existing name-matching pass, proposes the FK as an additive `create_field` when a single match is found, and asks the user when several candidates plausibly fit (e.g. `vendors`, `suppliers`, `saas_vendors`). Entries whose target is not in the catalog are silently skipped, so erring toward inclusion is cheap.
+
+This section is a hint list, not a contract. It does **not** carry entity-overlap declarations (vendors-vs-suppliers, contracts-vs-saas_contracts). Those are name collisions and the deployer detects them by inspecting the live catalog at deploy time, so the analyst does not need to pre-declare them here.
+
+If this model has no plausible cross-model links, write "No cross-model link suggestions." under §6. The `related_domains` front-matter (described below) is a separate discovery tag and may still be populated even when §6 is empty.
+
+| From | To | Verb | Cardinality | Delete |
+|---|---|---|---|---|
+| `{{source_table}}` | `{{target_concept}}` | {{verb in parent voice}} | {{N:1 \| 1:1}} | {{clear \| restrict}} |
+| ... | ... | ... | ... | ... |
+
+- **From** is the table that hosts the FK column. For *outbound* rows it is a `table_name` declared in this model's §3; for *inbound* rows it is a sibling-owned `table_name` that does not yet exist in the catalog (the FK lands on the sibling's table at a later deploy). The same entity in this model can act as parent in some rows and child in others.
+- **To** is the FK target (the parent of the relationship). No module prefix; the deployer resolves against the global catalog. Use the most likely canonical plural snake_case form, the deployer handles fuzzy matches and ambiguity.
+- **Verb** follows the same parent-voice rule as `relationship_label` in §3: it fills "a `<To>` ___ many `<From>`". Both **active** parent voice ("owns", "tracks", "hosts", "manages") and **passive** parent voice ("is affected by", "is referenced by", "is the subject of") are valid; pick whichever reads naturally given which side is the natural actor. Avoid **child voice** ("an incident affects a hardware_asset"), which flips the breadcrumb. The deployer copies the verb onto the created FK as `relationship_label`.
+- **Cardinality** defaults to `N:1`; state `1:1` only when the FK should be unique. Cross-model `M:N` is out of scope for §6 (it requires a junction table that no model owns).
+- **Delete** defaults to `clear`. `restrict` is allowed when the link must block deletion of the target. `cascade` is never valid across modules (no module owns another).
+
+The deployer auto-generates the field name from the resolved target's singular form (e.g. `hardware_assets` becomes `hardware_asset_id`). When the source entity already has a field by that name, the deployer surfaces the collision and asks for an alternative.
+
+## 7. Open questions
 
 Questions the analyst flagged during the session. Every entry must be phrased as a **forward-looking question** that a reviewer can answer — not as a decision log or assumption narrative. Split into two severity buckets and keep both headings even when empty (use "None." under an empty bucket).
 
 **How to phrase entries.** Wrong: *"Contracts folded into subscriptions — if MSAs become needed, split them out."* (This is a decision log, not a question.) Right: *"Should contracts be separated from subscriptions to support master service agreements with multiple sub-products?"* Wrong: *"Actual invoiced spend is out of scope."* Right: *"Is tracking actual invoiced spend (paid vs. due, dispute handling) required, or is the expected-spend calculation from subscription terms sufficient?"*
 
-### 6.1 🔴 Decisions needed (blockers)
+### 7.1 🔴 Decisions needed (blockers)
 
 Questions where the model is **ambiguous or incomplete** without an answer. Leaving these open means the deployer has to guess at entity shape, cardinality, or required fields. The semantic-model-deployer skill refuses to proceed while any 🔴 question is unresolved.
 
 - {{Blocker question 1 — e.g. "Can a user hold multiple roles concurrently, or exactly one? This changes whether `user_roles` is a junction or a FK on `users`."}}
 - {{Blocker question 2}}
 
-### 6.2 🟡 Future considerations (deferred scope)
+### 7.2 🟡 Future considerations (deferred scope)
 
 Questions about extensibility or scope that are **fine to leave open**. These capture trade-offs the analyst deliberately deferred — the model works as-is, but a future business need would trigger a change. Safe to ignore at implementation time.
 
 - {{Deferred-scope question 1 — e.g. "Should the `category` enum on `subscriptions` and `budget_lines` be promoted to a lookup table if the category list starts evolving frequently?"}}
 - {{Deferred-scope question 2}}
 
-## 7. Implementation notes for the downstream agent
+## 8. Implementation notes for the downstream agent
 
 A short checklist for the agent who will materialise this model in Semantius (or equivalent):
 
@@ -144,36 +196,8 @@ A short checklist for the agent who will materialise this model in Semantius (or
 4. For each field in §3: pass `table_name`, `field_name`, `format`, `title` (the Label column), and for `reference`/`parent` fields also `reference_table` and a `reference_delete_mode` consistent with §4. (The §3 `Required` column is analyst intent; the platform manages nullability internally and does not need a per-field flag.)
 5. **Fix up each entity's auto-created label-column field title.** `create_entity` auto-creates a field whose `field_name` equals the entity's `label_column`, and its `title` defaults to `singular_label` (e.g. entity `vendors` with `singular_label: "Vendor"` and `label_column: "vendor_name"` yields an auto-field `vendors.vendor_name` with title `"Vendor"`). If the §3 field table specifies a different Label for the label_column row (e.g. `"Vendor Name"` instead of `"Vendor"`), follow up with `update_field` to set the correct title. The `update_field` `id` is the **composite string** `"{table_name}.{field_name}"` (e.g. `"vendors.vendor_name"`) — **pass it as a string, not an integer**, or the update will fail.
 6. **Deduplicate against Semantius built-in tables.** This model is self-contained and may declare entities (e.g. `users`, `roles`, `permissions`) that already exist in Semantius as built-ins. For each declared entity, read Semantius first: if a built-in already covers it, **skip the create** and reuse the built-in as the `reference_table` target — do not attempt to recreate. Optionally add missing fields to the built-in only if the model requires them (additive, low-risk changes only).
-7. **Reconcile against related modules (§8).** After the model's own creates and the built-in dedup pass, walk the front-matter `related_models` array. For each sibling slug already deployed, walk its §8 sub-section: apply **Defers to sibling** entries the same way as built-in dedup (skip the local create and rewire FKs), and propose **Expects on sibling** entries as additive FKs on the sibling's tables (always user-confirmed, never auto-applied). **Exposes** entries are informational and indexed for future sibling deploys. All cross-module changes are additive only; declines persist on sibling module metadata so the same proposal does not reappear on every redeploy.
+7. **Apply §6 cross-model link suggestions.** After the model's own creates and the built-in dedup pass, walk the §6 hint table. For each row, look up the `To` concept in the live catalog: when a single entity matches, propose an additive `create_field` on `From` using the auto-generated `<target_singular>_id` field name with the row's `Verb` as `relationship_label` and `Delete` as `reference_delete_mode`; when several candidates match (e.g. `vendors`, `suppliers`, `saas_vendors`), batch a single user confirmation; when no candidate matches, skip silently. All §6 changes are strictly additive (new optional FK columns); §6 never carries renames, type changes, deletions, or entity-overlap declarations.
 8. After creation, spot-check that `label_column` on each entity resolves to a real field and that all `reference_table` targets exist.
-
-## 8. Related domains
-
-This model is one atomic piece of a broader enterprise model. The entries below tell the deployer which sibling modules to look for, what entities are shared with each, and what cross-module FKs to propose so the deployed schema closes silos instead of duplicating master data. Each sub-section uses three keys:
-
-- **Exposes** — entities owned by this model that siblings are expected to reference (informational; deployer indexes them for reciprocity).
-- **Expects on sibling** — FKs the deployer should propose adding to the sibling's tables when the sibling is (or becomes) live (additive, user-confirmed).
-- **Defers to sibling** — entities this model declares for self-containment but whose canonical owner is the sibling if deployed (deployer reuses sibling's table, skips the local create, rewires FKs).
-
-All cross-module changes are additive and user-confirmed (see §7 step 7). If a sibling slug listed in `related_models` is not deployed, its §8 sub-section is dormant; the deployer indexes it so a future sibling deploy can reciprocate.
-
-If this model has no related siblings, write "No related domains identified." under §8 and leave `related_models` out of the front-matter (do not write an empty list).
-
-### 8.{{N}} `{{sibling_module_slug}}` — {{Sibling Module Display Name}}
-
-**Relationship:** {{peer | upstream | downstream}} ({{one-line context, e.g. "downstream consumer of CMDB data" or "canonical owner of vendor master data when deployed"}}).
-
-**Exposes:** {{`entity_a`, `entity_b` — entities this model owns that the sibling is expected to reference. List `none` if this model exposes nothing to this sibling.}}
-
-**Expects on sibling:**
-- `{{sibling_slug}}.{{table}}.{{fk_field}} → {{this_slug}}.{{exposed_table}}` (N:1, {{restrict | clear | cascade}}) {{; one-line rationale if non-obvious}}
-- {{additional expected FKs, or write "none" as a single-line list when nothing is expected}}
-
-**Defers to sibling:**
-- `{{this_slug}}.{{local_table}}` should be reused from `{{sibling_slug}}.{{sibling_table}}` if that module is deployed. The deployer should skip creating the local table and rewire every FK in this model that points at it. {{One-line note on which fields, if any, this model adds that the sibling lacks and should be proposed as additive extensions.}}
-- {{additional defers entries, or "none"}}
-
-_(repeat 8.1, 8.2, … per related sibling. Keep entries tight. If a key is genuinely empty for a sibling, write "none" rather than omitting the line, so the deployer can tell "explicitly nothing" from "author forgot".)_
 ```
 
 ## Template ends above this line
@@ -183,24 +207,24 @@ _(repeat 8.1, 8.2, … per related sibling. Keep entries tight. If a key is genu
 ## Authoring guidance
 
 - Use the fenced `markdown` block so the model is self-contained when copied.
-- Table columns are fixed — don't rename or reorder them. Agents parse by header.
+- Table columns are fixed, don't rename or reorder them. Agents parse by header.
 - If a field is a reference, always put the arrow + target + cardinality in the "Reference / Notes" column, e.g. `→ accounts (N:1)`. If it's a parent (ownership), use `↳ accounts (N:1, cascade)` so the distinction is visible.
-- The §2 Mermaid diagram is **required** — it must list every entity in the summary table and every relationship in §4. Regenerate it whenever entities or relationships change.
-- Keep the "Open questions" section and both severity sub-sections (§6.1 Decisions needed, §6.2 Future considerations) even when empty — write "None." under an empty bucket. Every entry is a forward-looking question; decision-log prose ("X was folded into Y") does not belong here. The semantic-model-deployer skill uses §6.1 as a gate — any unresolved 🔴 item blocks deployment.
-- **§7 module name must equal `system_slug`.** The frontmatter `system_slug` is the single source of truth for the module identifier. Do not introduce a second name like `{domain}_spend` or `{domain}_tracker` in §7 — if the frontmatter says `acme_crm`, §7 step 1 must read "Create one module named `acme_crm` …" and the permissions must be `acme_crm:read` / `acme_crm:manage`. A divergence between frontmatter and §7 is a blocker: the downstream deployer sees two authoritative sources and cannot pick silently.
-- **§7 must explain the label-column title fixup.** After `create_entity`, Semantius auto-creates a field named `<label_column>` with its `title` defaulting to `singular_label`. If any entity's §3 field table specifies a Label for the label_column row that differs from `singular_label` (e.g. `singular_label: "Vendor"` but §3 Label `"Vendor Name"`), §7 step 5 must explicitly instruct the implementer to call `update_field` with the composite string id (`"{table_name}.{field_name}"`, passed as a **string** not an integer) to set the correct title. Do not silently harmonize labels to avoid the fixup — `singular_label` stays a bare singular for plural/singular symmetry, and field-level titles live on the field.
-- The front-matter is YAML — every value must be quoted if it contains a colon.
-- **`domain`** — the system category in **Title-case / acronym form**. Common values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. These are seed examples, not a closed set — prefer one when it genuinely fits (keeps the vocabulary tight for discovery), but coin a new Title-case / acronym value when nothing fits (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). **Omit the key entirely** only when you can't categorize the system at all. **Never write `custom`** — it adds no information; absence already means "uncategorized".
-- **Discovery tags** — `entities` is **lowercase snake_case** (matches Semantius `table_name` form so it works as an exact-match table tag). `departments` and `industries` use **Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) so acronyms read correctly and humans can scan them — snake_case mangles initialisms (`it`, `hr`, `saas`).
-  - `entities` is **required** and must be the complete list of `table_name` values from §2 (in §2 order, lowercase snake_case). Regenerate it whenever entities are added, removed, or renamed — a stale list defeats discovery.
-  - `departments` is **optional**: list the department(s) where the system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments — for cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant; do not write an empty list.
+- The §2 Mermaid diagram is **required**, it must list every entity in the summary table and every relationship in §4. Regenerate it whenever entities or relationships change.
+- Keep the "Open questions" section and both severity sub-sections (§7.1 Decisions needed, §7.2 Future considerations) even when empty, write "None." under an empty bucket. Every entry is a forward-looking question; decision-log prose ("X was folded into Y") does not belong here. The semantic-model-deployer skill uses §7.1 as a gate, any unresolved 🔴 item blocks deployment.
+- **§8 module name must equal `system_slug`.** The frontmatter `system_slug` is the single source of truth for the module identifier. Do not introduce a second name like `{domain}_spend` or `{domain}_tracker` in §8, if the frontmatter says `acme_crm`, §8 step 1 must read "Create one module named `acme_crm` …" and the permissions must be `acme_crm:read` / `acme_crm:manage`. A divergence between frontmatter and §8 is a blocker: the downstream deployer sees two authoritative sources and cannot pick silently.
+- **§8 must explain the label-column title fixup.** After `create_entity`, Semantius auto-creates a field named `<label_column>` with its `title` defaulting to `singular_label`. If any entity's §3 field table specifies a Label for the label_column row that differs from `singular_label` (e.g. `singular_label: "Vendor"` but §3 Label `"Vendor Name"`), §8 step 5 must explicitly instruct the implementer to call `update_field` with the composite string id (`"{table_name}.{field_name}"`, passed as a **string** not an integer) to set the correct title. Do not silently harmonize labels to avoid the fixup, `singular_label` stays a bare singular for plural/singular symmetry, and field-level titles live on the field.
+- **`version`** is the analyst skill's `CURRENT_VERSION` at the time the file was last written, as a quoted string `"MAJOR.MINOR"`. The analyst stamps this on every save (Mode A Stage 5, Mode B fix-up writes, Mode C extend writes); it is never authored by hand. Major changes only on breaking schema/structure shifts (frontmatter keys removed, sections renumbered, table column shapes changed); minor changes on any non-breaking analyst-skill update (new audit checks, clarified rules, additional optional fields). The deployer rejects models whose major differs from its expected major; the analyst treats older-major files as archived knowledge rather than literal models. Files with no `version` key (legacy, pre-versioning) require an explicit review-and-migrate pass before any audit/extend or deploy.
+- **`system_description`** is **required**: a compact tagline of ≤40 characters (2-5 words) shown in the UI module-selector chip and on the module landing page beside `system_name`. Its job is to disambiguate similar-looking names at a glance (ITSM vs ITAM, CRM vs CDP). For acronym `system_name`s use the plain English expansion (`CRM` → `Customer Relationship Management`, `ITSM` → `IT Service Management`, `CMDB` → `Configuration Management Database`, `HRIS` → `Human Resources Information System`, `SAM` → `Software Asset Management`, `ATS` → `Applicant Tracking System`, `CDP` → `Customer Data Platform`). For non-acronym names use a 2-4 word disambiguating noun phrase (`Helpdesk` → `IT Support & Ticketing`, `Workforce Planning` → `Headcount & Org Design`). Full-sentence descriptions belong in §1 Overview, not here.
+- The front-matter is YAML, every value must be quoted if it contains a colon.
+- **`domain`**, the system category in **Title-case / acronym form**. Common values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. These are seed examples, not a closed set, prefer one when it genuinely fits (keeps the vocabulary tight for discovery), but coin a new Title-case / acronym value when nothing fits (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). **Omit the key entirely** only when you can't categorize the system at all. **Never write `custom`**, it adds no information; absence already means "uncategorized".
+- **Discovery tags**, `entities` is **lowercase snake_case** (matches Semantius `table_name` form so it works as an exact-match table tag). `departments` and `industries` use **Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) so acronyms read correctly and humans can scan them, snake_case mangles initialisms (`it`, `hr`, `saas`).
+  - `entities` is **required** and must be the complete list of `table_name` values from §2 (in §2 order, lowercase snake_case). Regenerate it whenever entities are added, removed, or renamed, a stale list defeats discovery.
+  - `departments` is **optional**: list the department(s) where the system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments, for cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant; do not write an empty list.
   - `industries` is **optional**: list the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when the model is industry-agnostic; do not write an empty list.
-- `initial_request` is **immutable**. It captures the user's verbatim opening ask from the Create session. Audit and Extend modes must preserve it exactly — never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
-- If the system has no enums, §5 can read "No enumerations defined." — don't omit the section; keeping section numbers stable helps humans navigate multiple models.
-- **§8 Related domains is the federation contract.** The semantic model is atomic by design (it covers one bounded domain), but Semantius is a unified catalog where many such models coexist. §8 is how each atomic model declares its links to the rest of the enterprise model so the deployer can close silos automatically. Three keys per related sibling, all required (use `none` for empty entries so "explicitly nothing" is distinguishable from "author forgot"):
-  - **Exposes** — entities this model owns that siblings reference. Informational; the deployer indexes them so a future sibling deploy can reciprocate.
-  - **Expects on sibling** — concrete FK fields (with target table and cardinality) the deployer should propose adding to the sibling's tables when the sibling is live. Always additive, always user-confirmed; declines persist on the sibling module's metadata so the proposal does not nag on every redeploy.
-  - **Defers to sibling** — entities this model declares for self-containment but whose canonical owner is the sibling if deployed. Treated by the deployer like Semantius built-in dedup: skip the local create, rewire local FKs to the sibling's table, and propose any non-overlapping fields as additive extensions on the sibling.
-  Cross-module changes from §8 are strictly additive (new optional FKs, new fields on existing tables). Renames, type changes, and deletions across module boundaries are out of scope and must be raised with the user as separate work.
-- **`related_models` front-matter** mirrors §8: list the slug of every sibling that has at least one §8 sub-section. Each entry is **lowercase**, byte-for-byte equal to the target model's `system_slug` (e.g. `cdp`, `itsm`, `acme_crm`). Never use the Title-case `domain` form (`CDP`, `ITSM`) here — that's a different field with a different job; mixing casings here is a deployer-blocker. The deployer uses this list as a fast index ("am I a sibling of any deployed module?") before reading §8 in detail. **Omit the key entirely** when the model has no related siblings (do not write an empty list); §8 then reads "No related domains identified."
-- **When inferring related siblings,** look at: (a) what entities you deferred to other modules during Stage 4 (e.g. "no `change_requests` here, that lives in `change_management`"), (b) what shared concepts exist in your `*_id` FKs that point at master-data tables likely to be canonically owned elsewhere (`vendors`, `users`, `cost_centers`, `departments`), and (c) what downstream modules will plausibly need an FK back into this model (a CMDB exposes `configuration_items` to ITSM, change management, software asset management, etc.). The §6.2 future considerations are the natural seed list — anything the model defers to "a separate module" probably wants a §8 entry.
+- `initial_request` is **immutable**. It captures the user's verbatim opening ask from the Create session. Audit and Extend modes must preserve it exactly, never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
+- If the system has no enums, §5 can read "No enumerations defined.", don't omit the section; keeping section numbers stable helps humans navigate multiple models.
+- **§6 Cross-model link suggestions is a hint table.** The semantic model is atomic by design (it covers one bounded domain), but Semantius is a unified catalog where many such models coexist. §6 lists potential FKs from this model's entities to entities that may be owned by another domain (e.g. `incidents → hardware_assets`, `incidents → configuration_items`). The deployer resolves each `To` against the live catalog at deploy time, proposes an additive FK when the target exists, asks when multiple candidates fit, and silently skips when the target is not deployed. Five columns per row: `From`, `To`, `Verb`, `Cardinality` (default `N:1`), `Delete` (default `clear`).
+- **§6 does not carry entity-overlap declarations.** Vendors-vs-suppliers, contracts-vs-saas_contracts, and similar shared-master-data overlaps are name collisions, and the deployer detects them by inspecting the live catalog at deploy time (entity-name match and similarity heuristic, with a user decision on merge / rename incoming / rename existing). The analyst does not need to pre-declare them in §6.
+- **`related_domains` front-matter** is a discovery tag for humans browsing the model catalog: the names of business domains/system categories this model sits next to in the enterprise neighborhood. Each entry is **Title-case / acronym form**, the same vocabulary as the `domain` field itself (`ITAM`, `CMDB`, `Change Management`, `Workforce Planning`, `Vendor Management`, `Identity & Access`). It is **not** a list of slugs of other model files, it is descriptive analyst knowledge about which neighborhoods this system touches, drawn from general business-architecture knowledge rather than what other model files happen to exist. No skill consumes `related_domains` for logic; it exists purely to help a human scanning a directory of `*-semantic-model.md` files see how a model fits into the broader catalog. Omit the key entirely when the system genuinely has no adjacent domains (rare); do not write an empty list.
+- **When drafting §6 rows,** look at: (a) anything you deferred to "another module" in Stage 3 or 4 that takes the form of a cross-domain link (the §7.2 future considerations are the natural seed list); (b) entities in this model whose lifecycle is closely tied to a concept in a different domain (an incident's affected device, a job opening's planned position, a software install's host CI). Vendors / users / cost-centers / departments and other shared-master-data tables do **not** belong in §6, the deployer's name-collision flow handles them.
+- **`Computed fields` and `Validation rules` are optional §3 sub-blocks** that capture entity-level JsonLogic the platform evaluates on every write. Use them when a derived value is documented elsewhere as a computed quantity (RICE score, line subtotal, days-open) or when an invariant is documented as a record-level rule ("only set X once Y reaches state Z"). Omit the heading entirely when an entity needs neither — these are not required scaffolding. The blocks are emitted as fenced ```` ```json ```` arrays so the deployer can pass them byte-for-byte to `create_entity` / `update_entity` and the optimizer can round-trip them out of live state. Keep the JSON valid (real arrays of real objects, no comments), every `computed_fields[].name` resolves to an existing scalar field on the same entity, every `validation_rules[].code` is snake_case and unique within the entity, and reserved variables (`$today`, `$now`, `$user_id`) are referenced as `{"var": "$today"}` etc. Cross-row lookups, aggregates, and FK traversal are out of scope for these blocks (that work belongs in cube/views).

@@ -11,7 +11,7 @@ description: >-
 
 # use-semantius Skill
 
-**Semantius** is a low-code platform that lets you define a semantic data model — entities, fields, relationships, and access rules — and instantly get a fully managed PostgreSQL database with a REST API, auto-generated UI, and an analytics layer behind it. You define *what* your data looks like (Layer 1), and Semantius handles storage, querying (Layer 2), and cross-table analytics (Layer 3).
+**Semantius** is a low-code platform that lets you define a semantic data model, entities, fields, relationships, and access rules, and instantly get a fully managed PostgreSQL database with a REST API, auto-generated UI, and an analytics layer behind it. You define *what* your data looks like (Layer 1), and Semantius handles storage, querying (Layer 2), and cross-table analytics (Layer 3).
 
 `semantius` is the official CLI that gives shell and agent access to two servers: `crud` (schema management + record operations) and `cube` (CubeJS-compatible analytics).
 
@@ -51,34 +51,37 @@ Understanding which layer you're working with determines which tools to use:
 | File | When to read |
 |------|-------------|
 | `references/cli-usage.md` | CLI commands, shell patterns, chaining, installation |
-| `references/data-modeling.md` | Layer 1 — entities, fields, modules, relationships, safe evolution |
-| `references/rbac.md` | Layer 1 — permissions, roles, user assignments, hierarchy |
+| `references/data-modeling.md` | Layer 1, entities, fields, modules, relationships, safe evolution |
+| `references/rbac.md` | Layer 1, permissions, roles, user assignments, hierarchy |
 | `references/crud-tools.md` | Layer 1 typed tools + Layer 2 postgrestRequest/sqlToRest reference |
-| `references/cube-queries.md` | Layer 3 — CubeJS query DSL, date filtering, analysis modes |
-| `references/cube-tools.md` | Layer 3 — discover/validate/load/chart tool signatures |
+| `references/cube-queries.md` | Layer 3, CubeJS query DSL, date filtering, analysis modes |
+| `references/cube-tools.md` | Layer 3, discover/validate/load/chart tool signatures |
 | `references/webhook-import.md` | Bulk import of records into Layer 2 via signed webhook |
 
 ---
 
 ## Quick Decision Guide
 
-**Managing schema — create/modify entities, fields, modules?**
-→ Layer 1 — read `references/data-modeling.md`, follow mandatory creation order
+**Managing schema, create/modify entities, fields, modules?**
+→ Layer 1, read `references/data-modeling.md`, follow mandatory creation order
 
 **Setting up permissions, roles, users?**
-→ Layer 1 — read `references/rbac.md`
+→ Layer 1, read `references/rbac.md`
 
 **Inserting, reading, updating, or deleting records in a single table?**
-→ Layer 2 — use `postgrestRequest` — see `references/crud-tools.md`
+→ Layer 2, use `postgrestRequest`, see `references/crud-tools.md`
 
 **Querying across multiple tables, aggregating, trending over time, top-N, metrics?**
-→ Layer 3 — use `cube` — read `references/cube-queries.md` + `references/cube-tools.md`
+→ Layer 3, use `cube`, read `references/cube-queries.md` + `references/cube-tools.md`
 
 **Writing shell scripts or chaining CLI commands?**
 → Read `references/cli-usage.md`
 
 **Importing a CSV or Excel file?**
 → Read `references/webhook-import.md`
+
+**A baked recipe (e.g. from a `semantius-skill-maker`-generated skill) hit an unexpected 409/422 and you suspect schema drift?**
+→ Live introspect with `read_entity` / `read_field`, see `references/data-modeling.md` § "Runtime schema introspection (live FK / shape lookup)". Do not silently adapt the recipe; abort, surface the drift, recommend regenerating the domain skill.
 
 ---
 
@@ -105,8 +108,8 @@ semantius info
 ```
 
 If this fails with "Missing required environment variables" or similar error, list what's missing and STOP. Required variables:
-- `SEMANTIUS_API_KEY` — your API key
-- `SEMANTIUS_ORG` — your organization name
+- `SEMANTIUS_API_KEY`, your API key
+- `SEMANTIUS_ORG`, your organization name
 
 Do not proceed until both are set and `semantius info` returns successfully.
 
@@ -139,7 +142,7 @@ Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably.
 
 ## The Two Servers
 
-### `crud` — Schema Management + Record Operations (Layers 1 & 2)
+### `crud`: Schema Management + Record Operations (Layers 1 & 2)
 
 **Layer 1 typed tools** manage the semantic data model: `create_entity`, `create_field`, `create_module`, `create_permission`, `create_role`, etc. These operate on Semantius's own schema tables.
 
@@ -157,11 +160,11 @@ semantius call crud postgrestRequest '{"method":"PATCH","path":"/products?catego
 
 Full reference: `references/crud-tools.md`
 
-### `cube` — CubeJS-Compatible Analytics (Layer 3)
+### `cube`: CubeJS-Compatible Analytics (Layer 3)
 
 The cube server implements a **CubeJS-compatible API**. If you know CubeJS, the query DSL is the same. Use it for anything requiring joins, aggregations, or metrics that PostgREST alone cannot express efficiently.
 
-**Always call `discover` first** — it returns the schema, the complete query language reference, and the date filtering guide.
+**Always call `discover` first**, it returns the schema, the complete query language reference, and the date filtering guide.
 
 Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 
@@ -169,17 +172,17 @@ Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 
 ## Golden Rules
 
-1. **Read before writing** — Before any `create_*`, call `read_*` to check for duplicates. ALWAYS first.
+1. **Read before writing**, Before any `create_*`, call `read_*` to check for duplicates. ALWAYS first.
    - Before `create_module` → run `read_module` first
    - Before `create_entity` → run `read_entity` first
    - Before `create_permission` → run `read_permission` first
    - Before `create_role` → run `read_role` first
    - If the read returns results, use those IDs instead of creating duplicates. Only create if it returns empty.
-2. **Schema first** — Module → Permissions → Entity → Fields. Never skip steps.
-3. **Never create auto-generated fields** — `id`, `label`, `created_at`, `updated_at`, and the `label_column` field are created automatically by `create_entity`.
-4. **`reference_table` mandates relational format** — Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
-5. **Warn before risky changes** — Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
-6. **Link after schema changes** — Provide the UI link: `https://tests.semantius.app/{module_name}/{table_name}`
+2. **Schema first**, Module → Permissions → Entity → Fields. Never skip steps.
+3. **Never create auto-generated fields**, `id`, `label`, `created_at`, `updated_at`, and the `label_column` field are created automatically by `create_entity`.
+4. **`reference_table` mandates relational format**, Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
+5. **Warn before risky changes**, Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
+6. **Link after schema changes**, Provide the UI link: `https://tests.semantius.app/{module_slug}/{table_name}` (URLs use the lowercase `module_slug`, not the display `module_name`).
 
 ## Response handling: exit code is not enough
 

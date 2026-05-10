@@ -11,22 +11,22 @@ The `cube` server implements a **CubeJS-compatible API** over your Semantius dat
 | Complex metrics | Retention, funnels, conversion rates |
 | Pre-defined measures | Reuse metric definitions from the semantic model |
 
-For simple single-table reads — filtering one table, fetching a record by ID — use `postgrestRequest` instead (Layer 2).
+For simple single-table reads, filtering one table, fetching a record by ID, use `postgrestRequest` instead (Layer 2).
 
 ---
 
 ## Mandatory Workflow
 
-**Always follow this sequence — never skip `discover`:**
+**Always follow this sequence, never skip `discover`:**
 
 ```
 1. discover  →  2. (validate)  →  3. load / chart
 ```
 
-1. **`discover`** — Returns available cubes, the complete query DSL (`queryLanguageReference`), and the `dateFilteringGuide`. Read all three before constructing any query.
-2. **`validate`** (optional) — Auto-corrects field names, filter syntax, and join validity. Returns corrected query + generated SQL for debugging.
-3. **`load`** — Executes the query and returns data.
-4. **`chart`** — Same as `load` but renders an interactive chart UI.
+1. **`discover`**, Returns available cubes, the complete query DSL (`queryLanguageReference`), and the `dateFilteringGuide`. Read all three before constructing any query.
+2. **`validate`** (optional), Auto-corrects field names, filter syntax, and join validity. Returns corrected query + generated SQL for debugging.
+3. **`load`**, Executes the query and returns data.
+4. **`chart`**, Same as `load` but renders an interactive chart UI.
 
 ```bash
 # Step 1 — always first, supports optional filtering
@@ -35,10 +35,10 @@ semantius call cube discover '{}'
 semantius call cube discover '{"topic": "sales", "intent": "analyze revenue trends", "limit": 10, "minScore": 0.1}'
 ```
 
-**`discover` returns three things — read all before querying:**
-- `cubes` — available cubes with measures, dimensions, join relationships, and metadata hints
-- `queryLanguageReference` — the **complete** TypeScript DSL, filter operators, analysis modes. This is the source of truth — do not construct queries from memory.
-- `dateFilteringGuide` — decision tree for date filtering vs time grouping. Read this whenever the user mentions any time period.
+**`discover` returns three things, read all before querying:**
+- `cubes`, available cubes with measures, dimensions, join relationships, and metadata hints
+- `queryLanguageReference`, the **complete** TypeScript DSL, filter operators, analysis modes. This is the source of truth, do not construct queries from memory.
+- `dateFilteringGuide`, decision tree for date filtering vs time grouping. Read this whenever the user mentions any time period.
 
 ```bash
 # Step 2 — optional: validate auto-corrects field names and returns generated SQL
@@ -53,7 +53,7 @@ semantius call cube load '{"query": {"measures": ["Sales.count"], "dimensions": 
 
 ## Field Naming Rules
 
-Fields are **exactly** `CubeName.fieldName` — two parts, one dot. Copy verbatim from `discover` output.
+Fields are **exactly** `CubeName.fieldName`, two parts, one dot. Copy verbatim from `discover` output.
 
 | Wrong | Right |
 |-------|-------|
@@ -98,7 +98,7 @@ semantius call cube load '{
 }'
 ```
 
-Always read the `dateFilteringGuide` returned by `discover` — it is the authoritative decision tree.
+Always read the `dateFilteringGuide` returned by `discover`, it is the authoritative decision tree.
 
 ---
 
@@ -129,9 +129,9 @@ Always read the `dateFilteringGuide` returned by `discover` — it is the author
 
 | Property | Notes |
 |----------|-------|
-| `dimension` | Required — e.g. `"Sales.createdAt"` |
+| `dimension` | Required, e.g. `"Sales.createdAt"` |
 | `dateRange` | Relative (`"last 7 days"`, `"this month"`, `"last quarter"`) or absolute `["2024-01-01","2024-06-30"]` |
-| `granularity` | `second`, `minute`, `hour`, `day`, `week`, `month`, `quarter`, `year` — **required for time series**; omit only when using as a date range filter |
+| `granularity` | `second`, `minute`, `hour`, `day`, `week`, `month`, `quarter`, `year`, **required for time series**; omit only when using as a date range filter |
 | `fillMissingDates` | `true` (default) fills gaps in the series with zero/null. Set `false` to skip empty periods. Requires `granularity` + `dateRange`. |
 | `compareDateRange` | Period-over-period comparison: array of date ranges, e.g. `["last 30 days", ["2024-01-01","2024-01-30"]]` |
 
@@ -181,7 +181,7 @@ Common operators (see `queryLanguageReference` from `discover` for the full list
 
 ## Cross-Cube Joins
 
-The `joins` property in each `discover` result lists related cubes. Include dimensions from related cubes freely — the system auto-joins them.
+The `joins` property in each `discover` result lists related cubes. Include dimensions from related cubes freely, the system auto-joins them.
 
 ```bash
 # Discover shows: Productivity joins to Employees

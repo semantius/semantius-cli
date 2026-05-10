@@ -1,6 +1,6 @@
 # Semantius Data Modeling Reference (Layer 1)
 
-This is **Layer 1** of Semantius — the semantic data model that defines the schema for your application. It stores domain concepts, attributes, relationships, and access rules as structured data. When you define an entity here, Semantius automatically creates a real PostgreSQL table for it, which then becomes accessible via PostgREST (Layer 2) and the CubeJS API (Layer 3).
+This is **Layer 1** of Semantius, the semantic data model that defines the schema for your application. It stores domain concepts, attributes, relationships, and access rules as structured data. When you define an entity here, Semantius automatically creates a real PostgreSQL table for it, which then becomes accessible via PostgREST (Layer 2) and the CubeJS API (Layer 3).
 
 Unlike raw database DDL, the semantic model encodes:
 - Human-readable labels and descriptions (used by auto-generated UIs)
@@ -14,16 +14,16 @@ The typed crud tools (`create_entity`, `create_field`, etc.) all operate on this
 
 ## Mandatory Creation Order
 
-**Always follow this sequence — never skip steps:**
+**Always follow this sequence, never skip steps:**
 
 ```
 Module → Permissions → Entity → Fields
 ```
 
-1. **Resolve/create module** — `read_module`, then `create_module` if needed
-2. **Resolve/create permissions** — `read_permission`, then `create_permission` if needed
-3. **Create entity** — `create_entity` with `module_id`, `view_permission`, `edit_permission`
-4. **Add fields** — `create_field` for each domain attribute (not the auto-generated ones)
+1. **Resolve/create module**, `read_module`, then `create_module` if needed
+2. **Resolve/create permissions**, `read_permission`, then `create_permission` if needed
+3. **Create entity**, `create_entity` with `module_id`, `view_permission`, `edit_permission`
+4. **Add fields**, `create_field` for each domain attribute (not the auto-generated ones)
 
 ---
 
@@ -31,19 +31,30 @@ Module → Permissions → Entity → Fields
 
 Every entity **must** belong to a module.
 
-**Check before creating:**
+A module has two name fields with distinct jobs:
+
+- **`module_name`** is the unique, human-facing display name shown in the UI module selector and on the module landing page. Keep acronyms as acronyms (`CRM`, `ITSM`, `CMDB`), this is what users read. Matches the source model's `system_name`.
+- **`module_slug`** is the lowercase, URL-safe handle (regex `^([a-z0-9_]+)?$`). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug`.
+
+> ⚠️ **`alias` is gone.** Earlier schemas had an `alias` column on modules. It has been removed. Use `module_name` for the display name and `module_slug` for the URL/permission handle.
+
+**Check before creating** (filter on `module_slug` for the URL handle, or on `module_name` for the display name):
 ```bash
-semantius call crud read_module '{"filters": "module_name=eq.crm"}'
+semantius call crud read_module '{"filters": "module_slug=eq.crm"}'
 ```
 
 **Create module + baseline permissions (always both):**
 ```bash
-semantius call crud create_module '{"data": {"module_name": "crm", "label": "CRM", "description": "Customer relationship management"}}'
+semantius call crud create_module '{"data": {"module_name": "CRM", "module_slug": "crm", "description": "Customer Relationship Management"}}'
 semantius call crud create_permission '{"data": {"permission_name": "crm:read", "description": "Read CRM data", "module_id": <id>}}'
 semantius call crud create_permission '{"data": {"permission_name": "crm:manage", "description": "Manage CRM data", "module_id": <id>}}'
 ```
 
-Permission naming convention: **always `<module>:<action>`** (e.g., `crm:read`, `crm:manage`, `leads:write`).
+The `description` field is a compact tagline (≤40 chars) shown beside `module_name` in the selector chip, for acronyms, the plain English expansion (`CRM` → `Customer Relationship Management`); for non-acronyms a 2-4 word disambiguating phrase. Long-form prose belongs in §1 Overview of the source model, not on the module record.
+
+Other optional fields on `modules`: `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`.
+
+Permission naming convention: **always `<module_slug>:<action>`** (e.g., `crm:read`, `crm:manage`). The permission prefix is the slug, not the display name, `crm:read`, never `CRM:read`.
 
 ---
 
@@ -72,26 +83,26 @@ semantius call crud create_entity '{
 
 ### Entity Naming Rules
 
-- **`table_name` is always plural snake_case** — `products`, `orders`, `order_lines`, not `product`, `order`, `orderLine`
-- **Never create a `users` entity** — Semantius has a built-in `users` table. Any module that needs to reference users must use `reference_table: "users"` pointing at the existing table. Creating a competing `users` or `user` entity will conflict with the built-in table and break authentication.
+- **`table_name` is always plural snake_case**, `products`, `orders`, `order_lines`, not `product`, `order`, `orderLine`
+- **Never create a `users` entity**, Semantius has a built-in `users` table. Any module that needs to reference users must use `reference_table: "users"` pointing at the existing table. Creating a competing `users` or `user` entity will conflict with the built-in table and break authentication.
 
 ### Key Entity Fields
 
 | Field | Notes |
 |-------|-------|
 | `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. |
-| `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label` — if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
+| `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
 | `plural_label` | e.g. "Products" |
 | `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title |
-| `module_id` | Required — find with `read_module` |
-| `view_permission` | Required — name string (e.g. `"catalog:read"`) |
-| `edit_permission` | Required — name string (e.g. `"catalog:manage"`) |
-| `icon_url` | Optional — URL to an icon representing this entity in the UI |
+| `module_id` | Required, find with `read_module` |
+| `view_permission` | Required, name string (e.g. `"catalog:read"`) |
+| `edit_permission` | Required, name string (e.g. `"catalog:manage"`) |
+| `icon_url` | Optional, URL to an icon representing this entity in the UI |
 | `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
 | `cube_mode` | Optional. OLAP cube generation: `disabled` (default) or `auto` (include in cube). Set to `auto` when the entity should be included in cube queries. |
 | `audit_log` | Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value. |
 
-### Auto-Generated Fields — NEVER Create These Manually
+### Auto-Generated Fields: NEVER Create These Manually
 
 When `create_entity` is called, the system automatically creates:
 
@@ -100,8 +111,8 @@ When `create_entity` is called, the system automatically creates:
 | `id` | `id` | Primary key (`is_pk: true`) |
 | `label` | `label` | Display field reading computed value from `label_column` |
 | `<label_column>` | `label` | The actual named field (e.g. `product_name`) with title from `singular_label` |
-| `created_at` | — | Timestamp, auto-maintained |
-| `updated_at` | — | Timestamp, auto-maintained |
+| `created_at` |, | Timestamp, auto-maintained |
+| `updated_at` |, | Timestamp, auto-maintained |
 
 > ⚠️ Calling `create_field` for any of these will fail or create duplicates.
 
@@ -109,7 +120,85 @@ When `create_entity` is called, the system automatically creates:
 
 ### Customizing the `label` field's title
 
-The auto-created `label` field's `title` defaults to `singular_label`. If the record's identifying value is more specific than the entity name, follow up with `update_field` on the `label` field to set its `title`. Example: an entity `cars` where each record is identified by its license plate — keep `singular_label: "Car"` / `plural_label: "Cars"` (symmetric), then update the `label` field's title to `"License Plate"`. See "Updating and Deleting Entities" below for the `update_field` call shape. Do **not** smuggle the field-level title into `singular_label` (e.g. `"Car License Plate"`) — that breaks plural/singular symmetry and propagates "Name"/"License Plate" into every UI surface that renders the entity name.
+The auto-created `label` field's `title` defaults to `singular_label`. If the record's identifying value is more specific than the entity name, follow up with `update_field` on the `label` field to set its `title`. Example: an entity `cars` where each record is identified by its license plate, keep `singular_label: "Car"` / `plural_label: "Cars"` (symmetric), then update the `label` field's title to `"License Plate"`. See "Updating and Deleting Entities" below for the `update_field` call shape. Do **not** smuggle the field-level title into `singular_label` (e.g. `"Car License Plate"`), that breaks plural/singular symmetry and propagates "Name"/"License Plate" into every UI surface that renders the entity name.
+
+### Computed fields and validation rules (entity-level JsonLogic)
+
+Every entity carries two optional JSON-array properties that let the platform derive values and enforce invariants on every write, without per-model service code:
+
+| Property | Type | Default | Purpose |
+|---|---|---|---|
+| `computed_fields` | `array` | `[]` | Ordered list of fields whose values are derived from the same record via JsonLogic. |
+| `validation_rules` | `array` | `[]` | Ordered list of record-level invariants that must hold for a write to succeed. |
+
+Both are first-class entity properties: read with `read_entity`, set on `create_entity`, replaced on `update_entity`. The platform compiles them into `BEFORE INSERT / UPDATE` triggers; when both arrays are empty (or the entity is deleted) the trigger is dropped.
+
+**`computed_fields` element shape** — `{ "name": <existing-scalar-field-on-this-entity>, "jsonlogic": <expr>, "description"?: <string> }`. The expression's result is written into `name`; `name` may use dotted notation to target a JSONB sub-property (e.g. `metadata.rice`). Earlier entries in the array are visible to later ones.
+
+**`validation_rules` element shape** — `{ "code": <snake_case-unique-within-entity>, "message": <default-English>, "jsonlogic": <expr>, "description"?: <string> }`. The rule passes when `jsonlogic` evaluates truthy.
+
+**Per-write semantics.** On every INSERT/UPDATE: (1) compute pass writes derived values in array order; if an expression throws, the platform errors with the entry's `name` and the inner error. (2) Validate pass evaluates rules in array order against the post-compute record; the platform collects every failure and rejects the write with `{ "errors": [{ "code", "message" }, ...] }`. Compute and validate run in the write's own transaction, so the record either lands fully derived and rule-clean or not at all.
+
+**Reserved variables** that JsonLogic may read via `{"var": "$name"}`:
+
+| Var | Type | Meaning |
+|---|---|---|
+| `$today` | `date` | Server date at evaluation time. |
+| `$now` | `date-time` | Server timestamp at evaluation time. |
+| `$user_id` | `uuid` | Authenticated user performing the write (`null` for system writes). |
+
+No other ambient state. Cross-row lookups, aggregates, and FK traversal are out of scope (use cube/views).
+
+**Deploy-time validation:** the platform rejects non-array values, names that don't resolve to a field on this entity, duplicate `code`s within an entity, and malformed `jsonlogic`. Errors point at the offending array index.
+
+**Example: passing both on `create_entity`** (a `features` entity that auto-derives `rice_score` and refuses to attach a release until the feature is committed):
+
+```bash
+semantius call crud create_entity '{
+  "data": {
+    "table_name": "features",
+    "singular_label": "Feature",
+    "plural_label": "Features",
+    "label_column": "feature_title",
+    "module_id": 12,
+    "view_permission": "product_roadmap:read",
+    "edit_permission": "product_roadmap:manage",
+    "computed_fields": [
+      {
+        "name": "rice_score",
+        "description": "(reach × impact × confidence) / effort, null when effort is missing or 0.",
+        "jsonlogic": {
+          "if": [
+            { "and": [
+              { "!=": [{ "var": "effort_score" }, null] },
+              { ">":  [{ "var": "effort_score" }, 0] }
+            ]},
+            { "/": [
+              { "*": [{ "var": "reach_score" }, { "var": "impact_score" }, { "var": "confidence_score" }] },
+              { "var": "effort_score" }
+            ]},
+            null
+          ]
+        }
+      }
+    ],
+    "validation_rules": [
+      {
+        "code": "release_only_when_committed",
+        "message": "A release can only be assigned once the feature is planned, in_progress, or shipped.",
+        "jsonlogic": {
+          "or": [
+            { "==": [{ "var": "release_id" }, null] },
+            { "in": [{ "var": "feature_status" }, ["planned", "in_progress", "shipped"]] }
+          ]
+        }
+      }
+    ]
+  }
+}'
+```
+
+Both arrays default to `[]` and may be omitted entirely. `update_entity` **replaces**, not merges, the arrays — to remove a rule send the new full array; to drop all rules send `[]`.
 
 ---
 
@@ -117,12 +206,12 @@ The auto-created `label` field's `title` defaults to `singular_label`. If the re
 
 ### Field Format Quick Reference
 
-Choose `format` carefully — **it is immutable after creation**.
+Choose `format` carefully, **it is immutable after creation**.
 
 | Category | `format` values |
 |----------|----------------|
 | Text | `string`, `text`, `html`, `code` |
-| Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double` — use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money — set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding — only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
+| Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
 | Choice | `enum` (also set `enum_values: ["a","b","c"]`) |
@@ -137,7 +226,7 @@ Choose `format` carefully — **it is immutable after creation**.
 
 | Value | Use |
 |-------|-----|
-| `default` | **Default — always use this** unless a specific layout requirement exists |
+| `default` | **Default, always use this** unless a specific layout requirement exists |
 | `s` | Small (short text, booleans, status badges) |
 | `m` | Medium |
 | `w` | Wide (long text, descriptions) |
@@ -146,9 +235,9 @@ Choose `format` carefully — **it is immutable after creation**.
 
 | Value | Meaning |
 |-------|---------|
-| `default` | Standard editable input — use for most fields |
+| `default` | Standard editable input, use for most fields |
 | `required` | Editable but marked mandatory in UI |
-| `readonly` | Displayed but not editable — **never import into this** |
+| `readonly` | Displayed but not editable, **never import into this** |
 | `disabled` | Greyed out, not editable |
 | `hidden` | Not shown in forms |
 
@@ -156,9 +245,9 @@ Choose `format` carefully — **it is immutable after creation**.
 
 Set `unique_value: true` only when duplicates would cause data integrity issues (e.g., `email` on contacts, external system keys).
 
-> ⚠️ Adding `unique_value: true` to an **existing** field is medium-risk — will fail if duplicates exist. Warn the user and suggest deduplication first.
+> ⚠️ Adding `unique_value: true` to an **existing** field is medium-risk, will fail if duplicates exist. Warn the user and suggest deduplication first.
 
-### `default_value` — auto-filled by the platform; authors only override
+### `default_value`: auto-filled by the platform; authors only override
 
 The Semantius column-add trigger picks a sensible default automatically based on `format` and whether the field is required (`input_type: "required"`):
 
@@ -175,7 +264,7 @@ The Semantius column-add trigger picks a sensible default automatically based on
 
 Nullability is also computed by format (via the platform's `is_nullable()` rule): **only `reference`, `date`, and `date-time` allow NULL**. Every other format is `NOT NULL` with the auto-default above when required. Non-required fields accept `''`/null as a backfill.
 
-**Rule:** authors do **not** need to declare `default_value`. Only set it explicitly when the auto-default is wrong for the domain — e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string.
+**Rule:** authors do **not** need to declare `default_value`. Only set it explicitly when the auto-default is wrong for the domain, e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string.
 
 - **Enum lifecycle ordering matters.** The auto-default for a required enum is `enum_values[0]`, so list values in lifecycle order (`draft`, `pending`, `new`, `open`, `active` first). If the natural starting value isn't first, either reorder the list or set `default_value` explicitly.
 - **`Required = "no"` only changes DB behavior for `reference`, `date`, `date-time`.** For other formats the column is NOT NULL with the auto-default regardless of `input_type`; marking the field optional doesn't make it nullable.
@@ -266,7 +355,7 @@ semantius call crud create_field '{
 
 | Property | Type | Notes |
 |----------|------|-------|
-| `table_name` | string | Target entity — required |
+| `table_name` | string | Target entity, required |
 | `field_name` | string | Snake_case identifier. Renaming is supported but think twice: views, integrations, and saved queries reference the field by name. |
 | `title` | string | Human-readable label shown in UI |
 | `description` | string | Explains what the field represents |
@@ -276,8 +365,8 @@ semantius call crud create_field '{
 | `field_order` | integer | Controls display order in the UI |
 | `searchable` | boolean | Adds this field to the entity's full-text search index |
 | `unique_value` | boolean | Enforces uniqueness at database level |
-| `enum_values` | array | Required when `format: "enum"` — list of allowed values |
-| `precision` | integer (0–18) | For `format: "number"` only — number of digits after the decimal point in the generated `NUMERIC` column. Defaults to `2` (suits money and most measured quantities). Set higher (e.g. `4`–`6`) for tax rates, FX rates, or scientific values; `0` for integer-like counts that still want NUMERIC semantics. |
+| `enum_values` | array | Required when `format: "enum"`, list of allowed values |
+| `precision` | integer (0–18) | For `format: "number"` only, number of digits after the decimal point in the generated `NUMERIC` column. Defaults to `2` (suits money and most measured quantities). Set higher (e.g. `4`–`6`) for tax rates, FX rates, or scientific values; `0` for integer-like counts that still want NUMERIC semantics. |
 | `default_value` | string | Override for the platform's auto-default. Only set when the auto-default is wrong for the domain. See `### default_value` below for the auto-default table per format. |
 | `reference_table` | string | Target entity's `table_name` for `reference`/`parent` fields |
 | `reference_delete_mode` | string | `restrict`, `clear`, or `cascade` |
@@ -293,7 +382,7 @@ semantius call crud create_field '{
 
 ### Choosing the Right Format
 
-The platform manages nullability internally based on format and delete-mode — do not pass an `is_nullable` flag. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
+The platform manages nullability internally based on format and delete-mode, do not pass an `is_nullable` flag. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
 
 | Scenario | `format` | `reference_delete_mode` |
 |----------|----------|------------------------|
@@ -302,9 +391,9 @@ The platform manages nullability internally based on format and delete-mode — 
 | Child is owned by parent | `parent` | `cascade` |
 | M:N junction FK (both sides) | `parent` | `cascade` |
 
-### `reference` — Cross-Entity Link (Independent Lifecycle)
+### `reference`: Cross-Entity Link (Independent Lifecycle)
 
-Use when the child record is **created independently** and then associated with the parent — it exists and makes sense on its own. Example: a Task is created on its own and linked to a Lead; a Product exists independently of any category. The child can outlive or be reassigned away from the parent.
+Use when the child record is **created independently** and then associated with the parent, it exists and makes sense on its own. Example: a Task is created on its own and linked to a Lead; a Product exists independently of any category. The child can outlive or be reassigned away from the parent.
 
 ```bash
 # Order has an optional assigned sales rep
@@ -323,9 +412,9 @@ semantius call crud create_field '{
 }'
 ```
 
-### `parent` — Ownership/Composition (Bound Lifecycle)
+### `parent`: Ownership/Composition (Bound Lifecycle)
 
-Use when the child record is **always created in the context of the parent** and has no meaning outside it — master-detail. Example: an Order Line is created within an Order; a Meeting Attendee is created within a Meeting. You would never create the child record first and link it later.
+Use when the child record is **always created in the context of the parent** and has no meaning outside it, master-detail. Example: an Order Line is created within an Order; a Meeting Attendee is created within a Meeting. You would never create the child record first and link it later.
 
 ```bash
 # Order line belongs to an order
@@ -377,8 +466,8 @@ semantius call crud create_field '{"data": {"table_name": "product_tags", "field
 - Adding `unique_value: true` to an existing field (fails if duplicates exist)
 
 ### 🛑 High-Risk (require explicit confirmation)
-- Renaming `table_name` or `field_name` — breaks all references
-- Deleting entities or fields — permanent data loss
+- Renaming `table_name` or `field_name`, breaks all references
+- Deleting entities or fields, permanent data loss
 - Removing permissions still in use by roles
 - Changing primary key fields
 - Always check dependencies before deletion
@@ -422,14 +511,14 @@ semantius call crud delete_entity '{"table_name": "<table_name>"}'
 
 ## Agent Workflow Tips
 
-1. **Always read before writing** — Before any `create_*`, call `read_*` to check for existing records. E.g., always call `read_entity` filtering by `table_name` before `create_entity`.
-2. **Resolve prerequisites in order** — Module → Permissions → Entity → Fields. Never skip steps.
-3. **Be conversational** — Explain what you're creating and why, especially for module/permission scaffolding the user may not have explicitly requested.
-4. **Validate semantic correctness** — Does the model make sense for the user's domain?
-5. **Ask for clarification when needed** — If a user says "add contacts", confirm what fields they need before creating anything.
-6. **Warn before risky changes** — Alert the user to medium/high-risk changes and wait for confirmation before executing.
-7. **Suggest next steps** — After creating an entity, suggest related entities, missing fields, or useful roles.
-8. **Provide link to UI** — After creating or updating entities/fields, provide: `https://tests.semantius.app/{module_name}/{table_name}`
+1. **Always read before writing**, Before any `create_*`, call `read_*` to check for existing records. E.g., always call `read_entity` filtering by `table_name` before `create_entity`.
+2. **Resolve prerequisites in order**, Module → Permissions → Entity → Fields. Never skip steps.
+3. **Be conversational**, Explain what you're creating and why, especially for module/permission scaffolding the user may not have explicitly requested.
+4. **Validate semantic correctness**, Does the model make sense for the user's domain?
+5. **Ask for clarification when needed**, If a user says "add contacts", confirm what fields they need before creating anything.
+6. **Warn before risky changes**, Alert the user to medium/high-risk changes and wait for confirmation before executing.
+7. **Suggest next steps**, After creating an entity, suggest related entities, missing fields, or useful roles.
+8. **Provide link to UI**, After creating or updating entities/fields, provide: `https://tests.semantius.app/{module_slug}/{table_name}` (URLs use the lowercase `module_slug`, never the display `module_name`).
 
 Use `wfts(simple)` on the `search_vector` column when the entity is searchable:
 
@@ -445,7 +534,7 @@ semantius call crud postgrestRequest '{
 }'
 ```
 
-> Always use `wfts(simple)` — the `simple` text search configuration is language-agnostic and required for multilingual content. Never use bare `wfts` or `fts`. Only fall back to field-specific filters (`ilike`, `eq`) when the user specifies a particular column or when the table is not searchable.
+> Always use `wfts(simple)`, the `simple` text search configuration is language-agnostic and required for multilingual content. Never use bare `wfts` or `fts`. Only fall back to field-specific filters (`ilike`, `eq`) when the user specifies a particular column or when the table is not searchable.
 
 ---
 

@@ -9,7 +9,7 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 | Concept | Description |
 |---------|-------------|
 | **Permission** | Atomic capability, named `<module>:<action>` (e.g., `crm:read`, `crm:manage`) |
-| **Permission Hierarchy** | `manage` implicitly includes `read` — set up so users don't need both assigned separately |
+| **Permission Hierarchy** | `manage` implicitly includes `read`, set up so users don't need both assigned separately |
 | **Role** | Named bundle of permissions (e.g., `crm_viewer`, `crm_manager`) |
 | **Role Permission** | M:N join: grants a permission to a role |
 | **User Role** | M:N join: assigns a role to a user |
@@ -19,12 +19,12 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 ## Naming Convention
 
 **Always use `<module>:<action>` format:**
-- `crm:read` — read access to CRM entities
-- `crm:manage` — full write access to CRM entities
-- `leads:write` — specific write-only on leads
+- `crm:read`, read access to CRM entities
+- `crm:manage`, full write access to CRM entities
+- `leads:write`, specific write-only on leads
 - `service_catalog:read`
 
-Never use free-form names like `"can_edit"` or `"admin"` — always scope to a module.
+Never use free-form names like `"can_edit"` or `"admin"`, always scope to a module.
 
 ---
 

@@ -21,9 +21,9 @@ that's where the skill earns its value.
 
 ## How to run on Claude.ai (no tooling needed)
 
-1. Start a **fresh conversation** (important — no prior Semantius context)
+1. Start a **fresh conversation** (important, no prior Semantius context)
 2. Paste the `prompt` from an eval
-3. Check the response against its `assertions` list — mark each pass/fail
+3. Check the response against its `assertions` list, mark each pass/fail
 4. Key question: does Claude read the right reference file and produce the **full
    command sequence**, not just one or two commands?
 
@@ -47,7 +47,7 @@ unzip use-semantius.skill -d ~/.claude/skills/
 Expand-Archive use-semantius.skill -DestinationPath "$env:USERPROFILE\.claude\skills\"
 ```
 
-Verify it landed correctly — you should see:
+Verify it landed correctly, you should see:
 ```
 ~/.claude/skills/
 └── use-semantius/
@@ -59,7 +59,7 @@ Verify it landed correctly — you should see:
 ```
 
 Then in VS Code, type `/reload-plugins` in the Claude Code prompt box (or restart
-Claude Code). The skill is now active — Claude will use it automatically when you
+Claude Code). The skill is now active, Claude will use it automatically when you
 ask about Semantius.
 
 ### Option B: Via plugin marketplace (for teams)
@@ -117,7 +117,7 @@ your browser.
 > to be run from that directory for the imports to resolve.
 
 > **Note on evals/ not being in the installed skill:**
-> The `evals/` folder is excluded from the packaged `.skill` file by design — evals
+> The `evals/` folder is excluded from the packaged `.skill` file by design, evals
 > are development tools, not something end users need. They only exist in your
 > working copy of the skill source (i.e. what you're reading now after unzipping).
 

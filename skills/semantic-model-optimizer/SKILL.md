@@ -1,7 +1,7 @@
 ---
 name: semantic-model-optimizer
 description: >-
-  Reverse-engineers a `*-semantic-model.md` file from a live Semantius module —
+  Reverse-engineers a `*-semantic-model.md` file from a live Semantius module,
   reads the module's entities, fields, and enum values via `semantius`,
   pulls in any related tables referenced from other modules or Semantius
   built-ins (e.g. `users`, `departments`) so the output is self-contained, and
@@ -14,7 +14,7 @@ description: >-
   markdown spec. Example phrases: "generate a model from the `<slug>` module",
   "extract the `<slug>` semantic model", "snapshot the live module", "pull
   `<slug>` down to a markdown spec", "optimize the `<slug>` module", "the live
-  model has drifted — regenerate the spec".
+  model has drifted, regenerate the spec".
 ---
 
 # semantic-model-optimizer Skill
@@ -25,13 +25,33 @@ Closes the loop in the semantic-model lifecycle:
 semantic-model-analyst  →  semantic-model-deployer  →  (users customize in Semantius)  →  semantic-model-optimizer  →  …
 ```
 
-The `.md` file this skill produces is **interchangeable with one produced by the analyst**: same front-matter keys, same §1–§7 structure, same Mermaid diagram conventions. The deployer can re-deploy it; the analyst can audit or extend it. That compatibility is the main reason this skill exists — without it, live customizations in Semantius drift silently away from the `.md` and no other skill in the cycle can catch up.
+The `.md` file this skill produces is **interchangeable with one produced by the analyst**: same front-matter keys (including `version`), same eight-section structure (§1 Overview, §2 Entity summary, §3 Entities, §4 Relationship summary, §5 Enumerations, §6 Cross-model link suggestions, §7 Open questions, §8 Implementation notes), same Mermaid diagram conventions. The deployer can re-deploy it; the analyst can audit or extend it. That compatibility is the main reason this skill exists, without it, live customizations in Semantius drift silently away from the `.md` and no other skill in the cycle can catch up.
 
 ## Division of responsibility
 
 - **This skill** owns the workflow: picking the module, reading its state, discovering related tables in other modules, transforming live state into the markdown template, and (opt-in) suggesting optimizations.
 - **The `use-semantius` skill** owns the execution: every read is a `semantius` call.
-- **This skill is read-only against Semantius.** It never writes to the platform. Any fixes suggested in Stage 5 are applied to the `.md` file only — a re-deploy via the `semantic-model-deployer` skill is how changes make it back to Semantius.
+- **This skill is read-only against Semantius.** It never writes to the platform. Any fixes suggested in Stage 5 are applied to the `.md` file only, a re-deploy via the `semantic-model-deployer` skill is how changes make it back to Semantius.
+
+## Writing conventions (apply to every output this skill produces)
+
+These rules apply to chat output, the regenerated semantic-model markdown file, audit reports, and anything else this skill writes for the user to read.
+
+**1. US English spellings, always.** Never British English. Examples (left = correct US form, right in backticks = banned British form): optimize (not `optimise`), behavior (not `behaviour`), modeling (not `modelling`), customize (not `customise`), recognize (not `recognise`), labeled (not `labelled`), materialize (not `materialise`), organization (not `organisation`), summarize (not `summarise`), categorize (not `categorise`), uncategorized (not `uncategorised`), normalize (not `normalise`), harmonize (not `harmonise`), analyze (not `analyse`). When in doubt, pick the `-ize` / `-or` / `-er` form.
+
+**2. No em-dashes (`—`, U+2014).** Banned as a parenthetical break or "and" substitute. Replace with: `X — Y` parenthetical → `X (Y)` or `X, Y`; `X — but Y` contrast → `X. But Y.` or `X; Y`; `A — B — C` triplet → split into two sentences. The en-dash (`–`) and hyphen (`-`) are fine in number ranges and compound words; the ban is on `—` used as punctuation. Scan every file and chat message for `—` before writing.
+
+**3. Singular-subject grammar in confirmation prompts.** "Looks good?" not "Look good?"; "Sounds right?" not "Sound right?". Use the form that agrees with the singular implicit subject.
+
+**4. Semantius entity-label symmetry.** When the optimizer reads `singular_label` and `plural_label` from live state and writes them into the regenerated `.md`: `singular_label` is the bare singular noun matching `plural_label`. ✅ `Product` / `Products`. ❌ `Product Name` / `Products`. If live state has an asymmetric pair, surface it in the Stage 5 audit report as a 🔴 Blocker (the entity was misconfigured at deploy time); do not "fix" it silently, the live module needs the correction, not the `.md` alone.
+
+---
+
+## Schema compatibility
+
+This skill writes files at the analyst skill's `CURRENT_VERSION`. At Step 0 it reads `semantic-model-analyst/SKILL.md`; the "Skill version" section at the top of that file declares the canonical version (e.g. `CURRENT_VERSION = "1.0"`). The optimizer stamps that exact value on every file it writes via the front-matter `version` key. Major bumps in the analyst force a coordinated update of this skill: a major bump means section numbers, table shapes, or required front-matter keys have changed, and the optimizer's output template must follow.
+
+When this skill reads a prior file (for `initial_request` / `departments` / `industries` carry-over), it does **not** route on the prior file's `version`. The live module is the source of truth; the new file is regenerated from live state and stamped with the current analyst version regardless. If the prior file's major is older than `CURRENT_VERSION`, the carry-over still happens (those keys haven't changed shape), and the resulting new file is current-major.
 
 ---
 
@@ -40,9 +60,9 @@ The `.md` file this skill produces is **interchangeable with one produced by the
 Read these first:
 
 - `<skills-root>/use-semantius/SKILL.md`
-- `<skills-root>/use-semantius/references/data-modeling.md` — authoritative list of Semantius built-ins and platform constraints
-- `<skills-root>/semantic-model-analyst/references/semantic-model-template.md` — the output template; the `.md` must match it exactly
-- `<skills-root>/semantic-model-analyst/SKILL.md` Mode B audit checklist — reused in Stage 5
+- `<skills-root>/use-semantius/references/data-modeling.md`, authoritative list of Semantius built-ins and platform constraints
+- `<skills-root>/semantic-model-analyst/references/semantic-model-template.md`, the output template; the `.md` must match it exactly
+- `<skills-root>/semantic-model-analyst/SKILL.md` Mode B audit checklist, reused in Stage 5
 
 ---
 
@@ -64,9 +84,11 @@ If the user named a module, resolve it directly with `read_module`. Otherwise li
 semantius call crud read_module '{"order": "module_name.asc"}'
 ```
 
-Present the list as a compact table (`module_name`, `label`, short description). Ask the user which module to extract. Do not guess when multiple candidates match — ask.
+> **Module schema reminder.** Modules carry both `module_name` (unique human-facing display name shown in the UI selector, e.g. `CRM`, `ITSM`, `CMDB`) and `module_slug` (lowercase URL/permission handle, e.g. `crm`, `itsm`, `cmdb`). The earlier `alias` field is **removed** from the schema; the earlier `label` field is also gone. The compact tagline lives on `description` (≤40 chars, the analyst's `system_description`).
 
-Capture `module_id`, `module_name`, `label`, and `description` for the rest of the pipeline. Never create a module here; this skill is read-only.
+Present the list as a compact table (`module_name`, `module_slug`, `description`). Ask the user which module to extract. Do not guess when multiple candidates match, ask.
+
+Capture `module_id`, `module_name`, `module_slug`, and `description` for the rest of the pipeline. Never create a module here; this skill is read-only.
 
 ---
 
@@ -75,8 +97,9 @@ Capture `module_id`, `module_name`, `label`, and `description` for the rest of t
 Pull the full schema:
 
 ```bash
-# Module already resolved above; re-read only if you need the exact row
-semantius call crud read_module '{"filters": "module_name=eq.<slug>"}'
+# Module already resolved above; re-read only if you need the exact row.
+# Filter on module_slug (the URL handle), not module_name (which is now the display name).
+semantius call crud read_module '{"filters": "module_slug=eq.<slug>"}'
 
 # Entities belonging to this module, in creation order
 semantius call crud read_entity '{"filters": "module_id=eq.<id>", "order": "created_at.asc"}'
@@ -87,9 +110,9 @@ semantius call crud read_field '{}'
 
 Build in memory:
 
-- **module** — `module_name`, `label`, `description`
-- **entities[]** — each with `table_name`, `singular`, `plural`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `edit_mode`, `cube_mode`, `module_id` (`searchable` and `is_child` are read-only / auto-computed and only used for sanity checks; do not round-trip them)
-- **fields_by_table** — map keyed by `table_name`, per field: `field_name`, `format`, `title`, `description`, `unique_value`, `reference_table`, `reference_delete_mode`, `relationship_label`, `singular_label_parent`, `plural_label_parent`, `cube_type`, `enum_values`, `default_value`, `ctype`, `field_order`, `searchable`
+- **module**, `module_name` (display name, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `description` (compact tagline, ≤40 chars)
+- **entities[]**, each with `table_name`, `singular`, `plural`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `edit_mode`, `cube_mode`, `module_id`, **`computed_fields`** (JSON array, may be empty), **`validation_rules`** (JSON array, may be empty). `searchable` and `is_child` are read-only / auto-computed and only used for sanity checks; do not round-trip them.
+- **fields_by_table**, map keyed by `table_name`, per field: `field_name`, `format`, `title`, `description`, `unique_value`, `reference_table`, `reference_delete_mode`, `relationship_label`, `singular_label_parent`, `plural_label_parent`, `cube_type`, `enum_values`, `default_value`, `ctype`, `field_order`, `searchable`
 
 **Strip auto-generated fields** before rendering. Do not render these in §3:
 
@@ -99,7 +122,7 @@ Build in memory:
 | `label` | Auto-created computed display field (the *generic* one, `ctype: label`, distinct from the named `label_column` field) |
 | `created_at`, `updated_at` | Auto-maintained timestamps |
 
-**Keep** the named `label_column` field (e.g. `product_name`, `subscription_name`). It *is* rendered as a §3 row — marked `label_column` in the Notes column — because that is how the analyst's template expresses it and how the deployer round-trips.
+**Keep** the named `label_column` field (e.g. `product_name`, `subscription_name`). It *is* rendered as a §3 row, marked `label_column` in the Notes column, because that is how the analyst's template expresses it and how the deployer round-trips.
 
 Identify `label_column` by matching `field.field_name == entity.label_column`. In Semantius that row has `ctype: label` but a non-generic `field_name`, which is how it differs from the skipped generic `label` row.
 
@@ -107,13 +130,13 @@ Identify `label_column` by matching `field.field_name == entity.label_column`. I
 
 ## Stage 3: Discover related tables (self-containment)
 
-The analyst's template requires the model to be self-contained — every entity referenced by any FK must appear as its own §3 section, even if the referenced entity lives in another module or is a Semantius built-in.
+The analyst's template requires the model to be self-contained, every entity referenced by any FK must appear as its own §3 section, even if the referenced entity lives in another module or is a Semantius built-in.
 
 Walk every field in our module's entities where `reference_table` is non-empty. For each target `table_name`:
 
 - **Target is in our own module** → already included; skip.
 - **Target is in a different module** → add to a `related_entities[]` list and pull it in.
-- **Target is a Semantius built-in** (`users`, `roles`, `permissions`, `permission_hierarchy`, `role_permissions`, `user_roles`, `webhook_receivers`, `webhook_receiver_logs`, `modules`, `entities`, `fields` — see `use-semantius/references/data-modeling.md` for the authoritative list) → add to `related_entities[]` and pull it in. Built-ins are included as normal §3 entities; the `semantic-model-deployer` skill deduplicates them at deploy-time.
+- **Target is a Semantius built-in** (`users`, `roles`, `permissions`, `permission_hierarchy`, `role_permissions`, `user_roles`, `webhook_receivers`, `webhook_receiver_logs`, `modules`, `entities`, `fields`, see `use-semantius/references/data-modeling.md` for the authoritative list) → add to `related_entities[]` and pull it in. Built-ins are included as normal §3 entities; the `semantic-model-deployer` skill deduplicates them at deploy-time.
 
 For each related table:
 
@@ -127,10 +150,10 @@ Apply the same auto-field stripping from Stage 2.
 **Recursion depth.** In principle a related table might reference yet another table. In practice:
 
 - Always walk one level out.
-- Walk a second level **only** if the second-level target is a Semantius built-in (most commonly `users`) — this keeps the model self-contained without dragging in an entire sibling module.
-- Stop at two levels. If the third level would add yet another non-built-in entity, do not include it; instead, note it in §6.2 as a future consideration (e.g. *"Should `<entity>` be included to round out FK targets for `<related>`?"*).
+- Walk a second level **only** if the second-level target is a Semantius built-in (most commonly `users`), this keeps the model self-contained without dragging in an entire sibling module.
+- Stop at two levels. If the third level would add yet another non-built-in entity, do not include it; instead, note it in §7.2 as a future consideration (e.g. *"Should `<entity>` be included to round out FK targets for `<related>`?"*).
 
-Record for each entity whether it came from our module or `related_entities[]` — §7 lists the external ones explicitly.
+Record for each entity whether it came from our module or `related_entities[]`, §8 lists the external ones explicitly.
 
 ---
 
@@ -140,18 +163,20 @@ Follow `semantic-model-analyst/references/semantic-model-template.md` verbatim. 
 
 | Live property | Template location |
 |---|---|
-| `module.module_name` | front-matter `system_slug`, §7 module name |
-| `module.label` | front-matter `system_name`, top-level `#` heading |
-| `module.description` | §1 Overview (expand to 2–3 sentences if short — do not invent facts, stay faithful) |
+| `module.module_name` | front-matter `system_name`, top-level `#` heading |
+| `module.module_slug` | front-matter `system_slug`, §8 module name |
+| `module.description` | front-matter `system_description` (verbatim, it is already the compact tagline) **and** §1 Overview seed (expand the tagline to 2-3 sentences using entity names and descriptions; do not invent facts, stay faithful) |
 | `entity.table_name` | §2 Table name, §3 sub-heading, §4 From/To |
 | `entity.singular_label` | §2 Singular label, §3 sub-heading suffix |
 | `entity.plural_label` | §3 Plural label line |
 | `entity.description` | §3 Description |
 | `entity.label_column` | §3 Label column |
-| `entity.audit_log` | §3 `**Audit log:** yes \| no` line — render `yes` when `true`, `no` when `false`/null |
+| `entity.audit_log` | §3 `**Audit log:** yes \| no` line, render `yes` when `true`, `no` when `false`/null |
+| `entity.computed_fields` | §3 `**Computed fields**` sub-block as a fenced ```` ```json ```` array, byte-for-byte. Omit the heading entirely when the array is empty (`[]`). Never paraphrase JsonLogic into prose. |
+| `entity.validation_rules` | §3 `**Validation rules**` sub-block as a fenced ```` ```json ```` array, byte-for-byte. Omit the heading entirely when the array is empty (`[]`). Never paraphrase JsonLogic into prose. |
 | `field.field_name` | §3 Field name |
 | `field.format` | §3 Format (the live value is already from the analyst's vocabulary) |
-| (inferred) | §3 Required — the platform manages nullability internally and does not expose a per-field flag. Infer: `format: parent` → `yes`; `format: reference` → `no`; other formats default to `yes`. |
+| (inferred) | §3 Required, the platform manages nullability internally and does not expose a per-field flag. Infer: `format: parent` → `yes`; `format: reference` → `no`; other formats default to `yes`. |
 | `field.title` | §3 Label |
 | `field.reference_table` + `reference_delete_mode` | §3 Reference / Notes + §4 summary row |
 | `field.enum_values` | §3 Notes (`values listed in §5.N`) and a §5 sub-section |
@@ -163,49 +188,70 @@ Follow `semantic-model-analyst/references/semantic-model-template.md` verbatim. 
 ```yaml
 ---
 artifact: semantic-model
-system_name: <module.label>
-system_slug: <module.module_name>
+version: "<CURRENT_VERSION from analyst SKILL.md>"
+system_name: <module.module_name>
+system_description: <module.description>
+system_slug: <module.module_slug>
 # domain: see inference rule below — omit when no canonical category fits
 naming_mode: agent-optimized
 created_at: <today, YYYY-MM-DD>
 entities:
   - <table_name_1>
   - <table_name_2>
-# departments and industries: see carry-over / inference rule below
+# departments, industries, related_domains: see carry-over / inference rule below
 ---
 ```
 
-**`entities` is required.** Populate it from the live module's entity list — every `table_name` rendered in §2 (in §2 order, lowercase snake_case). Include only the entities owned by *this* module; do **not** list `related_entities[]` pulled in for self-containment, since the discovery tag is meant to identify what the model is about, not its FK neighbourhood. Regenerate every run from live state — never trust a prior file's list.
+**`version` is required.** Read the analyst's "Skill version" section (loaded in Step 0) and copy the `CURRENT_VERSION` value verbatim, as a quoted string `"MAJOR.MINOR"`. Every file written by the optimizer is stamped with the current analyst version, regardless of any prior file's value. The downstream deployer will reject files whose major doesn't match its expected major, so this stamp is what keeps the round-trip clean.
 
-**`system_slug` is taken byte-for-byte from `module.module_name`.** The live module name is authoritative — preserve it exactly, even when it looks like a bare acronym (`ats`, `crm`, `erp`). Do **not** "improve" it to a more descriptive form during reverse-engineering: changing the slug would change the deployed module's identity and break permissions, downstream skills, and any references stored elsewhere. The analyst skill flags acronym-shaped slugs as a 🟡 Warning when *authoring*, but for the optimizer the live state wins — that warning does not apply here.
+**`entities` is required.** Populate it from the live module's entity list, every `table_name` rendered in §2 (in §2 order, lowercase snake_case). Include only the entities owned by *this* module; do **not** list `related_entities[]` pulled in for self-containment, since the discovery tag is meant to identify what the model is about, not its FK neighborhood. Regenerate every run from live state, never trust a prior file's list.
 
-**`domain` — infer from the entities you just read.** `domain` is not stored in Semantius. The live entity names are usually the strongest signal — a module containing `tickets`, `incidents`, `agents` is `ITSM`; one containing `leads`, `accounts`, `opportunities` is `CRM`; one containing `employees`, `positions`, `time_off` is `HRIS`; one dominated by clinical entities is `EHR`. Use the module label and description as supporting signal but the entity shape is what disambiguates.
+**`system_name` is taken byte-for-byte from `module.module_name`.** The live display name is authoritative, preserve casing and acronyms exactly as stored (`CRM`, `ITSM`, `CMDB`). Do not retitle, expand, or "tidy" it during reverse-engineering.
 
-The vocabulary is open: prefer the common values (`CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`) when one fits cleanly, otherwise coin a new Title-case / acronym value that captures the system shape (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). Only omit `domain` when you genuinely can't categorise the system. **Never write `custom`** — it adds zero discovery signal. A prior file's `domain` value is *not* carried over — re-infer from live state every run.
+**`system_slug` is taken byte-for-byte from `module.module_slug`.** Preserve the slug exactly as stored, even when it looks like a bare acronym (`ats`, `crm`, `erp`). Do **not** "improve" it to a more descriptive form during reverse-engineering: changing the slug would change the deployed module's identity and break permissions, downstream skills, and any references stored elsewhere. The analyst skill flags acronym-shaped slugs as a 🟡 Warning when *authoring*, but for the optimizer the live state wins, that warning does not apply here.
 
-**`departments` and `industries` — carry over when a prior file has them, otherwise infer from the gathered live state.** These tags aren't a column in Semantius, but the live state still carries plenty of signal — `module.label`, `module.description`, the entity names you just read in Stage 2, the field names within those entities — that maps to the same inference the analyst makes from a Stage 1 capture. Use that signal, not a guess from the module name alone. **Use Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) — never lowercase snake_case.
+**`system_description` is taken byte-for-byte from `module.description`.** It is already the compact tagline (≤40 chars) the platform stores; copy it through unchanged. If the live `module.description` is empty or missing, fall back to inferring a tagline from `module.module_name`: for an acronym name, the plain English expansion (`CRM` → `Customer Relationship Management`, `ITSM` → `IT Service Management`); for a non-acronym name, a 2-4 word disambiguating phrase. Note in §7.2 that the tagline was inferred so the user knows to confirm and push back to live state via `update_module` if it doesn't match.
+
+**`domain`, infer from the entities you just read.** `domain` is not stored in Semantius. The live entity names are usually the strongest signal, a module containing `tickets`, `incidents`, `agents` is `ITSM`; one containing `leads`, `accounts`, `opportunities` is `CRM`; one containing `employees`, `positions`, `time_off` is `HRIS`; one dominated by clinical entities is `EHR`. Use the module label and description as supporting signal but the entity shape is what disambiguates.
+
+The vocabulary is open: prefer the common values (`CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`) when one fits cleanly, otherwise coin a new Title-case / acronym value that captures the system shape (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). Only omit `domain` when you genuinely can't categorize the system. **Never write `custom`**, it adds zero discovery signal. A prior file's `domain` value is *not* carried over, re-infer from live state every run.
+
+**`departments`, `industries`, and `related_domains`, carry over when a prior file has them, otherwise infer from the gathered live state.** These tags aren't columns in Semantius, but the live state still carries plenty of signal, `module.module_name`, `module.description`, the entity names you just read in Stage 2, the field names within those entities, that maps to the same inference the analyst makes from a Stage 1 capture. Use that signal, not a guess from the module name alone. **Use Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`, `ITAM`, `CMDB`, `Change Management`), never lowercase snake_case.
+
+`related_domains` specifically is the names of business domains/system categories this model sits next to in the enterprise neighborhood, drawn from analyst-style domain knowledge, not a list of slugs of files in the workspace. Inference signal: given the entities and fields you just read, what other domain categories would naturally live alongside this system? An ITSM module's `related_domains` would typically include `ITAM`, `CMDB`, `Change Management`, `Vendor Management`, `Identity & Access`.
 
 Two cases at Stage 4:
 
-1. **Prior file exists with `departments` / `industries`.** Copy each present key byte-for-byte into the new file (same mechanic as `initial_request`). The user has already curated these tags; respect that.
-2. **Prior file is missing the key (or no prior file at all).** Re-run the analyst's Stage 5 inference rule against the gathered live state — entity names, module label, module description, field names. If you can confidently propose a value, include it. If you have low or no confidence, omit the key. Never invent a value with no supporting signal.
+1. **Prior file exists with `departments` / `industries` / `related_domains`.** Copy each present key byte-for-byte into the new file (same mechanic as `initial_request`). The user has already curated these tags; respect that.
+2. **Prior file is missing the key (or no prior file at all).** Re-run the analyst's Stage 5 inference rule against the gathered live state, entity names, module name, module description, field names. If you can confidently propose a value, include it. If you have low or no confidence, omit the key. Never invent a value with no supporting signal.
 
 Either way, the result is a single concrete YAML key (or omission). Do not block on user input.
 
-> **🛑 Do not search the workspace for existing semantic-model files.** This skill exports the currently-live module from Semantius — the live state *is* the source of truth. Never glob `*semantic-model*.md`, and never read unrelated semantic-model files. Other systems' models tell you nothing about this module, and the template (already loaded in Step 0) is the only style reference you need.
+> **🛑 Do not search the workspace for existing semantic-model files.** This skill exports the currently-live module from Semantius, the live state *is* the source of truth. Never glob `*semantic-model*.md`, and never read unrelated semantic-model files. Other systems' models tell you nothing about this module, and the template (already loaded in Step 0) is the only style reference you need.
 
-**`initial_request` — one-field carry-over from a matching prior file, if and only if it exists.**
+**`initial_request`, one-field carry-over from a matching prior file, if and only if it exists.**
 
-At Stage 4, do exactly this — no broader search:
+At Stage 4, do exactly this, no broader search:
 
-1. Try to read the **exact path** `{system_slug}-semantic-model.md` in the workspace folder. Accept "file not found" as the answer and move on — that is the common case.
+1. Try to read the **exact path** `{system_slug}-semantic-model.md` in the workspace folder. Accept "file not found" as the answer and move on, that is the common case.
 2. If and only if that file exists **and** contains a non-empty `initial_request` front-matter key, copy **that single value** byte-for-byte into the new file's front-matter as a YAML literal block. The analyst's immutability rule applies across the cycle: the original ask is a historical record, not yours to rewrite.
 3. If the file exists but has no `initial_request` (or has an empty one), **omit the key entirely** in the new file. Do not invent a placeholder, do not write a synthetic "extracted on …" value.
 4. If the file does not exist, **omit the key entirely**. The analyst's audit treats missing `initial_request` as a 🟡 Warning (not a blocker), which correctly signals that this file was reverse-engineered.
 
-> **Only the user-curated metadata is preferentially carried over — nothing else.** From the prior file, copy `initial_request` (immutable historical record), `departments`, and `industries` byte-for-byte if present. `initial_request` is purely carry-over (omit when absent — never invent). `departments` and `industries` fall back to live-state inference when the prior file lacks them — see the dedicated rule below. Do not copy `domain`, `naming_mode`, `system_name`, the §1 Overview prose, the §2 entity list, or any structural content — the live module is the source of truth for everything the platform stores, and the prior file's structural content may be stale relative to what users have since customized in Semantius. Regenerate everything except those carry-over keys from live state.
+> **Only the user-curated metadata is preferentially carried over, nothing else.** From the prior file, copy `initial_request` (immutable historical record), `departments`, `industries`, and `related_domains` byte-for-byte if present. `initial_request` is purely carry-over (omit when absent, never invent). `departments`, `industries`, and `related_domains` fall back to live-state inference when the prior file lacks them, see the dedicated rule above. Do not copy `domain`, `naming_mode`, `system_name`, the §1 Overview prose, the §2 entity list, or any structural content, the live module is the source of truth for everything the platform stores, and the prior file's structural content may be stale relative to what users have since customized in Semantius. Regenerate everything except those carry-over keys from live state.
 
-**`naming_mode`** is not persisted in Semantius. Always write `naming_mode: agent-optimized` unless the user tells you otherwise in this conversation. **`domain`** is handled by its own inference rule above — never default it to `custom`, never carry over from a prior file; either infer from entities or omit.
+**`naming_mode`** is not persisted in Semantius. Always write `naming_mode: agent-optimized` unless the user tells you otherwise in this conversation. **`domain`** is handled by its own inference rule above, never default it to `custom`, never carry over from a prior file; either infer from entities or omit.
+
+### Computed fields and validation rules round-trip
+
+Render each entity's `computed_fields` and `validation_rules` arrays into the §3 sub-blocks **byte-for-byte**, wrapped in fenced ```` ```json ```` blocks. The deployer reads these arrays and passes them back to `create_entity` / `update_entity` verbatim, so any reformatting (key reordering, whitespace normalization, JSON5-style trailing commas) breaks the round-trip silently — the deployer would re-deploy a "different" array and the live trigger would regenerate without functional change but with a noise diff.
+
+**Rules:**
+
+- When the live entity's array is empty (`[]`), **omit the §3 heading entirely**. Do not write `**Computed fields**` followed by an empty `[]` block; that's scaffolding noise. The analyst's audit treats absence as "no rules" and that's the correct round-trip.
+- When the live array is non-empty, render `**Computed fields**` (or `**Validation rules**`) on its own line, blank line, then a ```` ```json ```` fenced block containing the array. Pretty-print the JSON with 2-space indentation so a human reviewer can read it; this is the canonical form the analyst writes too, so the round-trip stays stable.
+- Do **not** add a `description` to entries that lack one in live state, and do not fabricate. If the live entry has no `description` key, the rendered JSON entry has none either.
+- Do **not** paraphrase JsonLogic into prose, and do not "explain" the expression in the §3 prose around it. The expression is the contract.
 
 ### Reference notation in §3 Notes
 
@@ -230,42 +276,48 @@ Follow the analyst's convention verbatim (`-->` = many, `---` = one, arrows poin
 - For every `reference` or `parent` FK: draw `<reference_table> --> <child_table>`. One edge per FK, not one per entity pair.
 - For junctions: draw each of the two parent entities `-->` into the junction entity. Never draw a direct edge between the two parents.
 - Self-references: draw `<entity> -->|parent of| <entity>` (self-loop).
-- **Edge label comes verbatim from the field's `relationship_label`** — render it as `|<verb>|` exactly as stored in `fields_by_table[entity][field].relationship_label`. **Never invent, paraphrase, shorten, or "polish" the verb** — if live state says `"owns"`, the diagram says `|owns|`, not `|has many|` or `|holds|`. When `relationship_label` is empty/null, leave the edge unlabeled. The Stage 5 audit will flag empty values; this stage's job is to surface live state truthfully, not to fill gaps with guesses. Self-reference fallback (`|parent of|`) is the one exception, used only when no `relationship_label` is set on the self-reference field.
+- **Edge label comes verbatim from the field's `relationship_label`**, render it as `|<verb>|` exactly as stored in `fields_by_table[entity][field].relationship_label`. **Never invent, paraphrase, shorten, or "polish" the verb**, if live state says `"owns"`, the diagram says `|owns|`, not `|has many|` or `|holds|`. When `relationship_label` is empty/null, leave the edge unlabeled. The Stage 5 audit will flag empty values; this stage's job is to surface live state truthfully, not to fill gaps with guesses. Self-reference fallback (`|parent of|`) is the one exception, used only when no `relationship_label` is set on the self-reference field.
 - Also persist the same verb on the FK row in §3 Notes as `relationship_label: "<verb>"` so the round-trip preserves it. The §3 annotation and the diagram label must agree byte-for-byte.
 
 **Build-then-verify procedure (mandatory):**
 
-1. **Build mechanically from `fields_by_table`.** For every FK with a non-empty `reference_table`, emit one edge labeled with the literal `relationship_label` value from live state — or no label if the value is empty/null. Do not consult your intuition about what a "good" verb would be; the platform owns that string now.
+1. **Build mechanically from `fields_by_table`.** For every FK with a non-empty `reference_table`, emit one edge labeled with the literal `relationship_label` value from live state, or no label if the value is empty/null. Do not consult your intuition about what a "good" verb would be; the platform owns that string now.
 2. **Self-verify before saving.** After the Mermaid block is drafted, walk every edge and confirm three things:
    - it corresponds to a real FK row in §3
    - the edge label, when present, equals the field's `relationship_label` byte-for-byte (no hallucinated, paraphrased, or "improved" verbs)
    - the same verb is also written to that FK's §3 Notes as `relationship_label: "<verb>"`
-   If any mismatch is found, regenerate the affected edge from live state. The Stage 5 audit treats hallucinated verbs as data corruption — do not save a file that fails this check.
+   If any mismatch is found, regenerate the affected edge from live state. The Stage 5 audit treats hallucinated verbs as data corruption, do not save a file that fails this check.
 - `flowchart LR` is the default; switch to `flowchart TB` if the graph is wider than tall.
 
-Regenerate the diagram from the field data every run. Never reuse a diagram from a prior `.md` — that is exactly what would go stale.
+Regenerate the diagram from the field data every run. Never reuse a diagram from a prior `.md`, that is exactly what would go stale.
 
 ### §5 Enumerations
 
 One sub-section per field whose `enum_values` is non-empty, sub-numbered in §2-table order. Skip fields with empty or null `enum_values`. Write the values as a bullet list, one per line, code-fenced (`` `value` ``).
 
-### §6 Open questions
+### §6 Cross-model link suggestions
 
-- **§6.1 🔴 Decisions needed** — write `None.` Live extraction doesn't propose anything, so nothing is ambiguous that would block redeployment.
-- **§6.2 🟡 Future considerations** — write `None.` unless Stage 5 is run and surfaces items you choose to demote here.
+Live extraction is reverse-engineering, not authoring. Every cross-module FK that already exists in the catalog appears as a normal §3 reference field (with `reference_table` pointing at an entity from another module, pulled in via Stage 3's `related_entities[]`). There is no need to *suggest* a link the catalog already has.
+
+Always write `No cross-model link suggestions.` under §6. The `related_domains` front-matter is independent: infer it from the live entity shape and module description (the same way `domain` is inferred), since a discovery tag for humans browsing the catalog still adds value on a reverse-engineered model. If the user wants speculative §6 hint rows (links that *would* add value if other modules later arrive), they author them via the analyst skill in Extend mode after the optimizer's output is saved, that is not the optimizer's job.
+
+### §7 Open questions
+
+- **§7.1 🔴 Decisions needed**, write `None.` Live extraction doesn't propose anything, so nothing is ambiguous that would block redeployment.
+- **§7.2 🟡 Future considerations**, write `None.` unless Stage 5 is run and surfaces items you choose to demote here.
 
 Keep both sub-headings even when empty, per the template.
 
-### §7 Implementation notes
+### §8 Implementation notes
 
-Follow the analyst's §7 checklist verbatim. In addition:
+Follow the analyst's §8 checklist verbatim. In addition:
 
 - List every entity that came from `related_entities[]` in Stage 3, with its home module (or "Semantius built-in") so the downstream `semantic-model-deployer` knows to reuse, not recreate.
-- Preserve the creation-order constraints — entities without FKs first, junctions last, with a second pass for self-references and mutual cross-references.
+- Preserve the creation-order constraints, entities without FKs first, junctions last, with a second pass for self-references and mutual cross-references.
 
 ### Save
 
-Write to `{system_slug}-semantic-model.md` in the workspace folder. If a file with exactly that name already exists, confirm before overwriting (it might have manual edits) — but do **not** read it to "merge" anything; the live module is the source of truth and what you just built from live state is what gets saved. Check only by targeted path; do not glob the workspace. After saving, report a one-line summary:
+Write to `{system_slug}-semantic-model.md` in the workspace folder. If a file with exactly that name already exists, confirm before overwriting (it might have manual edits), but do **not** read it to "merge" anything; the live module is the source of truth and what you just built from live state is what gets saved. Check only by targeted path; do not glob the workspace. After saving, report a one-line summary:
 
 > Extracted `<slug>`: N entities (K from other modules / built-ins), M fields, E enums. Saved to `<slug>-semantic-model.md`.
 
@@ -279,23 +331,28 @@ After the file is saved, ask one question:
 
 > "Would you like me to suggest optimizations for this model?"
 
-If **no** — done. Do not push further.
+If **no**, done. Do not push further.
 
-If **yes** — run the Mode B audit from `semantic-model-analyst/SKILL.md` against the file you just wrote. Report findings in the analyst's exact format (🔴 Blockers, 🟡 Warnings, 🟢 Suggestions, with an overall one-line verdict).
+If **yes**, run the Mode B audit from `semantic-model-analyst/SKILL.md` against the file you just wrote. Report findings in the analyst's exact format (🔴 Blockers, 🟡 Warnings, 🟢 Suggestions, with an overall one-line verdict).
 
 ### Optimizer-specific checks (on top of the analyst's audit)
 
 Checks that are most useful when the source is live state, not a greenfield draft:
 
-- **Missing `label_column`** — an entity with a blank `label_column` in live state breaks the analyst's and deployer's expectations. **🔴 Blocker.**
-- **`label_column` is a FK** — an entity where `label_column` matches a `reference` or `parent` field. Per `data-modeling.md`, Semantius auto-creates a field with the same name as `label_column`, which collides with the FK. Suggest a dedicated scalar label field (e.g. `<entity>_label`) — especially for junction tables. **🔴 Blocker.**
-- **Singular-form `table_name`** — per Semantius platform rule. **🔴 Blocker.**
-- **Inconsistent singular/plural labels** — `singular_label` should be the bare singular; field-level titles (e.g. "Product Name") belong on the auto-created `label` field's `title`, never on the entity's `singular_label`. **🟡 Warning.**
-- **Missing descriptions** — entities or fields with empty `description` suggest the spec drifted during live customization. **🟢 Suggestion.**
-- **Entities with no incoming or outgoing FKs** — an isolated entity is sometimes a real root (e.g. `users`) and sometimes an oversight. **🟡 Warning** unless it's clearly a root.
-- **Likely missing junction** — two entities that look like they should have an M:N link (based on naming heuristics) but don't. **🟢 Suggestion.** Be conservative — false positives here are noise.
-- **Missing or weak `relationship_label`** — any FK field with empty `relationship_label`, or a filler verb (`"has"`, `"references"`, `"belongs to"`, `"relates to"`). The verb is now managed metadata that drives the §2 Mermaid diagram, navigation breadcrumbs, and ER docs in the Semantius UI — empty or generic values reproduce on every UI surface. **🟡 Warning.** Propose a domain-specific verb in the parent's voice (e.g. `accounts → opportunities` is `"owns"`, `users → tasks` is `"manages"`). When live state has many empty values (a module that predates the field), offer one batch sweep that proposes verbs across all FKs in one pass — do not turn it into a per-FK Q&A.
-- **Same-parent FKs with identical / missing `relationship_label`** — e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users` with the same or empty verb. The verbs must differentiate. **🔴 Blocker.**
+- **Missing `label_column`**, an entity with a blank `label_column` in live state breaks the analyst's and deployer's expectations. **🔴 Blocker.**
+- **`label_column` is a FK**, an entity where `label_column` matches a `reference` or `parent` field. Per `data-modeling.md`, Semantius auto-creates a field with the same name as `label_column`, which collides with the FK. Suggest a dedicated scalar label field (e.g. `<entity>_label`), especially for junction tables. **🔴 Blocker.**
+- **Singular-form `table_name`**, per Semantius platform rule. **🔴 Blocker.**
+- **Inconsistent singular/plural labels**, `singular_label` should be the bare singular; field-level titles (e.g. "Product Name") belong on the auto-created `label` field's `title`, never on the entity's `singular_label`. **🟡 Warning.**
+- **Missing descriptions**, entities or fields with empty `description` suggest the spec drifted during live customization. **🟢 Suggestion.**
+- **Entities with no incoming or outgoing FKs**, an isolated entity is sometimes a real root (e.g. `users`) and sometimes an oversight. **🟡 Warning** unless it's clearly a root.
+- **Likely missing junction**, two entities that look like they should have an M:N link (based on naming heuristics) but don't. **🟢 Suggestion.** Be conservative, false positives here are noise.
+- **Missing or weak `relationship_label`**, any FK field with empty `relationship_label`, or a filler verb (`"has"`, `"references"`, `"belongs to"`, `"relates to"`). The verb is now managed metadata that drives the §2 Mermaid diagram, navigation breadcrumbs, and ER docs in the Semantius UI, empty or generic values reproduce on every UI surface. **🟡 Warning.** Propose a domain-specific verb in the parent's voice (e.g. `accounts → opportunities` is `"owns"`, `users → tasks` is `"manages"`). When live state has many empty values (a module that predates the field), offer one batch sweep that proposes verbs across all FKs in one pass, do not turn it into a per-FK Q&A.
+- **Same-parent FKs with identical / missing `relationship_label`**, e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users` with the same or empty verb. The verbs must differentiate. **🔴 Blocker.**
+- **`computed_fields` references a non-existent field**, the live entity carries a `computed_fields[].name` that does not match any field on the entity. The platform should have rejected this on write, but live drift (a field rename or delete after the rule was set) can leave it stale. **🔴 Blocker.** Surface in the report and propose either fixing the JsonLogic to point at the renamed field or removing the entry.
+- **`validation_rules` carries duplicate `code` within an entity**, two entries share a `code`. **🔴 Blocker.** Surface the codes; only one will keep its UI/i18n binding.
+- **`validation_rules` entry missing `message`**, the platform's default error text has nothing to return. **🟡 Warning.** Propose a default English message tied to the rule's intent.
+- **`computed_fields` / `validation_rules` references cross-row data**, the JsonLogic expression names a column that is not on this entity (FK traversal, aggregate). The platform throws at evaluation time. **🟡 Warning.** Propose moving the logic to a cube view.
+- **JsonLogic expression is malformed**, the live entity carries an entry whose `jsonlogic` is not a valid expression (the platform usually rejects this on write, but bypass paths exist). **🔴 Blocker.** Surface the offending entry's index and propose a fix.
 
 After presenting the report, ask:
 
@@ -303,29 +360,29 @@ After presenting the report, ask:
 
 If yes:
 
-- **Only update the `.md` file** — never touch live Semantius. Live changes are the deployer's job and require a re-deploy pass.
+- **Only update the `.md` file**, never touch live Semantius. Live changes are the deployer's job and require a re-deploy pass.
 - Regenerate the §2 Mermaid diagram if any relationship-affecting fix is applied.
-- Before writing, re-run the analyst's self-audit pass on the updated draft — don't save a file that fails its own audit.
+- Before writing, re-run the analyst's self-audit pass on the updated draft, don't save a file that fails its own audit.
 - Save back to the same filename. Share a one-line summary of what changed.
 
 ### Offer to redeploy
 
-Once the updated `.md` is saved, the `.md` and the live module have drifted — the `.md` now reflects the fixes, Semantius still holds the unfixed shape. Close the loop by asking:
+Once the updated `.md` is saved, the `.md` and the live module have drifted, the `.md` now reflects the fixes, Semantius still holds the unfixed shape. Close the loop by asking:
 
 > "The `.md` file now has those fixes, but Semantius still holds the pre-fix shape. Want me to hand this off to the `semantic-model-deployer` skill to redeploy the corrected model?"
 
-If **yes** → invoke the `semantic-model-deployer` skill with the saved `.md` file as its input. The deployer's own workflow takes over from there (parse, inspect, plan, execute) — do not try to duplicate its logic here.
+If **yes** → invoke the `semantic-model-deployer` skill with the saved `.md` file as its input. The deployer's own workflow takes over from there (parse, inspect, plan, execute), do not try to duplicate its logic here.
 
 If **no** → stop. Mention that the user can redeploy later by invoking the deployer against the saved `.md`.
 
-Only make this offer when fixes were actually applied. If Stage 5 ran but the user declined to apply the findings — or the audit came back clean with zero 🔴/🟡 — the `.md` matches live state, there is nothing to redeploy, and asking would be noise.
+Only make this offer when fixes were actually applied. If Stage 5 ran but the user declined to apply the findings, or the audit came back clean with zero 🔴/🟡, the `.md` matches live state, there is nothing to redeploy, and asking would be noise.
 
 ---
 
 ## What this skill does not do
 
 - Does **not** write to Semantius. Read-only reverse-engineering.
-- Does **not** capture RBAC roles, permissions, user assignments, or webhook receivers — those are out of scope for the semantic model (the analyst excludes them too).
-- Does **not** capture sample business data — schema only.
-- Does **not** guess at `domain` or `naming_mode` — it uses safe defaults (`custom`, `agent-optimized`) and lets the user or the analyst's audit correct them.
+- Does **not** capture RBAC roles, permissions, user assignments, or webhook receivers, those are out of scope for the semantic model (the analyst excludes them too).
+- Does **not** capture sample business data, schema only.
+- Does **not** invent `naming_mode`, defaults to `agent-optimized` unless the user says otherwise. `domain` is inferred from the live entity shape (per the dedicated rule in Stage 4), or omitted when no canonical category fits, never written as `custom`.
 - Does **not** duplicate the analyst's Audit mode. If the user wants a pure audit of an existing `.md` file without touching Semantius, route them to `semantic-model-analyst` in Audit mode. Use this skill only when the *live state* is the source of truth.

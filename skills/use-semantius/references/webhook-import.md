@@ -14,18 +14,18 @@ When importing many records from a CSV, Excel, or TXT file, use the webhook-base
 
 ---
 
-## Step 1 — Identify Target Entity and Fields
+## Step 1: Identify Target Entity and Fields
 
 ```bash
 semantius call crud read_entity '{"filters": "table_name=eq.<table_name>"}'
 semantius call crud read_field '{"filters": "table_name=eq.<table_name>"}'
 ```
 
-Note which fields have `input_type: "readonly"` — **never import into those**.
+Note which fields have `input_type: "readonly"`, **never import into those**.
 
 ---
 
-## Step 2 — Find or Create Webhook Receiver
+## Step 2: Find or Create Webhook Receiver
 
 ```bash
 semantius call crud read_webhook_receiver \
@@ -46,7 +46,7 @@ semantius call crud create_webhook_receiver '{
 
 ---
 
-## Step 3 — Get API Base URL
+## Step 3: Get API Base URL
 
 ```bash
 semantius call crud getCurrentUser '{}'
@@ -56,7 +56,7 @@ semantius call crud getCurrentUser '{}'
 
 ---
 
-## Step 4 — Map Columns to Fields
+## Step 4: Map Columns to Fields
 
 | Match type | Action |
 |------------|--------|

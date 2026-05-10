@@ -133,10 +133,10 @@ Input Schema:
 
 Always follow this order:
 
-1. **Discover** — `semantius info` to see available servers
-2. **Explore** — `semantius info <server>` to see tools + parameters
-3. **Inspect** — `semantius info <server> <tool>` to get the full JSON schema
-4. **Execute** — `semantius call <server> <tool> '<json>'`
+1. **Discover**, `semantius info` to see available servers
+2. **Explore**, `semantius info <server>` to see tools + parameters
+3. **Inspect**, `semantius info <server> <tool>` to get the full JSON schema
+4. **Execute**, `semantius call <server> <tool> '<json>'`
 
 ---
 
@@ -268,7 +268,7 @@ fi
 By default the CLI uses a lazy-spawn background daemon to avoid MCP server startup latency on every call.
 
 - Each MCP server gets its own daemon process
-- 60-second idle timeout — auto-terminates when idle
+- 60-second idle timeout, auto-terminates when idle
 - Stale-detection: config changes trigger re-spawn
 
 **Control via environment:**

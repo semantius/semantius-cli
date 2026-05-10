@@ -4,7 +4,7 @@ The `crud` server covers two distinct purposes. Understanding which you need det
 
 ## Layer 1: Schema Management Tools (typed tools)
 
-The 48 typed tools (`create_entity`, `read_field`, `update_role`, etc.) manage Semantius's **semantic data model** — the schema definitions stored in Semantius's own system tables (`entities`, `fields`, `modules`, `permissions`, `roles`, `users`, `webhook_receivers`, etc.).
+The 48 typed tools (`create_entity`, `read_field`, `update_role`, etc.) manage Semantius's **semantic data model**, the schema definitions stored in Semantius's own system tables (`entities`, `fields`, `modules`, `permissions`, `roles`, `users`, `webhook_receivers`, etc.).
 
 Use these when: defining new entities, adding fields, configuring RBAC, managing modules.
 
@@ -26,11 +26,11 @@ sqlToRest            →  translating a SQL query into PostgREST path syntax
 
 ### `getCurrentUser`
 Returns current user's profile, email, roles, effective permissions, accessible modules, and `api_baseurl`.
-No parameters required — call with `'{}'`.
+No parameters required, call with `'{}'`.
 
 ### `postgrestRequest`
 
-Direct HTTP request against the PostgREST API. Works on **any table** — both Semantius system tables and your own entity tables.
+Direct HTTP request against the PostgREST API. Works on **any table**, both Semantius system tables and your own entity tables.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -129,7 +129,7 @@ The typed tools accept a structured object instead of raw path strings:
 | `filters` | string | PostgREST filter string, e.g. `"table_name=eq.products&format=eq.string"` |
 | `select` | string | Columns to return, e.g. `"id,name,label"`. Default: `"*"` |
 | `limit` | integer | Max records to return |
-| `offset` | integer | Records to skip — formula: `(page - 1) * limit` |
+| `offset` | integer | Records to skip, formula: `(page - 1) * limit` |
 | `order` | string | Sort, e.g. `"created_at.desc"` or `"name.asc,id.desc"` |
 
 ---
@@ -139,16 +139,16 @@ The typed tools accept a structured object instead of raw path strings:
 ### `create_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Entity fields. See data-modeling.md for required fields and auto-generated fields. |
+| `data` | object | yes | Entity fields. See data-modeling.md for required fields and auto-generated fields. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in data-modeling.md. |
 
 ### `read_entity`
-Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`).
+Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties.
 
 ### `update_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `table_name` | string | yes | Identifier of the entity to update |
-| `data` | object | yes | Fields to update (partial — omitted fields unchanged) |
+| `data` | object | yes | Fields to update (partial, omitted fields unchanged). `computed_fields` and `validation_rules` are **replaced wholesale** when present in `data`, not merged; send the full intended array. Sending an empty array removes the per-record trigger. |
 
 ### `delete_entity`
 | Parameter | Type | Required | Description |
@@ -186,7 +186,23 @@ Also use to find cross-references before deletion: `"reference_table=eq.<table_n
 ### `create_module`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Requires: `module_name` (snake_case), `label`, `description` |
+| `data` | object | yes | Requires `module_name`. Optional: `module_slug`, `description`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
+
+#### `modules` field reference
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `module_name` | string | **Unique display name shown in the UI module selector and on the landing page header** (e.g. `CRM`, `ITSM`, `CMDB`). Keep acronyms as acronyms, this is the human-facing name. Required. |
+| `module_slug` | string | URL-safe slug, lowercase alphanumeric or underscore (regex `^([a-z0-9_]+)?$`). Used in URLs, permission prefixes, and as the foreign-key target when referenced from semantic-model files. Convention: matches the source model's `system_slug` (e.g. `crm`, `itsm`, `cmdb`). Optional but strongly recommended, without it the URL/permission scheme has no stable handle. |
+| `description` | string | Compact tagline shown beside `module_name` in the selector dropdown and on the landing page (e.g. `Customer Relationship Management`, `IT Service Management`). For acronym `module_name`s use the plain English expansion; for non-acronyms use a 2-4 word disambiguating phrase. Aim for ≤40 characters. Optional. |
+| `view_permission` | string | Permission name required to see the module in the selector (e.g. `crm:read`). Optional; when omitted the module is visible to anyone with at least one entity permission inside it. |
+| `logo_url` | string | URL or `data:` URI for the module logo shown in the selector chip. Optional. |
+| `logo_color` | string | Hex color for the logo background tile (e.g. `#4F46E5`). Optional. |
+| `home_page` | string | Path the module's landing button routes to (e.g. `/crm/dashboard`). Optional. |
+| `settings` | JSON | Module-specific configuration blob. Optional. |
+| `dashboard_config` | JSON | Module landing-page dashboard layout. Optional. |
+
+> ⚠️ **`alias` is removed.** Earlier versions of the schema carried an `alias` field; it is gone. Use `module_name` for the unique display name and `module_slug` for the URL/permission handle. Code or scripts that read or write `alias` will fail.
 
 ### `read_module`
 Accepts common read parameters.
