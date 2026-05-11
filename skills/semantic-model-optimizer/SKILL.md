@@ -49,7 +49,7 @@ These rules apply to chat output, the regenerated semantic-model markdown file, 
 
 ## Schema compatibility
 
-This skill writes files at the analyst skill's `CURRENT_VERSION`. At Step 0 it reads `semantic-model-analyst/SKILL.md`; the "Skill version" section at the top of that file declares the canonical version (e.g. `CURRENT_VERSION = "1.0"`). The optimizer stamps that exact value on every file it writes via the front-matter `version` key. Major bumps in the analyst force a coordinated update of this skill: a major bump means section numbers, table shapes, or required front-matter keys have changed, and the optimizer's output template must follow.
+This skill writes files at the analyst skill's `CURRENT_VERSION`. At Step 0 it reads `semantic-model-analyst/SKILL.md`; the "Skill version" section at the top of that file declares the canonical version (e.g. `CURRENT_VERSION = "1.7"` at the time of writing). The optimizer stamps that exact value on every file it writes via the front-matter `version` key. The downstream `semantic-model-deployer` carries an `EXPECTED_MAJOR` constant (currently `1`) and rejects files whose major doesn't match; as long as the optimizer stamps the analyst's current value, the round-trip stays clean. Major bumps in the analyst force a coordinated update of this skill *and* the deployer: a major bump means section numbers, table shapes, or required front-matter keys have changed, and the optimizer's output template must follow.
 
 When this skill reads a prior file (for `initial_request` / `departments` / `industries` carry-over), it does **not** route on the prior file's `version`. The live module is the source of truth; the new file is regenerated from live state and stamped with the current analyst version regardless. If the prior file's major is older than `CURRENT_VERSION`, the carry-over still happens (those keys haven't changed shape), and the resulting new file is current-major.
 
@@ -165,13 +165,15 @@ Follow `semantic-model-analyst/references/semantic-model-template.md` verbatim. 
 |---|---|
 | `module.module_name` | front-matter `system_name`, top-level `#` heading |
 | `module.module_slug` | front-matter `system_slug`, §8 module name |
-| `module.description` | front-matter `system_description` (verbatim, it is already the compact tagline) **and** §1 Overview seed (expand the tagline to 2-3 sentences using entity names and descriptions; do not invent facts, stay faithful) |
+| `module.description` | front-matter `system_description` (verbatim, it is already the compact tagline) **and** §1 Overview seed (see §1 Overview rules below; do not invent facts, stay faithful) |
 | `entity.table_name` | §2 Table name, §3 sub-heading, §4 From/To |
 | `entity.singular_label` | §2 Singular label, §3 sub-heading suffix |
 | `entity.plural_label` | §3 Plural label line |
 | `entity.description` | §3 Description |
 | `entity.label_column` | §3 Label column |
 | `entity.audit_log` | §3 `**Audit log:** yes \| no` line, render `yes` when `true`, `no` when `false`/null |
+| `entity.edit_mode` | §3 `**Edit mode:** auto \| sidebar \| modal \| page` line, render the live value as-is. **Omit the line entirely when the live value is `auto`** (the platform default), so the round-trip through the deployer stays clean (the deployer also defaults `auto` when the line is absent). |
+| `entity.cube_mode` | §3 `**Cube mode:** disabled \| auto` line, render the live value as-is. **Omit the line entirely when the live value is `disabled`** (the platform default), same rationale as `edit_mode`. |
 | `entity.computed_fields` | §3 `**Computed fields**` sub-block as a fenced ```` ```json ```` array, byte-for-byte. Omit the heading entirely when the array is empty (`[]`). Never paraphrase JsonLogic into prose. |
 | `entity.validation_rules` | §3 `**Validation rules**` sub-block as a fenced ```` ```json ```` array, byte-for-byte. Omit the heading entirely when the array is empty (`[]`). Never paraphrase JsonLogic into prose. |
 | `field.field_name` | §3 Field name |
@@ -181,7 +183,19 @@ Follow `semantic-model-analyst/references/semantic-model-template.md` verbatim. 
 | `field.reference_table` + `reference_delete_mode` | §3 Reference / Notes + §4 summary row |
 | `field.enum_values` | §3 Notes (`values listed in §5.N`) and a §5 sub-section |
 | `field.unique_value` | §3 Notes (`unique`) |
-| `field.description` | §3 Notes (append when non-trivial) |
+| `field.description` | §3 **Description** column (5th column, analyst v1.8+). Render the live value verbatim into the cell; if empty, leave the cell blank. Never paraphrase. Never smuggle the description into the Reference / Notes column — that's the v1.7 convention the v1.8 split was designed to retire, and it trips the analyst's audit `🔴 Free prose in Notes` rule. |
+
+### §1 Overview
+
+§1 is **two or three sentences of plain domain prose**, expanded from `module.description` (the compact tagline) using entity names and descriptions as supporting signal. It seeds catalog discovery and is consumed verbatim by downstream skills, so its content contract matters. Apply the analyst v1.7 rules verbatim (auditing the optimizer's own output otherwise flags every reverse-engineered file as 🟡):
+
+- **No §-number cross-references** (`§3`, `§6`, `§7.2`, "see §3"). The narrative reads as standalone prose; pointers to other sections are an audit-of-the-file artifact, not catalog content.
+- **No snake_case identifiers or column-shaped tokens** (`cost_center_id`, `features.cost_center_id`, `cost_allocations`). Use plain domain words ("cost centers", "cost allocations") if the concept genuinely belongs in the narrative; usually it doesn't.
+- **No platform plumbing vocabulary**: `Semantius`, `deployer`, `optimizer`, `module`, `built-in`, `auto-field`, `at runtime`, `reconciles`, `extracted from live state`. §1 talks about the system the user is modeling, not about the file or the catalog that holds it. Don't narrate the fact that the file was reverse-engineered, the front-matter and the absence of `initial_request` already signal that.
+- **No scope-deferral narration**: "deliberately out of scope", "moved to a sibling domain", "deferred to <Domain>", "links out via". The audit detects deferrals from `related_domains` + §6, not from prose.
+- **Two or three sentences**, no more. Additional paragraphs that narrate authoring choices or mechanics are noise.
+
+Plain example for an extracted CRM module: *"Tracks the lifecycle of leads, accounts, and opportunities for the sales team. Captures contact history, deal pipeline, and forecast roll-up. Connects accounts to the contracts and subscriptions they own."*
 
 ### Front-matter
 
@@ -216,16 +230,22 @@ entities:
 
 The vocabulary is open: prefer the common values (`CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`) when one fits cleanly, otherwise coin a new Title-case / acronym value that captures the system shape (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). Only omit `domain` when you genuinely can't categorize the system. **Never write `custom`**, it adds zero discovery signal. A prior file's `domain` value is *not* carried over, re-infer from live state every run.
 
-**`departments`, `industries`, and `related_domains`, carry over when a prior file has them, otherwise infer from the gathered live state.** These tags aren't columns in Semantius, but the live state still carries plenty of signal, `module.module_name`, `module.description`, the entity names you just read in Stage 2, the field names within those entities, that maps to the same inference the analyst makes from a Stage 1 capture. Use that signal, not a guess from the module name alone. **Use Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`, `ITAM`, `CMDB`, `Change Management`), never lowercase snake_case.
+**`departments` and `industries`, carry over when a prior file has them, otherwise infer from the gathered live state.** These tags aren't columns in Semantius, but the live state still carries plenty of signal, `module.module_name`, `module.description`, the entity names you just read in Stage 2, the field names within those entities, that maps to the same inference the analyst makes from a Stage 1 capture. Use that signal, not a guess from the module name alone. **Use Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`), never lowercase snake_case.
 
-`related_domains` specifically is the names of business domains/system categories this model sits next to in the enterprise neighborhood, drawn from analyst-style domain knowledge, not a list of slugs of files in the workspace. Inference signal: given the entities and fields you just read, what other domain categories would naturally live alongside this system? An ITSM module's `related_domains` would typically include `ITAM`, `CMDB`, `Change Management`, `Vendor Management`, `Identity & Access`.
+Two cases for `departments` / `industries` at Stage 4:
 
-Two cases at Stage 4:
-
-1. **Prior file exists with `departments` / `industries` / `related_domains`.** Copy each present key byte-for-byte into the new file (same mechanic as `initial_request`). The user has already curated these tags; respect that.
-2. **Prior file is missing the key (or no prior file at all).** Re-run the analyst's Stage 5 inference rule against the gathered live state, entity names, module name, module description, field names. If you can confidently propose a value, include it. If you have low or no confidence, omit the key. Never invent a value with no supporting signal.
+1. **Prior file exists with the key.** Copy it byte-for-byte into the new file (same mechanic as `initial_request`). The user has already curated these tags; respect that.
+2. **Prior file is missing the key (or no prior file at all).** Re-run the analyst's Stage 5 inference rule against the gathered live state. If you can confidently propose a value, include it. If you have low or no confidence, omit the key. Never invent a value with no supporting signal.
 
 Either way, the result is a single concrete YAML key (or omission). Do not block on user input.
+
+**`related_domains`, always re-walk via the analyst's two-axis Stage 4c rule, even when the prior file has values.** This is a v1.7 analyst rule the optimizer must mirror; pure carry-over (and pure entity-shadow inference) reproduces the v1.6 failure mode where a neighboring domain disappears from the tag list because no live entity happens to shadow it. Run **both** axes from analyst knowledge of the domain and the live entity shape, then merge with any prior values:
+
+- **Axis 1 — System-type walk (run first).** Independent of which entities are in §3, ask: *"What does a typical instance of this kind of system sit next to in a typical organization's enterprise stack?"* The answer is driven by the inferred `domain` and the kind of work the system represents, not by the current entity list. A Product Roadmap is next to OKR, Issue Tracking, Release Management, CRM, Identity & Access, AND Budgeting (because features cost money in every organization, whether or not *this* roadmap tracks cost internally). An ITSM helpdesk is next to ITAM, CMDB, HRIS, Identity & Access. An ATS is next to HRIS, Workforce Planning, Identity & Access. Produce this list from analyst knowledge of the system's domain, before walking §3.
+- **Axis 2 — Entity-driven shadowing walk.** Then walk every §3 entity (including `related_entities[]` from Stage 3) and apply the shadowing test: *"would a dedicated enterprise system model this concept in meaningful depth?"* If yes, add the corresponding domain when it is not already on the Axis-1 list. Familiar shadows: `objectives` shadows OKR, `users` shadows Identity & Access, `vendors` shadows Vendor Management, `assets` shadows CMDB / ITAM, `tickets` shadows ITSM, `employees` shadows HRIS, `releases` shadows Release Management, `features` shadows Issue Tracking. Junctions and weak shadows (`comments`, `tags` that no enterprise system materially expands on) are skipped; on borderline cases the bias is toward inclusion.
+- **Absence of an internal shadow is NOT evidence the domain is not a neighbor.** Axis 1 catches what Axis 2 misses. If the prior file listed a neighbor (e.g. Budgeting next to a roadmap) and the live module has since dropped its `cost_centers`, the neighbor still belongs in `related_domains` because the neighborhood is about the *system type's position in the enterprise*, not the current §3 count. Do **not** silently drop a prior-file domain just because no live entity shadows it; re-derive via Axis 1 and confirm.
+- **Merge with prior values, take the union.** Axis 1 ∪ Axis 2 ∪ prior-file values. Never silently drop a prior-curated value just because the new walk didn't surface it (the prior value reflects user-confirmed neighborhood knowledge); only drop when the live module's `domain` has clearly shifted and the prior tag is now misleading. Use **Title-case / acronym form** (`ITAM`, `CMDB`, `Change Management`, `Vendor Management`, `Identity & Access`), never lowercase snake_case.
+- **Result is a concrete YAML list (or omission when the system genuinely has no adjacent domains, rare).** Do not block on user input; if Stage 5 runs, the user can review and edit the inferred neighborhood there.
 
 > **🛑 Do not search the workspace for existing semantic-model files.** This skill exports the currently-live module from Semantius, the live state *is* the source of truth. Never glob `*semantic-model*.md`, and never read unrelated semantic-model files. Other systems' models tell you nothing about this module, and the template (already loaded in Step 0) is the only style reference you need.
 
@@ -335,6 +355,16 @@ If **no**, done. Do not push further.
 
 If **yes**, run the Mode B audit from `semantic-model-analyst/SKILL.md` against the file you just wrote. Report findings in the analyst's exact format (🔴 Blockers, 🟡 Warnings, 🟢 Suggestions, with an overall one-line verdict).
 
+### Audit findings that are expected on a reverse-engineered file
+
+A few of the analyst's checks are designed for greenfield authoring and will fire on every file the optimizer writes by construction, not because the live module is broken. **Demote these to an "expected on extraction" note in the report rather than surfacing them as actionable**, otherwise every reverse-engineered file looks worse than it is and the user learns to ignore the audit:
+
+- **🟡 `initial_request` missing.** The analyst writes this from a Stage 1 capture; the live module has no equivalent and the optimizer omits the key when no prior file exists. The audit's own rule treats this as 🟡, not 🔴, exactly because reverse-engineered files won't have it. Note this as expected, do not propose to backfill (a synthetic "extracted on …" value would lie about the historical record).
+- **🟡 §6 completeness against `related_domains`.** Analyst v1.5+ flags 🟡 when a `related_domains` entry has zero §6 rows. Stage 4 of this skill deliberately writes `No cross-model link suggestions.` because live extraction is reverse-engineering, not authoring; every cross-module FK that the catalog actually carries already shows up as a normal §3 reference field. Surface the analyst's finding as expected-noise on extracted files, then offer a concrete handoff: *"If you want speculative §6 hint rows for `<domain1>`, `<domain2>`, …, route to the analyst skill in Extend mode against this file."* The analyst is the right home for that authoring pass; the optimizer stays read-only against the catalog.
+- **🟡 Pair-overlap and system-type-neighbor §6 rules from analyst v1.7.** Same rationale, the optimizer doesn't author §6 hints. Group these with the §6 completeness finding above so the user sees one expected-noise block, not three.
+
+Everything else in the analyst's audit is real signal even on a reverse-engineered file (label_column shape, naming consistency, format/kind coupling, computed_fields / validation_rules integrity, `relationship_label` quality), surface those as actionable findings.
+
 ### Optimizer-specific checks (on top of the analyst's audit)
 
 Checks that are most useful when the source is live state, not a greenfield draft:
@@ -376,6 +406,18 @@ If **yes** → invoke the `semantic-model-deployer` skill with the saved `.md` f
 If **no** → stop. Mention that the user can redeploy later by invoking the deployer against the saved `.md`.
 
 Only make this offer when fixes were actually applied. If Stage 5 ran but the user declined to apply the findings, or the audit came back clean with zero 🔴/🟡, the `.md` matches live state, there is nothing to redeploy, and asking would be noise.
+
+### Offer a Mode D rebuild when the audit surfaces structural drift
+
+The Stage 5 audit catches rule violations in the live shape; it does not reconsider entity granularity, naming choices, or scope boundaries. When the findings make it clear the live module has drifted *structurally* (a long list of 🟡 / 🔴 across many entities, junk entities the live admin added that don't fit the domain, an entity that has accumulated unrelated fields and now models two concepts, a slug that no longer matches what the system has become), suggest the analyst's **Mode D Rebuild** as a parallel option:
+
+> "The live module looks like it has drifted structurally beyond what spot-fixes can clean up (`<short reason>`). Want me to hand the saved `.md` to the `semantic-model-analyst` skill in Mode D (Rebuild)? Mode D treats the file as archived knowledge and re-authors a brand-new model at the current analyst version, keeping `initial_request` (if any) and curated metadata, with every other decision back on the table."
+
+If **yes** → invoke the analyst skill with the saved `.md` as input and "Mode D" as the explicit mode signal. The analyst's own workflow takes over (Stages 1-4 run end-to-end with the prior content as Stage 1 seed); do not attempt to drive the rebuild from here.
+
+If **no** → stop. Mention the option remains available, and that the deployer hand-off above is still the right path for spot-fix-level changes.
+
+Only make this offer when the audit findings genuinely point at structural drift, not when they are spot-fixable rule violations (a missing `relationship_label`, a label-column FK collision, a malformed JsonLogic expression). For those, the redeploy path above is the right call. Mode D is the heavier hammer for the case where the live module no longer resembles the system the model is meant to describe.
 
 ---
 

@@ -146,8 +146,27 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
 | `$user_id` | `uuid` | Authenticated user performing the write (`null` for system writes). |
+| `$old` | `object` or `null` | Previous row as JSON on UPDATE; `null` on INSERT. Use to express transition rules ("status cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
 
-No other ambient state. Cross-row lookups, aggregates, and FK traversal are out of scope (use cube/views).
+`$old` is the only window into prior state; cross-row lookups, aggregates, and FK traversal stay out of scope (use cube/views).
+
+**Detecting INSERT vs UPDATE:** `$old` is `null` on INSERT, an object on UPDATE. A rule that should fire only on UPDATE wraps its body in `{"if": [{"!=": [{"var": "$old"}, null]}, <update-only-check>, true]}` so the INSERT path passes trivially. Transition rules that compare current vs prior (e.g. `{"var": "release_status"}` against `{"var": "$old.release_status"}`) read `null` from `$old.<field>` on INSERT and naturally pass — no extra guard needed unless INSERT needs distinct handling.
+
+**Example transition rule** (a release that has reached `released` cannot regress):
+
+```json
+{
+  "code": "released_is_terminal",
+  "message": "A release that has been released cannot move back to planned or in_progress.",
+  "jsonlogic": {
+    "or": [
+      { "==": [{ "var": "$old" }, null] },
+      { "!=": [{ "var": "$old.release_status" }, "released"] },
+      { "==": [{ "var": "release_status" }, "released"] }
+    ]
+  }
+}
+```
 
 **Deploy-time validation:** the platform rejects non-array values, names that don't resolve to a field on this entity, duplicate `code`s within an entity, and malformed `jsonlogic`. Errors point at the offending array index.
 

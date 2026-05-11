@@ -16,8 +16,8 @@ description: >-
   way". Do NOT answer such requests by recommending off-the-shelf SaaS products
   or asking whether they'd prefer to buy vs build, invoke this skill and
   produce a semantic model. Also use this skill when the user wants to review,
-  audit, check, update, customize, or extend an existing `*-semantic-model.md`
-  file. Use for greenfield modeling,
+  audit, check, update, customize, extend, rebuild, or reanalyze an existing
+  `*-semantic-model.md` file. Use for greenfield modeling,
   adopting existing SaaS vendor schemas (Salesforce, Zendesk, ServiceNow,
   Workday, HubSpot, Jira, Linear, Productboard, etc.), and reviewing or
   evolving models already built.
@@ -64,25 +64,46 @@ The en-dash (`–`, U+2013) and hyphen (`-`) are fine in their normal roles (num
 
 ---
 
-## Skill version: `CURRENT_VERSION = "1.1"`
+## Skill version: `CURRENT_VERSION = "1.9"`
 
-This skill stamps every model file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"`. The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
+This skill stamps every model file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"1.9"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
 
-**When to bump.** Skill maintainers (humans editing this `SKILL.md`) own the version field at the top of this section. Bump *minor* on any non-breaking change to this skill: a new audit check, a clarified rule, an added optional front-matter key, an updated example. Bump *major* only when the change is breaking, meaning files written by the new version cannot be processed by tools that expect the old version (or vice versa). Concrete breaking-change triggers:
+> **`1.9` changelog.** Two authoring rules tightened, both prompted by a real deployment foot-gun where an ATS `Headcount` field opened forms prefilled with `0` and failed the `headcount_positive` rule on save.
+>
+> 1. **Default coupled to validation.** When a field's auto-default (per the Semantius `is_nullable()` / column-default contract) would violate any `validation_rules` entry that references the field, the analyst must declare an explicit `default: "<value>"` annotation that satisfies the rule. Common trigger: required integer/number with a `>= N` floor (N>0) — auto-default `0` fails. The audit pass enforces this as a 🔴 Blocker.
+> 2. **Description for jargon titles.** The "fill the Description column when" list grew a 7th trigger: the title is a domain term-of-art a non-specialist couldn't parse cold (acronyms `MRR`/`FTE`/`RICE`, single-word jargon like `Headcount`/`Disposition`/`Loss Reason`). Descriptions remain the exception, not the rule — plain-English titles (`First Name`, `Email`, `City`) still leave the column blank. The added rule is calibrated with examples and a one-line test ("would someone from a different department know what to type?") to keep it from drifting into "describe every field just in case".
+>
+> Minor bump, not major: column shape is unchanged, only the rules content must satisfy. Files written under `1.8` remain structurally valid; rewriting them under `1.9` (via the analyst's audit pass) tightens content but doesn't break readers.
+
+> **`1.8` changelog.** §3 field tables grew a new **Description** column between **Label** and **Reference / Notes**. Description prose now lives in that dedicated column instead of being smuggled into Notes as a `description: "..."` annotation. The deployer reads the column directly. **Major stays at `1`** because this skill is still pre-release / prototyping and no committed models need migrating; once the convention is stable and external models exist, a column-shape change like this becomes a major bump.
+
+**When to bump.** The version stamp tracks the file's **content contract**: its structural shape *and* the modeling rules its content was written under. Bump when that contract changes; do not bump when only the skill's internal mechanics change.
+
+Bump *minor* when the contract changes in a non-breaking way:
+- A new optional front-matter key with a defined default.
+- A new optional section or sub-block that older readers can ignore.
+- A new modeling convention authors must follow when writing content (e.g., a new naming rule, a new field-format constraint, a new required `relationship_label` annotation). Files written under the new rule are still readable by old tools, but their content reflects a tighter standard, the stamp signals which rule set was applied at write time.
+
+Bump *major* when the contract changes in a breaking way, meaning files written by the new version cannot be processed by tools that expect the old version (or vice versa). Concrete breaking-change triggers:
 
 - Section renumbering (today's `§6` ↔ `§8` swap would have been a major bump if this scheme had existed then).
 - Removing or renaming a front-matter key.
 - Changing the column shape or required columns of a structural table (§3 fields, §4 relationships, §6 cross-model).
 - Switching how a section is parsed (e.g. flat list to keyed sub-sections).
 
-Non-breaking changes (always minor): new audit checks that only flag, not block; clarified prose; added examples; new optional front-matter keys with defined defaults; new modes that don't affect existing files.
+**Do not bump** when the change is internal to the skill and produces output indistinguishable from what the prior version would have produced under the same input:
+- New modes that don't change the output shape or the rules its content follows (e.g., a new workflow path that ends in the same Mode-A-style write).
+- New audit checks that only flag findings to the user, not changes the rules content must satisfy.
+- Clarified prose, added examples, refactored skill internals.
+
+In short: ask "would two files, one written by the prior version and one by the new version under the same Stage 1 input, differ in shape or in the rules their content follows?". If no, don't bump. If yes (non-breaking), bump minor. If yes (breaking), bump major.
 
 When you bump, **update `CURRENT_VERSION` in this section's heading and rewrite this paragraph's quoted string to match**. The analyst reads the version from this section programmatically (the heading line `## Skill version — \`CURRENT_VERSION = "<version>"\``), so the format must stay byte-stable.
 
 **How files are routed by version.**
 
 - **Same major as `CURRENT_VERSION`**, operate normally. Audit, extend, deploy all work as documented. Differing minors are not flagged.
-- **Older major than `CURRENT_VERSION` (or no `version` key, treated as major `0`)**, the file's shape may not match current rules. **This skill does not carry per-version translation rules.** The semantic content of a model (entities, fields, relationships, enum values, business intent) is stable across schema bumps; only the encoding changes. So the analyst treats older files as **archived knowledge**: the LLM reads the file as natural-language content, extracts the semantic model, and offers the user one of two next steps. (a) **Re-author at current major**, drive a fresh Mode A or Mode C pass using the extracted content as input; the output is a brand-new file at `CURRENT_VERSION`, the old file is left untouched (git tracks it). (b) **Reference only**, load the entities and relationships into context for the conversation, propose no edits, hand nothing to the deployer; useful when the user just wants to discuss "how did we model X before?" without rebuilding. Audit and Extend modes refuse to operate on older-major files directly: they would otherwise try to apply current-major rules against a shape that doesn't match.
+- **Older major than `CURRENT_VERSION` (or no `version` key, treated as major `0`)**, the file's shape may not match current rules. **This skill does not carry per-version translation rules.** The semantic content of a model (entities, fields, relationships, enum values, business intent) is stable across schema bumps; only the encoding changes. So the analyst treats older files as **archived knowledge**: the LLM reads the file as natural-language content, extracts the semantic model, and offers the user one of two next steps. (a) **Re-author at current major**, drive a Mode D Rebuild pass using the extracted content as input; the output is a brand-new file at `CURRENT_VERSION`, the old file is left untouched (git tracks it). (b) **Reference only**, load the entities and relationships into context for the conversation, propose no edits, hand nothing to the deployer; useful when the user just wants to discuss "how did we model X before?" without rebuilding. Audit and Extend modes refuse to operate on older-major files directly: they would otherwise try to apply current-major rules against a shape that doesn't match.
 - **Newer major than `CURRENT_VERSION`**, error. The file was written by a future version of this skill that knows things this one doesn't. Refuse to operate; ask the user to update the skill.
 
 The downstream `semantic-model-deployer` skill maintains its own `EXPECTED_MAJOR` constant and rejects models whose major differs. The two skills must be kept in sync; bumping major in this skill always implies a coordinated bump in the deployer.
@@ -99,10 +120,11 @@ Before doing anything else, figure out which of these three modes applies:
 | **Audit** | User has an existing `*-semantic-model.md` and wants it checked for quality, completeness, or correctness. |
 | **Extend** | User has an existing semantic model and wants to add entities, fields, or relationships to it. |
 | **Customize** | User says "customize" (or similar, "tweak", "adapt", "tailor") without saying *what* to change. Treat this as: load → **show a brief overview (§1 summary + the §2 entity table)** → ask the user which entities, fields, or relationships they want to customize → then route into Extend or targeted edits. Do **not** run a full audit up front and do **not** guess at changes, the overview is the orientation, the user drives the rest. |
+| **Rebuild** | User wants a holistic reanalysis of an existing model that has drifted across many iterations. Trigger verbs: "rebuild", "reanalyze", "re-author", "rethink", "overhaul", "modernize", "reconsider from scratch". Distinct from Audit (which only flags rule violations) and Extend (which is additive); Mode D puts every prior decision back on the table while preserving `initial_request` and curated metadata. |
 
-If the user uploaded or referenced a semantic-model file, you're in Audit, Extend, or Customize mode, ask which one if it's not obvious from context. If there's no existing file, you're in Create mode.
+If the user uploaded or referenced a semantic-model file, you're in Audit, Extend, Customize, or Rebuild mode, ask which one if it's not obvious from context. If there's no existing file, you're in Create mode.
 
-When in Audit, Extend, or Customize mode, read the file before doing anything else. If the user hasn't told you the path, ask for it (or look in the workspace folder for `*-semantic-model.md` files).
+When in Audit, Extend, Customize, or Rebuild mode, read the file before doing anything else. If the user hasn't told you the path, ask for it (or look in the workspace folder for `*-semantic-model.md` files).
 
 > **🛑 Fetching remote models, use `curl`, not WebFetch.** If the file is at an `http(s)` URL, fetch the raw bytes via Bash (`curl -s <url>`) and read the full output. **Never use WebFetch for a semantic model.** WebFetch runs the content through an HTML→markdown summarization pass that silently strips YAML front-matter and can alter structural details. Auditing the WebFetch output will produce false blocker findings (most commonly "front-matter missing" when it is actually present) and erode user trust. This rule applies in every mode.
 
@@ -139,7 +161,7 @@ Construct exactly one question with **4 options**: "Agent-optimized" first (the 
 
 Use this exact structure:
 
-- **question**: `"Build a future-proof, agent-optimized model — or stay compatible with a legacy {domain} vendor?"`
+- **question**: `"Build a future-proof, agent-optimized model — or stay compatible with a legacy {domain} system?"`
 - **header**: `"Schema basis"`
 - **multiSelect**: `false`
 - **options** (in this order, recommended option first per AskUserQuestion convention):
@@ -213,11 +235,12 @@ Then ask the user a single open question: *"Does this entity list look right, or
 
 For each confirmed entity, draft a field list. Present each entity as its own table with these columns:
 
-| Field name | Format | Required | Label | Reference / Notes |
-|---|---|---|---|---|
-| `contact_email` | `email` | yes | Email Address | unique |
-| `account_id` | `reference` | yes | Account | → `accounts` (N:1) |
-| `lifecycle_stage` | `enum` | no | Lifecycle Stage | values: `lead`, `mql`, `sql`, `customer` |
+| Field name | Format | Required | Label | Description | Reference / Notes |
+|---|---|---|---|---|---|
+| `contact_email` | `email` | yes | Email Address |  | unique |
+| `account_id` | `reference` | yes | Account | Internal owner responsible for the account | → `accounts` (N:1), relationship_label: "owns" |
+| `lifecycle_stage` | `enum` | no | Lifecycle Stage |  | values: `lead`, `mql`, `sql`, `customer` |
+| `effort_score` | `number` | no | Effort | RICE effort in person-months | precision: 2 |
 
 **Field format vocabulary**, use these Semantius values (never invent new ones):
 
@@ -260,6 +283,8 @@ A row that contradicts this coupling (`reference` with `cascade`, or `parent` wi
 
 **Required enums: declare `default: "<value>"` explicitly, even when it equals `enum_values[0]`.** The annotation documents analyst intent (so a reader doesn't have to infer "first listed = chosen starting state" from list order alone) and survives `enum_values` reordering during edits. Treat the auto-fallback as a safety net, not the recommended path. For other formats, only add an explicit `default: "<value>"` when the auto-default would be wrong for the domain (a non-zero starting balance, a non-default boolean, a specific seed string); otherwise leave it off.
 
+**Whenever the auto-default would *violate* one of the field's own validation rules, declare an explicit `default: "<value>"` that satisfies the rule.** This is mechanical and non-negotiable: the auto-default is what the platform writes into the field if the caller doesn't supply a value, so a form opens prefilled with that value. A required integer with a `>= 1` floor rule (`headcount_positive`, `vote_weight_positive`, `quantity_at_least_one`) auto-defaults to `0`, which fails the rule the moment the user clicks save — the form is broken before it's used. The fix is to write `default: "1"` (or whatever value satisfies the floor) in the §3 Notes column on that field. Same pattern applies to any auto-default that would clash with a `validation_rules` entry: required numbers with `>= N` (N>0), required enums whose `enum_values[0]` is a forbidden starting state, required booleans where `FALSE` violates a rule. Walk every `validation_rules` entry once at the end of Stage 4 and mentally evaluate it against the auto-default for each referenced field; for every rule that would reject the auto-default, emit a compensating `default: "<value>"`. The audit pass enforces this as a 🔴 Blocker (see "Entity health").
+
 **Nullability is computed from format.** The platform's `is_nullable()` rule makes only `reference`, `date`, and `date-time` formats nullable at the DB level; every other format is NOT NULL with the auto-default above. Marking a `reference`/`date`/`date-time` field as `Required = "yes"` means UI-required, not DB-NOT-NULL, be explicit in the Notes if the distinction matters for the domain.
 
 Example §3 row: `| status | enum | yes | Status | values: draft, active, discontinued; default: "draft" |` (explicit default documents intent even when it matches the first listed value).
@@ -271,6 +296,37 @@ Example §3 row: `| status | enum | yes | Status | values: draft, active, discon
 - **Self-references** get a hierarchy verb (`"parent of"`, `"manages"`, `"reports to"`, `"replies to"`), pick the one that matches the model.
 - When the same parent has multiple FKs from the same child (e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users`), the verbs must differentiate them (`"created"` vs `"assigned"`), that's the whole point of having per-FK metadata instead of a per-entity-pair label.
 - Annotate the verb in the §3 Notes column as `relationship_label: "<verb>"` so the deployer persists it (e.g. `→ accounts (N:1), relationship_label: "owns"`). The §2 Mermaid edge label and this annotation must agree byte-for-byte.
+
+**Fill the §3 Description column only when the schema's structured metadata can't already convey the meaning.** A field's description should answer something an agent doing a cold `read_field` (or a human filling out the form) could not figure out from `field_name` + `title` + `format` + `enum_values` + `reference_table` + `reference_delete_mode` + the entity's own `description` + the entity's `validation_rules` / `computed_fields`. Restating the title is clutter; duplicating a validation rule's message is drift waiting to happen. The Description column **stays blank** for most fields — that's the right authoring default.
+
+**Fill the Description column when one of these is true:**
+
+- **Units not in the type.** `effort_score` (number) → *"RICE effort in person-months"*. The format `number` doesn't say what unit.
+- **Ranges or conventions not encoded as a validation rule.** `confidence_score` (number) → *"RICE confidence as percentage (0-100)"*. If the bound isn't a hard `validation_rules` entry, the Description column is the only place it lives.
+- **Domain semantics where direction matters.** `vote_weight` (integer) → *"Higher value = stronger signal"*. The schema doesn't say which way "weight" leans.
+- **Format hints for freeform strings.** `objective_period` (string) → *"Freeform period label, e.g. Q2 2026, FY26"*. The string format alone tells the agent nothing about shape.
+- **Disambiguation for domain-overloaded terms.** `reach_score` (integer, title "Reach") → *"RICE reach: number of users/period reached"*. "Reach" alone could mean reach distance, radio reach, etc.
+- **Sign or polarity convention not in the type.** `amount` (number) → *"Negative for refunds"*. A number is just a number; the convention matters.
+- **Title is a domain term-of-art a non-specialist couldn't parse cold.** When the Label is *just* an industry term standing alone (an acronym, a methodology word, a single domain noun whose meaning lives inside a specific discipline), one short Description sentence saves a form-filler from guessing what to enter. Calibration examples that earn one: `MRR` → *"Monthly recurring revenue across active subscriptions"*; `FTE` → *"Full-time equivalent; 1.0 = one full-time person"*; `RICE Score` → *"(reach × impact × confidence) / effort"*; `Headcount` (on a requisition) → *"Number of positions to hire under this requisition"*; `Disposition` (on an HR record) → *"Final outcome of this case"*; `Loss Reason` (on a deal) → *"Why the deal was lost, used in win/loss analysis"*. The test is "would someone from a different department, opening this form for the first time, know what to type?" — if no, one sentence. If yes, the title alone is enough.
+
+**Leave the Description column blank when:**
+
+- The title is plain business English a typical office worker reads at a glance (`First Name`, `Email`, `Phone`, `City`, `Country`, `Notes`, `Start Date`, `Status` when the values self-describe). Plain titles are the common case; the Description column stays blank for most fields, and that's correct. The jargon trigger above is for the minority where the title alone is a discipline-specific term — not a license to describe every field "just in case".
+
+- The title is just a longer form of the field name (`actual_start_date` → "Actual Start"). A description like "When work actually began" restates the title and adds clutter.
+- The conditional or cross-field rule already lives in `validation_rules` (e.g. "set only when feature_status is in_progress or shipped" is the `actual_start_only_when_in_progress_or_later` rule's job; the rule's `message` is what end users and agents read on rejection).
+- The caller-population recipe is entity-wide (junction `*_label` composition recipes like `{user_full_name} → {feature_title}` belong in the entity's §3 entity description, not on each field).
+- The FK target and delete mode already imply the relationship (`comments.author_id` → `users` with `reference_delete_mode: clear` already encodes "author of the comment, survives user deletion as an orphan"; the matching insert-required rule is in `validation_rules`).
+- The enum's values are the full disambiguation (`feature_type` with `enum_values: [new_feature, enhancement, change_request, bug, tech_debt]` needs no description).
+
+**Mechanics.** Description is a dedicated cell in the §3 row (the 5th column, between Label and Reference / Notes), not an annotation. One short sentence, under ~80 chars, no `key: "value"` syntax. The deployer reads the cell directly and passes it verbatim to `create_field`'s `description` parameter. The Reference / Notes column is for **structured annotations only** (`relationship_label: "<verb>"`, `default: "<value>"`, `precision: <n>`, `cube_type: <mode>`, `parent label: "<sing>" / "<plur>"`, `label_column`, `unique`, plus the FK arrow `→ <table> (<card>)`); free prose **never** belongs in Notes now that Description has its own column.
+
+Examples:
+
+- `| reach_score | integer | no | Reach | RICE reach: number of users/period reached |  |`
+- `| effort_score | number | no | Effort | RICE effort in person-months | precision: 2 |`
+- `| vote_weight | integer | no | Weight | Higher value = stronger signal | default: "1" |`
+- `| feature_title | string | yes | Title |  | label_column |` *(blank Description — title says it)*
 
 After the field tables, present for each entity a short **Relationships** section that restates all links in prose + a cardinality table. This section is for humans, the field tables are for the agent. Example:
 
@@ -303,15 +359,91 @@ The §2 Entity summary includes a Mermaid **flowchart** that visualises every en
    - the edge label, if present, equals the §3 `relationship_label` of that FK byte-for-byte (no hallucinated, paraphrased, or "improved" verbs)
    If any mismatch is found, fix the diagram (or fix the §3 annotation if the §3 value is the wrong one) and run the check again. Do not show the user a diagram that fails this check.
 
-Show the drafted diagram to the user alongside the field tables and ask for confirmation. If the user changes entities or relationships later in this stage, regenerate the diagram — do not carry forward a stale one.
+**Show the drafted diagram, do not gate on it.** The diagram is a *visualization* of §3 entities and relationship_labels, not a separate decision point. The user already approved every entity, FK, and verb in Stage 4 (fields) — there is nothing in the diagram for them to independently review. Render it inline so they can see it, but **do not ask "look right?" / "ok?" / "should I proceed?"** about the diagram itself. Move directly to Stage 4c after rendering. The build-then-verify procedure above is the agent's own check; it doesn't surface to the user unless it caught a real problem (which would be a §3 issue, not a diagram issue, and should be raised against §3). If the user changes entities or relationships *later* in any stage, regenerate the diagram silently — do not carry forward a stale one, and still no separate confirmation prompt.
 
-### Stage 4c — Add cross-model link suggestions
+### Stage 4c — Related domains (shadowing walk)
+
+> **🛑 This is a mandatory, standalone confirmation gate.** It fires every time, in Create, Extend, and Rebuild. Skipping it or collapsing it into another turn's prose is an authoring bug, even when the conversation is mid-flow on an unrelated scope change. If you find yourself writing "Budgeting stays, CRM stays" as a one-liner, stop and surface the full Stage 4c proposal block instead.
+
+`related_domains` is a discovery tag for humans browsing the catalog (no skill consumes it for logic), but its accuracy matters on two fronts: (a) an under-declared list quietly hides the model's neighborhood from anyone scanning the catalog and silently widens the data-silo problem the deployer is built to surface; and (b) **this list is the input that Stage 4d (cross-model link suggestions) walks** — a missing domain here means missing §6 rows there, so produce this list before reaching for §6. Build the list yourself from analyst knowledge (same posture as the entity list in Stage 3), then surface it as its own proposal block under a visibly labeled "Stage 4c — Related domains" (or just "Related domains") heading for prose review. Do **not** offload the discovery to the user via AskUserQuestion or by asking "what neighbors should this have?" — the analyst owns the proposal; the user reviews it.
+
+**`related_domains` describes the system's *neighborhood* in the enterprise, NOT just what's shadowed by §3 entities (v1.7 rule).** The walk has two axes that must both run; collapsing them to just the entity-driven axis is the bug v1.6 shipped.
+
+**Axis 1 — System-type walk (NEW in v1.7, do this first).** Independent of which entities are currently in §3, ask: *"What does a typical instance of this kind of system sit next to in a typical organization's enterprise stack?"* The answer is driven by the system's `domain` and the kind of work it represents, not by which fields/tables happen to be in this model. A Product Roadmap is next to OKR (strategic alignment), Issue Tracking (feature handoff), Release Management (delivery), CRM (customer requests), Identity & Access (people), AND Budgeting / Finance (because features cost money in every organization, whether or not *this* roadmap tracks cost internally). An ITSM helpdesk is next to ITAM, CMDB, HRIS, Identity & Access. An ATS is next to HRIS, Workforce Planning, Identity & Access. Produce this list from analyst knowledge of the system's domain, before walking §3.
+
+**Axis 2 — Entity-driven shadowing walk.** Then walk the §3 entity list and apply the shadowing test for each entity: *"would a dedicated enterprise system model this concept in meaningful depth?"* If yes, the corresponding domain belongs in `related_domains` if it's not already on the list from Axis 1. Familiar shadows: `objectives` shadows OKR (which adds key results, check-ins, confidence updates), `users` shadows Identity & Access (auth, group membership, lifecycle), `vendors` shadows Vendor Management (onboarding, risk, contract metadata), `assets` shadows CMDB / ITAM (discovery, lifecycle, depreciation), `tickets` shadows ITSM, `employees` shadows HRIS, `releases` shadows Release Management (release trains, environments, deployment pipelines), `features` shadows Issue Tracking once they hand off to delivery (sprints, sub-tasks, branches, PRs), and so on. Self-contained models must shadow neighboring concepts internally; that shadowing is a positive signal a shadowed domain is a neighbor — but **the absence of an internal shadow is NOT evidence the domain is not a neighbor.** Axis 1 catches what Axis 2 misses. Junctions and weak shadows (`comments`, `tags` that no enterprise system materially expands on) are skipped; on borderline cases the bias is toward inclusion.
+
+**Removing internal entities NEVER removes a related domain (v1.7 rule).** This is the failure that bit the v1.6 fresh-session test. When the user removes scope ("no cost constraints", "drop attachments", "we don't track customer requests in this system"), the agent must NOT conclude that the corresponding sibling domain has stopped being a neighbor. The neighborhood is about *what this kind of system sits next to in the enterprise*, not *what entities are currently in §3*. A roadmap with no `cost_centers` is still next to Budgeting because roadmap features get funded somewhere. A helpdesk with no `vendors` is still next to Vendor Management because vendor support contracts exist somewhere. The user's intent "no cost in this system" is **not** equivalent to "Budgeting is not a neighbor" — those are different statements. Apply Axis 1 to recover the neighbor regardless of removal. **Concrete trigger:** if the user removes entities for any reason, do NOT remove the corresponding `related_domains` entry. Re-derive `related_domains` from Axis 1 + Axis 2; the result will keep the neighbor.
+
+**Deferred-scope special case (v1.5 rule, kept).** When the user explicitly defers scope to a sibling domain ("cost tracking belongs in a Budgeting domain", "vendor master is in Vendor Management"), the destination domain stays — and a §6 hint row bridging back is *expected* because the deferral *is* the integration point. This is a strict subset of the v1.7 rule above (removal in any form keeps the neighbor); the deferred-scope phrasing just makes the §6-row implication explicit. **The §6 row and the `related_domains` entry are the entire deferral record.** Do *not* add prose narration of the deferral anywhere in the file — not in §1, not in §3 entity descriptions, not in §7. Both representations are machine-readable, both are checked by audit, and both survive a re-author. A "this used to include cost tracking, see §6" sentence in §1 is decision-log narrative, which §7's audit already bans (rule below); §1 has the same constraint and for the same reason.
+
+**The parenthesized entities in your shadowing-walk descriptions are direct inputs for Stage 4d.** When you write `OKR — typical neighbor of Product Roadmap; OKR systems add key results, check-ins, confidence updates`, the parenthesized "key results, check-ins, confidence updates" are not flavor text — those are the sibling entities Stage 4d will walk for inbound FK candidates against this model's entities. Write the parenthetical *concretely* (named entities, not vague descriptions), because Stage 4d reads it.
+
+**Look-ahead loop:** if while running Stage 4d you discover a sibling target whose owning domain isn't on this list, return here and add it before continuing — Stage 4d's per-domain walk only fires for domains that appear here.
+
+**Mandatory output format for Stage 4c.** Produce the `related_domains` list as a single block with each entry showing **(a)** which axis it came from (system-type, entity-shadow, deferred-scope, or multiple), **(b)** the concrete sibling entities the agent will pass to Stage 4d. Format:
+
+> **Related domains.** Walking the system type and the §3 entities:
+>
+> - **`OKR`** — system-type neighbor of Product Roadmap (strategic alignment); also entity-shadow on `objectives`. Sibling entities: `key_results`, `check_ins`, `confidence_updates`.
+> - **`Identity & Access`** — system-type neighbor; entity-shadow on `users`. Sibling entities: `groups`, `team_memberships`, `sessions`.
+> - **`Release Management`** — system-type neighbor (delivery side); entity-shadow on `releases`. Sibling entities: `deployments`, `environments`, `release_trains`.
+> - **`Issue Tracking`** — system-type neighbor (engineering handoff); entity-shadow on `features`. Sibling entities: `issues`, `epics`, `sprints`.
+> - **`CRM`** — system-type neighbor (customer request capture); no internal shadow but the planned §6 link to `accounts` makes it a clear neighbor. Sibling entities: `accounts`, `contacts`, `opportunities`.
+> - **`Budgeting`** — system-type neighbor (features cost money in every org); also a deferred-scope target since cost tracking was scoped out. Sibling entities: `cost_centers`, `cost_allocations`, `budgets`.
+>
+> Add, drop, or rename any?
+
+The "Sibling entities" lists feed Stage 4d directly. Empty sibling-entity lists are visible misses; if a domain genuinely has no entities that would FK to/from this model's entities, say so explicitly ("no inbound or outbound FK candidates expected — overlap-only via X").
+
+Then surface the proposal:
+
+> **Related domains.** Walking the entities, I'd tag this model's neighborhood as:
+>
+> - `OKR` — driven by `objectives` (a dedicated OKR system adds key results, check-ins, confidence updates)
+> - `Identity & Access` — driven by `users` (auth, group membership, lifecycle)
+> - `Release Management` — driven by `releases` (release trains, environments, deployment pipelines)
+> - `Issue Tracking` — driven by `features` once they hand off to engineering (sprints, sub-tasks, branches, PRs)
+> - `CRM` — driven by the planned §6 link to `accounts` (customers requesting features)
+>
+> Add, drop, or rename any?
+
+Loop on user feedback until they confirm, the same way the entity list is confirmed in Stage 3. After confirmation, the list feeds Stage 4d's per-domain walk and is written into the front-matter in Stage 5.
+
+### Stage 4d — Add cross-model link suggestions
 
 The model is atomic by design (one bounded domain), but Semantius is a unified catalog where many such models coexist. Whenever this model declares an entity that *might* benefit from an FK to an entity owned by a different domain (the classic example: an ITSM incident linked to an ITAM hardware asset, or to a CMDB configuration item), record that hint in §6.
 
 **§6 is a hint table, not a contract.** The deployer reads each row, looks up the `To` concept in the live catalog at deploy time, and proposes an additive FK only when the target is actually deployed. Entries whose target does not exist are silently skipped, so erring toward inclusion is cheap. Entries whose target matches multiple candidates (e.g. `vendors`, `suppliers`, `saas_vendors`) trigger a single confirmation widget; the analyst does not need to pre-pick the canonical name.
 
 **§6 does not carry entity-overlap declarations.** Vendors-vs-suppliers, contracts-vs-saas_contracts, users-vs-employees, and similar shared-master-data overlaps are name collisions, and the deployer detects them by inspecting the live catalog at deploy time (entity-name match in 2d, similarity heuristic in 2e, with a user decision on merge / rename incoming / rename existing). The analyst does not predict every collision the catalog might hold; that work has moved to deploy time where the catalog is actually known.
+
+#### Completeness rule: §6 must cover the §4c shadowing walk
+
+§6 is **not** an "obvious link or two" list, it must be **complete** with respect to the `related_domains` produced by the §4c shadowing walk. A loose §6 silently hides cross-domain integration points that the deployer can't recover later (verb, cardinality, delete-mode are analyst judgment, not catalog data). To stay complete, run a **mechanical per-domain × per-entity walk** before drafting §6. For each non-overlap entry in the (Stage 4c-confirmed) `related_domains` list, walk every §3 entity once and classify the (entity, sibling-domain) pair into one of these patterns:
+
+| Pattern | Meaning | Where it goes |
+|---|---|---|
+| **Outbound FK hint** | This model's entity should point at a sibling-owned target (`features → accounts`). FK column lands on this model's table at deploy time. | §6 row, `From` is this model's entity, `To` is the sibling target |
+| **Inbound FK hint** | A sibling-owned table should point at this model's entity (`issues → features`). FK column lands on the sibling's table at deploy time, when the sibling later arrives. | §6 row, `From` is the (future) sibling table, `To` is this model's entity |
+| **Pair overlap** | This *specific* (this-model entity, sibling-domain entity) pair is the same concept under different homes (`users` vs platform `users`; `objectives` vs OKR `objectives`; `releases` vs Release Mgmt `releases`). Deployer dedups at deploy time. | Omit *this pair's* row — but **keep walking the sibling domain's other entities** for inbound or outbound candidates against the (now-merged) entity |
+| **No link** | This (entity, sibling-entity) pair has no plausible cross-domain FK in either direction. | Omit |
+
+The walk is **mechanical, not creative**: for each non-overlap entry in `related_domains`, list the sibling domain's typical entities (the ones you named in §4c's parenthetical descriptions are the seed list — extend as needed), then for every (this-model entity, sibling entity) pair ask "would I want an FK between these two, in either direction, if the sibling ships?". If yes, classify outbound or inbound and emit the row. If yes-but-this-pair-collides, classify pair overlap and skip *only this row*. If no link applies, skip *only this row*. The deployer's silent-skip behavior makes erring toward inclusion cheap.
+
+**🛑 Pair overlap is per-pair, not per-domain.** This is the failure mode that bit v1.4. When an entity in this model collides by name with one entity in a sibling domain, the deployer dedups *that one entity* — the rest of the sibling domain still has its own entities, and those entities frequently point at (or are pointed at by) this model's entities. Classifying the *whole sibling domain* as "overlap-only, no §6 rows" because the central entity name matches is **wrong**, and produces silent under-coverage. Concretely:
+
+- **Release Management.** `releases` (this) ↔ `releases` (Release Mgmt) — pair overlap. But Release Mgmt also owns `deployments`, `environments`, `release_trains`. `deployments → releases` is a valid **inbound** §6 row pointing at the (merged) `releases` table. Emit it.
+- **OKR.** `objectives` (this) ↔ `objectives` (OKR) — pair overlap. But OKR also owns `key_results`, `check_ins`. `key_results → objectives` is a valid **inbound** §6 row. Emit it.
+- **Issue Tracking** (no overlap, full walk): `features` shadows engineering-side issues. Outbound `features → epics` (a feature rolls up to an epic) AND inbound `issues → features` (engineering issues back-reference the roadmap feature). Emit both.
+- **Identity & Access.** `users` (this) ↔ `users` (platform) — pair overlap. Identity & Access typically *extends* `users` upward (groups, teams, sessions) rather than referencing them from new tables, so often no §6 row applies — but check the sibling domain's actual shape: `team_memberships → users` is plausible if the sibling materializes that pattern.
+- **Budgeting** (deferred-scope domain). Even though `cost_centers` and cost fields were removed from §3, Budgeting stays in `related_domains` and is walked here. `features → cost_centers` outbound (a feature is funded by one cost center) and `cost_allocations → features` inbound (an allocation tracks spend on a feature) are both valid §6 rows. The fact that we *deferred* the cost work is exactly why these rows matter.
+
+**Self-audit before drafting the §6 proposal (mandatory):**
+
+1. For every non-overlap entry in `related_domains`, the §6 list contains at least one row whose `From` or `To` resolves to a table in that domain, OR the analyst can state in one sentence why no link applies. A related domain with **zero** §6 rows and **no** stated reason is an authoring bug — go back and walk the sibling domain's other entities.
+2. For every entry in `related_domains` that you classified as "pair overlap on the central entity," the §6 list still walks the sibling's *other* entities. "Pair X overlaps, therefore the whole domain is dedup-only" is the v1.4 bug; do not reproduce it.
+3. Every entry in `related_domains` that is a known deferred-scope target (a sibling domain whose entities the user moved out of this model) has at least one §6 row referencing a table in that destination domain. Detect deferrals from the *structure* — entries in `related_domains` that no §3 entity shadows — not by scanning prose for phrases like "out of scope". The §6 row IS the deferral record; if a deferral lives only in prose, it is the prose that is wrong, not the row that is missing.
 
 #### What belongs in §6
 
@@ -356,39 +488,85 @@ Present a short proposal to the user:
 >
 > Should I add or drop any of these?
 
-After the user confirms, the §6 table is written in Stage 5. The `related_domains` front-matter list (a separate discovery tag for humans browsing the catalog) collects the names of business domains this model sits next to in the enterprise neighborhood, drawn from analyst knowledge rather than from any specific other model files. The deployer does not consume `related_domains`. If the user says "none" to the §6 hint rows, write "No cross-model link suggestions." under §6; `related_domains` is independent and may still be populated if the model has plausible neighbors.
+After the user confirms, the §6 table is written in Stage 5. If the user says "none" to the §6 hint rows, write "No cross-model link suggestions." under §6.
 
-### Stage 4d — Capture computed fields and validation rules
+### Stage 4e — Capture computed fields and validation rules
 
-Walk every entity once more and ask: does this entity have any **derived field** whose value is a function of its other fields, or any **record-level invariant** the platform should enforce on every write?
+Walk every entity once more and look for **derived fields** (values that are functions of other fields) and **record-level invariants** the platform should enforce on every write. These are the two optional §3 sub-blocks (`Computed fields` and `Validation rules`) the analyst skill has carried since v1.1; both are entity-level, JsonLogic-based, and evaluated by the platform on every INSERT/UPDATE. See `./references/data-modeling.md` § "Computed fields and validation rules" for the platform contract, including the reserved variables (`$today`, `$now`, `$user_id`, `$old`).
 
-These are the two new optional §3 sub-blocks (`Computed fields` and `Validation rules`) the analyst skill carries from v1.1 onward. Both are entity-level, JsonLogic-based, and evaluated by the platform on every INSERT/UPDATE — see `./references/data-modeling.md` § "Computed fields and validation rules" for the platform contract.
+**Computed fields.** Anything documented in §3 prose as "(formula)" or "derived from", any field labeled "score", "total", "subtotal", "days open", "rice", "amount minus discount", any field whose §3 description carries arithmetic or a conditional. The §3 row for a derived field still lives in the field table (it's a real column with a `format`), but its *value* is owned by `computed_fields`. Caller-supplied values are silently overwritten on write.
 
-**Surface candidates from the work you've already done:**
+**Validation rules.** Open-ended pattern-matching on prose ("any constraint you wrote") is not enough; the analyst will under-detect. Instead run a **mechanical scan** of every §3 entity description, every §3 field Notes column, and the §1 Overview, looking for the constraint-signal vocabulary below. For each match, emit a `validation_rules` entry whose JsonLogic encodes exactly that constraint. The catalog of constraint families:
 
-- **Computed fields.** Anything documented in §3 prose as "(formula)" or "derived from", any field labeled "score", "total", "subtotal", "days open", "rice", "amount minus discount", any field whose §3 description carries arithmetic or a conditional. The §3 row for a derived field still lives in the field table (it's a real column with a `format`), but its *value* is owned by `computed_fields`. Caller-supplied values are silently overwritten on write.
-- **Validation rules.** Any constraint the analyst wrote in prose like "only X once Y is committed", "X cannot exceed Y", "the start date must be before the end date", "X is required when Y is set". These are record-level rules expressible against the same row's columns. Status enums where the DB accepts any value but the domain only allows specific transitions are typical sources.
+| # | Family | Signal phrases in prose | JsonLogic shape |
+|---|---|---|---|
+| 1 | Numeric range / non-negativity | "between X and Y", "0-100", "must be ≥ 0", "must be positive" | `and([>=, X], [<=, Y])` over `{"var": "field"}` |
+| 2 | Domain-unit non-negativity / positivity | "currency amount", "person-months", "percentage", "count", "duration" without an explicit range; **also** signal-strength fields (`weight`, `score`, `rank`, `rating`, `intensity`, `priority_score`) whose Notes say "higher = stronger", "higher is more", "higher = better", "default 1, higher = ..." — these imply ≥ 1 (when 0 has no domain meaning) or ≥ 0 | `>=` against 0 or 1 |
+| 3 | Date ordering | Two date fields that share a domain (start/end, target/actual, due/completed, posted/edited, opened/closed) | `>=` or `<=` between the two `{"var": ...}` dates |
+| 4 | Conditional gate (forbidden-when) | "only set when X", "null until Y", "not allowed when Z", "blocked by W" | `or([==, field, null], <when-condition>)` |
+| 5 | Conditional required (required-when) | "must be set once X", "required when Y", "populated when ships", "required on terminal status"; **also** by implication when a terminal enum value semantically requires the field (e.g. `feature_status="shipped"` ⇒ `release_id` must point at the release it shipped in; `release_status="released"` ⇒ `actual_release_date` must be set). See the gate↔required-when pairing rule below the table. | `or(<when-not-condition>, [!=, field, null])` |
+| 6 | Mutual requirement | "if A is set, B must be set", "A and B come together" | `or([==, A, null], [!=, B, null])` |
+| 7 | Mutual exclusion (XOR) | "A or B but not both", "either X or Y", "exactly one of" | XOR via `or` + `and` of nullness |
+| 8 | Cross-field arithmetic | "must equal X+Y", "cannot exceed Z × factor", "within tolerance of" | `==` / `<=` / `>=` over an `{+,-,*,/}` expression |
+| 9 | Enum-state-driven gate | Enum value with lifecycle wording: "only after committed", "before approval", "after release" | `or([==, field, null], [in, status, allowed-states])` |
+| 10 | State transition (uses `$old`) | "X cannot become Y after Z", "is one-way once W", "set-once after first save", "immutable after committed"; **also** by default for any enum whose value list contains terminal-looking states (`achieved`, `missed`, `cancelled`, `shipped`, `completed`, `archived`, `deleted`, `closed`, `resolved`, `released`, `won`, `lost`, `void`, `expired`, `paid`, `refunded`, `signed`) — propose a one-way transition rule by default; only skip when the analyst can name a specific domain reason the state is reversible (and add a §7.2 note documenting the reversibility) | `or([==, $old, null], [!=, $old.status, "<terminal>"], <still-valid>)` |
+| 11 | Set-once / immutable-after-first-save (uses `$old`) | "immutable after first save", "cannot be changed once set" | `or([==, $old, null], [==, $old.field, null], [==, field, $old.field])` |
 
-**What does NOT belong here:**
+**Gate↔required-when pairing rule.** Rules in family 4 (gate) and family 5 (required-when) almost always come in pairs. Whenever you emit a family-4 gate ("X may only be set when status ∈ {Y,Z}"), mechanically check whether the inverse family-5 required-when applies ("once status reaches terminal Z, X must be set"). The semantic test: if the gating field reaches a *terminal* value and the gated field is logically present in that state (a shipped feature ships in *some* release; a released release has *some* actual ship date), emit the paired required-when rule. Missing this pair is the exact failure mode v1.5 shipped on `release_id` (had `release_only_when_committed`, missed `release_required_when_shipped`).
 
-- Cross-row lookups, aggregates, FK traversal — out of scope (cube/views handle that). A rule like "no two features can share the same release_id and feature_title" is cross-row; do not write it.
-- Per-field default values that aren't conditional — set them via the field's `default: "<value>"` annotation in §3 Notes, not via `computed_fields`.
-- UI-only validation (length limits, regex on string format) — use field constraints, not `validation_rules`.
+**Terminal-enum default rule.** Family 10 fires by default for any enum field whose value list contains a recognizably-terminal state. The defaults table is the start of the closed catalog, but the analyst should treat the spirit (a state that records an outcome — shipped, achieved, cancelled, paid, closed) as the trigger, not the literal word match. The override path is a one-line §7.2 entry naming the domain reason the state is reversible (e.g. *"`feature_status='shipped'` is reversible because we sometimes reopen shipped features for follow-up bug fixes"*); without that note, default to emitting the transition rule.
 
-**For each candidate, state the JsonLogic verbatim.** The deployer will pass these arrays byte-for-byte to `create_entity` / `update_entity`; ambiguous prose is not enough. JsonLogic primitives the analyst should know:
+The walk is mechanical: read each entity's prose front-to-back, and for every signal-phrase match emit one `validation_rules` entry. Don't rely on "I'll remember the obvious ones" — the gap between obvious and complete is exactly where misses live (the rebuild that triggered this rule shipped a `confidence_score (0-100)` description without a corresponding range rule, and the v1.5 fresh-session test missed `vote_weight_positive` despite "higher = stronger signal" being right there in §3.5).
+
+#### Mandatory pre-draft signal-scan table
+
+Before writing any `validation_rules` JSON, produce a **structured signal-scan table** for each entity. List every meaningful field (skip auto-fields and pure-narrative scalars like `description` / `notes` that carry no constraint), and for each one explicitly walk the constraint families above and record the result. This artifact is the audit. A field with no family hits gets a row marked "none — scalar, no constraint"; a family hit with no rule emitted must have a short reason in the rule column. **Empty cells are visible misses, that's the point.**
+
+| Entity | Field | Family hits (with prose phrase) | Rule emitted (or §7.2 escape) |
+|---|---|---|---|
+| `features` | `confidence_score` | 1: range "RICE: percentage (0-100)" | `confidence_score_in_range` |
+| `features` | `reach_score` | 2: count "# users/period reached" | `reach_score_non_negative` |
+| `features` | `effort_score` | 2: domain-unit "person-months" | `effort_score_non_negative` |
+| `features` | `release_id` | 4: gate "null until scheduled"; 5 (paired): "shipped" implies a release exists | `release_only_when_committed`; `release_required_when_shipped` |
+| `features` | `feature_status` | 10: terminal value `shipped` (and `declined`, `parked`) | `shipped_is_terminal` (or §7.2 if reversible) |
+| `features` | `target_start_date` ↔ `target_completion_date` | 3: date pair (start/end) | `target_dates_ordered` |
+| `feature_votes` | `vote_weight` | 2: signal-strength "higher = stronger signal" implies ≥ 1 | `vote_weight_positive` |
+| `releases` | `actual_release_date` | 4: gate "null until released"; 5 (paired): `released` implies actual date is recorded | `actual_date_only_when_released`; `released_requires_actual_date` |
+| `releases` | `release_status` | 10: terminal value `released` | `released_is_terminal` (or §7.2 if reversible) |
+| `comments` | `author_id` | 5: "required on insert (caller must always set), nullable in storage" — required-on-insert pattern | `author_required_on_insert` (uses `$old == null`) |
+| `objectives` | `objective_status` | 10: terminal values `achieved`, `missed`, `cancelled` | `objective_terminal_is_one_way` (or §7.2 if reversible) |
+
+(The example rows above are illustrative — produce the actual table for the model in front of you, with every meaningful field included even when it produces zero hits.)
+
+Once the table is complete, the JSON for `computed_fields` and `validation_rules` is mechanical: one rule per non-empty cell in the rightmost column. The order in the JSON array follows the order in the table.
+
+**Out of scope (and where it actually goes):**
+
+| Pattern | Why row-level JsonLogic can't enforce it | Where it goes |
+|---|---|---|
+| Cross-row aggregates ("≤ 5 high-priority features per release") | JsonLogic sees one record only | Cube view + alert; or DB unique/check constraint |
+| Cross-row sums ("Σ child amounts ≤ parent total") | One record only | Cube view + alert |
+| FK-target predicates ("FK must point at active record") | JsonLogic sees own row only | Application layer or DB trigger |
+| Regex-shaped scalars (hex color, phone, postal code) | Possible but the field's `format` vocabulary is the cleaner home | Field `format` extension |
+| Per-field default values that aren't conditional | Not a rule, not a derivation | Field's `default: "<value>"` annotation in §3 Notes |
+| UI-only validation (length limits, character whitelists) | Cosmetic, not record-integrity | Field-level constraint, not `validation_rules` |
+
+**For each emitted entry, write the JsonLogic verbatim.** The deployer passes these arrays byte-for-byte to `create_entity` / `update_entity`; ambiguous prose is not enough. JsonLogic primitives:
 
 - Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`
 - Boolean: `and`, `or`, `!`, `if`
 - Arithmetic: `+`, `-`, `*`, `/`, `%`
-- Variable lookup: `{"var": "<field_name>"}`; reserved variables `{"var": "$today"}`, `{"var": "$now"}`, `{"var": "$user_id"}` are server-injected at evaluation time.
+- Variable lookup: `{"var": "<field_name>"}`; reserved variables `{"var": "$today"}`, `{"var": "$now"}`, `{"var": "$user_id"}`, `{"var": "$old"}` (or dotted, e.g. `{"var": "$old.status"}`) are server-injected at evaluation time. `$old` is `null` on INSERT, an object on UPDATE — see `./references/data-modeling.md` for the INSERT-vs-UPDATE pattern.
 
-**Show the user a draft of the JSON for each affected entity** before saving, so they can sanity-check the formula or rule against the prose. Iterate until they confirm. Most entities will have **neither** block; those entities omit the headings entirely (do not write empty arrays as scaffolding).
+**Show the user a draft of the JSON for each affected entity** before saving. Iterate until they confirm. Most entities will have **neither** block; those entities omit the headings entirely (do not write empty arrays as scaffolding).
 
-**Cross-check before moving on:**
+**Bidirectional self-audit before moving on (mandatory):**
 
-- Every `computed_fields[].name` resolves to an existing scalar field on the same entity's §3 field table. A typo or a name that doesn't exist is a 🔴 Blocker (the deployer will fail at `create_entity`).
-- Every `validation_rules[].code` is snake_case and unique within the entity. Two rules sharing a code is a 🔴 Blocker.
-- No JsonLogic expression references a column that does not exist on this entity, including across `computed_fields` (an earlier compute may set a value, but the field still has to exist).
+1. **Forward pass — the signal-scan table IS the audit.** The structured table you produced above is the forward pass artifact. Walk it and confirm: every meaningful field has a row, every family hit has either a rule or a §7.2 escape, and every gate (family 4) has been mechanically paired against family 5 (required-when). A field absent from the table is a 🔴 Blocker; a family-hit cell with neither a rule nor a §7.2 escape is a 🔴 Blocker; a family-4 gate without its family-5 pair-check (even if the conclusion is "no required-when applies, here's why") is a 🔴 Blocker.
+2. **Reverse pass — rules to prose.** For every `validation_rules` entry, verify the prose somewhere in §1 / §3 grounds it. A rule without a prose anchor is a 🟡 Warning; either add a one-line prose reference (the rule encodes a real domain invariant the reader should be able to find) or drop the rule (it encodes an analyst hunch with no domain weight).
+3. **Structural cross-check.** Every `computed_fields[].name` resolves to an existing scalar field on the same entity's §3 field table (typo / non-existent name is 🔴). Every `validation_rules[].code` is snake_case and unique within the entity (collision is 🔴). No JsonLogic expression references a column that does not exist on this entity (🔴). State-transition rules that read `$old.<field>` reference a real field on this entity's current §3 (🔴).
+
+The structured-table forward pass + reverse pass + structural check is the only mechanism here that catches LLM under-detection. The structured table specifically defeats "I read it once and emitted what came to mind" — every field gets a row, every signal family gets a column-walk, and every empty cell is a visible miss the user can point at. Open-ended forward scans (the v1.4/v1.5 design) silently miss what the LLM doesn't recognize as a constraint; the structured table closes that gap by forcing the recognition step to produce an artifact.
 
 ### Stage 5 — Write the semantic-model file
 
@@ -414,7 +592,7 @@ Detail per key:
 - `entities` (**required**) — the complete list of `table_name` values from the §2 entity summary, in §2 order. Mechanical to populate from the confirmed entity list.
 - `departments` (**optional**) — the department(s) where this system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments; cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant — do not write an empty list.
 - `industries` (**optional**) — the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when industry-agnostic — do not write an empty list.
-- `related_domains` (**optional**) — the names of business domains / system categories this model sits next to in the enterprise neighborhood, as a discovery tag for humans browsing the model catalog. Each entry is **Title-case / acronym form**, the same vocabulary as the `domain` field itself (`ITAM`, `CMDB`, `Change Management`, `Workforce Planning`, `Vendor Management`, `Identity & Access`). Drawn from general business-architecture knowledge: "if I deployed this system, what other systems would naturally live alongside it?" Not a list of slugs and not tied to which `*-semantic-model.md` files happen to exist on disk. No skill consumes `related_domains` for logic — it exists purely so a person scanning the catalog can see how a model fits into the broader landscape. **Omit the key entirely** when the system genuinely has no adjacent domains (rare); do not write an empty list.
+- `related_domains` (**optional**) — the names of business domains / system categories this model sits next to in the enterprise neighborhood, as a discovery tag for humans browsing the model catalog. Each entry is **Title-case / acronym form**, the same vocabulary as the `domain` field itself (casing examples: `ITAM`, `CMDB`, `Change Management`, `Workforce Planning`, `Vendor Management`, `Identity & Access`, the casing examples are illustrative, not a closed catalog). Drawn from general business-architecture knowledge: any enterprise domain the analyst can reason about is fair game, the values are not drawn from a fixed list and not tied to which `*-semantic-model.md` files happen to exist on disk. The primary discovery procedure is the **shadowing walk** described in Stage 4c: for every §3 entity, ask whether a dedicated enterprise system would model that concept in meaningful depth, and if yes add the corresponding domain. Self-containment forces the model to shadow neighboring concepts; that shadowing is the strongest signal that the shadowed domain is a neighbor worth tagging. No skill consumes `related_domains` for logic — it exists purely so a person scanning the catalog can see how a model fits into the broader landscape. **Omit the key entirely** when the system genuinely has no adjacent domains (rare); do not write an empty list.
 
 Infer `departments` and `industries` the same way you infer `domain` — from everything captured in Stage 1 (the full conversation by the end of capture, not just the verbatim `initial_request`). The opening ask is rarely enough on its own; the org-size cues, sector hints, and follow-up clarifications gathered through Stage 1 are what make the call reliable. If you can confidently propose a value from those signals, include it; if you have low or no confidence, omit the key — don't ask the user a separate question just to tag the file.
 
@@ -509,6 +687,13 @@ After listing findings, give an overall summary: how many issues of each severit
 - All eight sections present in the canonical order: §1 Overview, §2 Entity summary, §3 Entities, §4 Relationship summary, §5 Enumerations, §6 Cross-model link suggestions, §7 Open questions, §8 Implementation notes.
 - Section numbers are sequential and match the template.
 - §2 Entity summary contains a Mermaid flowchart sub-section immediately after the entity table.
+
+**§1 Overview content** _(catalog-readable narrative; downstream skills copy it verbatim)_
+- 🟡 **§1 is two or three sentences of plain domain prose, no more.** Additional paragraphs that narrate scope-deferrals, authoring choices, or platform mechanics are a Warning, propose deleting them. Common offenders: "Cost tracking is deliberately out of scope, links via §6"; "The model is self-contained, `users` is fully declared even though Semantius ships a built-in"; "The deployer reconciles overlaps at deploy time". The deferral is fully captured by `related_domains` + §6; the built-ins choice is captured by the §3 entity declaration plus the deployer's documented behavior. Neither needs prose narration.
+- 🟡 **§1 contains no §-number cross-references** (`§6`, `§7.2`, "see §3"). The narrative reads as standalone prose; pointers to other sections are an audit-of-the-file artifact, not catalog content. Propose rewriting without the references.
+- 🟡 **§1 contains no snake_case identifiers or column-shaped tokens** (`cost_center_id`, `features.cost_center_id`, `cost_allocations`). Use plain domain words ("cost centers", "cost allocations") if the concept genuinely belongs in the narrative; usually it doesn't.
+- 🟡 **§1 contains no platform plumbing vocabulary**: `Semantius`, `deployer`, `deploy time`, `module`, `built-in`, `auto-field`, `at runtime`, `reconciles`, `silently skipped`. §1 talks about the system the user is modeling, not about the file or the catalog that holds it. Propose deletion.
+- 🟡 **§1 contains no scope-deferral narration**: "deliberately out of scope", "moved to a sibling domain", "deferred to <Domain>", "links out via". The audit detects deferrals from `related_domains` + §6, not from prose; the prose is purely cosmetic noise. Propose deletion.
 - Files whose section structure does not match the canonical layout above are not audited as-is. They are routed through the version gate (older-major or missing-`version` files go into archived-knowledge mode; see "Skill version" near the top of this file). This skill does not carry per-shape translation rules; the LLM reads older files as content and re-authors a current-major file from the same semantic input.
 
 **Mermaid entity-relationship diagram (§2)** _(treat missing/incorrect as 🔴 Blocker)_
@@ -532,6 +717,7 @@ After listing findings, give an overall summary: how many issues of each severit
 - Every `enum` field has its allowed values listed in the Notes column
 - **Defaults are an analyst-intent signal, never noise.** Explicit `default: "<value>"` annotations on required enums (and any other field where the starting value matters) are the **preferred** form because they document analyst intent and survive `enum_values` reordering during edits. **Never flag an explicit default as "redundant"** even when the value matches `enum_values[0]`, the explicit form is the recommended one and the auto-fallback is a safety net, not the desired state. **Do not flag missing defaults as a warning either**, the platform auto-fills them. Only flag (🟢 Suggestion) when the value the field will end up with (whether explicit or auto) is clearly wrong for the domain, e.g. a balance that shouldn't start at `0`, an enum whose effective starting value is wrong for the lifecycle, a string that shouldn't default to `''`.
 - 🟡 When a `default: "<value>"` annotation **is** present on an enum, the value must be one of the listed `enum_values`. A typo or unlisted value is a Warning.
+- 🔴 **Effective default must satisfy every `validation_rules` entry that references the field.** Compute the *effective default*: the explicit `default: "<value>"` annotation when present, else the platform auto-default for the format (per the table above: `0` for integer/number, `''` for strings, `enum_values[0]` for required enums, `FALSE` for boolean, `CURRENT_DATE`/`CURRENT_TIMESTAMP` for dates, `'{}'` for json). For each `validation_rules` entry mentioning this field, evaluate the JsonLogic with the effective default plugged in. If any rule returns falsy, the field is *broken at the form*: forms open prefilled with a value that fails save. Mechanical examples to flag: required integer with `>= 1` rule and no override (auto-default `0` fails), required number with `> 0` rule and no override, required enum whose `enum_values[0]` is a forbidden starting state per a gate rule. Fix: add a `default: "<value>"` in §3 Notes that satisfies the rule (typically the floor itself: `default: "1"` for `>= 1`). The blocker fires whether the rule is on this field directly or on a cross-field expression that references it.
 - **Nullability check.** Only `reference`, `date`, `date-time` allow NULL at the DB level; every other format is NOT NULL with an auto-default. **`Required = "no"` on a string / text / enum / boolean / json / numeric field is normal**, not a misunderstanding: it is the UI-optional affordance, and the platform's auto-default (`''`, `enum_values[0]`, `FALSE`, `0`, `'{}'`) is the canonical "unset" representation. **Do not flag this as a misunderstanding by default.** Only fire 🟡 when the auto-default would collide with a meaningful real value in the domain, and you can name the collision: e.g. an `account_balance` integer where `0` is a valid balance distinct from "unknown", or an enum where `enum_values[0]` is a real lifecycle state (`active`, `paid`) that would silently apply to records the user meant to leave unset. If you cannot name the colliding domain value, do not flag. (This rule mirrors the 🟢 Suggestion at the previous bullet for required fields; severity differs because optional fields rely on the auto-default implicitly.)
 - Every `reference` or `parent` field has a target table in the Notes column, with cardinality (e.g., `→ accounts (N:1)`)
 - Field names are snake_case
@@ -547,6 +733,8 @@ After listing findings, give an overall summary: how many issues of each severit
 **Relationship integrity**
 - Every `reference`/`parent` field in §3 has a corresponding row in the §4 relationship summary table
 - 🟡 Every `reference`/`parent` field row in §3 carries a non-empty `relationship_label: "<verb>"` annotation. Missing or filler verbs (`"has"`, `"references"`, `"belongs to"`, `"relates to"`) are 🟡, propose a domain-specific verb in the parent's voice (e.g. `accounts → opportunities` is `"owns"`, `users → tasks` is `"manages"`). Models that predate this rule will commonly miss labels everywhere; offer a sweep that proposes a verb per FK in one pass rather than turn-by-turn.
+- 🟡 Fields whose meaning isn't fully captured by the structured metadata have a non-empty **Description column** cell. Apply the "needs description" / "leaves it blank" rules from the Description-column section above (units not in type, ranges not in a validation rule, direction-mattering domain semantics, sign/polarity conventions, freeform-string format hints, disambiguation of overloaded terms). Equally call out the inverse: **flag fields whose Description column is filled but the cell doesn't earn one** (title is a restatement of the field name; the description duplicates a validation rule's message; the FK + delete mode already encodes the relationship) — over-description is clutter and worth removing in the same audit pass. Offer a sweep that proposes (or removes) descriptions per affected field in one pass rather than turn-by-turn.
+- 🔴 **Free prose in the Reference / Notes column is a Blocker.** The Notes column carries structured annotations only (`relationship_label`, `default`, `precision`, `cube_type`, `parent label`, `label_column`, `unique`, and the FK arrow); free prose belongs in the Description column. A Notes cell whose contents aren't entirely recognized annotations (or the FK arrow) is leaking description-shaped content into the wrong column — the deployer's annotation parser drops it on the floor, and the live entity ends up without the hint the author intended. Audit must extract any leaking prose and either move it to the Description column (when it's user/agent-facing per the rules above) or strip it (when it was analyst commentary that belongs nowhere on the field). Models authored under the older `1.7` convention (description prose mixed into Notes, with or without a `description: "..."` annotation) will commonly trip this rule everywhere; offer a one-pass sweep that classifies each Notes cell and reshapes the row.
 - Every junction table (for M:N relationships) is listed as its own entity in §2 and §3
 - Cardinality (N:1, 1:N, M:N, 1:1) is stated consistently between §3 and §4
 - Delete behavior is specified in §4 for every parent/reference
@@ -571,8 +759,9 @@ After listing findings, give an overall summary: how many issues of each severit
 - 🔴 Every `validation_rules[].code` is snake_case and unique within the entity. Two rules sharing a `code` is a Blocker.
 - 🔴 Every `validation_rules[]` carries a non-empty `message`. Missing or empty `message` is a Blocker — it's the default user-facing error text.
 - 🟡 Every `validation_rules[]` carries a `description` that explains *why* the rule exists. Missing description is 🟡 Warning; the rule still works but future maintainers won't know what business intent it encodes.
-- 🟡 Every JsonLogic expression references only columns on this entity (and the reserved `$today` / `$now` / `$user_id` variables). Cross-row lookups, aggregates, or FK traversal in the expression are 🟡 Warning — the platform will throw at evaluation time. Propose moving such logic to a cube view.
-- 🟢 An entity that documents a derived value or invariant in §3 prose ("`rice_score` = (reach × impact × confidence) / effort", "release_id only allowed once committed") but does **not** carry the corresponding `Computed fields` / `Validation rules` block is a 🟢 Suggestion: the rule will not be enforced unless captured here. Offer to add the block.
+- 🟡 Every JsonLogic expression references only columns on this entity (and the reserved `$today` / `$now` / `$user_id` / `$old` variables, including dotted forms like `$old.status`). Cross-row lookups, aggregates, or FK traversal in the expression are 🟡 Warning — the platform will throw at evaluation time. Propose moving such logic to a cube view.
+- 🟡 **Forward-pass signal-vocabulary scan (constraint-without-rule).** Run the Stage 4e signal-vocabulary scan against §1 / §3 prose. For every match, verify a covering `validation_rules` entry exists. A signal-phrase match without a covering rule is a 🟡 Warning (was 🟢 Suggestion in v1.3, promoted in v1.4 to make under-detection visible). Concrete forms to flag: a numeric range stated as "0-100" / "between X and Y" with no range rule; a domain-unit field (currency, person-months, percentage, count) with no non-negativity rule; a pair of date fields sharing a domain (start/end, target/actual) with no ordering rule; "only set when X" with no gate rule; "must be set once Y" with no required-when rule; "if A is set, B must be set" with no mutual-requirement rule; "either X or Y but not both" with no XOR rule; arithmetic invariants ("must equal X+Y", "cannot exceed Z * factor") with no cross-field rule; lifecycle wording ("only after committed", "before approval") with no enum-state-driven rule; "X cannot become Y" / "is one-way once Z" / "immutable after first save" with no `$old`-based transition rule. If the constraint is genuinely out of scope (cross-row, FK-target predicate), the audit accepts a one-line §7.2 note explaining the omission instead of a rule.
+- 🟡 **Reverse pass — rules without prose anchor.** Every `validation_rules` entry's intent is grounded in §1 or §3 prose. A rule whose constraint isn't traceable to any prose is a 🟡 Warning: either the prose is missing the documentation (add a one-line reference) or the rule encodes an analyst hunch with no domain weight (consider dropping). The point is to keep prose and rules synchronized so future readers see the same picture.
 - 🟢 An entity carries one of the blocks but the documented prose constraint and the JsonLogic disagree (e.g. prose says "effort > 0", JsonLogic checks `effort >= 0`) — Suggestion to reconcile.
 
 **Cross-model link suggestions (§6 + `related_domains` front-matter)**
@@ -584,11 +773,16 @@ After listing findings, give an overall summary: how many issues of each severit
 - 🟡 `Cardinality` is `N:1` or `1:1`. Rows with `M:N` are a Warning; cross-model M:N requires a junction table that no model owns and is out of scope for §6.
 - 🟡 `Delete` is `clear` or `restrict`. `cascade` is a Warning; cross-module cascade implies ownership across modules, which is never valid.
 - 🟡 **Re-evaluate the §6 row list against the rest of the model.** The audit's job is to catch under-declaration, not to protect the author's existing rows. Walk §3's FK fields and §7.2's deferred-scope notes for two signals: (a) entities in §3 whose lifecycle is closely tied to a concept in a different domain that you'd expect to FK to (an incident's affected device, a job opening's planned position, a software install's host CI, a contract's owning vendor when vendor master is in a different module); (b) §7.2 entries that defer some scope to "another module" of a different domain. Each surfaced gap is a 🟡 Warning with a concrete proposed row.
+- 🟡 **§6 completeness against `related_domains` (v1.5).** For every entry in `related_domains`, the §6 list must contain at least one row whose `From` or `To` resolves to a table in that domain, OR the analyst must be able to state a one-line reason no link applies (e.g. "Identity & Access typically extends `users` upward and the sibling shape doesn't materialize an inbound FK"). A related domain with **zero** §6 rows and **no** stated reason is a 🟡 Warning — propose either an inbound or outbound row, or document why none applies. This is the audit-mode counterpart to the Stage 4d per-domain × per-entity walk; both must produce the same answer.
+- 🔴 **Pair overlap mistaken for domain overlap (v1.5 fix).** A common authoring failure: the analyst sees that the central entity in a related domain shares a name with a §3 entity (`releases` vs Release Mgmt `releases`, `objectives` vs OKR `objectives`, `users` vs platform `users`) and concludes the whole sibling domain is "overlap-only, no §6 rows". This is wrong — the deployer dedups *one entity*, not the entire sibling domain. The sibling typically has additional entities (Release Mgmt has `deployments`, `environments`; OKR has `key_results`, `check_ins`; Issue Tracking has `issues`, `epics`) that legitimately reference the merged entity. A `related_domains` entry whose central concept overlaps with a §3 entity but whose §6 list contains zero inbound rows from the sibling's other entities is a 🔴 Blocker — propose at least one inbound row for each overlap-domain whose sibling shape carries plausible referencing entities.
+- 🔴 **Deferred-scope domain missing from `related_domains` (v1.5).** When the user has explicitly told the analyst (in conversation) that scope was deferred to a sibling domain — "cost tracking belongs in Budgeting", "vendor master is in Vendor Management" — that destination domain MUST appear in `related_domains` and at least one §6 row must bridge this model back to it. The deferral is the integration point. Detect this from conversation context and from the structural signal (a `related_domains` entry whose concept no §3 entity shadows), **not** by scanning §1 / §3 / §7.2 prose for "out of scope" phrases. Decision-log prose ("cost tracking moved to Budgeting") does not belong in the file at all (see the §1 / §7 rules below); the `related_domains` entry plus the §6 row are sufficient and are what audit reads.
+- 🔴 **System-type neighbor missing from `related_domains` (v1.7).** Independent of deferred scope, a system's `related_domains` must reflect its enterprise neighborhood — what it sits next to in a typical organization, regardless of which entities it currently carries. For each `domain` value the model declares, walk the system-type axis: a Product Roadmap is next to OKR / Issue Tracking / Release Management / CRM / Identity & Access / Budgeting; an ITSM helpdesk is next to ITAM / CMDB / HRIS / Identity & Access; an ATS is next to HRIS / Workforce Planning / Identity & Access; etc. A system-type-typical neighbor that is **absent** from `related_domains` is a 🔴 Blocker, especially when the model's own §3 doesn't carry the shadow. The trap to catch: an analyst removing internal entities ("no cost in this system") and silently dropping the matching neighbor — neighborhood is about the system's position in the enterprise, not its current entity count. Propose adding the missing neighbor.
 - **🛑 Do NOT base proposals on which `*-semantic-model.md` files happen to sit next to this one in the workspace.** The catalog is being built and most targets will not exist yet. File presence is not evidence the target exists; file absence is not evidence it doesn't. Reason from analyst domain knowledge about which cross-domain links *plausibly add value* whenever the targets later arrive.
 - 🟡 **Vendors / users / cost-centers / departments / customers and similar shared-master-data targets do not belong in §6.** These are name collisions, and the deployer's Stage 2d/2e detection handles them. A row whose `To` is one of these tables is a Warning; propose dropping it.
 - **`related_domains` front-matter**, when present, is a YAML list of **Title-case / acronym-form** domain names (`ITAM`, `CMDB`, `Change Management`, `Vendor Management`, `Identity & Access`). It is a discovery tag for humans browsing the catalog and is not consumed by any skill; it does not need to match §6 row-for-row. Empty list (`related_domains: []`) is 🟡 Warning; omit the key instead.
 - 🟡 An entry in `related_domains` that uses lowercase snake_case (`itam`, `vendor_management`) is a Warning; that's the `system_slug` casing, not the domain casing. Propose the Title-case / acronym form.
 - 🟡 `related_domains` entries that look like specific module slugs from this workspace (e.g. naming a company-prefixed slug like `acme_crm` or referring to a known sibling file) instead of generic domain categories (`CRM`) are a Warning. The field captures domain neighborhood from analyst knowledge; it should not depend on which `*-semantic-model.md` files happen to exist.
+- 🟡 **Run the shadowing walk against §3.** For every entity in the model, ask: would a dedicated enterprise system model this concept in meaningful depth? Common shadow cases include `objectives` shadowing OKR, `users` shadowing Identity & Access, `vendors` shadowing Vendor Management, `assets` shadowing CMDB / ITAM, `tickets` shadowing ITSM, `employees` shadowing HRIS, `cost_centers` shadowing Finance / GL or Budgeting, and any equivalent concept the analyst can reason about (the rule is procedural, not catalog-driven, any enterprise domain qualifies). If a shadowed domain is missing from `related_domains`, propose adding it. Internal shadowing is *required* by the self-containment rule, so its presence is not a defect, but it is the strongest signal that the shadowed domain is a neighbor worth tagging. Junctions and weak shadows (generic `comments` / `tags` that no enterprise system materially expands on) are skipped; on borderline cases prefer inclusion. Surface each missing domain as a 🟡 Warning with the concrete value to add.
 
 **Scope cleanliness**
 - No UI content (forms, layout, field widths, page structure)
@@ -677,13 +871,100 @@ Update the file in place:
 - Update `created_at` in the front-matter to today's date
 - **Refresh the `entities` front-matter list** to match the new §2 entity summary (in §2 order, lowercase snake_case). A stale `entities` tag breaks discovery, never skip this step when entities are added, removed, or renamed.
 - **Re-evaluate `departments` and `industries`** against the post-extension model, the new entities, fields, and any scope cues from the extension request can shift these tags (e.g. adding HR entities to a finance system → add `hr` to `departments`; adding patient-record entities to a generic CRM → add `healthcare` to `industries`). If the inference is now confident where it wasn't before, add the key; if a previously-valid value is no longer accurate, change or drop it. Mention any change in the summary so the user can push back. If the extension doesn't shift scope, leave the existing values as-is.
-- **Re-evaluate §6 cross-model link suggestions** against the post-extension model using the Stage 4c rules. New entities often introduce new cross-domain links: a CMDB extended with `software_installs` may now want a row pointing software installs at a SAM-owned product table; a CRM extended with `tickets` may now want a row linking tickets to ITSM incidents when both are deployed. Walk the new entities and FKs and ask whether any added entity (a) plausibly links to a target owned by a different domain that is not in this model, and (b) would benefit from an additive FK if the target is deployed. Add a row per such case. Apply the same posture as Stage 4c: err toward inclusion, the deployer silently skips rows whose target does not exist. Refresh `related_domains` if the extension broadens the model's neighborhood (purely a discovery tag for humans). Mention any change in the summary so the user can push back; if the extension is purely internal, leave §6 and `related_domains` as-is.
-- **Re-evaluate computed fields and validation rules** for the affected entities. A new field added to an entity that already carries a `Computed fields` block may need to feed the formula (or the formula may need to be revised); a new field that introduces an invariant ("only set X when Y is committed") may warrant a new `validation_rules` entry. Run Stage 4d's check pass on every entity touched by the extension. Untouched entities' blocks stay byte-for-byte unchanged.
+- **Re-run the Stage 4c shadowing walk for `related_domains`** against the post-extension entity list. Mandatory in every extension, never skipped, never collapsed into "leave as-is unless the extension shifts scope". This must run **before** the §6 re-evaluation below, because §6 walks the (post-extension-confirmed) `related_domains` list. The prior `related_domains` values are an input, not a substitute for the walk: a new entity may shadow a domain not previously listed (adding `objectives` exposes OKR; adding `vendors` exposes Vendor Management; adding `cost_centers` exposes Budgeting), and an entity removed by the extension may make a previously-listed domain stale. Build the post-extension list yourself first, then surface it as a standalone proposal block under a visibly labeled "Related domains" heading in the change summary so the user can confirm or edit, the same shape as the original Stage 4c proposal.
+- **Re-evaluate §6 cross-model link suggestions** against the post-extension model using the Stage 4d rules and the just-confirmed `related_domains` list. New entities often introduce new cross-domain links: a CMDB extended with `software_installs` may now want a row pointing software installs at a SAM-owned product table; a CRM extended with `tickets` may now want a row linking tickets to ITSM incidents when both are deployed. Walk every non-overlap related domain × every entity (including new ones) per the Stage 4d completeness rule and emit outbound or inbound rows wherever an FK is plausible. Apply the same posture as Stage 4d: err toward inclusion, the deployer silently skips rows whose target does not exist.
+- **Re-evaluate computed fields and validation rules** for the affected entities. A new field added to an entity that already carries a `Computed fields` block may need to feed the formula (or the formula may need to be revised); a new field that introduces an invariant ("only set X when Y is committed") may warrant a new `validation_rules` entry. Run Stage 4e's check pass on every entity touched by the extension. Untouched entities' blocks stay byte-for-byte unchanged.
 - Add any new questions surfaced during the extension to the appropriate §7 bucket, **§7.1 🔴 Decisions needed** if the extension introduces ambiguity that blocks implementation, **§7.2 🟡 Future considerations** if it's deferred-scope or extensibility. Phrase every entry as a forward-looking question, never as a decision log. Do not move existing questions between buckets unless the extension genuinely changes their severity.
 
 **Before saving, run a self-audit pass on the updated draft.** Work through every 🔴 Blocker check from the Audit checklist (Mode B), including the Mermaid diagram checks, and fix any issues before writing. Do not save a file that would fail its own audit.
 
 Save back to the same filename in the workspace folder. Share the `computer://` link with a one-sentence summary of what changed.
+
+---
+
+## Mode D: Rebuild (holistic reanalysis of an existing semantic model)
+
+The goal is a fresh holistic pass over a model that has drifted across many iterations. Mode B (Audit) is conservative on purpose, it reports rule violations but never reconsiders entity choice or §1 framing; Mode C (Extend) is additive and preserves prior decisions. Mode D is for the case in between: every prior decision is back on the table (vendor template choice, entity granularity, field shapes, naming, scope boundaries), with the prior file treated as **archived knowledge** the same way the version-routing rule treats older-major files. The output is a brand-new file at `CURRENT_VERSION`; the prior file is left untouched so the user can diff in their editor and decide what to merge.
+
+> **🔒 `initial_request` is immutable.** The original opening ask carries through the rebuild byte-for-byte, even when the rebuilt model has reframed the system. The field is the historical record of what kicked the model off, not a running scope statement.
+
+### When to choose Mode D
+
+Trigger phrases the user is likely to use:
+- "We've iterated this 10 times, I want everything reconsidered."
+- "Check if anything essential was lost during all the customizations."
+- "Bring this up to current best practices, willing to restructure."
+- "Reanalyze / re-author / rebuild / rethink / overhaul / modernize the `<slug>` model."
+
+### When *not* to use Mode D
+
+- The user only wants rule-conformance findings, route to **Mode B**. Audits stay conservative on purpose.
+- The user wants to add specific entities, fields, or relationships, route to **Mode C**.
+- The model is fine and the user just wants minor tweaks, route to **Customize**.
+- The source of truth is the **live deployed module** in Semantius, not the `.md` file, route to the `semantic-model-optimizer` skill. If both have drifted from each other, the right call is usually optimizer first (snapshot live to `.md`), then Mode D on the snapshot.
+
+### Step D1: Load the existing file as content, not as structure
+
+Read the file in full. Extract:
+- The original `initial_request` (immutable, byte-for-byte preserve into the new file)
+- The domain category, vendor `naming_mode`, and `system_description`
+- The entity list with one-line purposes (from §2)
+- Business rules documented in §3 prose, computed/validation rule blocks, §7.1 decisions, and §7.2 future considerations
+- Curated metadata: `departments`, `industries`, `related_domains`
+
+Treat the §3 field tables, §4 relationships, and §6 cross-model rows as **proposals from a prior analyst pass**, not as constraints. The point of Mode D is that any of them can change.
+
+### Step D2: Drive a fresh Mode A pass with the prior model as input
+
+Run Stages 1 through 4 of Mode A end-to-end, with the extracted content seeded as Stage 1 input. **The confirmation gates that MUST fire in Mode D, in order, with no collapsing or bundling:**
+
+1. **Stage 1** — confirm the original `initial_request` still describes the system the rebuilt model should produce. If scope has shifted in ways the original ask doesn't cover, capture the shift in conversation as input for the rest of Mode D (it informs the Stage 3 entity walk and the Stage 4c neighborhood). Then **rewrite §1 cleanly to describe the *new* scope as if you were authoring fresh today** — the model file is a snapshot, not a diff log. Do **not** leave a trail like "this used to include cost tracking but doesn't anymore"; do not narrate the supplement in §1 Overview, §3 prose, or §7. The git diff is the changelog. The `initial_request` front-matter stays immutable as historical record; §1 reflects the present.
+2. **Stage 2** — re-confirm vendor template vs agent-optimized using AskUserQuestion. The prior choice is the default but it is explicitly re-asked. Users learn the domain across iterations and the right answer can change.
+3. **Stage 3** — re-propose the entity list from first principles. Show the prior entities as "here's how we modeled this last time" so the user can accept, rename, split, merge, or drop each one. Net new entities welcome.
+4. **Stage 4** — re-propose fields per entity. Carry over hand-tuned labels, descriptions, computed fields, and validation rules **only when the rebuilt entity still warrants them**; do not preserve fields whose entity was dropped or split.
+5. **Stage 4b** — regenerate the §2 Mermaid ER diagram against the rebuilt entities and FKs. *Render-only, not a confirmation gate — see Stage 4b above.* Show the diagram inline as a visualization, run the agent-side build-then-verify check, and proceed directly to Stage 4c. Do not ask the user "look right?" about the diagram; they already approved the underlying §3 entities and relationship_labels.
+6. **Stage 4c** — re-run the `related_domains` shadowing walk against the rebuilt entity list. **This is its own gate, never bundled with Stage 4d, never deferred to Step D3, never glossed as "X stays, Y stays" inside a different turn's prose.** Surface the full proposal block under a labeled "Related domains" heading even when the conversation is mid-flow on an unrelated scope change (cost deferral, vendor swap, entity rename). The list must be locked before Stage 4d, because Stage 4d walks each non-overlap domain × every §3 entity to enumerate §6 rows.
+7. **Stage 4d** — re-run §6 cross-model link suggestions against the rebuilt entity list, walking the (Stage 4c-confirmed) `related_domains` list per the §6 completeness rule.
+8. **Stage 4e** — re-run the computed-fields and validation-rules check pass on every rebuilt entity.
+
+Skipping or collapsing any gate is an authoring bug. The user confirms at every gate. Mode D does not skip them.
+
+### Step D3: Show what changed before saving
+
+Before writing, present a one-screen diff summary:
+
+> **Rebuild summary, `<slug>-semantic-model.md`**
+> - Entities **added**: `<list>`
+> - Entities **removed**: `<list>`
+> - Entities **renamed**: `<old → new>`
+> - Entities **restructured** (split / merged): `<list>`
+> - Field shape changes worth flagging (format changes, new/dropped FKs): `<list>`
+> - Carry-over confirmed: `initial_request`, `<keys>`
+> - Carry-over re-evaluated: `<keys with notes>`
+> - **`related_domains` (re-walked):** add `<list>`, drop `<list>`, keep `<list>`
+
+Ask: *"Does this rebuild look right, or anything to keep from the prior model?"* Loop until confirmed.
+
+### Step D4: Write the rebuilt file
+
+Default: write to `{system_slug}-semantic-model.rebuild.md` so the prior file survives for diffing. Overwriting `{system_slug}-semantic-model.md` directly is allowed **only after explicit user confirmation** at the Step D3 gate. A slug change is loud: system identity is keyed off `system_slug` and changing it breaks the deployer round-trip; flag any slug rename in the summary so the user can confirm.
+
+Front-matter rules:
+- `version`: stamped at `CURRENT_VERSION` (same as any Mode A write)
+- `initial_request`: byte-for-byte from the prior file
+- `created_at`: today's date
+- `naming_mode`: Stage 2's confirmed choice (may differ from prior)
+- `system_name`, `system_slug`, `system_description`: re-derived in Stages 1 and 5; the slug stays the same unless the user explicitly renames the system
+- `domain`: re-inferred from the rebuilt entity list
+- `departments`, `industries`: preferentially carried over when the user-curated values still fit the rebuilt model, re-inferred when the rebuild has reframed the domain enough that the old tags no longer apply
+- `related_domains`: must already have been confirmed at its own **Stage 4c** gate during D2; Step D3 only echoes the confirmed list as part of the diff summary. The Stage 4c walk is never deferred to D3, never collapsed into the diff summary as the user's first sight of the list, and never carried over from the prior file unchanged. Prior values are an input to the walk (so a user-confirmed addition from the prior pass isn't silently dropped) but never a substitute for it.
+- `entities`: rebuilt from the new §2 entity list
+
+Run the same self-audit pass as Mode A Stage 5: every 🔴 Blocker check from the Mode B checklist must pass before save, including the §2 Mermaid diagram checks. A rebuild that fails its own audit is not saved.
+
+After save, share a one-sentence summary including the prior-file path so the user can diff:
+
+> Rebuilt `<slug>` from `<prior_path>`. New file at `<new_path>`, N entities (Δ +X / −Y / renamed Z), M fields. Run a diff in your editor before discarding the prior file.
 
 ---
 

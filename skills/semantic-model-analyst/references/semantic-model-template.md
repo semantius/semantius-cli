@@ -34,7 +34,7 @@ initial_request: |
 
 ## 1. Overview
 
-{{Two or three sentences describing the system, its users, and the problem it solves. Written for a human reviewer; keep it concrete and avoid marketing tone.}}
+{{Two or three sentences describing the system, its users, and the problem it solves. Written for a human reviewer; keep it concrete and avoid marketing tone. §1 is the catalog-readable system narrative — downstream skills (notably semantius-skill-maker) copy it verbatim into their human-facing README. Hard bans: no §-number cross-references (no "see §6", "via §6 hint rows"); no snake_case identifiers or column-shaped tokens (no `cost_center_id`, no `features.cost_center_id`); no platform plumbing words ("Semantius", "deployer", "deploy time", "self-contained"); no scope-deferral or authoring-decision narration ("deliberately out of scope", "moved to a sibling domain", "fully declared even though..."). Deferrals live in `related_domains` plus §6, never in §1 prose. Authoring decisions about platform built-ins are the deployer's concern at deploy time, not §1's. If you find yourself wanting to add a third paragraph that explains a *modeling choice*, delete it: §1 describes the system, not the model file.}}
 
 ## 2. Entity summary
 
@@ -83,9 +83,9 @@ For each entity, repeat the following sub-structure.
 
 **Fields**
 
-| Field name | Format | Required | Label | Reference / Notes |
-|---|---|---|---|---|
-| `{{field_name}}` | `{{format}}` | {{yes \| no}} | {{Human Label}} | {{e.g., → `accounts` (N:1), unique, enum values: [a,b,c], searchable; for FK fields optionally append `relationship_label: "owns"` to set the ER-diagram edge verb}} |
+| Field name | Format | Required | Label | Description | Reference / Notes |
+|---|---|---|---|---|---|
+| `{{field_name}}` | `{{format}}` | {{yes \| no}} | {{Human Label}} | {{one short sentence — leave blank when the title + format + enum/FK already says it; fill for units (e.g. "person-months"), ranges not in a validation rule, direction-mattering semantics, sign/polarity conventions, freeform-string shape hints, or overloaded terms; see SKILL.md "Fill the §3 Description column" for when to fill vs leave blank}} | {{structured annotations ONLY — no free prose: e.g., → `accounts` (N:1), `relationship_label: "owns"`, `default: "draft"`, `precision: 2`, `cube_type: dimension`, `parent label: "X" / "Ys"`, `label_column`, `unique`, `searchable`, `enum values: [a,b,c]`}} |
 | … | … | … | … | … |
 
 > Do not include `id`, `created_at`, `updated_at`, or the auto-generated `label` field — Semantius creates these automatically.

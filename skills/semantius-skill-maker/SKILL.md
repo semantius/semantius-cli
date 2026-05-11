@@ -12,10 +12,14 @@ description: >-
   Use when the user wants "a skill for the CRM model", "wrap the
   workforce model in a skill", "generate a domain skill from this
   semantic model", or any phrasing that asks for a model-specific skill
-  on top of an existing `*-semantic-model.md` file. The generated
-  SKILL.md delegates platform mechanics (CLI install, PostgREST
-  encoding, cube DSL) to `use-semantius`, which is expected to load
-  alongside.
+  on top of an existing `*-semantic-model.md` file. Also trigger when
+  the user wants to rebuild, reanalyze, re-author, or holistically
+  regenerate an existing generated skill against the current model
+  (e.g. "rebuild the `<slug>` skill from scratch", "the model has
+  drifted, regenerate everything", "throw out the existing skill folder
+  and start over"). The generated SKILL.md delegates platform mechanics
+  (CLI install, PostgREST encoding, cube DSL) to `use-semantius`, which
+  is expected to load alongside.
 ---
 
 # semantius-skill-maker
@@ -186,6 +190,17 @@ Once the version gate passes, extract:
   what the calling agent must do and what the calling agent must NOT do.
   See "Pass 2" merit-test adjustments below.
 
+  Treat each entry's **JsonLogic body as opaque** and read only the
+  human-readable metadata (`name` and `description` for `computed_fields`;
+  `code`, `message`, and `description` for `validation_rules`). All
+  matching downstream, Pass 2 suppression, gap-tracking, SKILL.md
+  preamble copy, JTBD failure-mode wiring, uses that metadata. The
+  analyst's job is to write `description` / `message` text precise
+  enough that a candidate transition or derivation can be matched
+  against it by reading. If the analyst's text is too vague to match,
+  that is a model defect to send back; do not try to evaluate the
+  JsonLogic to recover.
+
 Compute `modelslug = system_slug.replace(/_/g, "-")`.
 
 Refuse if §7.1 lists open blockers, the model is not finished and the
@@ -310,14 +325,28 @@ of the following:
 | Merit signal | What to check in the model |
 |---|---|
 | **Caller-populated label** | Junction or sub-entity has a required `*_label` column distinct from any `label_column`, with no DB-level default. The recipe must compose the label client-side, not obvious from the schema alone. |
-| **Computed field (NOT platform-managed)** | A stored numeric/derived field (e.g. `rice_score`, `total_amount`, `days_open`) whose value depends on sibling fields **and is NOT covered by the entity's `computed_fields` JsonLogic block**. The recipe must recompute on every relevant PATCH. **If the model's `computed_fields` already derives the value, this signal is suppressed** — the platform overwrites caller payloads on every write, so the recipe must NOT include the derived field in POST/PATCH bodies (callers cannot set it; the platform owns it). Document the field as platform-derived in the JTBD prose instead. **Gap-tracking:** when this signal fires AND the model's entity carries no matching `computed_fields[].name`, record the candidate in a `platform_enforceable_gaps` list (see "Track platform-enforceable gaps" below) for the Step 3 confirmation checkpoint. The merit signal still earns the JTBD a section (the recipe is still needed as a stopgap), but the human gets one more chance to push the rule into the model. |
-| **DB-unguarded lifecycle gate** | Status enum where some transitions are valid and others aren't, but the DB accepts any value, **and the entity's `validation_rules` block does NOT enforce the gate**. The recipe must read-before-write. **If a `validation_rules` entry already gates the transition, this signal is suppressed** — the platform rejects the bad write with a structured error and the recipe just needs to surface that error to the user, not pre-validate. Reference the platform error's `code` in the JTBD's failure-modes block. **Gap-tracking:** when this signal fires AND no `validation_rules` entry on the entity gates the transition, record the candidate in `platform_enforceable_gaps`. Same logic as the computed-field row above: the JTBD still earns a section (the recipe enforces the rule client-side as a stopgap), and the human is told. |
+| **Computed field** | A stored derived field (e.g. `rice_score`, `total_amount`, `days_open`) whose value depends on sibling fields. Match by exact `name` against the entity's `computed_fields[].name` array, then resolve to one of three cases. **(a) Field is in `computed_fields`** → signal is **suppressed; does NOT earn a section on its own**. The platform overwrites caller payloads on every write, so the calling agent must not include the derived field in any POST/PATCH body and must not recompute it client-side. That rule is documented globally in the SKILL.md `Platform-derived fields` preamble (resolved at generation time); no per-JTBD recipe is needed. A candidate whose only merit signal is this row, in case (a), is dropped and listed under skipped. **(b) §3 prose names a derivation but no matching `computed_fields[].name` entry exists** → gap-tracked (record under `platform_enforceable_gaps`; see below). The signal earns a section ONLY when the candidate also passes one of the other merit signals (cascade, side-effect, junction without uniqueness, etc.); the recipe enforces the derivation client-side as a stopgap until the analyst adds the rule to the model. **(c) Neither field-name match nor §3 prose names a derivation** → signal does not fire. |
+| **DB-unguarded lifecycle gate** | Status enum where some transitions are valid and others aren't, but the DB accepts any value. Suppression here is **per-transition, matched by `description` / `message` text**, not per-block: walk the entity's `validation_rules[]` and ask "does any entry's `description` or `message` text name *this specific transition*, or the invariant it gates?" Then resolve. **(a) A `validation_rules[]` entry covers the transition** → signal is **suppressed for that transition; does NOT earn a section on its own**. The platform rejects the bad write with `{ "errors": [{ "code", "message" }, ...] }`; the recipe just surfaces that. The `code` is documented globally in the SKILL.md `Platform-enforced invariants` preamble; no per-JTBD recipe is needed for the gate. A candidate whose only merit is this row, in case (a), is dropped and listed under skipped. (Scripts that exist for *other* merit reasons may name the platform `code` in their stderr diagnostics so the agent surfaces a clean recovery hint; they must not duplicate the JsonLogic check.) **(b) §3 prose names the invariant but no matching `validation_rules[]` description does** → gap-tracked. The signal earns a section ONLY when the candidate also passes another merit signal (cascade, side-effect, etc.); the recipe enforces the gate client-side as a stopgap. **(c) Neither prose nor `validation_rules` names the invariant** → signal does not fire. |
 | **DB-unguarded invariant across FKs** | E.g. `features.release_id` and `features.product_id` must agree on product. The recipe must read both rows and check before patching. Cross-row constraints are out of scope for `validation_rules` (entity-level only), so this signal is **not** suppressed by the platform. |
 | **Cascade flow** | Flipping one parent row should flip a filtered set of children in the same logical operation (e.g. release-shipped → its planned/in-progress features → shipped). |
 | **Junction without uniqueness** | M:N junction without a DB-level unique constraint on the natural key. The recipe must dedupe-before-insert. |
 | **Materialization / handoff** | One entity row spawns rows in a different table (Pattern C). The order, FK back-pointers, and source-status flip are easy to get wrong. |
 | **Side-effect fields on transition** | `approved_at`, `committed_at`, `actual_release_date`, etc. that must be set in the same PATCH as the status flip, easy to forget. |
 | **Audit-trail read** | Audit-logged entity (`audit_log: true`) where "who/when changed X" is a likely user question. Worth a short recipe even though writes need no special handling. |
+
+> **Trap, the most common defect:** when a candidate's only merit
+> signal is **Computed field** and the field is in `computed_fields`,
+> OR only **DB-unguarded lifecycle gate** and a `validation_rules[]`
+> entry covers the transition (matched by description), the candidate
+> is **dropped**, not earned. The platform owns the rule end-to-end;
+> a JTBD section would just restate what the SKILL.md preamble already
+> documents globally. List under skipped with a reason like
+> `pure CRUD; <field> is platform-derived` or
+> `pure CRUD; transition is platform-enforced via <code>`. The "Score
+> with RICE" anti-pattern is the canonical example: every input has a
+> `validation_rules` range check and `rice_score` is in
+> `computed_fields`, so the recipe is one PATCH and the platform
+> handles the rest, no JTBD section earns a place.
 
 If the only thing a candidate does is single-table CRUD with the platform
 defaults (no merit signals), drop it. List dropped candidates in the Step
@@ -348,12 +377,15 @@ The detection is **conservative**: only fire when the §3 prose names the
 derivation or constraint explicitly. Do not infer rules the analyst did
 not write down — that is the analyst's job, not the skill-maker's.
 
-This list does **not** suppress JTBD generation. The merit signal still
-earns the JTBD a section (the recipe enforces the rule client-side as a
-stopgap, see the "Gap-tracking" notes in the merit table). The list is
-purely for the Step 3 confirmation checkpoint, so the human can decide
-whether to pause and add the rule to the model via the analyst skill, or
-accept the stopgap recipe.
+A gap by itself does **not** earn a JTBD section. A candidate still has
+to pass the merit test on at least one *other* signal (cascade,
+side-effect on transition, junction without uniqueness, materialization
+handoff, caller-populated label, etc.). When it does, the gap-tracked
+rule earns a stopgap recipe inside that JTBD until the analyst adds the
+matching `computed_fields` / `validation_rules` entry to the model. The
+gaps list itself is purely the Step 3 confirmation checkpoint, so the
+human can decide whether to pause and add the rule via the analyst
+skill, or accept the stopgap recipe.
 
 #### Pass 3, Classify each surviving JTBD into a file
 
@@ -1546,6 +1578,17 @@ echo "<op-slug>: ok"
   branches on these three.
 - **Failure messages name the failed step.** `step 3 (sweep
   <child>) failed` is recoverable; `error` is not.
+- **Surface platform `validation_rules` errors verbatim, never
+  duplicate them.** When a `semantius call ... POST/PATCH` fails because
+  the platform rejected the write, the response body carries
+  `{ "errors": [{ "code", "message" }, ...] }`. Pass the `code` and
+  `message` through to stderr unchanged so the agent can surface a
+  clean recovery hint to the user. The script may *name* known codes
+  in its diagnostic prose (e.g. "step 3 failed; if code is
+  `release_only_when_committed`, the user should triage the feature
+  to `planned` first"), but it must NOT pre-check the JsonLogic
+  client-side; that duplicates a rule the platform owns and rots the
+  moment the rule changes.
 - **Idempotent.** A repeat run on partially-applied state must
   either complete or be a deterministic no-op. For cascade scripts,
   filter writes to "rows still in the source state", not "all rows
@@ -2734,6 +2777,53 @@ wording, user-prompt phrasing); the audit treats those edits as
 authoritative unless the file has a real defect (broken link,
 missing required field, contradicts the model). For non-canonical
 patterns alone, the user decides whether to take the upgrade.
+
+## Rebuild from scratch (Mode D)
+
+A holistic regeneration of the entire generated skill folder, distinct from the conservative "Re-running on an updated model" flow above. The conservative re-run preserves hand-edits and rewrites only defective files; Mode D throws out the prior generation entirely and re-derives every artifact from the current model, treating the prior folder as **archived knowledge** for lessons learned but never as a structural constraint.
+
+### When to choose Mode D
+
+Trigger phrases the user is likely to use:
+- "Rebuild / reanalyze / re-author the `<slug>` skill from scratch."
+- "The model has drifted across many iterations, regenerate everything."
+- "Throw out the existing skill folder and start over."
+- "We accumulated cruft in the generated skill, I want a fresh pass."
+
+### When *not* to use Mode D
+
+- The model has minor changes and you only want to update affected files, use the conservative **Re-running on an updated model** flow (the default re-run behavior).
+- The user wants to preserve hand-edits to README.mdx narrative or reference-file copy, use the conservative flow. Mode D rewrites everything.
+- The user wants audit-only (no writes), run Step 4 alone and stop without proceeding to Step 10's regeneration prompt.
+- The model file's major differs from `EXPECTED_MAJOR`, refuse and route the user to the analyst's Mode D Rebuild on the model file first; this skill cannot rebuild a generated skill from a stale-major model.
+
+### How a rebuild runs
+
+1. **Run Steps 1–3 as if generating from scratch.** Re-parse the current model file and re-derive jobs to be done from first principles. Do **not** consult the prior `SKILL.md` or its reference files for the JTBD list, the model is the only input. Reading the prior generation here would import its biases and defeat the point of a rebuild.
+
+2. **At Step 4, the audit's role flips.** Instead of producing a "regenerate this defective file" list, it produces a "lessons from the prior generation" list, surfaced for the user at Step 10. Look for:
+   - Hand-edited narrative copy in README.mdx or reference files that captures domain nuance not in the model (rare; surface so the user can paste relevant bits manually after the rebuild lands).
+   - JTBDs present in the prior plan that no longer have a model basis (likely intentional drops; surface as "removed").
+   - Guardrails or domain-glossary entries that look user-customized (preserve verbatim only if the user explicitly opts in at Step 10).
+   - Orphan files (JTBDs that no longer exist in the rebuilt plan); surfaced but never auto-deleted.
+
+3. **Steps 5–9 write a complete fresh folder.** Default target: a sibling folder `<skills-root>/<slug>.rebuild/` so the prior survives for diffing. Overwriting `<skills-root>/<slug>/` directly is allowed **only after explicit user confirmation** at the Step 10 summary gate.
+
+4. **Step 10 shows the diff before overwriting.** The summary names: JTBDs added / removed / renamed, references regenerated, scripts regenerated, and any hand-edits the audit flagged for manual carry-over. Ask: *"Does this rebuild look right, or anything to keep from the prior folder?"* Loop until confirmed. No overwrite of `<slug>/` until the user says yes.
+
+### What carries over
+
+- **Nothing structural by default.** The semantic-model file is the single source of truth; prior artifacts are not. The rebuilt SKILL.md, README.mdx, references, and scripts are derived fresh from the model.
+- **Hand-edited content** (README narrative, reference-file failure-mode wording, guardrail prose) is surfaced in the Step 10 diff for opt-in manual carry-over. The skill does not auto-merge; the user pastes the bits they want to keep into the rebuilt folder.
+- **The target folder name** (`<slug>/`) stays the same unless the user explicitly renames the system, in which case follow the slug change loudly per the front-matter rules in Step 5 (a slug change breaks any external references to the prior folder).
+
+### What this is not
+
+- **Not the conservative re-run.** That preserves hand-edits and rewrites only defective files. Mode D rewrites everything.
+- **Not a fix-up of broken artifacts.** Use Step 4 audit + Step 10 subset selection for that, the conservative flow handles it correctly.
+- **Not an upgrade path for major-version mismatches.** Major mismatch is rejected at Step 2; the user must re-author the model via `semantic-model-analyst` Mode D Rebuild first, then re-run skill-maker (any flow) against the fresh file.
+
+---
 
 ## Failure modes
 

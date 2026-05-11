@@ -178,8 +178,29 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
 | `$user_id` | `uuid` | Authenticated user performing the write (`null` for system writes). |
+| `$old` | `object` or `null` | Previous row as JSON on UPDATE; `null` on INSERT. Use to express transition rules ("status cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
 
-No other ambient state. **Cross-row lookups, aggregates, and FK traversal are out of scope** — those belong in cube and views.
+`$old` is the only window into prior state; everything else outside the post-write record (cross-row lookups, aggregates, FK traversal) is out of scope and belongs in cube/views.
+
+**Detecting INSERT vs UPDATE:** `$old` is `null` on INSERT, an object on UPDATE. A rule that should fire only on UPDATE wraps its body in `{"if": [{"!=": [{"var": "$old"}, null]}, <update-only-check>, true]}` so the INSERT path passes trivially. Conversely, transition rules that compare current vs prior values (e.g. `{"var": "release_status"}` against `{"var": "$old.release_status"}`) read `null` from `$old.<field>` on INSERT and naturally pass — no extra guard needed unless the INSERT path needs distinct handling.
+
+**Example transition rule** (a release that's reached `released` cannot regress):
+
+```json
+{
+  "code": "released_is_terminal",
+  "message": "A release that has been released cannot move back to planned or in_progress.",
+  "jsonlogic": {
+    "or": [
+      { "==": [{ "var": "$old" }, null] },
+      { "!=": [{ "var": "$old.release_status" }, "released"] },
+      { "==": [{ "var": "release_status" }, "released"] }
+    ]
+  }
+}
+```
+
+The rule passes on INSERT (no prior row), passes when the prior status was anything but `released`, and on UPDATE from `released` only passes when the new status is still `released`.
 
 #### Deploy-time guarantees
 
