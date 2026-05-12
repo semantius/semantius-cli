@@ -330,9 +330,28 @@ The CLI automatically retries transient failures with exponential backoff.
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Client error (bad args, missing config) |
-| `2` | Server error (tool failed) |
-| `3` | Network error |
+| `1` | Bad args / config / JSON, **or** `--single` returned zero rows (mutually exclusive flows) |
+| `2` | `--single` returned two or more rows |
+| `3` | Network / transport failure (transient, retryable: `ECONNREFUSED`, `ETIMEDOUT`, `5xx`, `429` after retry exhaustion) |
+| `4` | Tool execution failed (RLS denial, duplicate key, schema violation, validation rule) |
+| `5` | Auth failure (missing/invalid `SEMANTIUS_API_KEY`, `401`, `403`) |
+
+Notes:
+- Exit `1` carries two meanings, but they cannot co-occur: a malformed
+  request never reaches the server, so a zero-row `1` and a bad-args
+  `1` are distinct branches in execution. Recipes treat exit `1` from
+  a `--single` read as "not found" by convention; bad-args `1`
+  indicates a recipe bug and is caught at development time.
+- Exit `3` and `5` are split so recipes can branch on retry-ability
+  without parsing stderr: `3` is transient (retry once or twice with
+  backoff), `5` is permanent (abort and surface credential failure
+  to the user). The CLI itself already auto-retries the common
+  transient classes; a `3` reaching the script means retries were
+  exhausted.
+- Exit `4` is the bucket for any error returned by the tool itself
+  (PostgREST rejection, RLS denial, unique-key violation, platform
+  `validation_rules`). The response body on stderr carries the
+  structured error; surface it verbatim.
 
 ---
 

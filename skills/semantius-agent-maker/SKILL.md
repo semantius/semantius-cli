@@ -74,6 +74,8 @@ Read the supplied model file end to end. Build a mental index of:
 - Module slug (URLs use `module_slug`, lowercase)
 - Label composition rules and lookup conventions
 - Cross-cutting data rules and guardrails
+- **Entity-level `Select rule` sub-blocks** — note which entities carry a non-empty `select_rule`. Capture the rule's plain-English **uniform per-row predicate** (from the sub-block's `description`, the entity's §3 prose, or a paraphrase of the JsonLogic intent). **The rule applies uniformly to every caller with `view_permission`** — the platform evaluates the JsonLogic body per row with `$today` / `$now` / `$user_id` as reserved variables; there is no documented mechanism by which holding a specific permission causes the rule to be skipped. If the model's §7 carries an explicit architectural-decision entry naming a documented broadening mechanism (a separate cube view / entity surface admins read, or a Postgres `BYPASSRLS` role attribute), capture that mechanism alongside the predicate. **Never read the §2 Permissions summary for a `<slug>:view_all_<plural>`-style permission and assume the platform honors it as a bypass — that mechanism is not in the current platform spec; promising it in the generated skill ships broken RBAC.**
+- **Field-level `Input type rules` entries** — note which fields carry a non-empty `input_type_rule` and what trigger the rule's `description` (or JsonLogic intent) names. Two patterns matter at authoring time: (a) rules that flip a field's effective mode to `required` on a sibling-field transition (typically `*_at` housekeeping fields like `approved_at`, `closed_at`, `submitted_at`) — when the user's task drives that transition, the recipe must include the dependent field in the same PATCH body; (b) rules that flip a field to `readonly` after a terminal state — recipes that update the entity after that state should drop the locked field from their PATCH body.
 
 Be aware of `use-semantius`'s `references/` directory (cli-usage,
 data-modeling, rbac, crud-tools, cube-queries, cube-tools, webhook-import).
@@ -104,6 +106,31 @@ Adapt for Semantius. Get answers to:
    catalog" is **read-first-then-create-if-missing**, never blind insert.
 8. **Failure handling.** What's a domain error (refuse) vs. a transient
    error (retry once)?
+9. **Read scope** (when any entity the task reads has a `select_rule`). Ask:
+   "The model applies a uniform per-row filter on `<entity>` — every caller
+   with `view_permission`, including the one running this agent, sees only
+   `<plain-English predicate from the rule>`. Does this skill respect that
+   uniform scope (the agent acts on what the caller can see), or does the
+   task genuinely need to read rows outside the predicate?"
+
+   The default is **respect the scope**; this is the simplest answer and is
+   correct for most agent skills. If the user needs broader read access,
+   the path depends on what the **model file's §7 already resolves**:
+
+   - If §7 carries an architectural-decision entry naming a documented
+     broadening mechanism (option C separate cube view / entity surface,
+     option D Postgres `BYPASSRLS` role provisioned outside Semantius),
+     wire the generated skill's read step to that mechanism explicitly.
+   - If §7 does NOT resolve a broadening mechanism, the skill **cannot
+     promise broader read access**. The generated skill says so plainly:
+     "broader read access requires running as a caller who holds the
+     role with broader visibility; escalate or hand off". Do NOT propose
+     a `<slug>:view_all_<plural>` permission as a bypass; that mechanism
+     is not documented in the current platform spec, and a generated
+     skill that names it ships broken RBAC. If the user thinks they need
+     broader access and §7 doesn't cover it, the correct route is to send
+     the user back to `semantic-model-analyst` to resolve Stage 12's
+     architectural-decision question before generating the skill.
 
 Proactively suggest answers based on what the model implies. Don't make the
 user fill every blank from scratch.
@@ -121,6 +148,8 @@ For each entity in the slice, the generated skill will need:
 - FK fields with the target entity and its key column
 - Label composition rule (so the generated skill can build display labels)
 - Any cross-cutting rule that applies (e.g. "soft-deactivate, never hard-delete")
+- **Row-level read scope** when the entity carries a non-empty `select_rule`. Pull the uniform per-row predicate from the Step 1 mental index. The slice notes this so the generated SKILL.md can surface the visibility callout. If the model's §7 named a documented broadening mechanism, capture it; if §7 did NOT, the slice notes only the uniform predicate and routes broader-access requests to escalation — **never invents a `view_all_<plural>` permission bypass**.
+- **Conditional UI states** for any field on the entity that carries a non-empty `input_type_rule` AND whose trigger or target lies on the user's task path. Cross-check the user's task against the rule's trigger condition: when the task drives the transition the rule keys on (e.g. the task is "approve the offer" and `approved_at` has `input_type_rule: hidden until status=approved`), record `(entity, field, trigger_field, trigger_value)` as a paired side-effect — the recipe must set the dependent field in the same PATCH as the trigger. Fields whose rule is unrelated to the task path are noise; keep the slice tight.
 
 Entities not in the slice should be **referenced by name only** (one-line note
 in the generated skill: "this domain also has X, Y, Z — out of scope").
@@ -172,6 +201,45 @@ Before showing the draft to the user, check:
       do not silently adapt.
 - [ ] FK shapes match what the model says today (re-read the model section,
       do not rely on memory).
+- [ ] (Analyst v2.2+) Every read recipe against an entity in the slice that
+      carries a `select_rule` includes a one-sentence visibility callout
+      ("you will see only `<plain-English scope>`"), either inline in the
+      recipe or in the entity's slice block. A read with no callout against
+      a scoped entity is the silent-empty-result defect — a missing row is
+      indistinguishable from no-such-row, and the agent draws the wrong
+      conclusion.
+- [ ] (Analyst v2.2+) No recipe duplicates a `select_rule` in its own GET
+      filter. If the entity's rule filters on `submitter_user_id = $user_id`,
+      the recipe's path does NOT add the same filter — the platform applies
+      it via RLS, and the client-side duplication is dead code that breaks
+      when the analyst updates the rule.
+- [ ] (Analyst v2.2+) Every transition recipe that fires a trigger named in
+      the slice's "Conditional UI states" block sets the dependent field in
+      the same PATCH body. Example: when the slice records `approved_at`'s
+      trigger as `status = "approved"`, the "approve offer" recipe's PATCH
+      includes both `status = "approved"` and `approved_at = $now`. A
+      transition that sets the trigger without the dependent is the
+      silent-empty-housekeeping-field defect — the UI would have rendered
+      the dependent as `required` at form time, but the recipe has no form.
+- [ ] (Analyst v2.2+) No recipe interprets the JsonLogic body of an
+      `input_type_rule`. The rule is for the form-rendering layer; recipes
+      derive their semantics from the task's own intent (the user's
+      interview answers, the entity's `validation_rules`), not by
+      re-evaluating the UI rule's body.
+- [ ] (Analyst v2.2+ critical rule) **No prose anywhere in the generated
+      skill promises a `<slug>:view_all_<plural>`-style permission bypass
+      of `select_rule`.** Walk every preamble line, every JTBD visibility
+      callout, every Approval-gates entry, every Failure-modes block. If
+      any prose names a permission code as a path to "see every row" /
+      "bypass the filter" / "broader read access" / "elevated tier", the
+      ONLY acceptable shape is: (a) the source model's §7 explicitly
+      resolves the broadening mechanism (option C separate cube view,
+      option D Postgres `BYPASSRLS` role attribute) AND the prose names
+      THAT mechanism, not a permission code; OR (b) delete the prose
+      entirely and route broader-access requests to "escalate to a caller
+      who holds the role". A prose promise of a permission bypass that
+      the platform does not honor is the canonical v2.2 defect — the
+      generated skill looks right but silently ships broken RBAC.
 
 ### Step 7 — Confirm output path and write
 
@@ -254,11 +322,34 @@ For each entity in the slice, write a block like:
 - `<field>` → `<target_table>.<key>` (format: reference)
 **Label rule:** `<how the display label is composed>`
 **Lookup convention:** `<how to resolve user input to a row>`
+**Row-level read scope** *(omit when the entity has no `select_rule`)*:
+- Every caller with `view_permission` sees only rows where `<plain-English
+  uniform predicate>`. <Optional, only when the source model's §7
+  explicitly resolves a broadening mechanism: "Broader read access for
+  `<role>` is provisioned via `<mechanism — separate cube view, Postgres
+  BYPASSRLS role, etc.>` per the model's §7."> **NEVER write a line like
+  "callers holding `<slug>:view_all_X` bypass the filter"** — that
+  mechanism is not in the platform spec; promising it ships broken RBAC.
+  When the user's task genuinely needs broader access and the model's §7
+  has not resolved a mechanism, the recipe says "escalate to a user who
+  holds the role with broader visibility" and does not pretend to grant it.
+- The platform applies this filter via RLS on every read; this skill does
+  not duplicate the rule in its own query filters.
+**Conditional UI states** *(omit when no field on this entity has an
+`input_type_rule` on the task path)*:
+- `<field>`: <trigger gist, e.g. "becomes required when `status` is being
+  set to `approved`; locks to readonly after save">. The recipe at the
+  bottom sets this field in the same PATCH as the trigger.
 ```
 
 Do not include fields the skill doesn't read or write. Brevity over
 completeness — the calling agent loads this into context every time the
-skill triggers.
+skill triggers. The two analyst-v2.2 sub-blocks (`Row-level read scope`,
+`Conditional UI states`) are likewise opt-in: include them only when the
+model declares the rule AND the rule bears on the task. An entity in the
+slice whose `select_rule` doesn't affect the task's read path, or whose
+field-level `input_type_rule` triggers fall outside the task, omits the
+sub-block.
 
 ### Recipe section
 
@@ -409,6 +500,24 @@ recipes at the bottom are tight, with explicit reads and verifies.
 8. **Link after writes.** Output the UI link
    `https://tests.semantius.app/<module_slug>/<table_name>` so the user
    can verify in the browser.
+9. **Visibility callout on row-scoped reads**. Every read
+   against an entity carrying a `select_rule` is preceded by a one-sentence
+   reminder of what every caller with `view_permission` sees (the uniform
+   per-row predicate). The reminder lives in the slice block (preferred)
+   or inline in the recipe (when the slice is omitted). Generated skills
+   that read a scoped entity without naming the scope leave the calling
+   agent unable to tell "no matching rows" from "rows exist but are
+   filtered out for me", and the conclusion downstream is silently wrong.
+   **The reminder never promises a `view_all_<plural>`-style permission
+   bypass; that mechanism is not in the platform spec.** When the model's
+   §7 has resolved a documented broadening mechanism, the reminder may
+   point at it; otherwise broader access is human escalation, full stop.
+10. **Paired side-effect for `input_type_rule`-triggered required fields.**
+    When the slice's `Conditional UI states` block records
+    a field whose UI rule flips to `required` on a transition the recipe
+    drives, the PATCH body sets both the trigger field and the dependent
+    field in the same call. The UI would have prompted for the dependent
+    at form time; the recipe has no form and must carry the value itself.
 
 ---
 

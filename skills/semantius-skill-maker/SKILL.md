@@ -67,6 +67,8 @@ This skill expects model files written by `semantic-model-analyst` major `2`. Th
 
 When the analyst's major bumps, this skill's `EXPECTED_MAJOR` must be bumped in lock-step (same commit when feasible). The trio of analyst, deployer, and skill-maker share the major.
 
+The history of the skill-maker's contract changes lives in [`CHANGELOG.md`](./CHANGELOG.md) — what each analyst-lockstep bump changed in the parser, indices, generated-skill preambles, and self-review principles. That file is not loaded at runtime; the body of this SKILL.md is the **current contract**, the CHANGELOG is the **history**.
+
 ---
 
 ## Inputs
@@ -201,14 +203,20 @@ Once the version gate passes, extract:
   that is a model defect to send back; do not try to evaluate the
   JsonLogic to recover.
 
-  **One exception: scan each rule's JsonLogic body literally (string-match only) for the platform-extension operators introduced in analyst v1.11.** Two are first-class JTBD signals:
+  **One exception: scan each rule's JsonLogic body literally (string-match only) for the two platform-extension operators.** Both are first-class JTBD signals:
 
   - **`require_permission`**, i.e. `{"require_permission": "<code>"}` somewhere inside the rule body. Extract `(entity, rule_code, rule_description, permission_code)` for every match into a `conditional_permissions` index. This index drives the new "Conditional-permission gate" merit signal in Pass 2 and the `Platform-enforced permissions` SKILL.md preamble (Step 5). The match is purely literal; *which* condition gates the permission still comes from the rule's `description` text, not from interpreting the JsonLogic.
   - **`value_changed`**, i.e. `{"value_changed": "<field>"}` somewhere inside the rule body. Note `(entity, field)` pairs into a `transition_gated_fields` index. This is informational, not a merit signal on its own; it helps Pass 2 confirm that a `require_permission` rule actually fires on transition rather than on every write (a quality check that the analyst's audit also runs).
 
   In analyst v2.0+ files, the **§2 Permissions summary table is the canonical source** for the module's full permission catalog (not §8 step 1). Parse the table verbatim — five columns: `Permission | Type | Description | Used by | Hierarchy parent`. Build a `permissions_catalog` index from the rows. Use this index for everything: the SKILL.md "Platform-enforced permissions" preamble (one row per workflow permission), the role-hint lookup for each `conditional_permissions` entry (the `Description` and `Used by` cells give the role-hint richer than v1.11's §8 prose), and the cross-check that every `conditional_permissions[].permission_code` appears in the table. A mismatch is a model defect; refuse to generate and route back to the analyst. §8 step 1 in a v2 file is a procedural pointer to the table and no longer enumerates permissions itself; do not parse §8 for the permission list.
 
-- **Inbound-FK delete-mode index (analyst v1.13+).** Walk the §4 relationship table once more and build a `restrict_inbound` index per entity: for every row whose `Kind` is `reference` and `Delete` is `restrict`, record `(child_entity, fk_field)` against the *target* (the entity on the right side of the relationship). This index drives the new "Restrict-chained cleanup" merit signal in Pass 2 and is consumed by Pattern J (delete / archive of a parent entity that has restrict-children). The pattern matters because the platform refuses to delete a row that has live `reference + restrict` children; the calling agent must clean them up first, in dependency order, and a generic `use-semantius` `DELETE` will surface only a single per-row constraint failure rather than the full chain. Also note inbound `reference + cascade` and `reference + clear` rows separately; they don't trigger Pattern J but the SKILL.md preamble should still call out the cascade-delete / orphan-clear behavior for downstream awareness.
+- **Inbound-FK delete-mode index).** Walk the §4 relationship table once more and build a `restrict_inbound` index per entity: for every row whose `Kind` is `reference` and `Delete` is `restrict`, record `(child_entity, fk_field)` against the *target* (the entity on the right side of the relationship). This index drives the new "Restrict-chained cleanup" merit signal in Pass 2 and is consumed by Pattern J (delete / archive of a parent entity that has restrict-children). The pattern matters because the platform refuses to delete a row that has live `reference + restrict` children; the calling agent must clean them up first, in dependency order, and a generic `use-semantius` `DELETE` will surface only a single per-row constraint failure rather than the full chain. Also note inbound `reference + cascade` and `reference + clear` rows separately; they don't trigger Pattern J but the SKILL.md preamble should still call out the cascade-delete / orphan-clear behavior for downstream awareness.
+
+- **Read-side rule indices).** Two new optional §3 sub-blocks per entity. Build one index for each; both stay opaque on the JsonLogic body and read only the human-readable metadata.
+  - **`row_visibility_rules`** — for every entity that declares a non-empty `Select rule` sub-block, record `(entity, jsonlogic_object, description?)`. `description` is the entity-level prose that explains "what the rule restricts" — if the analyst didn't write one, walk §3 prose for a sentence that names the per-row predicate (e.g. *"a note is visible to its author, or to anyone when its `visibility` field is `public`"*). Surface a defect to the user if neither the sub-block carries a `description` nor §3 prose names the scope; the SKILL.md preamble and per-JTBD guardrails need readable scope text. **Critical (v2.2): the rule applies uniformly to every caller with `view_permission`.** The platform evaluates the JsonLogic body per row with `$today` / `$now` / `$user_id` as reserved variables; there is no documented mechanism by which holding a specific permission causes the rule to be skipped for that caller. If the analyst's model contains a §7 architectural decision naming a documented broadening mechanism (Stage 12 option C separate-entity surface, option D Postgres `BYPASSRLS` role attribute), record it under `row_visibility_broadening` keyed by entity so the SKILL.md preamble can name the actual mechanism the user resolved. **Never invent a "view_all bypass" the model file does not explicitly resolve in §7.** This index drives the **Row-level read scope** SKILL.md preamble (Step 5), the **Row-level read scope** cross-cutting guardrail attached to every read recipe against a scoped entity (Step 6 / Step 7), and a new severity row in Step 9 self-review.
+  - **`dynamic_input_types`** — for every `Input type rules` entry across every entity, record `(entity, field, jsonlogic_object, description?)`. The `description` field describes *when* the rule changes the field's UI mode — `"hidden until status=approved, then readonly"` is the canonical shape. Walk the JsonLogic body literally (string-match only, same posture as `require_permission` / `value_changed`) for one pattern that bears on JTBD shaping: a return value of `"required"` triggered by a sibling-field comparison (e.g. `status=approved → "required"`) flags the field as a **conditional-required side-effect** on the same transition, which co-fires with Pattern A's side-effect-fields-on-transition merit signal. Record those into a sub-index `conditional_required_fields` keyed by `(entity, trigger_field, trigger_value, dependent_field)`. This index drives the **Conditional field UI states** SKILL.md preamble (Step 5), additional side-effect-fields-on-transition coverage in Pattern A recipes (Step 6 / Step 7), and a new severity row in Step 9 self-review.
+
+  Skip both indices entirely when the model declares no entity-level `Select rule` and no field-level `Input type rules`. v2.1 and earlier files have neither.
 
 Compute `modelslug = system_slug.replace(/_/g, "-")`.
 
@@ -235,7 +243,7 @@ non-trivial transition (more than a status flip) is a candidate. Pure
 status flips with no side effects collapse into the entity's primary
 lifecycle JTBD.
 
-**Sub-shape: approval / sign-off / workflow gate (analyst v1.11+, broadened in v1.12).** Any
+**Sub-shape: approval / sign-off / workflow gate), broadened in v1.12).** Any
 transition whose `validation_rules` entry invokes `{"require_permission":
 "..."}` (look up the entity's `conditional_permissions` index from Step
 2) is automatically a strong JTBD candidate. The agent calling this
@@ -257,17 +265,19 @@ The sub-shape covers three distinct trigger fields, all flagged the
 same way once `value_changed` + `require_permission` co-occur in the
 rule body:
 
-1. **Status-transition gates** (analyst v1.11): `value_changed: "status"` →
+1. **Status-transition gates**: `value_changed: "status"` →
    one of `approved` / `signed` / `released` / etc. Recipe: confirm with
    the user, then PATCH `status`.
-2. **Submit-then-lock gates** (analyst v1.12): `value_changed:
+2. **Submit-then-lock gates**: `value_changed:
    "is_submitted"` (or `is_locked` / `is_final` / `is_complete`) → `true`.
    Recipe: confirm the user is the row's owner (or holds the override
    permission); compose the PATCH that flips the lock; after the flip,
    treat the row as immutable except via the override.
-3. **Closure / cancellation gates** (analyst v1.12): `value_changed: "status"` →
+3. **Closure / cancellation gates**: `value_changed: "status"` →
    one of `closed` / `cancelled` / `void` / `hired` (when §3 prose names
    weight). Same recipe shape as (1).
+
+**Sub-shape: housekeeping field appears on transition).** For each entry in the `conditional_required_fields` sub-index (built in Step 2 from `Input type rules`), the transition JTBD that fires the trigger condition must include the dependent field as a same-PATCH side-effect. Concretely: when `dynamic_input_types` says *"`offers.approved_at` hidden until status=`approved`, then readonly"*, the "approve offer" JTBD's PATCH body MUST set `approved_at = $now` in the same call as `status = "approved"` — the UI rule controls when the form renders the field, but a recipe that drives the transition through the API has no form to render and would silently leave `approved_at` empty. This is the same merit signal as the existing "Side-effect fields on transition" row (the `*_at` field that must be set in the same PATCH as the status flip), but the `input_type_rule` makes the pairing **mechanical and detectable** instead of relying on the analyst remembering to mention it in prose. Cross-reference with the entity's `validation_rules`: a paired family-5 conditional-required rule (server-side `must be non-null when status='approved'`) confirms the intent and gives the JTBD's Failure modes block the platform `code` to surface on bad writes. When the UI rule fires but no server-side family-5 rule exists, surface as a `platform_enforceable_gaps` entry of kind `validation_rule` (the UI says the field must be set; the server doesn't enforce it; the recipe enforces it client-side as a stopgap).
 
 **Pattern B, Polymorphic action / event staging.**
 Shape test: entity named `*_actions`, `*_events`, `*_transactions`,
@@ -291,11 +301,13 @@ informational ("previous version of this row") with no operation that
 restructures the tree.
 
 **Pattern E, Ownership / sharing.**
-Shape test: `owner_*_id` field, sharing tables, multi-tenant scoping
-via a tenant FK on most entities. Candidates: transfer ownership of X,
-share X with, revoke access to X.
+Shape test: `owner_*_id` field, sharing tables. Candidates: transfer
+ownership of X, share X with, revoke access to X. (Multi-tenant
+scoping is not a Semantius concern: each customer organization runs
+its own Semantius deployment against its own database, so a single
+instance never holds rows for two different tenants.)
 
-**Sub-shape: owner-or-manager edit gate (analyst v1.11+).** Entity
+**Sub-shape: owner-or-manager edit gate).** Entity
 carries a `created_by` / `author_id` / `owner_id` / `assignee_id`
 field AND its `conditional_permissions` index includes a rule that
 references the owner field against `$user_id` plus an elevated
@@ -335,7 +347,7 @@ Shape test: 3+ entities joined by FKs and at least one numeric measure
 below, in this skill, reporting becomes a `## Common queries`
 appendix, not a JTBD section.
 
-**Pattern J, Restrict-chained cleanup (analyst v1.13+).**
+**Pattern J, Restrict-chained cleanup).**
 Shape test: an entity that appears as the *target* of at least one
 inbound `reference + restrict` FK from another entity in the model
 (read the `restrict_inbound` index from Step 2). The platform refuses
@@ -413,8 +425,10 @@ of the following:
 | **Materialization / handoff** | One entity row spawns rows in a different table (Pattern C). The order, FK back-pointers, and source-status flip are easy to get wrong. |
 | **Side-effect fields on transition** | `approved_at`, `committed_at`, `actual_release_date`, etc. that must be set in the same PATCH as the status flip, easy to forget. |
 | **Audit-trail read** | Audit-logged entity (`audit_log: true`) where "who/when changed X" is a likely user question. Worth a short recipe even though writes need no special handling. |
-| **Conditional-permission gate** (analyst v1.11+) | The entity's `conditional_permissions` index from Step 2 carries one or more entries (i.e. at least one `validation_rules` rule invokes `{"require_permission": "<code>"}`). Unlike the basic "DB-unguarded lifecycle gate" row, this signal is **never suppressed** by the platform-enforces-it rule, the platform enforces the *check* but the calling agent still owns the *workflow*: detecting that the caller lacks the permission before the write attempt (cheap UX win), surfacing the rule's `message` cleanly on the throw, and proposing the right escalation path (which role typically holds the permission, who to hand off to). One JTBD per `(entity, permission_code)` pair, or one combined JTBD per entity when several conditional gates share the same approver role. Cross-reference the §8 step 1 description for the permission to know what role typically holds it. |
-| **Restrict-chained cleanup** (analyst v1.13+) | The entity appears in at least one other entity's `restrict_inbound` index (i.e. is the target of at least one `reference + restrict` inbound FK). Pattern J fires. The recipe walks the dependency tree of restrict-children, naming each one and providing the find-and-delete query shape, then performs the parent delete. The merit signal is the chain itself: a generic `use-semantius` `DELETE` against the parent will surface only one row's constraint failure per attempt, never the full chain; the recipe makes the order explicit. |
+| **Conditional-permission gate** | The entity's `conditional_permissions` index from Step 2 carries one or more entries (i.e. at least one `validation_rules` rule invokes `{"require_permission": "<code>"}`). Unlike the basic "DB-unguarded lifecycle gate" row, this signal is **never suppressed** by the platform-enforces-it rule, the platform enforces the *check* but the calling agent still owns the *workflow*: detecting that the caller lacks the permission before the write attempt (cheap UX win), surfacing the rule's `message` cleanly on the throw, and proposing the right escalation path (which role typically holds the permission, who to hand off to). One JTBD per `(entity, permission_code)` pair, or one combined JTBD per entity when several conditional gates share the same approver role. Cross-reference the §8 step 1 description for the permission to know what role typically holds it. |
+| **Restrict-chained cleanup** | The entity appears in at least one other entity's `restrict_inbound` index (i.e. is the target of at least one `reference + restrict` inbound FK). Pattern J fires. The recipe walks the dependency tree of restrict-children, naming each one and providing the find-and-delete query shape, then performs the parent delete. The merit signal is the chain itself: a generic `use-semantius` `DELETE` against the parent will surface only one row's constraint failure per attempt, never the full chain; the recipe makes the order explicit. |
+| **Row-scoped read** | The entity appears in the `row_visibility_rules` index from Step 2 (i.e. carries a non-empty `Select rule`). Like the conditional-permission gate above, this signal is **never suppressed** — the platform filters rows from the result set, but the calling agent still owns the workflow of surfacing the limit to the user. **Critical (v2.2): the rule applies uniformly to every caller with `view_permission`.** A read recipe against a scoped entity must surface that as a uniform limit ("every caller sees only `<predicate>`"), not as a tiered limit. If the analyst's model has resolved an architectural-decision §7 entry that names a documented broadening mechanism (option C separate-entity surface, option D Postgres `BYPASSRLS` role), the recipe can name it as the path to broader access; otherwise the broader-access path is "talk to a user with that role" and the recipe says so. **Never invent a `view_all_<plural>` permission bypass.** The signal earns a section when the entity is a target of meaningful read recipes (list, search, look up by non-id) — those recipes need a preamble noting the scope. Pure write recipes on the entity (insert, update with the id already known) are not affected and don't need a separate JTBD; the cross-cutting **Row-level read scope** preamble in the SKILL.md body covers them. Entities whose only operations against them are writes-by-known-id get the preamble entry but no per-JTBD section. |
+| **Conditional field UI state** | The entity has at least one field in the `dynamic_input_types` index. By itself, this is **not** a merit signal that earns a section: an `input_type_rule` is UI control only, the platform doesn't gate writes on it, and recipes that POST/PATCH bypass the UI entirely. The exception is the `conditional_required_fields` sub-index (UI rules that go `default → required` on a transition): those compose with Pattern A's existing "Side-effect fields on transition" signal and the housekeeping-field-appears-on-transition sub-shape above, and earn coverage *inside* the transition JTBD that fires the trigger. Cross-cutting documentation of every `input_type_rule` lives in the **Conditional field UI states** SKILL.md preamble (Step 5), not in per-JTBD sections — same posture as **Platform-derived fields**. |
 
 > **Trap, the most common defect:** when a candidate's only merit
 > signal is **Computed field** and the field is in `computed_fields`,
@@ -819,7 +833,7 @@ baked into the generated files:
   entity, with the model's `message` and `description` intact.
   Defect on any add / remove / rename.
 - **SKILL.md "Platform-enforced permissions" preamble block**
-  (analyst v1.11+): must match the `conditional_permissions`
+ ): must match the `conditional_permissions`
   index built in Step 2 (i.e. every `validation_rules` rule whose
   JsonLogic invokes `{"require_permission": "<code>"}`). Every
   `(entity, rule_code, permission_code)` tuple in the index must
@@ -827,7 +841,7 @@ baked into the generated files:
   step 1 description of the permission. Defect on any add / remove
   / rename. Skip the section entirely when the index is empty.
 - **SKILL.md "Restrict-cleanup chains" preamble block**
-  (analyst v1.13+): must match the `restrict_inbound` index built
+ ): must match the `restrict_inbound` index built
   in Step 2. Every entity that is the target of at least one
   `reference + restrict` inbound FK must appear with its
   cleanup-children listed in dependency order. Drift signals: an
@@ -837,6 +851,46 @@ baked into the generated files:
   restrict-inbound row in the model that the preamble fails to
   list. Skip the section entirely when no entity has
   restrict-inbound edges.
+- **SKILL.md "Row-level read scope" preamble block**:
+  must match the `row_visibility_rules` index built in Step 2. Every
+  entity that declares a non-empty `Select rule` must appear with the
+  scope's plain-English gist (from the rule's `description`, the
+  entity's §3 prose, or a fallback paraphrase of the JsonLogic intent).
+  The gist must describe the **uniform per-row predicate** that the
+  platform applies to every caller with `view_permission`; it must NOT
+  promise a `view_all_<plural>` permission bypass unless the model
+  file's §7 architectural-decision entry explicitly resolves the
+  broadening mechanism (option C separate-entity surface, option D
+  Postgres `BYPASSRLS` role attribute) and the preamble names that
+  mechanism. **Drift signals (defects):** (a) an entity that the model
+  now declares with a new / removed / modified `Select rule` whose
+  preamble entry hasn't been regenerated; (b) **a preamble entry that
+  names a permission bypass the model file does not resolve in §7**
+  (the canonical v2.2 defect — the prose claims a bypass the platform
+  cannot honor); (c) a preamble entry whose gist describes a *tiered*
+  read pattern but whose underlying `Select rule` JsonLogic encodes a
+  uniform filter (drift between intent and rule). Skip the section
+  entirely when `row_visibility_rules` is empty.
+- **SKILL.md "Conditional field UI states" preamble block** (analyst
+  v2.2+): must match the `dynamic_input_types` index built in Step 2.
+  Every field that declares a non-empty `input_type_rule` must appear
+  with the rule's `description` (or the JsonLogic's plain-English
+  gist), grouped by entity. Drift signals: an `Input type rules` entry
+  that the model adds, removes, or whose trigger condition the model
+  rewrites without a matching preamble change; a preamble entry whose
+  field no longer exists in §3 (the analyst dropped the field but the
+  preamble lingers). Skip the section entirely when
+  `dynamic_input_types` is empty.
+- **Per-JTBD coverage of `conditional_required_fields`**:
+  for every entry in the `conditional_required_fields` sub-index built
+  in Step 2 (a field whose `input_type_rule` flips `default → required`
+  on a transition), the transition JTBD that fires the trigger
+  condition must include the dependent field in its PATCH body as a
+  side-effect of the trigger. A transition recipe that sets the trigger
+  field without the paired side-effect field is a drift defect — the
+  rule was added to the model after the recipe was written, or the
+  generator missed it. Severity: defect (regenerate the JTBD's
+  reference / script).
 - **SKILL.md "What this skill does NOT do" inlined §7.2 list**:
   must match the model's current §7.2 bullets. Defect on any add
   / remove / rename. (Bullets the user has paraphrased for
@@ -1033,7 +1087,7 @@ JTBD for the composition rule). Do not omit `*_label` from POST bodies.
 
 **Platform-derived fields** (set by the platform's per-entity
 `computed_fields` triggers on every INSERT/UPDATE; **never include in
-POST/PATCH bodies, the platform overwrites caller payloads**):
+POST/PATCH bodies, the platform overwrites caller payloads**:
 <list each `computed_fields[].name` from the model, grouped by table
 and one-line description copied from `computed_fields[].description`.
 Skip the section entirely when no entity in the model declares
@@ -1067,7 +1121,7 @@ section entirely when `conditional_permissions` is empty.>
 - `<table>` rule `<code>` requires `<permission_code>` (`<role-hint
   from §8>`): <message>. Why: <description, when present>.
 
-**Restrict-cleanup chains** (analyst v1.13+; inbound `reference + restrict`
+**Restrict-cleanup chains**; inbound `reference + restrict`
 FKs that block deletion of the target entity until children are
 explicitly cleaned up first. The calling agent attempting to delete a
 listed entity must walk the named children first, in the order given,
@@ -1083,6 +1137,63 @@ in the model has restrict-inbound FKs.>
 - Deleting `<table>` requires cleaning up first: `<child_table>` (via
   `<fk_field>`), `<child_table>` (via `<fk_field>`), … See the
   `delete-<table>` JTBD for the recipe.
+
+**Row-level read scope**; per-row visibility filters set on the
+entity via `select_rule`. The platform applies an RLS policy on every read.
+**Critical: the rule applies uniformly to every caller with `view_permission`** —
+the platform evaluates the JsonLogic body per row with `$today` / `$now` /
+`$user_id` as reserved variables; there is no documented mechanism by which
+holding a specific permission causes the rule to be skipped for that caller.
+Recipes against a scoped entity must surface the per-row predicate as a
+**uniform** limit, not a tiered one. If the model file's §7 carries an
+explicit architectural-decision entry naming a documented broadening
+mechanism (a separate cube view / entity surface admins read, or a
+Postgres role with `BYPASSRLS` provisioned outside Semantius), name that
+mechanism here so the recipe can route to it; otherwise the broader-access
+path is human escalation, not a magic permission grant.):
+<list each entity in the `row_visibility_rules` index from Step 2. For
+each entity, give the scope in plain English (from the rule's
+`description`, the entity's §3 prose, or a paraphrase). Name the
+documented broadening mechanism ONLY when the model file's §7 explicitly
+resolves it; otherwise omit the broadening line. Skip the section
+entirely when `row_visibility_rules` is empty.>
+
+- `<table>`: every caller with `view_permission` sees only rows where
+  <plain-English uniform predicate>. <Optional: "Broader read access for
+  `<role>` is provisioned via `<mechanism named in model §7>`" — include
+  only when the model's §7 names the mechanism.>
+
+> **Never write a line like "callers holding `<slug>:view_all_X` bypass the
+> filter".** That mechanism is not documented in the current Semantius
+> platform spec. A preamble that promises it generates recipes that look
+> right but silently leak access OR silently deny access (depending on
+> how the calling agent reasons). The audit catches this as the canonical
+> v2.2 defect.
+
+**Conditional field UI states**; per-field UI mode overrides
+set via `input_type_rule`. The platform evaluates the rule client-side at
+form-render time and overrides the field's static `input_type` for the
+current record. The rule does NOT gate writes — recipes that POST/PATCH
+the entity bypass the form entirely and can set any field at any
+time — but two patterns matter for recipe shape: (a) when a rule flips
+a field's effective mode to `required` on a sibling-field transition,
+the transition's recipe must set that field in the same PATCH (else the
+form would have rendered it `required` but the API call leaves it null);
+(b) when a rule flips a field's effective mode to `readonly` after a
+terminal state, recipes that update the entity after that state should
+not write the field. Cross-reference with `validation_rules` — when the
+server-side rule enforces the same invariant, the platform rejects the
+bad write with a structured `code` / `message`; surface that in the
+JTBD's Failure modes block):
+<list each field in the `dynamic_input_types` index from Step 2,
+grouped by entity. For each, name the field, the trigger gist (from the
+rule's `description` or the JsonLogic's plain-English summary), and the
+resulting effective `input_type`. Skip the section entirely when
+`dynamic_input_types` is empty.>
+
+- `<table>.<field>`: <trigger gist, e.g. "hidden until status=approved,
+  then readonly"> (paired server-side rule: `<validation_rules.code>` —
+  or *"no paired server-side rule; UI-only behavior"*).
 
 ---
 
@@ -1401,6 +1512,65 @@ When you bake a recipe, **resolve every reference**:
 - **1:1 / unique constraints**, flag in **Failure modes** with the
   exact 409 condition *and* the recovery action (PATCH the existing row,
   pick a different parent, etc.).
+- **Row-scoped reads (`select_rule`)**, the platform
+  filters rows from every read of a scoped entity via an RLS policy.
+  **The rule applies uniformly to every caller with `view_permission`.**
+  Three recipe shapes apply:
+  - *Read recipes against a scoped entity* lead with a one-sentence
+    visibility callout pulled from the **Row-level read scope** preamble
+    ("every caller with `view_permission` sees only rows where `<plain-
+    English predicate>`; rows outside the predicate are filtered out at
+    the RLS layer regardless of the caller's role"). Recipes that
+    *enumerate* the entity to make a decision ("are there any open
+    tickets?") need this callout most loudly — a missing row is
+    indistinguishable from no-such-row, and a recipe that concludes
+    "no open tickets exist" from an empty result is wrong when the
+    caller is scoped.
+  - *Broader-access path (when the model's §7 resolves a mechanism).*
+    If the **Row-level read scope** preamble named a documented
+    broadening mechanism (separate cube view / entity surface, or a
+    Postgres `BYPASSRLS` role attribute), the recipe's "you might want
+    more" block names that mechanism and how the caller routes to it.
+    The recipe does not auto-elevate; it proposes the route and lets
+    the caller decide. **If the preamble did NOT name a mechanism, the
+    recipe says so plainly: "broader read access for this entity is
+    not provisioned in this catalog; escalate to a user who holds the
+    role with broader access" — and never invents a "grant yourself
+    `<slug>:view_all_X`" hand-off.**
+  - *No client-side re-encoding of the rule.* Recipes must not duplicate
+    the `select_rule` JsonLogic in their own filter (e.g. wiring
+    `submitter_user_id=eq.$user_id` into the GET path "to be safe"). The
+    platform applies the rule; client-side duplication is redundant and
+    breaks if the model's rule changes between regenerations. The
+    correct posture is: read with the natural query; the platform
+    filters; surface the visibility limit to the user via the preamble
+    callout.
+- **Conditional UI states (`input_type_rule`)**, the
+  platform overrides a field's effective `input_type` at form render
+  per-record. Recipes that POST/PATCH bypass the form and are not gated
+  by the rule, but two patterns matter:
+  - *Conditional-required side-effect.* For every entry in the
+    `conditional_required_fields` sub-index (a rule that flips
+    `default → required` on a transition), the JTBD that performs the
+    triggering transition must set the dependent field in the same
+    PATCH. The `dynamic_input_types` index gives the trigger and the
+    dependent; the JTBD's Recipe block makes the PATCH explicit ("set
+    `status=approved` AND `approved_at=$now` in one call"). When a
+    paired `validation_rules` family-5 entry exists, name its `code` in
+    the Failure modes block as the platform's enforcement-side counterpart.
+  - *Post-terminal lock.* For every rule that flips a field to
+    `readonly` after a terminal state, recipes that *update* the entity
+    after that state should drop the locked field from their PATCH body.
+    The platform doesn't enforce this server-side via `input_type_rule`,
+    so the recipe is what keeps it consistent with the UI; if a paired
+    server-side rule exists (a Stage 8 family-10 state-transition rule
+    typically), surface its `code` in Failure modes.
+  - *No re-derivation of the rule's effective value.* Recipes must not
+    attempt to compute the field's UI mode client-side and branch on
+    it — the rule is for the form, not for the recipe. A recipe that
+    reads `status` and decides whether to include `approved_at` in the
+    body should do so based on the **JTBD's own transition semantics**
+    (which it owns), not by interpreting the `input_type_rule` JsonLogic.
 - **Cube queries in the appendix**, always lead with
   `cube discover '{}'` and tell the calling agent to *map* the
   appendix's measure/dimension names against discover's output. Cube
@@ -1732,9 +1902,19 @@ echo "<op-slug>: ok"
   modes, then the detail explains them.
 - **Validate args before any platform call.** Print usage to stderr,
   exit 1. The agent reads stderr to recover.
-- **Exit codes are part of the contract.** 0 = ok, 1 = bad inputs,
-  2 = platform error. Don't invent more codes; the agent only
-  branches on these three.
+- **Exit codes are part of the contract.** The recipe script's own
+  exit codes are: 0 = ok, 1 = bad inputs or unresolved/ambiguous
+  lookup, 2 = platform error. The agent only branches on these
+  three; do not invent more for the script layer.
+  The underlying `semantius` CLI carries finer-grained signal —
+  `1` (bad args / `--single` zero rows), `2` (`--single` ≥2 rows),
+  `3` (network / transport, transient and retryable), `4` (tool
+  execution failed: RLS, dup key, schema, validation rule), `5`
+  (auth failure, permanent) — but the script collapses platform
+  failures into its own `2` and lets stderr carry the specifics.
+  The diagnostic string must name *which step* failed (e.g.
+  `step 3 (sweep <child>) failed`) and surface any platform
+  `validation_rules` error verbatim so the agent can recover.
 - **Failure messages name the failed step.** `step 3 (sweep
   <child>) failed` is recoverable; `error` is not.
 - **Surface platform `validation_rules` errors verbatim, never
@@ -2489,6 +2669,64 @@ skill should follow the same patterns so it composes cleanly.
   Failure modes block to name the platform `code` and the recovery
   action instead. Duplicated checks are brittle and confuse the agent
   about who owns the rule.
+- **No recipe duplicates a `select_rule` in its own filter** (analyst
+  v2.2+). Walk every GET path against an entity that appears in the
+  `row_visibility_rules` index. If the path adds a filter that
+  re-encodes the rule (e.g. `submitter_user_id=eq.$user_id` against an
+  entity whose `select_rule` already filters on the same column), drop
+  the duplicate filter. The platform applies the rule via RLS; the
+  client-side duplication is dead code that breaks the moment the
+  analyst updates the rule. Recipes against a scoped entity should
+  read with the natural query and let the platform filter; the
+  user-facing scope reminder lives in the JTBD preamble (sourced from
+  the SKILL.md "Row-level read scope" block).
+- **Every read recipe against a row-scoped entity carries a visibility
+  callout**. For every JTBD whose Recipe reads an
+  entity that appears in the `row_visibility_rules` index, the JTBD's
+  preamble or Inputs block must contain a one-sentence scope reminder
+  ("every caller with `view_permission` sees only rows where `<plain-
+  English uniform predicate>`"). A read recipe on a scoped entity
+  without that reminder is the silent-empty-result defect: a missing
+  row is indistinguishable from no-such-row, and the agent (or the
+  user) draws the wrong conclusion. Pull the scope sentence from the
+  SKILL.md "Row-level read scope" preamble.
+- **No recipe promises a `view_all_<plural>`-style permission bypass**
+ ) critical rule). Walk every preamble line, every JTBD
+  visibility callout, every Failure-modes block. If any prose names a
+  permission code as a way to "see every row" / "bypass the filter" /
+  "broader read access" / "elevated tier" / similar, the corresponding
+  `Select rule` JsonLogic must literally reference that permission code
+  via `{"require_permission": "<code>"}` or an equivalent platform
+  operator AND the model's §7 must resolve the architectural decision.
+  A prose claim about permission bypass with no JsonLogic reference
+  and no §7 entry is the **canonical v2.2 defect** the audit exists to
+  catch — the prose promises something the platform does not honor,
+  and the calling agent ships with broken RBAC. Fix by either deleting
+  the bypass prose (rule applies uniformly; broader access goes through
+  human escalation), pointing at a real documented mechanism from §7,
+  or routing the user back to `semantic-model-analyst` to resolve
+  Stage 12 / Stage 12.5 properly.
+- **Every transition JTBD that fires a `conditional_required_fields`
+  trigger writes the dependent field in the same PATCH** (analyst
+  v2.2+). Walk the `conditional_required_fields` sub-index from Step 2.
+  For every `(entity, trigger_field, trigger_value, dependent_field)`
+  tuple, find the JTBD whose Recipe PATCHes the trigger field to the
+  trigger value. The Recipe body must include the dependent field in
+  the same PATCH body. A transition that sets the trigger without the
+  dependent is the silent-empty-housekeeping-field defect — the UI
+  would have rendered `dependent_field` as `required` at form time, but
+  the API recipe has no form. Fix: add the dependent to the PATCH
+  body with the correct value (typically `$now` for `*_at` fields,
+  `$user_id` for `*_by` fields).
+- **No recipe interprets the JsonLogic of an `input_type_rule`** (analyst
+  v2.2+). The rule is for the form-rendering layer, not for the recipe.
+  Recipes drive their transition semantics from the JTBD's own intent
+  (the analyst's prose, the `validation_rules`, the trigger condition
+  captured in `conditional_required_fields`), not by re-evaluating the
+  `input_type_rule` body. A recipe with a branch like *"check whether
+  `input_type_rule` would have rendered this field as `hidden` for the
+  current record"* is wrong — drop the branch, let the recipe's own
+  preconditions decide.
 
 If a new platform convention shows up in the use-semantius references
 that this list doesn't mention, treat the principle ("match the

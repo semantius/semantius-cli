@@ -210,9 +210,21 @@ contract:
 | Exactly one row | 0 | `{"id":"...", ...}` (bare object, **not** an array) |
 | Zero rows | 1 | error on stderr |
 | Two or more rows | 2 | error on stderr |
-| Bad args, missing config | 1 | error message on stderr |
-| Server / tool error | 2 | error message on stderr |
-| Network error | 3 | error message on stderr |
+| Bad args / config / JSON | 1 | error message on stderr |
+| Network / transport (transient, retryable) | 3 | error message on stderr |
+| Tool execution failed (RLS, dup key, schema) | 4 | error message on stderr |
+| Auth failure (missing/invalid API key, 401, 403) | 5 | error message on stderr |
+
+Note that exit `1` covers two distinct cases — "zero rows" and "bad
+args". For a well-formed script in steady-state, only the zero-rows
+meaning fires at runtime, so the canonical guard ("not found or
+ambiguous") is unambiguous; a bad-args 1 indicates a recipe bug and
+should never reach end users.
+
+Exit `3` and `5` are split deliberately: `3` is transient (retry
+once or twice), `5` is permanent (surface to the user immediately so
+they can fix credentials). A recipe that branches on these can do
+`case $? in 3) retry ;; 5) abort ;; esac` without parsing stderr.
 
 The exit code now carries the not-found case directly. The
 canonical script pattern collapses to one guard:
@@ -241,9 +253,10 @@ the agent has to inspect the body to know what came back.
 |---|---|---|---|
 | Row(s) found | 0 | `[{...}, ...]` | Use the row(s) |
 | No rows found | 0 | `[]` | The dedupe/list answer is "none"; act accordingly |
-| Bad args, missing config | 1 | error message on stderr | Fix args; do not retry |
-| Server / tool error | 2 | error message on stderr | Surface to user; usually a real bug |
-| Network error | 3 | error message on stderr | Retry once, then surface |
+| Bad args / config / JSON | 1 | error message on stderr | Fix args; do not retry |
+| Network / transport (transient) | 3 | error message on stderr | Retry once or twice, then surface |
+| Tool execution failed (RLS, dup key, schema) | 4 | error message on stderr | Surface to user; usually a real bug or a write conflict |
+| Auth failure (missing/invalid API key, 401, 403) | 5 | error message on stderr | Abort and surface to user; do not retry |
 
 The canonical pattern for an array read whose business
 interpretation depends on emptiness:

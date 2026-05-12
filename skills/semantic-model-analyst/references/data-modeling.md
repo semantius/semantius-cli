@@ -282,6 +282,93 @@ semantius call crud create_entity '{
 
 Both arrays default to `[]` and may be omitted entirely. `update_entity` **replaces**, not merges, the arrays — to remove a rule send the new full array; to drop all rules send `[]`.
 
+### Row-level read access via `select_rule` (entity-level JsonLogic)
+
+Every entity also carries an optional `select_rule` property — a single JsonLogic *object* (not an array) that, when non-empty, drives a `FOR SELECT` row-level security policy on the underlying table. It is the read-side analog of `validation_rules`: instead of a per-row truthy check on writes, it is a per-row truthy check on every read.
+
+| Property | Type | Default | Purpose |
+|---|---|---|---|
+| `select_rule` | `object` (JsonLogic) | `{}` | Per-row predicate that must evaluate truthy for the row to be visible to the caller. Evaluated by the platform's RLS policy on every `SELECT`. |
+
+**Storage and lifecycle.** JSONB object, NOT NULL, default `'{}'::jsonb`; the platform's `select_rule_is_object` constraint rejects anything that isn't a JSON object. When the rule is non-empty, the platform generates a `FOR SELECT` RLS policy function for the table; when the rule is reset to `{}` or the entity is deleted, the policy is dropped.
+
+**Return contract.** The expression must return a **boolean**:
+
+- `true` — the row is visible to the current caller.
+- `false` — the row is filtered out of the result set (the caller sees neither the row nor its existence; FK joins from other tables that surface the row hit the same gate).
+
+A non-boolean result is treated as falsy. The rule fails closed (rows hide), which is the safer direction, but a non-boolean result indicates an authoring bug and should be corrected.
+
+**Reserved variables.** Same vocabulary as `computed_fields` / `validation_rules`: `$today`, `$now`, `$user_id` are server-injected; `$old` is not meaningful in a select context (no prior row to compare against) and should not be referenced.
+
+**Relationship to `view_permission`.** Both apply, layered.
+
+- `view_permission` is the **coarse table-level gate** ("does the caller have read access to this entity at all?"). A caller without `view_permission` sees nothing regardless of `select_rule`.
+- `select_rule` is the **per-row filter** layered on top. A caller with `view_permission` still sees only rows where `select_rule` evaluates truthy.
+
+The split is the right shape for the common pattern: every operational user has `view_permission` on the entity (so the entity is listed in their UI), and `select_rule` then narrows the per-user result set to "rows that belong to me / are visible to my tier". **Critical: `select_rule` applies uniformly to every caller with `view_permission`.** The platform evaluates the JsonLogic body per row with `$today` / `$now` / `$user_id` as reserved variables; there is no documented mechanism by which holding a specific permission causes the rule to be skipped for that caller. **Tiered visibility ("manager sees more than recruiter") cannot be encoded inside a single `select_rule`.** When the design wants a broader audience for some roles, the broadening goes through one of: (option B) a column on the row whose value the broader-audience predicate reads, (option C) a separate cube view / entity surface for the broader audience, (option D) a Postgres role with `BYPASSRLS` provisioned outside Semantius. The analyst surfaces this as a §7.1 architectural decision and the user picks; the `select_rule` body itself never promises a permission bypass it cannot implement.
+
+**Performance.** Evaluated on every read of every row of this entity. Keep the expression simple: direct column comparisons, `$user_id` matches, enum / boolean checks. Avoid deeply nested arithmetic. Cross-row lookups and FK traversals are not available and would not scale.
+
+**Example — owner-or-public visibility:**
+
+```json
+{
+  "or": [
+    { "==": [{ "var": "owner_id" }, { "var": "$user_id" }] },
+    { "==": [{ "var": "visibility" }, "public" ] }
+  ]
+}
+```
+
+The caller sees a row when they own it OR when the row is marked public.
+
+**Example — case-management shape (uniform per-row filter).** Tickets are visible to their submitter, their assignee, and every caller with `view_permission` when unassigned:
+
+```json
+{
+  "or": [
+    { "==": [{ "var": "submitter_user_id" }, { "var": "$user_id" }] },
+    { "==": [{ "var": "assignee_user_id" }, { "var": "$user_id" }] },
+    { "==": [{ "var": "assignee_user_id" }, null] }
+  ]
+}
+```
+
+**This rule applies uniformly to every caller with `view_permission`** — including managers. A manager calling the API sees only the tickets they submitted, are assigned to, or that are unassigned. If the design wants managers to see every ticket regardless, that is a **§7.1 architectural decision**, not something the rule can encode. The four options the analyst surfaces to the user:
+
+- **A. Accept the uniform filter.** Managers query the same data the rule allows; "see all tickets" becomes a cube view or a different reporting surface.
+- **B. Encode broadening in a column.** Add a `visibility` enum with a `team` value; the rule reads it (`visibility==team OR submitter==$user OR assignee==$user`). Author-controlled, per-row, no permission bypass involved.
+- **C. Separate entity / cube view.** Managers read tickets through `manager_ticket_overview` (a cube view exposing all tickets), not through the `tickets` entity directly. The view has its own `view_permission` granted only to manager roles.
+- **D. Postgres `BYPASSRLS` role.** A specific Postgres role (often the one Semantius provisions for `<slug>:admin` holders) is configured with the `BYPASSRLS` attribute and skips the RLS policy entirely. Requires platform / DBA confirmation that the role attribute is set; analyst NEVER assumes it without explicit user sign-off.
+
+**Never write a rule that promises a `<slug>:view_all_<plural>` permission bypass without one of these mechanisms being explicitly resolved.** The platform does not honor permission-based bypass of `select_rule` as a documented feature; the rule's JsonLogic is the only thing the platform evaluates per row, and a prose claim that the bypass exists does not make the platform implement it.
+
+**Setting and removing.**
+
+```bash
+semantius call crud update_entity '{
+  "table_name": "tickets",
+  "data": {
+    "select_rule": {
+      "or": [
+        { "==": [{ "var": "submitter_user_id" }, { "var": "$user_id" }] },
+        { "==": [{ "var": "assignee_user_id" }, { "var": "$user_id" }] },
+        { "==": [{ "var": "assignee_user_id" }, null] }
+      ]
+    }
+  }
+}'
+
+# Remove and drop the generated RLS policy function:
+semantius call crud update_entity '{
+  "table_name": "tickets",
+  "data": { "select_rule": {} }
+}'
+```
+
+**Risk.** Adding a `select_rule` to an entity that previously had none is **medium-risk** (read access pattern changes; rows that callers used to see suddenly disappear). Always warn the user, name the roles/users that should still see everything, and confirm rollout. Modifying or removing is also medium-risk (visibility change can surprise downstream consumers, dashboards, integrations).
+
 ---
 
 ## Fields
@@ -331,6 +418,75 @@ Heuristic: field names like `*_name`, `*_title`, `*_label`, `*_code`, `email_add
 | `readonly` | Displayed but not editable, **never import into this** |
 | `disabled` | Greyed out, not editable |
 | `hidden` | Not shown in forms |
+
+### Dynamic `input_type` via `input_type_rule` (field-level JsonLogic)
+
+Every field carries an optional `input_type_rule` — a JsonLogic *object* (not an array) that overrides the static `input_type` per-record at form-render time. It is the read-side analog of `computed_fields` for UI shape: instead of deriving a stored value on write, it derives the field's visible mode on read.
+
+| Property | Type | Default | Purpose |
+|---|---|---|---|
+| `input_type_rule` | `object` (JsonLogic) | `{}` | Per-record predicate that returns the effective `input_type` for this field in the current record. Evaluated client-side at form render. |
+
+**Storage.** JSONB object, NOT NULL, default `'{}'::jsonb`. The static `input_type` column is still the declared baseline; `input_type_rule` is the dynamic override.
+
+**Return contract.** The expression must return **one of the valid `input_type` enum values**: `"default"`, `"required"`, `"readonly"`, `"disabled"`, `"hidden"`. The returned value replaces the static `input_type` for this field when the form renders the current record.
+
+**Fallback.** If the rule is empty (`{}`), if the expression throws, or if it returns a value outside the enum, the static `input_type` is used. Fail-open in the UI-mode sense: a malformed rule degrades to the declared baseline rather than unexpectedly hiding or locking the field.
+
+**Where it runs.** Evaluated **client-side against the current form record** at render time. Server-side reads and writes still respect the field's actual nullability and validation rules — `input_type_rule` is purely a UI control. A field rendered `hidden` is still writable via API; a field rendered `readonly` is still mutable via API. Anything that must be enforced server-side belongs in `validation_rules`, not `input_type_rule`.
+
+**Reserved variables** (where the client supplies them): `$today`, `$now`, `$user_id`. `$old` is not meaningful in the client render context.
+
+**Example — lock `approved_at` once the record is approved:**
+
+```json
+{
+  "if": [
+    { "==": [{ "var": "status" }, "approved"] },
+    "readonly",
+    "default"
+  ]
+}
+```
+
+**Example — show `approved_at` only when the record is being approved.** The "housekeeping field appears at the right moment" pattern: starts hidden, surfaces as editable when the user moves the record into `approved`, locks readonly after save. The simplest two-state expression (always works, no `$old` dependency):
+
+```json
+{
+  "if": [
+    { "==": [{ "var": "status" }, "approved"] },
+    "readonly",
+    "hidden"
+  ]
+}
+```
+
+Pair this with a `validation_rules` entry on the server side that requires `approved_at` to be non-null whenever `status` is `approved`; together they give the analyst both the "field appears at the right time" UX and the "the field is actually populated" data invariant.
+
+**Setting and removing.**
+
+```bash
+semantius call crud update_field '{
+  "id": "tickets.approved_at",
+  "data": {
+    "input_type_rule": {
+      "if": [
+        { "==": [{ "var": "status" }, "approved"] },
+        "readonly",
+        "default"
+      ]
+    }
+  }
+}'
+
+# Remove and revert to the static input_type:
+semantius call crud update_field '{
+  "id": "tickets.approved_at",
+  "data": { "input_type_rule": {} }
+}'
+```
+
+**Risk.** Adding an `input_type_rule` is **low-risk** (UI behavior only, no data effect, fails open). Modifying or removing one is **medium-risk** in the UX sense (forms suddenly show, hide, or unlock a field mid-workflow); coordinate the change with whoever owns the forms.
 
 ### `unique_value`
 
@@ -553,12 +709,15 @@ semantius call crud create_field '{"data": {"table_name": "product_tags", "field
 - Add `searchable: true` to fields
 - Create new entities in new or existing modules
 - Add new permissions/roles/assignments
+- Add a new `input_type_rule` to a field (pure UI behavior, fails open)
 
 ### ⚠️ Medium-Risk (warn user first)
 - Changing `reference_delete_mode`
 - Adding `view_permission`/`edit_permission` to previously open entities
 - Changing `enum_values`
 - Adding `unique_value: true` to an existing field (fails if duplicates exist)
+- Adding, modifying, or removing a `select_rule` on an entity (changes read visibility; rows may suddenly disappear or reappear for current users)
+- Modifying or removing an existing `input_type_rule` (forms suddenly show, hide, or unlock a field mid-workflow)
 
 ### 🛑 High-Risk (require explicit confirmation)
 - Renaming `table_name` or `field_name`, breaks all references
