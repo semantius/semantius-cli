@@ -12,6 +12,7 @@ import {
 import {
   ErrorCode,
   formatCliError,
+  isAuthErrorMessage,
   serverConnectionError,
   toolNotFoundError,
 } from '../errors.js';
@@ -62,12 +63,13 @@ export async function infoCommand(options: InfoOptions): Promise<void> {
   try {
     connection = await getConnection(serverName, serverConfig);
   } catch (error) {
-    console.error(
-      formatCliError(
-        serverConnectionError(serverName, (error as Error).message),
-      ),
+    const message = (error as Error).message;
+    console.error(formatCliError(serverConnectionError(serverName, message)));
+    process.exit(
+      isAuthErrorMessage(message)
+        ? ErrorCode.AUTH_ERROR
+        : ErrorCode.NETWORK_ERROR,
     );
-    process.exit(ErrorCode.NETWORK_ERROR);
   }
 
   try {

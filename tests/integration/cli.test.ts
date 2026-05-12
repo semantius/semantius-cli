@@ -562,4 +562,60 @@ describe('--single flag Integration Tests', () => {
     expect(Array.isArray(normalParsed)).toBe(true);
     expect(singleParsed.id).toBe(normalParsed[0].id);
   });
+
+  test('--single unwraps postgrestRequest envelope to just the row', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    const result = await runCli([
+      '--single',
+      'call', 'crud', 'postgrestRequest',
+      JSON.stringify({ method: 'GET', path: '/modules?id=eq.1001' }),
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    // Should be the row directly, not { request, response: { data: {...} } }
+    expect(parsed).not.toHaveProperty('request');
+    expect(parsed).not.toHaveProperty('response');
+    expect(parsed).toMatchObject({ id: 1001 });
+  });
+
+  test('--single --diag returns the full envelope', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    const result = await runCli([
+      '--single', '--diag',
+      'call', 'crud', 'postgrestRequest',
+      JSON.stringify({ method: 'GET', path: '/modules?id=eq.1001' }),
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toHaveProperty('request');
+    expect(parsed).toHaveProperty('response');
+    expect((parsed.response as { data: { id: number } }).data.id).toBe(1001);
+  });
+
+  test('--single surfaces real server errors instead of MULTIPLE_ROWS', async () => {
+    if (!serverReachable) {
+      console.log('Skipping: CRUD server not reachable');
+      return;
+    }
+    // Hitting a non-existent table triggers a PostgREST schema-cache error
+    // (PGRST205) — not a row-count error. The CLI must report the real cause,
+    // not misclassify it as SINGLE_MULTIPLE_ROWS.
+    const result = await runCli([
+      '--single',
+      'call', 'crud', 'postgrestRequest',
+      JSON.stringify({ method: 'GET', path: '/__definitely_not_a_table__' }),
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).not.toContain('SINGLE_MULTIPLE_ROWS');
+    expect(result.stderr).toMatch(/PGRST205|schema cache|not.*table/i);
+  });
 });

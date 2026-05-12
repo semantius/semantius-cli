@@ -53,7 +53,7 @@ describe('Startup env variable validation', () => {
       SEMANTIUS_ORG: 'test-org',
       // SEMANTIUS_API_KEY intentionally omitted
     });
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(5); // AUTH_ERROR
     expect(result.stderr).toContain('MISSING_ENV_VAR');
     expect(result.stderr).toContain('SEMANTIUS_API_KEY');
   });
@@ -63,7 +63,7 @@ describe('Startup env variable validation', () => {
       SEMANTIUS_API_KEY: 'test-api-key',
       // SEMANTIUS_ORG intentionally omitted
     });
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(1); // CLIENT_ERROR — ORG is config, not auth
     expect(result.stderr).toContain('MISSING_ENV_VAR');
     expect(result.stderr).toContain('SEMANTIUS_ORG');
   });
@@ -72,7 +72,7 @@ describe('Startup env variable validation', () => {
     const result = await runCliWithEnv(['grep', '*'], {
       // Both intentionally omitted
     });
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(5); // AUTH_ERROR wins when API key is missing
     expect(result.stderr).toContain('MISSING_ENV_VAR');
     expect(result.stderr).toContain('SEMANTIUS_API_KEY');
     expect(result.stderr).toContain('SEMANTIUS_ORG');
@@ -109,7 +109,7 @@ describe('Startup env variable validation', () => {
         PROD_ORG: 'test-org',
         // PROD_API_KEY intentionally omitted
       });
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(5); // AUTH_ERROR — missing API key
       expect(result.stderr).toContain('MISSING_ENV_VAR');
       expect(result.stderr).toContain('PROD_API_KEY');
       expect(result.stderr).not.toContain('SEMANTIUS_API_KEY');
@@ -149,7 +149,7 @@ describe('Startup env variable validation', () => {
         SEMANTIUS_ORG: 'test-org',
         // PROD_* intentionally not set
       });
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(5); // AUTH_ERROR — PROD_API_KEY is missing
       expect(result.stderr).toContain('MISSING_ENV_VAR');
     });
   });

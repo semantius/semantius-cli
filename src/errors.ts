@@ -8,13 +8,39 @@
  */
 
 /**
- * Error codes matching exit codes
+ * Error codes matching exit codes.
+ *
+ * Codes 1 and 2 also have a second meaning under `--single`:
+ *   1 = SINGLE_NO_ROWS, 2 = SINGLE_MULTIPLE_ROWS.
+ * SERVER_ERROR is therefore 4 (not 2) so a real tool failure under --single
+ * (RLS, duplicate key, etc.) isn't conflated with "2+ rows returned".
+ *
+ * NETWORK_ERROR (3) is reserved for transient/retryable transport problems
+ * (ECONNREFUSED, ETIMEDOUT, 5xx after retries). AUTH_ERROR (5) is the
+ * permanent-failure split: missing/invalid API key, 401, 403.
  */
 export enum ErrorCode {
   CLIENT_ERROR = 1, // Invalid arguments, config issues
-  SERVER_ERROR = 2, // Tool execution failed
-  NETWORK_ERROR = 3, // Connection failed
-  AUTH_ERROR = 4, // Authentication failed
+  NETWORK_ERROR = 3, // Transient transport failure (retryable)
+  SERVER_ERROR = 4, // Tool execution failed (RLS, dup key, schema errors)
+  AUTH_ERROR = 5, // Missing/invalid API key, 401, 403 (permanent)
+}
+
+/**
+ * Detect auth-style failures in an error message so we can exit with
+ * AUTH_ERROR instead of NETWORK_ERROR. Looks for HTTP 401/403, common phrases
+ * ("Unauthorized", "Forbidden"), and the upstream MCP server's literal
+ * "Invalid API key" response.
+ */
+export function isAuthErrorMessage(message: string | undefined): boolean {
+  if (!message) return false;
+  if (/\b(401|403)\b/.test(message)) return true;
+  if (/\b(unauthorized|forbidden)\b/i.test(message)) return true;
+  if (/\binvalid\s+api[\s_-]*key\b/i.test(message)) return true;
+  if (/\bmissing\s+api[\s_-]*key\b/i.test(message)) return true;
+  if (/\bauthentication\s+(failed|required|error)\b/i.test(message))
+    return true;
+  return false;
 }
 
 /**

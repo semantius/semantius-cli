@@ -24,6 +24,7 @@ import {
   formatCliError,
   invalidJsonArgsError,
   invalidTargetError,
+  isAuthErrorMessage,
   serverConnectionError,
   toolExecutionError,
   toolNotFoundError,
@@ -105,17 +106,24 @@ async function parseArgs(
   }
 }
 
-// Exit codes for --single mode
+// Exit codes for --single row-count outcomes.
+// SERVER_ERROR was moved to 4 so a real tool failure under --single isn't
+// indistinguishable from "2+ rows returned".
 const SINGLE_NO_ROWS = 1;
 const SINGLE_MULTIPLE_ROWS = 2;
 
 /**
- * Handle --single response: extract text, detect 0-row and multi-row cases.
- * Exits the process directly with the appropriate code.
+ * Handle --single response: unwrap the postgrestRequest envelope when present,
+ * extract the single row, and detect 0-row / multi-row / error cases. Exits the
+ * process directly with the appropriate code.
+ *
+ * In --diag mode, prints the full envelope/raw JSON (or the raw error result)
+ * instead of just the extracted row, so callers can still inspect everything.
  */
 async function handleSingleResult(
   result: unknown,
   connection: McpConnection,
+  diag: boolean,
 ): Promise<void> {
   const r = result as {
     content?: Array<{ type: string; text?: string }>;
@@ -131,28 +139,77 @@ async function handleSingleResult(
   }
 
   if (r.isError) {
-    // Server signalled an error — distinguish 0 vs 2+ rows by message content
-    const isZeroRows = /\b0\s+rows?\b/i.test(text);
-    if (isZeroRows) {
+    if (diag) {
+      console.log(JSON.stringify(result, null, 2));
+    }
+    // PostgREST signals "no row" through the singular-object accept header with
+    // phrasing like "contains 0 rows". Treat that as SINGLE_NO_ROWS; surface
+    // every other server error verbatim and exit with SERVER_ERROR so the real
+    // cause (RLS, unique violation, etc.) isn't masked as MULTIPLE_ROWS.
+    if (/\b0\s+rows?\b/i.test(text)) {
+      console.error(
+        `Error [SINGLE_NO_ROWS]: ${text || 'Query returned 0 rows'}`,
+      );
+      await safeClose(connection.close);
+      process.exit(SINGLE_NO_ROWS);
+    }
+    console.error(/^error\b/i.test(text) ? text : `Error: ${text}`);
+    await safeClose(connection.close);
+    process.exit(ErrorCode.SERVER_ERROR);
+  }
+
+  // Try to JSON-parse the text so we can unwrap envelopes and detect empty results.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Non-JSON payload — print as-is.
+    console.log(text);
+    return;
+  }
+
+  // Unwrap the postgrestRequest envelope: { request, response: { data, ... } }
+  let data: unknown = parsed;
+  if (
+    parsed !== null &&
+    typeof parsed === 'object' &&
+    (parsed as Record<string, unknown>).response !== null &&
+    typeof (parsed as Record<string, unknown>).response === 'object' &&
+    'data' in
+      ((parsed as Record<string, unknown>).response as Record<string, unknown>)
+  ) {
+    data = (
+      (parsed as Record<string, unknown>).response as Record<string, unknown>
+    ).data;
+  }
+
+  // Detect empty results from tools that don't set isError (null or []).
+  if (data === null) {
+    console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
+    await safeClose(connection.close);
+    process.exit(SINGLE_NO_ROWS);
+  }
+  if (Array.isArray(data)) {
+    if (data.length === 0) {
       console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
       await safeClose(connection.close);
       process.exit(SINGLE_NO_ROWS);
-    } else {
+    }
+    if (data.length > 1) {
       console.error(
         'Error [SINGLE_MULTIPLE_ROWS]: Query returned multiple rows',
       );
       await safeClose(connection.close);
       process.exit(SINGLE_MULTIPLE_ROWS);
     }
+    data = data[0];
   }
 
-  if (text === 'null') {
-    console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
-    await safeClose(connection.close);
-    process.exit(SINGLE_NO_ROWS);
+  if (diag) {
+    console.log(JSON.stringify(parsed, null, 2));
+  } else {
+    console.log(JSON.stringify(data, null, 2));
   }
-
-  console.log(text);
 }
 
 /**
@@ -207,12 +264,13 @@ export async function callCommand(options: CallOptions): Promise<void> {
   try {
     connection = await getConnection(serverName, serverConfig);
   } catch (error) {
-    console.error(
-      formatCliError(
-        serverConnectionError(serverName, (error as Error).message),
-      ),
+    const message = (error as Error).message;
+    console.error(formatCliError(serverConnectionError(serverName, message)));
+    process.exit(
+      isAuthErrorMessage(message)
+        ? ErrorCode.AUTH_ERROR
+        : ErrorCode.NETWORK_ERROR,
     );
-    process.exit(ErrorCode.NETWORK_ERROR);
   }
 
   let result: unknown;
@@ -242,7 +300,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
   }
 
   if (options.single) {
-    await handleSingleResult(result, connection);
+    await handleSingleResult(result, connection, options.diag ?? false);
     await safeClose(connection.close);
     return;
   }

@@ -21,6 +21,7 @@ import {
   unknownSubcommandError,
   tooManyArgumentsError,
   ErrorCode,
+  isAuthErrorMessage,
 } from '../src/errors';
 
 describe('errors', () => {
@@ -204,9 +205,41 @@ describe('errors', () => {
   describe('error codes', () => {
     test('error codes have correct values', () => {
       expect(ErrorCode.CLIENT_ERROR).toBe(1);
-      expect(ErrorCode.SERVER_ERROR).toBe(2);
       expect(ErrorCode.NETWORK_ERROR).toBe(3);
-      expect(ErrorCode.AUTH_ERROR).toBe(4);
+      expect(ErrorCode.SERVER_ERROR).toBe(4);
+      expect(ErrorCode.AUTH_ERROR).toBe(5);
+    });
+  });
+
+  describe('isAuthErrorMessage', () => {
+    test('detects HTTP 401/403', () => {
+      expect(isAuthErrorMessage('HTTP 401 Unauthorized')).toBe(true);
+      expect(isAuthErrorMessage('got status 403 from server')).toBe(true);
+    });
+    test('detects Unauthorized / Forbidden phrases', () => {
+      expect(isAuthErrorMessage('Request unauthorized')).toBe(true);
+      expect(isAuthErrorMessage('Forbidden: cannot access')).toBe(true);
+    });
+    test('detects upstream "Invalid API key" body', () => {
+      expect(
+        isAuthErrorMessage(
+          'Streamable HTTP error: Error POSTing to endpoint: {"error":"Invalid API key"} (url: https://x/mcp)',
+        ),
+      ).toBe(true);
+      expect(isAuthErrorMessage('missing API key')).toBe(true);
+      expect(isAuthErrorMessage('invalid api_key supplied')).toBe(true);
+    });
+    test('returns false for transient transport errors', () => {
+      expect(isAuthErrorMessage('connect ECONNREFUSED 127.0.0.1:3000')).toBe(
+        false,
+      );
+      expect(isAuthErrorMessage('socket hang up')).toBe(false);
+      expect(isAuthErrorMessage('HTTP 502 Bad Gateway')).toBe(false);
+      expect(isAuthErrorMessage('request timeout')).toBe(false);
+    });
+    test('returns false for empty/undefined input', () => {
+      expect(isAuthErrorMessage(undefined)).toBe(false);
+      expect(isAuthErrorMessage('')).toBe(false);
     });
   });
 

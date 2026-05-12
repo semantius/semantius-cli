@@ -383,6 +383,14 @@ Output:
   call                     response.data JSON to stdout (use --diag for full response)
   Errors                   Always to stderr
 
+Exit codes:
+  0   Success
+  1   Client error (bad args, config, JSON)  — or --single: 0 rows
+  2   --single: 2+ rows
+  3   Network / transport error (transient: ECONNREFUSED, ETIMEDOUT, 5xx)
+  4   Server error (tool execution failed: RLS, dup key, schema errors)
+  5   Auth error (missing/invalid API key, 401, 403)
+
 Examples:
   semantius                                        # List all servers
   semantius -d                                     # List with descriptions
@@ -424,7 +432,10 @@ function checkRequiredEnvVars(): void {
         `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v}`,
       );
     }
-    process.exit(ErrorCode.CLIENT_ERROR);
+    // A missing API key is an auth failure (permanent); a missing ORG is a
+    // configuration issue. Exit AUTH_ERROR only when API_KEY itself is missing.
+    const missingApiKey = missing.some((v) => v.endsWith('_API_KEY'));
+    process.exit(missingApiKey ? ErrorCode.AUTH_ERROR : ErrorCode.CLIENT_ERROR);
   }
 }
 
