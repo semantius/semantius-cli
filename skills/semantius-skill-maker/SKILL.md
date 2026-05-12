@@ -57,9 +57,9 @@ These rules apply to chat output, the generated SKILL.md, the generated README.m
 
 ---
 
-## Schema compatibility: `EXPECTED_MAJOR = 1`
+## Schema compatibility: `EXPECTED_MAJOR = 2`
 
-This skill expects model files written by `semantic-model-analyst` major `1`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Step 2. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected; the resulting per-domain skill would bake in stale recipes. Three cases:
+This skill expects model files written by `semantic-model-analyst` major `2`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Step 2. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected; the resulting per-domain skill would bake in stale recipes. Three cases:
 
 - **Older major**, the file was written using a structure this skill no longer understands (different section numbering, different table shapes, missing fields). Tell the user to run `semantic-model-analyst`; its archived-knowledge mode reads the older file and re-authors a current-major file from the same semantic content. Re-run skill-maker against the new file.
 - **Newer major**, the file was written by a newer analyst than this skill knows. Tell the user to update `semantius-skill-maker` before retrying.
@@ -201,6 +201,15 @@ Once the version gate passes, extract:
   that is a model defect to send back; do not try to evaluate the
   JsonLogic to recover.
 
+  **One exception: scan each rule's JsonLogic body literally (string-match only) for the platform-extension operators introduced in analyst v1.11.** Two are first-class JTBD signals:
+
+  - **`require_permission`**, i.e. `{"require_permission": "<code>"}` somewhere inside the rule body. Extract `(entity, rule_code, rule_description, permission_code)` for every match into a `conditional_permissions` index. This index drives the new "Conditional-permission gate" merit signal in Pass 2 and the `Platform-enforced permissions` SKILL.md preamble (Step 5). The match is purely literal; *which* condition gates the permission still comes from the rule's `description` text, not from interpreting the JsonLogic.
+  - **`value_changed`**, i.e. `{"value_changed": "<field>"}` somewhere inside the rule body. Note `(entity, field)` pairs into a `transition_gated_fields` index. This is informational, not a merit signal on its own; it helps Pass 2 confirm that a `require_permission` rule actually fires on transition rather than on every write (a quality check that the analyst's audit also runs).
+
+  In analyst v2.0+ files, the **§2 Permissions summary table is the canonical source** for the module's full permission catalog (not §8 step 1). Parse the table verbatim — five columns: `Permission | Type | Description | Used by | Hierarchy parent`. Build a `permissions_catalog` index from the rows. Use this index for everything: the SKILL.md "Platform-enforced permissions" preamble (one row per workflow permission), the role-hint lookup for each `conditional_permissions` entry (the `Description` and `Used by` cells give the role-hint richer than v1.11's §8 prose), and the cross-check that every `conditional_permissions[].permission_code` appears in the table. A mismatch is a model defect; refuse to generate and route back to the analyst. §8 step 1 in a v2 file is a procedural pointer to the table and no longer enumerates permissions itself; do not parse §8 for the permission list.
+
+- **Inbound-FK delete-mode index (analyst v1.13+).** Walk the §4 relationship table once more and build a `restrict_inbound` index per entity: for every row whose `Kind` is `reference` and `Delete` is `restrict`, record `(child_entity, fk_field)` against the *target* (the entity on the right side of the relationship). This index drives the new "Restrict-chained cleanup" merit signal in Pass 2 and is consumed by Pattern J (delete / archive of a parent entity that has restrict-children). The pattern matters because the platform refuses to delete a row that has live `reference + restrict` children; the calling agent must clean them up first, in dependency order, and a generic `use-semantius` `DELETE` will surface only a single per-row constraint failure rather than the full chain. Also note inbound `reference + cascade` and `reference + clear` rows separately; they don't trigger Pattern J but the SKILL.md preamble should still call out the cascade-delete / orphan-clear behavior for downstream awareness.
+
 Compute `modelslug = system_slug.replace(/_/g, "-")`.
 
 Refuse if §7.1 lists open blockers, the model is not finished and the
@@ -225,6 +234,40 @@ Shape test: entity has a `*_status` enum + side-effect fields like
 non-trivial transition (more than a status flip) is a candidate. Pure
 status flips with no side effects collapse into the entity's primary
 lifecycle JTBD.
+
+**Sub-shape: approval / sign-off / workflow gate (analyst v1.11+, broadened in v1.12).** Any
+transition whose `validation_rules` entry invokes `{"require_permission":
+"..."}` (look up the entity's `conditional_permissions` index from Step
+2) is automatically a strong JTBD candidate. The agent calling this
+skill is the one that will trip the permission check, so it needs an
+explicit recipe: name the permission, name the role(s) that typically
+hold it (read from §8 step 1 description), and tell the agent how to
+recover from the platform's throw (surface the rule's `message`,
+propose escalation paths like "ask an offer-approver to confirm" or
+"defer to the user who is signed in as the approver"). This sub-shape
+**does not get suppressed by the merit-test "platform-enforced" rule**,
+because the platform enforces *the check* but the calling agent still
+owns the *workflow* around it (the read of who-approves-what, the
+confirmation prompt, the failure-message phrasing). Treat every entry
+in `conditional_permissions` as one JTBD candidate (or a branch inside
+the entity's primary lifecycle JTBD), even if Pattern A would otherwise
+collapse the transition.
+
+The sub-shape covers three distinct trigger fields, all flagged the
+same way once `value_changed` + `require_permission` co-occur in the
+rule body:
+
+1. **Status-transition gates** (analyst v1.11): `value_changed: "status"` →
+   one of `approved` / `signed` / `released` / etc. Recipe: confirm with
+   the user, then PATCH `status`.
+2. **Submit-then-lock gates** (analyst v1.12): `value_changed:
+   "is_submitted"` (or `is_locked` / `is_final` / `is_complete`) → `true`.
+   Recipe: confirm the user is the row's owner (or holds the override
+   permission); compose the PATCH that flips the lock; after the flip,
+   treat the row as immutable except via the override.
+3. **Closure / cancellation gates** (analyst v1.12): `value_changed: "status"` →
+   one of `closed` / `cancelled` / `void` / `hired` (when §3 prose names
+   weight). Same recipe shape as (1).
 
 **Pattern B, Polymorphic action / event staging.**
 Shape test: entity named `*_actions`, `*_events`, `*_transactions`,
@@ -252,6 +295,20 @@ Shape test: `owner_*_id` field, sharing tables, multi-tenant scoping
 via a tenant FK on most entities. Candidates: transfer ownership of X,
 share X with, revoke access to X.
 
+**Sub-shape: owner-or-manager edit gate (analyst v1.11+).** Entity
+carries a `created_by` / `author_id` / `owner_id` / `assignee_id`
+field AND its `conditional_permissions` index includes a rule that
+references the owner field against `$user_id` plus an elevated
+`<slug>:manage_all_<plural>` permission. The agent calling this skill
+is often *not* the original owner (it acts on behalf of users who may
+be different from the record's creator), so the recipe must surface:
+"editing this record requires that the caller is the original
+`<owner_field>` OR holds `<slug>:manage_all_<plural>`; if neither
+holds, the platform will reject with `<rule.code>: <rule.message>`,
+propose handing off to the original owner or to a user who holds the
+override permission." Treat as a JTBD candidate even when no other
+Pattern-E shape fires.
+
 **Pattern F, Publication / versioning.**
 Shape test: `draft`/`published` states distinct from approval; version
 chains (`*_version`, `previous_version_id`); `published_at` separate
@@ -277,6 +334,29 @@ Shape test: 3+ entities joined by FKs and at least one numeric measure
 (cost, count, duration, FTE, amount). See "pattern-level adjustments"
 below, in this skill, reporting becomes a `## Common queries`
 appendix, not a JTBD section.
+
+**Pattern J, Restrict-chained cleanup (analyst v1.13+).**
+Shape test: an entity that appears as the *target* of at least one
+inbound `reference + restrict` FK from another entity in the model
+(read the `restrict_inbound` index from Step 2). The platform refuses
+to delete a row that has live restrict-children; the calling agent
+needs an explicit cleanup recipe naming each restrict-child entity
+in dependency order, with a per-child query shape ("find all
+`<child>` where `<fk_field> = <parent_id>`") and a delete loop
+before the parent delete itself. This pattern is the v1.13
+parent-vs-reference rule's direct downstream consequence: when the
+analyst flips a `parent (cascade)` FK to `reference (restrict)`
+because the child has divergent permission scope, the analyst is
+*deliberately* moving the cleanup decision into the application
+layer rather than letting the platform silently cascade-delete
+permission-scoped rows. The skill-maker materialises that decision
+as a recipe. Candidates: "delete `<parent>`", "archive
+`<parent>`", "merge two `<parent>` records" (where merge ends with
+a delete of one). Skip when the entity has zero inbound
+restrict-FKs (the platform's own `DELETE` is enough) or when the
+restrict-children themselves carry no permission-scope divergence
+(then the analyst's choice of `restrict` was overly cautious; flag
+to the user but still emit the recipe).
 
 ##### Skip rules
 
@@ -333,6 +413,8 @@ of the following:
 | **Materialization / handoff** | One entity row spawns rows in a different table (Pattern C). The order, FK back-pointers, and source-status flip are easy to get wrong. |
 | **Side-effect fields on transition** | `approved_at`, `committed_at`, `actual_release_date`, etc. that must be set in the same PATCH as the status flip, easy to forget. |
 | **Audit-trail read** | Audit-logged entity (`audit_log: true`) where "who/when changed X" is a likely user question. Worth a short recipe even though writes need no special handling. |
+| **Conditional-permission gate** (analyst v1.11+) | The entity's `conditional_permissions` index from Step 2 carries one or more entries (i.e. at least one `validation_rules` rule invokes `{"require_permission": "<code>"}`). Unlike the basic "DB-unguarded lifecycle gate" row, this signal is **never suppressed** by the platform-enforces-it rule, the platform enforces the *check* but the calling agent still owns the *workflow*: detecting that the caller lacks the permission before the write attempt (cheap UX win), surfacing the rule's `message` cleanly on the throw, and proposing the right escalation path (which role typically holds the permission, who to hand off to). One JTBD per `(entity, permission_code)` pair, or one combined JTBD per entity when several conditional gates share the same approver role. Cross-reference the §8 step 1 description for the permission to know what role typically holds it. |
+| **Restrict-chained cleanup** (analyst v1.13+) | The entity appears in at least one other entity's `restrict_inbound` index (i.e. is the target of at least one `reference + restrict` inbound FK). Pattern J fires. The recipe walks the dependency tree of restrict-children, naming each one and providing the find-and-delete query shape, then performs the parent delete. The merit signal is the chain itself: a generic `use-semantius` `DELETE` against the parent will surface only one row's constraint failure per attempt, never the full chain; the recipe makes the order explicit. |
 
 > **Trap, the most common defect:** when a candidate's only merit
 > signal is **Computed field** and the field is in `computed_fields`,
@@ -736,6 +818,25 @@ baked into the generated files:
   must match the union of `validation_rules[].code` across every
   entity, with the model's `message` and `description` intact.
   Defect on any add / remove / rename.
+- **SKILL.md "Platform-enforced permissions" preamble block**
+  (analyst v1.11+): must match the `conditional_permissions`
+  index built in Step 2 (i.e. every `validation_rules` rule whose
+  JsonLogic invokes `{"require_permission": "<code>"}`). Every
+  `(entity, rule_code, permission_code)` tuple in the index must
+  appear in the preamble with the rule's `message` and the §8
+  step 1 description of the permission. Defect on any add / remove
+  / rename. Skip the section entirely when the index is empty.
+- **SKILL.md "Restrict-cleanup chains" preamble block**
+  (analyst v1.13+): must match the `restrict_inbound` index built
+  in Step 2. Every entity that is the target of at least one
+  `reference + restrict` inbound FK must appear with its
+  cleanup-children listed in dependency order. Drift signals: an
+  entity that the model now declares with a flipped `parent ↔
+  reference` FK (per the v1.13 permission-scope override rule)
+  but whose preamble entry hasn't been regenerated; or a
+  restrict-inbound row in the model that the preamble fails to
+  list. Skip the section entirely when no entity has
+  restrict-inbound edges.
 - **SKILL.md "What this skill does NOT do" inlined §7.2 list**:
   must match the model's current §7.2 bullets. Defect on any add
   / remove / rename. (Bullets the user has paraphrased for
@@ -950,6 +1051,38 @@ with the `message` and (if present) `description`. Skip the section
 entirely when no entity in the model declares `validation_rules`.>
 
 - `<table>` rule `<code>`: <message>. Why: <description, when present>.
+
+**Platform-enforced permissions** (rules whose JsonLogic invokes
+`{"require_permission": "<code>"}`; the platform throws when the caller
+lacks the named permission, surfacing the rule's `code` and `message`
+as a validation failure. The recipes that hit these gates name the
+permission up-front so the calling agent can either (a) confirm the
+caller holds it before attempting the write, or (b) propose handing
+off to a user who holds it instead of hitting the throw blind):
+<list each `(entity, rule_code, permission_code, role-hint)` tuple
+from the `conditional_permissions` index built in Step 2. Pull the
+`role-hint` from §8 step 1's description of the permission. Skip the
+section entirely when `conditional_permissions` is empty.>
+
+- `<table>` rule `<code>` requires `<permission_code>` (`<role-hint
+  from §8>`): <message>. Why: <description, when present>.
+
+**Restrict-cleanup chains** (analyst v1.13+; inbound `reference + restrict`
+FKs that block deletion of the target entity until children are
+explicitly cleaned up first. The calling agent attempting to delete a
+listed entity must walk the named children first, in the order given,
+or the platform will reject the DELETE with a foreign-key constraint
+error. Every listed chain corresponds to a Pattern J "delete /
+archive" JTBD in this skill):
+<list each entity that has at least one inbound `reference + restrict`
+edge per the `restrict_inbound` index from Step 2. For each entity,
+list the restrict-children in dependency order (children of children
+first if any chain deeper). Skip the section entirely when no entity
+in the model has restrict-inbound FKs.>
+
+- Deleting `<table>` requires cleaning up first: `<child_table>` (via
+  `<fk_field>`), `<child_table>` (via `<fk_field>`), … See the
+  `delete-<table>` JTBD for the recipe.
 
 ---
 
@@ -1231,7 +1364,7 @@ When you bake a recipe, **resolve every reference**:
   spot-check that the trigger fired.
 - **Platform-enforced invariants (`validation_rules`)**, the platform
   rejects bad writes with a structured `{ "errors": [...] }` body and a
-  4xx status. Recipes must **not pre-validate** these — duplicating the
+  4xx status. Recipes must **not pre-validate** these, duplicating the
   rule client-side is brittle (the rule can change in the platform without
   a recipe regen) and surfaces the same error twice on bad input. Instead,
   the JTBD's `Failure modes` block names each platform `code` the user
@@ -1239,6 +1372,32 @@ When you bake a recipe, **resolve every reference**:
   the user tried to attach a release before the feature is committed; tell
   them to triage the feature to `planned` first, then retry."* The
   `code` is the i18n binding key, never paraphrase it.
+- **Platform-enforced permissions (`require_permission` rules)**, the
+  platform throws when the caller lacks the named permission, and the
+  throw lands as a regular `validation_rules` failure (same `code` /
+  `message` shape, same 4xx response). Recipes here differ from the
+  generic "don't pre-validate" rule above: it is **cheap and high-value**
+  for the recipe to **pre-flight the permission check** by reading the
+  caller's role-permissions before attempting the write. The point is
+  not to duplicate the platform's enforcement (the platform is the
+  source of truth, and the recipe still surfaces the throw verbatim if
+  the pre-flight is wrong) but to give the calling agent a chance to
+  *avoid the failure entirely* by handing off to a user who holds the
+  permission, or by escalating to confirm. The recipe shape is:
+  (1) read the conditional-permission row from `Platform-enforced
+  permissions` preamble, naming the gate, the permission code, and the
+  role-hint; (2) if the caller is the current user and they lack the
+  permission, **stop and ask** ("this transition requires the
+  `<permission_code>` permission, typically held by <role-hint>; do you
+  want to hand off, or proceed as the user who is signed in?"); (3) if
+  the caller is acting on behalf of a specific user, surface who that
+  user is and confirm they hold the permission before proceeding;
+  (4) the JTBD's `Failure modes` block names the platform `code` and
+  the recovery action just like a regular invariant. Family-13 owner /
+  manager edit gates use the same shape: pre-flight by reading the
+  record's owner field against the caller's `$user_id`, fall back to
+  `require_permission` of the override role only when ownership doesn't
+  match.
 - **1:1 / unique constraints**, flag in **Failure modes** with the
   exact 409 condition *and* the recovery action (PATCH the existing row,
   pick a different parent, etc.).

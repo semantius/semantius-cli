@@ -150,7 +150,70 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 
 `$old` is the only window into prior state; cross-row lookups, aggregates, and FK traversal stay out of scope (use cube/views).
 
-**Detecting INSERT vs UPDATE:** `$old` is `null` on INSERT, an object on UPDATE. A rule that should fire only on UPDATE wraps its body in `{"if": [{"!=": [{"var": "$old"}, null]}, <update-only-check>, true]}` so the INSERT path passes trivially. Transition rules that compare current vs prior (e.g. `{"var": "release_status"}` against `{"var": "$old.release_status"}`) read `null` from `$old.<field>` on INSERT and naturally pass — no extra guard needed unless INSERT needs distinct handling.
+**Detecting INSERT vs UPDATE:** `$old` is `null` on INSERT, an object on UPDATE. A rule that should fire only on UPDATE wraps its body in `{"if": [{"!=": [{"var": "$old"}, null]}, <update-only-check>, true]}` so the INSERT path passes trivially. Transition rules that compare current vs prior (e.g. `{"var": "release_status"}` against `{"var": "$old.release_status"}`) read `null` from `$old.<field>` on INSERT and naturally pass, no extra guard needed unless INSERT needs distinct handling.
+
+**Platform-extension operators** (Semantius adds these on top of standard JsonLogic):
+
+| Operator | Shape | Meaning |
+|---|---|---|
+| `value_changed` | `{"value_changed": "<field_name>"}` | Returns `true` when the named field's new value differs from `$old.<field_name>`. On INSERT (where `$old` is `null`) it returns `true` (every field is "changed" from nothing). Sugar for `{"or": [{"==": [{"var": "$old"}, null]}, {"!=": [{"var": "<field>"}, {"var": "$old.<field>"}]}]}`. Use it to scope a transition-only check (gate the rule body to "only fires when this field moved"). |
+| `require_permission` | `{"require_permission": "<permission_code>"}` | Returns `true` when the authenticated user (`$user_id`) holds the named permission. **Throws** otherwise, which the platform reports back as a validation failure on this rule's `code` and `message`. This is the only JsonLogic primitive that has side effects, so it is the mechanism for *conditional permissions*: pair it with an `if` whose test detects the sensitive transition, and use the success branch to invoke `require_permission`. The trivial branch must still return `true` so the rule passes when the transition isn't happening. |
+
+**Conditional-permission pattern.** The two operators compose into the standard recipe for workflow-gated authorization:
+
+```json
+{
+  "code": "approve_offer_requires_approver_permission",
+  "message": "Only users with the offer-approver permission can mark an offer approved.",
+  "description": "Moving an offer into `approved` is the budget commitment step. The static edit_permission on the entity lets recruiters draft and send offers; this rule layers the approval gate on top so only designated approvers can flip the status field itself.",
+  "jsonlogic": {
+    "if": [
+      {
+        "and": [
+          { "value_changed": "status" },
+          { "==": [{ "var": "status" }, "approved"] }
+        ]
+      },
+      { "require_permission": "ats:approve_offer" },
+      true
+    ]
+  }
+}
+```
+
+The body reads: *"if the status field changed and its new value is `approved`, require the caller to hold `ats:approve_offer`; otherwise the rule passes trivially."* The wrap pattern is **`{"if": [<trigger>, {"require_permission": "..."}, true]}`**, the `true` fallback is mandatory; dropping it makes the rule fail whenever the trigger is false.
+
+Three guidelines for `require_permission`:
+
+1. **The permission code must be declared in §8 step 1 of the model.** The deployer cross-checks every `require_permission` argument against §8's permission list; an undeclared code is a deploy-time blocker, not a runtime surprise. Workflow-specific permissions (`<slug>:approve_<noun>`, `<slug>:close_<noun>`, `<slug>:sign_<noun>`) belong alongside the baseline `<slug>:read` / `<slug>:manage` / `<slug>:admin` triple.
+2. **Use it inside `if`, never as a top-level rule body.** A bare `{"require_permission": "..."}` at the rule root throws on *every* write by anyone without the permission, which is what `edit_permission` is for (and `edit_permission` is the cheaper, static gate). The point of this operator is to gate *conditional* writes: the rule body's `if` condition decides when authorization is on the hook.
+3. **Composition with `or`/`and` short-circuits.** `{"or": [<cheap-check>, {"require_permission": "..."}]}` only invokes the permission check when the cheap check failed. That's the canonical owner-or-elevated pattern (see below): owners pass the cheap check, non-owners hit the permission gate. Throws still propagate as rule failures, so the rule's `message` is what the user sees if neither leg holds.
+
+**Owner-or-elevated pattern.** A second common composition restricts writes to the record's creator unless the caller has an elevated permission:
+
+```json
+{
+  "code": "edit_restricted_to_owner_or_manager",
+  "message": "Only the note author or a manager can edit or delete this note.",
+  "description": "Notes are personal commentary; the author owns their own edits. Anyone else needs the elevated permission, which is granted to leads and HR partners.",
+  "jsonlogic": {
+    "if": [
+      { "==": [{ "var": "$old" }, null] },
+      true,
+      {
+        "or": [
+          { "==": [{ "var": "$old.created_by" }, { "var": "$user_id" }] },
+          { "require_permission": "ats:manage_all_notes" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Read: *"on INSERT, pass; on UPDATE, pass if the caller is the original creator OR holds the elevated permission."* `require_permission` is only invoked when the owner-equality check failed; the rule's `message` surfaces the throw to the user. The `$old` null-check at the top makes the rule INSERT-safe.
+
+**When NOT to reach for `require_permission`.** The static `edit_permission` on the entity (set from the §3 `**Edit permission:**` annotation) remains the right tool for coarse "who can write this table at all". Use `require_permission` only when the gate is *conditional* on record state, a transition, or row-ownership, the kind of policy that can't be expressed by a static role-to-table grant. If every write of the entity is equally sensitive, push the permission to `edit_permission` instead and skip the rule.
 
 **Example transition rule** (a release that has reached `released` cannot regress):
 
@@ -225,11 +288,11 @@ Both arrays default to `[]` and may be omitted entirely. `update_entity` **repla
 
 ### Field Format Quick Reference
 
-Choose `format` carefully, **it is immutable after creation**.
+Choose `format` carefully. Format **can** be changed after creation, but **only within the same Postgres primitive type**. Same-primitive transitions are allowed (`text → multiline → html`, all `TEXT`); cross-primitive transitions are rejected by the platform (`text → date`, `integer → number`, `date → boolean`). The primitive groupings are visible in the format-to-primitive table later in this reference (under `default_value`). Still pick the format deliberately on the first pass: a later change re-renders the form (input shape) and may require republishing UI surfaces, even though the column data survives.
 
 | Category | `format` values |
 |----------|----------------|
-| Text | `string`, `text`, `html`, `code` |
+| Text | `string`, `text`, `multiline`, `html`, `code` |
 | Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
@@ -240,6 +303,15 @@ Choose `format` carefully, **it is immutable after creation**.
 | Ownership/composition | `parent` + `reference_table` |
 
 > 🛑 **Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. Never combine `reference_table` with scalar formats (`integer`, `uuid`, `string`, etc.). This will always fail.**
+
+**Picking between text formats.** All five resolve to a Postgres `TEXT` column; the format selects the UI input shape. Because they share a primitive, the format **can be changed among them after creation** — `text → multiline → html` is safe and accepted by `update_field`. The choice still matters up front because flipping later re-renders the form and may force a UI republish. Cross-primitive changes (e.g. `text → date`) are rejected by the platform.
+
+- `string` and `text` are **single-line** inputs — names, titles, labels, email-like identifiers, short tags. The form renders a single-line `<input>`. Use these for any field that holds a short value displayed on a single row.
+- `multiline` is the **multi-line** input — descriptions, notes, comments, free-form prose, journal entries, scorecard commentary. The form renders a `<textarea>`. Pick `multiline` whenever the field holds prose the user might paste a paragraph into; pick `text` / `string` when the value is a single line. The distinction lives in the column metadata, so the choice is made up front and migrating between them later means dropping and recreating the field.
+- `html` renders a rich-text editor on top of HTML storage; reserve for fields that need formatted output (release notes, marketing copy).
+- `code` renders a monospace code editor; reserve for stored source / configuration snippets.
+
+Heuristic: field names like `*_name`, `*_title`, `*_label`, `*_code`, `email_address`, `phone_number`, `url` → single-line (`string` or `text`). Field names like `description`, `notes`, `body`, `comment`, `concerns`, `strengths`, `feedback`, `summary`, `details`, `rationale`, `instructions` → multi-line (`multiline`).
 
 ### `width` Values
 
@@ -272,7 +344,7 @@ The Semantius column-add trigger picks a sensible default automatically based on
 
 | Format | PostgreSQL type | Auto-default when required |
 |---|---|---|
-| `string`, `text`, `email`, `url`, …  | `TEXT` | `''` |
+| `string`, `text`, `multiline`, `email`, `url`, …  | `TEXT` | `''` |
 | `int32`, `int64`, `integer` | `INTEGER` / `BIGINT` | `0` |
 | `number`, `float`, `double` | `NUMERIC` / `REAL` | `0.0` |
 | `boolean` | `BOOLEAN` | `FALSE` |
@@ -407,8 +479,12 @@ The platform manages nullability internally based on format and delete-mode, do 
 |----------|----------|------------------------|
 | Optional link to independent entity | `reference` | `clear` |
 | Required link to independent entity | `reference` | `restrict` |
-| Child is owned by parent | `parent` | `cascade` |
+| Child is owned by parent (shared permission scope) | `parent` | `cascade` |
 | M:N junction FK (both sides) | `parent` | `cascade` |
+| Lifecycle-bound child with divergent permission scope (analyst v1.13+) | `reference` | `restrict` (default) or `clear` |
+| Lifecycle-bound child with divergent permission scope, accepting silent cascade-delete (high-risk) | `reference` | `cascade` |
+
+**Divergent-permission-scope rule (analyst v1.13+).** `format: parent` semantically asserts that the child shares the parent's permission model. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `require_permission` against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), `parent` is the wrong shape. Use `format: reference` instead. Pick the delete mode by lifecycle behavior: `restrict` when children must be explicitly cleaned up before the parent (recommended default for audit-logged decision evidence like scorecards or signed offers), `clear` when orphan-survival is acceptable (e.g. an authored note may survive its application being deleted), `cascade` only when the user explicitly accepts the silent cascade-delete trade-off (the shape says "permission scope is divergent" but the platform deletes anyway when the lifecycle owner goes).
 
 ### `reference`: Cross-Entity Link (Independent Lifecycle)
 

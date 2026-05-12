@@ -333,6 +333,24 @@ isn't in SKILL.md or won't be in the user's prompt must come from a
 `semantius call` at runtime — so either inline it now or write the call
 that fetches it.
 
+### Language conventions for bundled scripts
+
+When a generated skill needs a script (under `scripts/` or inline in a
+recipe), use this preference order:
+
+1. **Bash** for short, linear chains of `semantius call` invocations
+   (≤ ~30 lines, no nontrivial parsing). Bash is the lingua franca of
+   the `use-semantius` reference and stays readable for simple pipelines.
+2. **Bun (TypeScript/JavaScript)** for anything with branching, JSON
+   shaping beyond what `jq` handles cleanly, parallel fan-out, retries,
+   or shared helpers across multiple operations. `use-semantius` already
+   advertises Bun as a first-class scripting option for chaining the CLI.
+3. **Do not default to Python.** Only use Python if the user explicitly
+   asks for it or if a required library exists only in Python.
+
+When in doubt: Bash for one-screen recipes, Bun for anything that would
+need a second screen. Reach for Python only on explicit request.
+
 ---
 
 ## Non-determinism patterns (research, judgment, multi-step)

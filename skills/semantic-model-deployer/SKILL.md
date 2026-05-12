@@ -25,9 +25,11 @@ These rules apply to chat output, plan summaries, verification reports, and anyt
 
 ---
 
-## Schema compatibility: `EXPECTED_MAJOR = 1`
+## Schema compatibility: `EXPECTED_MAJOR = 2`
 
-This skill expects model files written by `semantic-model-analyst` major `1`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Stage 1. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected with a request to update the model via the analyst before retrying:
+This skill expects model files written by `semantic-model-analyst` major `2`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Stage 1. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected with a request to update the model via the analyst before retrying.
+
+**`v2.0` contract change.** Files written by analyst `2.0+` carry a mandatory `### Permissions summary` table under `## 2` (after the entity-summary table and the Mermaid diagram). This table is the canonical source for the module's permission catalog and its hierarchy rows. The deployer reads the table directly in Stage 2a (module + permissions setup) and creates every `create_permission` + `create_permission_hierarchy` call from it; the legacy parallel enumeration in §8 step 1 is gone in v2.0 files (§8 step 1 just points the deployer at the §2 table). v1.x files lack this table and are refused; route the user back to analyst Mode D Rebuild to materialize the v2 file from the v1 content. See "Parse the Permissions summary table" below for the column shape and validation rules.
 
 - **Older major** (e.g. file is `"0.x"`, this skill expects `"1.x"`), the file was written by an older analyst version using a structure this deployer no longer understands. Tell the user to run the analyst skill; its archived-knowledge mode reads the older file and re-authors a current-major file from the same semantic content.
 - **Newer major** (e.g. file is `"2.x"`, this skill expects `"1.x"`), the file was written by a newer analyst than this deployer knows about. Tell the user to update this deployer skill before retrying.
@@ -103,13 +105,37 @@ Once the version gate passes, extract the rest:
   - `table_name`, `singular`, `plural`, `singular_label`, `plural_label`, `description`, `label_column`
   - Fields: `field_name`, `format`, required, `title` (= Label column), reference targets, delete modes
   - Enum values from §5
+  - **`**Audit log:**`** line, when present (default `no` when absent or empty).
+  - **`**Edit permission:**`** line, when present (analyst skill v1.10+). Accepted values:
+    - `manage` (default, also the value when the line is absent) → `edit_permission = <system_slug>:manage`.
+    - `admin` (analyst v1.10+) → `edit_permission = <system_slug>:admin`.
+    - `<narrow_suffix>` matching a `Type: workflow-narrow` row in the §2 Permissions summary (analyst v2.1+) → `edit_permission = <system_slug>:<narrow_suffix>`. The parser checks the §2 table for a row whose `Permission` cell equals `<system_slug>:<narrow_suffix>` and whose `Type` is `workflow-narrow`; if no such row exists, this is a 🛑 High blocker (undeclared narrow tier).
+
+    Carry the resolved value through to Stage 4c's `create_entity` call. The line is **not** required, files written by older analyst minors (1.9 or earlier) carry no annotation; treat every entity as `manage` in that case (the legacy two-permission baseline).
   - **`Computed fields`** sub-block, when present: parse the fenced ```` ```json ```` array verbatim; default to `[]` when the heading is absent. Each entry has `name` (existing scalar field on this entity), `jsonlogic` (object), optional `description`. The deployer passes the array as-is to `create_entity` / `update_entity`.
-  - **`Validation rules`** sub-block, when present: parse the fenced ```` ```json ```` array verbatim; default to `[]` when the heading is absent. Each entry has `code` (snake_case, unique within entity), `message` (required), `jsonlogic` (object), optional `description`. The deployer passes the array as-is to `create_entity` / `update_entity`.
+  - **`Validation rules`** sub-block, when present: parse the fenced ```` ```json ```` array verbatim; default to `[]` when the heading is absent. Each entry has `code` (snake_case, unique within entity), `message` (required), `jsonlogic` (object), optional `description`. The deployer passes the array as-is to `create_entity` / `update_entity`. JsonLogic in this array may invoke two platform-extension operators introduced in analyst skill v1.11: `{"value_changed": "<field>"}` (true when the field's value differs from `$old`, true on INSERT) and `{"require_permission": "<permission_code>"}` (returns `true` when the caller holds the permission, throws otherwise). Both are passed through verbatim, no special encoding. **However**, the deployer must cross-check every `require_permission` argument against the §2 **Permissions summary** table (the canonical source as of v2.0): collect every distinct `<permission_code>` referenced across all entities' `validation_rules`, verify each one appears as a `Permission` row in the table. Mismatch is a 🛑 High blocker (see the precedence table below); refuse to deploy and send the user back to the analyst skill rather than calling `create_permission` ad hoc, the analyst's audit should have caught this and the model may have other gaps if it didn't.
 - **Relationship table** (§4), confirms `reference_delete_mode` for each FK field
 - **§2 Mermaid diagram**, sanity-check it agrees with §3/§4 (the model's own audit should have caught mismatches; if it disagrees here, flag for the user before proceeding rather than silently picking one side)
 - **§6 Cross-model link suggestions**, parse the §6 markdown table into a list of rows, each carrying `{from_table, to_concept, verb, cardinality, delete_mode}`. Defaults: `cardinality = "N:1"` and `delete_mode = "clear"` when the column is absent or empty; `verb` is required and never defaulted. If §6 reads "No cross-model link suggestions.", the list is empty and Stages 2g and 4f are no-ops. The `related_domains` front-matter is informational only (a discovery tag for humans browsing the catalog); the deployer does not consume it.
 - **§7 Open questions**, scan both sub-sections. **§7.1 🔴 Decisions needed is a gate**: if any entry is present and unresolved, stop before Stage 4 and list the blockers to the user; ask them to either (a) answer each question so the model can be updated first via the semantic-model-analyst skill, or (b) explicitly waive and proceed at their own risk. Do not make up answers, and do not silently proceed. **§7.2 🟡 Future considerations is informational only**, note them for the user but do not block.
-- **Implementation notes** (§8), always follow these.
+- **Permissions summary** (`### Permissions summary` sub-section under `## 2`, mandatory in analyst v2.0+) — parse the table verbatim. Five columns in this fixed order: `Permission | Type | Description | Used by | Hierarchy parent`. Build a `permissions` index from the rows; each entry `{permission, type, description, used_by, hierarchy_parent}`. The deployer's Stage 2a (module + permissions setup) creates one `create_permission` call per row in table order, using the `Permission` and `Description` cells. After all permissions exist, the deployer iterates the index once more and issues one `create_permission_hierarchy` call per row whose `hierarchy_parent` is non-`—`, with `parent_permission = hierarchy_parent` and `child_permission = permission`. **Parse-time validation** (all 🛑 High blockers, reject before any write):
+  - exactly one row with `Type: baseline-read` and `Permission = <slug>:read`;
+  - exactly one row with `Type: baseline-manage` and `Permission = <slug>:manage`;
+  - at-most-one row with `Type: baseline-admin` and `Permission = <slug>:admin`;
+  - every `Type` value in `{baseline-read, baseline-manage, baseline-admin, workflow, workflow-narrow}` (the `workflow-narrow` value was added in analyst v2.1; files stamped older than `2.1` that include it should not exist in the wild, refuse and route to the analyst);
+  - every `Hierarchy parent` cell either `—` or a `Permission` value that also appears in the table;
+  - **no `Type: workflow` (elevated) row whose `Hierarchy parent` is `<slug>:manage`** — rolling an elevated permission under `manage` auto-grants every manager the gated authority and defeats the conditional check;
+  - **every `Type: workflow-narrow` row's `Hierarchy parent` is `<slug>:manage` or higher in the baseline chain (`<slug>:admin` is acceptable *only if* it transitively includes `manage`)** — a `workflow-narrow` row whose `Hierarchy parent` is `—` is a blocker (the narrow tier would not be reachable by `manage` holders, inverting intent); a `workflow-narrow` row whose `Hierarchy parent` is `<slug>:admin` in a model where `admin` does *not* roll up to `manage` is also a blocker.
+
+  **Cross-check against the rest of the parse** (also blockers):
+  - every `require_permission(<code>)` argument referenced across all `validation_rules` appears as a `Permission` row;
+  - every entity carrying `**Edit permission:** admin` appears in the `baseline-admin` row's `Used by` cell (and vice versa);
+  - every entity carrying `**Edit permission:** <narrow_suffix>` (analyst v2.1+) has `<slug>:<narrow_suffix>` declared as a `Type: workflow-narrow` row, AND the entity appears in that row's `Used by` cell;
+  - every `Type: workflow` (elevated) row is invoked by at least one `require_permission` rule;
+  - every `Type: workflow-narrow` row is consumed by at least one entity's `Edit permission:` annotation OR invoked by at least one `require_permission` rule.
+
+  The table is the canonical source — when the table and a §3 / §8 reference disagree, the table wins and the disagreement is a defect surfaced to the user.
+- **Implementation notes** (§8), always follow these. **In v2.0 files, §8 step 1 references the §2 Permissions summary table rather than enumerating permissions inline.** Read §8 for the procedural sequence (module creation order, label-column fixups, dedup-against-builtin, etc.) but read the Permissions summary table for the permission catalog itself.
 
 ### Model-to-Entity Mapping
 
@@ -120,6 +146,7 @@ Once the version gate passes, extract the rest:
 | Description | `description` |
 | Label column | `label_column` |
 | `**Audit log:** yes \| no` | `audit_log` (boolean; omit or pass `false` when the model says `no` or is silent) |
+| `**Edit permission:** manage \| admin \| <narrow_suffix>` (analyst v1.10+ for `manage`/`admin`; v2.1+ for narrow; absent = `manage`) | `edit_permission`: `"<system_slug>:admin"` when the line says `admin`; `"<system_slug>:<narrow_suffix>"` when the line names a bare suffix that matches a `Type: workflow-narrow` row in the §2 Permissions summary (Stage 1 has already validated this); otherwise `"<system_slug>:manage"`. `view_permission` is always `"<system_slug>:read"`. For files without the line (pre-v1.10), every entity gets `"<system_slug>:manage"` — the legacy two-permission baseline. |
 | `**Edit mode:** auto \| sidebar \| modal \| page` (when present) | `edit_mode` (omit when absent, defaults to `auto`) |
 | `**Cube mode:** disabled \| auto` (when present) | `cube_mode` (omit when absent, defaults to `disabled`) |
 | `**Computed fields**` JSON block (when present) | `computed_fields` (array; omit or pass `[]` when absent. Sent verbatim — the deployer never edits, reorders, or merges entries.) |
@@ -132,7 +159,7 @@ Once the version gate passes, extract the rest:
 | Model column | `create_field` parameter |
 |---|---|
 | Field name | `field_name` |
-| Format | `format` |
+| Format | `format` (text formats include `string`, `text`, `multiline`, `html`, `code`; `string` and `text` render single-line inputs, `multiline` renders a `<textarea>`. All five store as Postgres `TEXT`. Format **can** be changed after `create_field`, but **only within the same primitive type** — `text → multiline → html` is safe (all `TEXT`), `text → date` is rejected. Surface a cross-primitive mismatch between model and live as a hard block; a same-primitive mismatch can be reconciled via `update_field`. See the format-rule below.) |
 | Label | `title` |
 | → `table` | `reference_table` |
 | Delete mode from §4 | `reference_delete_mode` |
@@ -185,8 +212,10 @@ semantius call crud read_module '{"filters": "module_slug=eq.<system_slug>"}'
 
 > **Module schema note.** Modules carry both a **`module_name`** (unique human-facing display name shown in the UI selector and landing page header, keep acronyms as acronyms, e.g. `CRM`, `ITSM`, `CMDB`) and a **`module_slug`** (lowercase URL/permission handle, e.g. `crm`, `itsm`, `cmdb`). The earlier `alias` field is **removed**. `module_name` maps to the model's `system_name`; `module_slug` maps to the model's `system_slug`; the module's `description` maps to the model's `system_description` (compact tagline, ≤40 chars, e.g. `Customer Relationship Management`). The §1 Overview prose does **not** go on the module record, it is too long for the selector chip; keep it in the markdown file only.
 
-- **Exists** → plan an `update_module` to refresh `module_name`, `description`, and (if missing on the existing record) `module_slug`, drawing them from the model's `system_name`, `system_description`, and `system_slug` respectively. Capture the existing `module_id` to reuse. **Never create a second module with the same slug.**
-- **Missing** → plan a `create_module` with `module_name: "<system_name>"`, `module_slug: "<system_slug>"`, `description: "<system_description>"`, followed by baseline permissions `<system_slug>:read` and `<system_slug>:manage`.
+- **Exists** → plan an `update_module` to refresh `module_name`, `description`, and (if missing on the existing record) `module_slug`, drawing them from the model's `system_name`, `system_description`, and `system_slug` respectively. Capture the existing `module_id` to reuse. **Never create a second module with the same slug.** On re-run, also reconcile permissions: if the model now requires `<system_slug>:admin` (per Stage 1's parsed §3 `**Edit permission:**` annotations) but the live module only has `<system_slug>:read` and `<system_slug>:manage` (the legacy two-permission baseline), plan an additive permission create plus the missing hierarchy row. See Stage 4b for the full reconciliation rules.
+- **Missing** → plan a `create_module` with `module_name: "<system_name>"`, `module_slug: "<system_slug>"`, `description: "<system_description>"`, followed by the permissions and hierarchy rows derived directly from the §2 **Permissions summary** table (parsed in Stage 1):
+  - **Create each permission, in table order.** For each row in the table, call `create_permission` with `permission_name = row.Permission` and `description = row.Description`. Permission creation happens before hierarchy because hierarchy rows reference both ends. There is no separate "baseline vs workflow" branching here — the table is a flat list and the deployer iterates it once. The parse-time validation has already enforced shape (exactly one baseline-read row, exactly one baseline-manage row, at-most-one baseline-admin row, valid `Type` values, etc.); if parse passed, this step is mechanical.
+  - **Create each hierarchy row.** Iterate the table again and for every row whose `Hierarchy parent` cell is non-`—`, call `create_permission_hierarchy` with `parent_permission = row["Hierarchy parent"]` and `child_permission = row.Permission`. The `manage includes read` baseline chain, the `admin includes manage` rollup (when baseline-admin exists), and every workflow rollup under `<slug>:admin` are all encoded in the table column; the deployer does not need a separate enumeration. Parse-time validation has already rejected any `Hierarchy parent = <slug>:manage` for a workflow row (defeats the conditional gate).
 
 > **Required model keys.** `system_name`, `system_slug`, and `system_description` are all required front-matter keys per analyst skill v1.0+. If the model file is missing `system_description`, stop and route the user back to the analyst skill (Mode B audit) to backfill it before deploying, the deployer will not invent a description.
 
@@ -256,7 +285,7 @@ Note for each:
 - Module it lives in, `singular`, `plural`, `description`, `label_column`
 - Field names, formats, required-ness
 - Overlap: which fields mean the same thing (often same name, sometimes just same concept under a different name)
-- Format conflicts on conceptually-same fields (immutable → blocks merge)
+- Format conflicts on conceptually-same fields (cross-primitive → blocks merge; same-primitive can be reconciled via `update_field` before merge)
 
 This comparison goes into the Stage 3 plan so the user can decide on informed grounds.
 
@@ -264,10 +293,12 @@ This comparison goes into the Stage 3 plan so the user can decide on informed gr
 
 | Property | Risk | Notes |
 |---|---|---|
-| Field `format` | 🛑 High, **immutable** | Cannot be changed after creation |
-| Field `enum_values` | ⚠️ Medium | Changing values may affect existing records |
+| Field `format` | ⚠️ Medium within primitive, 🛑 High across primitives | Same-primitive changes are accepted by `update_field` (e.g. `text` ↔ `multiline` ↔ `html` ↔ `json` ↔ `email`, all TEXT-backed; `integer` ↔ `number`, both numeric; `date` ↔ `datetime`). Cross-primitive changes (`text → date`, `email → integer`) are rejected by the platform — fall back to a model-level rethink via the analyst skill. Don't maintain a parallel primitive taxonomy here; sync to the model and let Semantius adjudicate. |
+| Field `enum_values` | ✅ Low for additive, 🛑 High for removals | Adding values the live row doesn't have is safe (no existing record carries the new value); sync via `update_field`. Removing values the live row still carries is unsafe: existing rows may hold the removed value and the check-constraint tightening will fail. Surface removals in the Stage 3 plan so the user can decide (drop the value and reconcile existing rows first, or keep it in the model). |
 | Entity labels, descriptions | ✅ Low | Safely updatable |
 | Field `title`, `description` | ✅ Low | Safely updatable |
+| Field `required`, `searchable`, `width`, `input_type` | ✅ Low | Safely updatable; sync to model value. |
+| Field `reference_table`, `reference_delete_mode`, `relationship_label`, `is_unique` | ✅ Low | FK metadata is safely updatable; sync to model value. |
 
 ### 2g. Resolve §6 cross-model link suggestions against the live catalog
 
@@ -294,7 +325,10 @@ Before running any writes, show the user a clear plan. The plan must have two pa
 ```
 📦 Module: saas_expense_tracker
   ✨ Will create (new module)
-  🔑 Permissions: ✨ saas_expense_tracker:read, ✨ saas_expense_tracker:manage
+  🔑 Permissions: ✨ saas_expense_tracker:read, ✨ saas_expense_tracker:manage, ✨ saas_expense_tracker:admin
+  🔗 Permission hierarchy: ✨ admin → manage, ✨ manage → read
+  🛠 Admin-tier entities (edit_permission = saas_expense_tracker:admin): departments, budget_periods
+  🛠 Operational entities (edit_permission = saas_expense_tracker:manage): every other entity below
 
 🗂 Entities (7 total):
   🔒 users — Semantius built-in, reusing (model declares 3 extra fields: `department_id`, `job_title`, `employee_id` — will add additively with user confirmation)
@@ -305,7 +339,7 @@ Before running any writes, show the user a clear plan. The plan must have two pa
   ✨ budget_lines — will create + 8 fields
   ✨ license_assignments — will create + 7 fields
 
-Total to create: 1 module, 2 permissions, 6 entities, ~58 fields
+Total to create: 1 module, 3 permissions, 2 hierarchy rows, 6 entities, ~58 fields
 Plus: 3 additive fields on built-in `users` (pending confirmation)
 
 🔗 Cross-model link suggestions (from §6):
@@ -314,7 +348,21 @@ Plus: 3 additive fields on built-in `users` (pending confirmation)
   💤 Skipped (target not in catalog): `subscriptions → cost_allocation_rules`
 ```
 
-If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12) — will update module metadata from the new model; will diff entities and apply only changes`.
+If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12) — will update module metadata from the new model; will diff entities and apply only changes`. Render the field-level deltas inline under each ♻️ entity so the user sees exactly what's about to change, not just a vague "will diff" promise:
+
+```
+🗂 Entities (7 total):
+  ♻️ subscriptions — 26 fields, 4 drifted, 1 new
+     ~ vendor_name.description: "Vendor" → "Legal name of the contracting vendor"
+     ~ status.enum_values: + "renewed", + "expired"
+     ~ amount.searchable: false → true
+     ~ contract_url.format: text → html (same primitive, accepted)
+     + renewal_date (date, optional)
+  ♻️ vendors — 6 fields, no drift
+  ✨ budget_lines — will create + 8 fields
+```
+
+Use `~` for drifted properties (with `old → new`), `+` for additions, and surface `🛑` separately for anything that blocks the fast-path (enum removals, cross-primitive format changes, field deletions, tier flips). The 🛑 deltas route through the normal Stage 3 ambiguity dialog; the `~` and `+` deltas are informational and apply automatically once the plan is approved (or under the clean re-run fast-path, immediately).
 
 ### Cross-model link suggestions (additive, reversible)
 
@@ -410,7 +458,7 @@ If the tool is not available in the harness, fall back to labeled prose options 
 **Merge (a):**
 
 - Do a field-by-field mapping. For each incoming field, either point it at an existing field with the same meaning, or add it as a new field on the existing entity.
-- **Format mismatch on a conceptually-same field is a hard block.** Formats are immutable; a merge that requires changing a format is impossible. Fall back to rename.
+- **Format mismatch on a conceptually-same field is a hard block only when the primitives differ.** Same-primitive mismatches (`text` vs `multiline`, both `TEXT`) can be reconciled with an `update_field` to align formats before the merge proceeds. Cross-primitive mismatches (one side `text`, the other `date`) cannot be reconciled; fall back to rename.
 - The merged entity stays in its current module (keeps existing records and FKs intact). The incoming model's module just references it.
 
 **Rename incoming (b):**
@@ -436,6 +484,8 @@ If the tool is not available in the harness, fall back to labeled prose options 
 Do not proceed to Stage 4 until every 🛑 has a recorded decision. Restate the resolved plan once before executing.
 
 **Exception:** If there are zero built-in overlaps, zero cross-module collisions, zero similar-name flags, and the module doesn't exist yet, proceed immediately: "No existing model found and no catalog collisions, creating everything from scratch now."
+
+**Clean re-run fast-path.** If the module already exists but every diff is all-green — no removed enum values, no cross-primitive format changes, no field deletions, no `edit_permission` tier flips, no cross-module collisions, no §6 ambiguities — print the delta summary inline and proceed without a confirmation prompt. Example: *"Re-run against existing `saas_expense_tracker` module: 0 entities to create, 3 entities to update (7 fields drifted, all safe). Applying now."* The user still sees exactly what changed; they just don't have to click through a gate that has nothing risky in it. Any single 🛑 (enum removal, cross-primitive format, removed field, tier flip, collision) cancels the fast-path and routes back to the normal Stage 3 dialog.
 
 ---
 
@@ -466,13 +516,22 @@ Recipe:
 
 Only fill the gap — never overwrite a `logo_color` the user (or an earlier deploy) already set. This is purely a cosmetic guardrail so module selector chips get a dark, readable backdrop instead of the platform's empty-string default. Picking a fresh shade per deploy means re-runs against the same empty-state module will land different colors; that's intentional — once set, it sticks, and the user can override at any time.
 
-**4b. Permissions**, Ensure `<slug>:read` and `<slug>:manage` exist. `read_permission` first; `create_permission` only for the missing ones.
+**4b. Permissions and hierarchy**, Determine the required permission set from Stage 1's parsed §3 `**Edit permission:**` annotations: if any entity carries `admin`, the model needs three permissions (`<slug>:read`, `<slug>:manage`, `<slug>:admin`); otherwise two (`<slug>:read`, `<slug>:manage`). For each required permission, `read_permission` first; `create_permission` only for the missing ones. Pass `description` strings that match the tier semantics: `read` → *"View <System Name> data"*; `manage` → *"Create, update, and delete operational <System Name> records"*; `admin` → *"Create, update, and delete reference / configuration <System Name> records"*.
+
+Then ensure the **permission hierarchy chain** exists via `create_permission_hierarchy` so higher tiers transitively grant lower ones (see use-semantius `references/rbac.md` § "Set Up Permission Hierarchy"):
+
+- For three-permission models: `parent_permission_id` = `<slug>:admin`, `child_permission_id` = `<slug>:manage`; AND `parent_permission_id` = `<slug>:manage`, `child_permission_id` = `<slug>:read`.
+- For two-permission models: `parent_permission_id` = `<slug>:manage`, `child_permission_id` = `<slug>:read`.
+
+`read_permission_hierarchy` first with `parent_permission_id=eq.<parent_id>&child_permission_id=eq.<child_id>` to check whether the row already exists (re-runs are idempotent). Create only missing rows. **Never invert direction** (child including parent breaks RBAC).
+
+**Re-run reconciliation.** When the module already exists with the legacy two-permission baseline but the current model has been upgraded to need three (any §3 entity now carries `**Edit permission:** admin`), the deploy adds the missing `<slug>:admin` permission and the missing `admin → manage` hierarchy row additively. Surface this in the Stage 3 plan as `✨ saas_expense_tracker:admin` and `✨ admin → manage` so the user can see the upgrade. Never delete or rename existing permissions or hierarchy rows.
 
 **4c. Entities**, Walk model §2 in order and apply each entity's bucket decision:
 
-- 🔒 Built-in → skip entirely. Do not `create_entity` for `users`, `roles`, etc.
-- ♻️ Same-module match → skip `create_entity`. If the model's `**Audit log:**`, `singular_label`, `plural_label`, `description`, **`computed_fields`**, or **`validation_rules`** differ from the live entity, call `update_entity` to sync. Treat `computed_fields` and `validation_rules` as **wholesale replacements**: send the model's array as-is, the platform replaces (does not merge). When the model carries the heading but with an empty array, pass `[]` so the platform drops any existing trigger; when the model omits the heading entirely, omit the key from the `update_entity` payload (do not silently clear an array a maintainer added live, unless the model authoritatively states there should be none — see "Conflict Resolution Reference"). Then fall through to 4d (field diff).
-- ✨ New → `create_entity`. Pass `audit_log` from the §3 `**Audit log:**` line (default `false` when the line is missing or says `no`). Pass `computed_fields` and `validation_rules` from the §3 sub-blocks (default `[]` when absent). After creation, correct the `label_column` field title if needed with `update_field`.
+- 🔒 Built-in → skip entirely. Do not `create_entity` for `users`, `roles`, etc. The §3 `**Edit permission:**` annotation, if any, has no effect on built-ins.
+- ♻️ Same-module match → skip `create_entity`. If the model's `**Audit log:**`, `**Edit permission:**`-derived `edit_permission`, `singular_label`, `plural_label`, `description`, **`computed_fields`**, or **`validation_rules`** differ from the live entity, call `update_entity` to sync. Treat `computed_fields` and `validation_rules` as **wholesale replacements**: send the model's array as-is, the platform replaces (does not merge). When the model carries the heading but with an empty array, pass `[]` so the platform drops any existing trigger; when the model omits the heading entirely, omit the key from the `update_entity` payload (do not silently clear an array a maintainer added live, unless the model authoritatively states there should be none — see "Conflict Resolution Reference"). For `edit_permission` specifically: read the live entity's current `edit_permission` first, and only `update_entity` when the resolved permission name (e.g. `<slug>:admin` vs `<slug>:manage`) differs; surface the change to the user in the Stage 3 plan as a tier flip so they can sanity-check (a tier flip is a real RBAC change). Then fall through to 4d (field diff).
+- ✨ New → `create_entity`. Pass `audit_log` from the §3 `**Audit log:**` line (default `false` when the line is missing or says `no`). Pass `view_permission: "<system_slug>:read"` and `edit_permission` derived from the §3 `**Edit permission:**` line: `"<system_slug>:admin"` when the line says `admin`, `"<system_slug>:manage"` otherwise (default, or when the line is absent in a pre-v1.10 file). Pass `computed_fields` and `validation_rules` from the §3 sub-blocks (default `[]` when absent). After creation, correct the `label_column` field title if needed with `update_field`.
 - 🛑 Resolved as **merge** → skip `create_entity`. The target is the existing entity in the other module. Record the mapping; the merge is realized in 4d by adding the non-overlapping fields additively to the existing entity.
 - 🛑 Resolved as **rename incoming** → `create_entity` using the new name. (Plan-level rewrite of `reference_table` values has already happened before this stage.)
 - 🛑 Resolved as **rename existing** → attempt `update_entity` on the existing entity's `table_name` first, before any new creates. If the platform rejects the rename, stop and return to Stage 3, never continue silently. Once the rename succeeds, Semantius repoints every catalog-side `reference_table` automatically; no follow-up `update_field` pass is needed.
@@ -483,7 +542,21 @@ Only fill the gap — never overwrite a `logo_color` the user (or an earlier dep
 
 **Computed-field columns are deployed as `input_type: "readonly"`.** Before issuing each `create_field`, check whether its `field_name` appears in the parent entity's `computed_fields[].name` list. If yes, override `input_type` to `"readonly"` instead of `"default"`, regardless of anything else the model says about that field's input_type. The platform silently overwrites caller-supplied values for any column listed in `computed_fields` (see use-semantius `references/data-modeling.md` § "Evaluation semantics" — *"Caller-supplied values for a computed field are silently overwritten"*), so the UI hint must match the semantics — otherwise the auto-generated form lets users type into a field whose value will be clobbered on save. This is a deployer-enforced consistency rule between two model declarations the user has already made consistent in intent; the JsonLogic stays verbatim and the model file is not modified.
 
-For ♻️ same-module matches and 🛑 merges, only create fields that don't already exist; `update_field` for safe diffs (title, description, enum extensions, searchable). Never attempt a format change, formats are immutable and that requires an analyst-level rethink. The readonly rule above also applies on re-runs: for every existing field whose name appears in `computed_fields[].name`, if its live `input_type` is anything other than `"readonly"`, issue an `update_field` to flip it. This catches both newly-introduced computed fields (the column existed first, then the model added it to `computed_fields`) and corrections to live data where someone manually toggled input_type away from readonly.
+For ♻️ same-module matches and 🛑 merges, do not just create the missing fields and stop — walk every model field against its live counterpart and emit `update_field` for each property that has drifted. The diff is essentially free: one `read_field` per entity (filter `table_name=eq.<table>`) already returns every property in a single round-trip, and local comparison is microseconds. Skipping the diff is the reason changed descriptions, title corrections, enum extensions, and same-primitive format adjustments fail to land on re-runs.
+
+For each model field on this entity:
+
+- **Field absent live** → `create_field` as before (auto-generated fields `id`, `label`, `created_at`, `updated_at`, and the entity's `label_column` are still skipped).
+- **Field present live** → compute the property delta against the model and emit **one** `update_field` carrying every changed key. Issue one call per drifted field (not one per property) so the audit log records a coherent change set per column. Properties to compare:
+  - `title`, `description` — sync to model value.
+  - `required`, `searchable`, `width`, `input_type` — sync to model value.
+  - `format` — sync to the model value and let the platform decide. Same-primitive changes are accepted by Semantius (TEXT family: `text`/`multiline`/`html`/`json`/`email`; numeric: `integer`/`number`; temporal: `date`/`datetime`). Cross-primitive changes return a primitive-change error — quote the error back verbatim and route the user to the analyst skill for a model-level rethink. The deployer doesn't keep its own primitive taxonomy; Semantius is authoritative.
+  - `enum_values` — only sync **additive** extensions (model values the live row doesn't have). Removals (live values the model omits) are unsafe — existing rows may carry the removed value and the constraint tightening will fail at write time. Removals are caught in Stage 2 and surfaced as a 🛑 in Stage 3, never silently applied here.
+  - `reference_table`, `reference_delete_mode`, `relationship_label`, `is_unique` (FK metadata) — sync to model value.
+
+The readonly rule from Stage 4d's create path also applies on re-runs: for every existing field whose name appears in `computed_fields[].name`, if its live `input_type` is anything other than `"readonly"`, include `input_type: "readonly"` in the same `update_field` call. This catches both newly-introduced computed fields (the column existed first, then the model added it to `computed_fields`) and corrections to live data where someone manually toggled input_type away from readonly.
+
+**Don't blind-upsert.** Calling `update_field` on every field regardless of drift is tempting because it's one less branch, but it bloats the audit log, masks live drift that the user may want to see (e.g. someone tightened a description live and the model is stale — the diff exposes that, a blind overwrite silently destroys it), and is strictly slower (more write round-trips than necessary). The diff is the fast path.
 
 **4d-bis. Apply computed fields and validation rules (after fields exist).** The platform validates `computed_fields[].name` against the entity's fields at deploy time, so these arrays can only be set once every field they reference exists. Sequence:
 
@@ -547,7 +620,9 @@ After all creates are done:
 2. `read_field` per entity, confirm field count matches the model (minus auto-generated)
 3. Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`)
 
-Print a final summary: "✅ Done. Created 1 module, 2 permissions, 5 entities, 47 fields. Reused built-ins: users. Additive fields on built-ins: 2."
+Print a final summary: "✅ Done. Created 1 module, 3 permissions, 2 hierarchy rows, 5 entities (2 admin-tier, 3 operational), 47 fields. Reused built-ins: users. Additive fields on built-ins: 2."
+
+When the model is on the two-permission fallback (no admin-tier entities), the summary reads "2 permissions, 1 hierarchy row, N entities (all operational)". The admin-tier breakdown is omitted when there are no admin-tier entities.
 
 ---
 
@@ -676,16 +751,18 @@ Run the complete script in one bash call and report the final output summary.
 | Conflict | Risk | Action |
 |---|---|---|
 | Module with same `system_slug` already exists | ✅ Low | `update_module`, never create a duplicate |
-| Field `format` mismatch | 🛑 High | Skip (keep as-is), or require rename/analyst rethink |
+| Field `format` mismatch, same primitive (TEXT family / numeric / temporal) | ✅ Low | `update_field` accepted by the platform — sync to model value. |
+| Field `format` mismatch, cross primitive (e.g. `text → date`, `email → integer`) | 🛑 High | Platform rejects. Quote the primitive-change error back and route to the analyst skill. |
 | Entity label/description mismatch | ✅ Low | Offer `update_entity` (skip for built-ins) |
-| Field title/description mismatch | ✅ Low | Offer `update_field` |
-| `enum_values` differ | ⚠️ Medium | Offer update, warn about impact on existing records |
+| Field title/description mismatch | ✅ Low | `update_field` — included in the per-field walk at Stage 4d. |
+| `enum_values` differ, additive (model adds values the live row doesn't have) | ✅ Low | `update_field` — sync the extended list. No existing record carries the new values, so no constraint break. |
+| `enum_values` differ, removal (live row still carries values the model omits) | 🛑 High | Existing rows may hold the removed value and the check-constraint tightening will fail. Surface in Stage 3 so the user can drop the value (and reconcile existing rows first) or keep it in the model. |
 | Extra fields/entities not in model | None | Leave them alone |
 | Model declares a built-in (`users`, `roles`, …) | None | Dedup: skip create, reuse built-in as `reference_table` target; never replace |
 | Model declares extra fields on a built-in | ⚠️ Medium | Offer additive `create_field`; never modify existing built-in fields |
 | **Cross-module exact-name collision** (entity with same `table_name` exists in another module) | 🛑 High, ambiguity gate | Stage 3 decision dialog: merge / rename incoming / rename existing / rename both / abort. Never silently coexist. |
 | **Similar-name collision** (root, synonym, qualifier, prefix/suffix) | 🛑 High, ambiguity gate | Same dialog as above. User may decline, in which case record the decision and proceed. |
-| Merge requires changing an immutable field format | 🛑 High | Merge is impossible, fall back to a rename option. |
+| Merge requires changing field format **across primitive types** (e.g. `text → date`) | 🛑 High | Merge is impossible, fall back to a rename option. Same-primitive format changes (`text → multiline → html`, all `TEXT`) are allowed and can be applied via `update_field` before the merge — not a blocker. |
 | Existing-entity rename rejected by platform | 🛑 High | Stop. Offer "rename incoming" or "rename both" as fallback. Never continue silently. |
 | §6 row whose `To` target is in the catalog (exact match) and whose auto-generated `<target_singular>_id` field name is free on `From` | ⚠️ Medium | Stage 3 user-confirmed proposal; Stage 4f executes as `create_field` on the source table with the §6 verb as `relationship_label`. |
 | §6 row whose `To` target is not in the catalog (and no near-name match) | ✅ Low | Dormant. Skip silently this run; redeploy any model whose §6 references the target once it later arrives. |
@@ -700,4 +777,16 @@ Run the complete script in one bash call and report the final output summary.
 | Model carries `Computed fields` referencing a field that does not yet exist on the entity | ⚠️ Medium | Sequence: create the referenced field first (Stage 4d), then push the array via `update_entity` (Stage 4d-bis). The platform rejects arrays whose `name` does not resolve to a field. |
 | Field is referenced by `computed_fields[].name` but its `input_type` is not `readonly` (either on create or on a re-run) | ✅ Low | Auto-set `input_type: "readonly"` — on create via the `create_field` payload (Stage 4d), on re-run via `update_field`. The column is semantically read-only: every caller value is clobbered by the compute pass at trigger time, so the UI hint is just being aligned with platform behavior. The model and its JsonLogic are not modified. |
 | Model carries `validation_rules` with a duplicate `code` within the entity | 🛑 High | Reject at parse time. Send the user back to the analyst skill to fix; the deployer will not silently rename. |
-| Model declares `computed_fields` / `validation_rules` on a Semantius built-in (`users`, `roles`, …) | 🛑 High | Refuse. Built-ins run platform logic; model-driven rules would conflict. The model is buggy — escalate to the analyst skill. |
+| Model declares `computed_fields` / `validation_rules` on a Semantius built-in (`users`, `roles`, …) | 🛑 High | Refuse. Built-ins run platform logic; model-driven rules would conflict. The model is buggy, escalate to the analyst skill. |
+| Model's `validation_rules` JsonLogic invokes `{"require_permission": "<code>"}` for a `<code>` that is not a row in the §2 Permissions summary table | 🛑 High | Reject at parse time, before any write. The platform will throw at rule-evaluation time on every write that hits the gate because the permission doesn't exist; that's a runtime failure mode the analyst's audit should have caught. Surface the offending rule's entity + `code` and the missing permission to the user, ask them to re-run the analyst skill's audit on the file. Do not call `create_permission` ad hoc, an undeclared permission usually signals the model is missing the matching hierarchy row and entity-tier wiring too. |
+| Model declares a workflow row in the §2 Permissions summary (e.g. `<slug>:approve_<noun>`) that no `validation_rules` JsonLogic invokes via `require_permission` | ⚠️ Medium | Surface to the user as an "orphan workflow permission" finding in Stage 3 plan. The deployer can still create the permission (it does no harm), but the model is likely buggy, either a `require_permission` call was dropped or the permission was declared speculatively. Ask the user whether to create it anyway or send the file back to the analyst. |
+| Live module has workflow permissions (`<slug>:approve_<noun>` etc.) that the model's §2 Permissions summary no longer lists | ⚠️ Medium | Do not silently delete; revoking a permission affects every role and user that holds it. Surface in Stage 3 plan and ask the user to confirm the removal before calling `delete_permission`. If the model's intent was to keep the permission but rename it, that should be done as a delete + create through the analyst skill, not inferred from a diff. |
+| Model's §2 Permissions summary table has a `Type: workflow` (elevated) row whose `Hierarchy parent` cell is `<slug>:manage` (rolling an elevated workflow permission up under the baseline manage tier) | 🛑 High | Reject before any write. This row auto-grants every `<slug>:manage` holder the gated authority, defeating the conditional `require_permission` check the workflow permission was created for. The analyst's audit should have caught this. Surface the offending row to the user and route back to the analyst skill; the fix is either to change the `Hierarchy parent` to `<slug>:admin` (promoting the model to three-permission baseline if needed) or to set it to `—` so the workflow permission is granted directly. |
+| Model's §2 Permissions summary table has a `Type: workflow-narrow` row whose `Hierarchy parent` cell is `—` or is `<slug>:admin` in a model where `admin` does not transitively include `manage` (analyst v2.1+) | 🛑 High | Reject before any write. The narrow tier's intent is that holders of `<slug>:manage` transitively pass the narrow check; a rollup that excludes `manage` from the chain inverts that intent. Surface the offending row and route back to the analyst skill; the fix is to set `Hierarchy parent` to `<slug>:manage` (the default) or to ensure the baseline chain includes `manage → admin`. |
+| Model carries `**Edit permission:** <narrow_suffix>` but the §2 Permissions summary has no `Type: workflow-narrow` row for `<slug>:<narrow_suffix>` (analyst v2.1+) | 🛑 High | Reject before any write — the entity binds to an undeclared narrow tier. Surface the offending entity and route back to the analyst skill to declare the row, or change the annotation back to `manage`/`admin`. |
+| Live entity's `edit_permission` is `<slug>:<narrow_suffix>` but model annotates it as `manage` (or vice versa) (analyst v2.1+) | ⚠️ Medium | Surface as a tier flip in Stage 3 plan, same posture as the `manage ↔ admin` flip — this is a real RBAC change (different population of users gains or loses write access on this entity). `update_entity` only after explicit user confirmation. |
+| Model's §2 Permissions summary table is missing entirely (file is v1.x or analyst v2.0 skipped the section) | 🛑 High | Reject at Stage 1. v2.0 files require the section; v1.x files are a major-mismatch. Route the user back to analyst Mode D Rebuild to materialize the v2 file from the existing content. Do not attempt to synthesize the table from §8 step 1 and per-entity `Edit permission:` annotations, the v2 contract requires the analyst to produce the table as a deliberate authoring step, not a deployer-side inference. |
+| Model carries `**Edit permission:** admin` annotations but the live module is on the legacy two-permission baseline (only `<slug>:read` and `<slug>:manage`) | ✅ Low | Additive upgrade. Stage 4b creates the missing `<slug>:admin` permission and the missing `admin → manage` hierarchy row; Stage 4c sets `edit_permission` on the admin-tier entities. Surface in Stage 3 plan as `✨` rows so the user can confirm. |
+| Model carries no `**Edit permission:**` annotations (pre-v1.10 file) but the live module has all three permissions and admin-tier entities | ✅ Low | Leave alone. Older analyst minors didn't author tier annotations; do not flip live entities' `edit_permission` from `<slug>:admin` back to `<slug>:manage` based on the absence of an annotation. To sync, the user runs the analyst's Mode B audit first (which proposes annotations + the three-permission §8 step 1) and redeploys against the updated file. |
+| Live entity's `edit_permission` is `<slug>:admin` but model annotates it as `manage` (or vice versa) | ⚠️ Medium | Surface as a tier flip in Stage 3 plan. `update_entity` only after explicit user confirmation, this is a real RBAC change; everyone with the old tier loses or gains edit access on that entity. Do not silently switch. |
+| Re-run on a module whose live hierarchy has the inclusion direction inverted (e.g. `read includes manage`) | 🛑 High | Stop. An inverted row breaks RBAC; the deployer never authored this. Surface to the user and ask whether to delete the inverted row and recreate it the right way around. Never `update` a hierarchy row silently. |

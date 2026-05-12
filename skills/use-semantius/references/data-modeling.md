@@ -282,11 +282,11 @@ Both arrays default to `[]` and may be omitted entirely. To remove a rule or rec
 
 ### Field Format Quick Reference
 
-Choose `format` carefully, **it is immutable after creation**.
+Choose `format` carefully. Format **can** be changed after creation, but **only within the same Postgres primitive type**. Same-primitive transitions are allowed (`text → multiline → html`, all `TEXT`); cross-primitive transitions are rejected by the platform (`text → date`, `integer → number`, `date → boolean`). The primitive groupings are visible in the format-to-primitive table later in this reference (under `default_value`). Still pick the format deliberately on the first pass: a later change re-renders the form (input shape) and may require republishing UI surfaces, even though the column data survives.
 
 | Category | `format` values |
 |----------|----------------|
-| Text | `string`, `text`, `html`, `code` |
+| Text | `string`, `text`, `multiline`, `html`, `code` |
 | Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
@@ -297,6 +297,15 @@ Choose `format` carefully, **it is immutable after creation**.
 | Ownership/composition | `parent` + `reference_table` |
 
 > 🛑 **Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. Never combine `reference_table` with scalar formats (`integer`, `uuid`, `string`, etc.). This will always fail.**
+
+**Picking between text formats.** All five resolve to a Postgres `TEXT` column; the format selects the UI input shape. Because they share a primitive, the format **can be changed among them after creation** — `text → multiline → html` is safe and accepted by `update_field`. The choice still matters up front because flipping later re-renders the form and may force a UI republish. Cross-primitive changes (e.g. `text → date`) are rejected by the platform.
+
+- `string` and `text` are **single-line** inputs — names, titles, labels, email-like identifiers, short tags. The form renders a single-line `<input>`. Use these for any field that holds a short value displayed on a single row.
+- `multiline` is the **multi-line** input — descriptions, notes, comments, free-form prose, journal entries, scorecard commentary. The form renders a `<textarea>`. Pick `multiline` whenever the field holds prose the user might paste a paragraph into; pick `text` / `string` when the value is a single line. The distinction lives in the column metadata, so the choice is made up front and migrating between them later means dropping and recreating the field.
+- `html` renders a rich-text editor on top of HTML storage; reserve for fields that need formatted output (release notes, marketing copy).
+- `code` renders a monospace code editor; reserve for stored source / configuration snippets.
+
+Heuristic for the analyst: field names like `*_name`, `*_title`, `*_label`, `*_code`, `*_id` (string identifier), `email_address`, `phone_number`, `url` → single-line (`string` or `text`). Field names like `description`, `notes`, `body`, `comment`, `concerns`, `strengths`, `feedback`, `summary`, `details`, `rationale`, `instructions` → multi-line (`multiline`).
 
 ### `width` Values
 
@@ -329,7 +338,7 @@ The Semantius column-add trigger picks a sensible default automatically based on
 
 | Format | PostgreSQL type | Auto-default when required |
 |---|---|---|
-| `string`, `text`, `email`, `url`, …  | `TEXT` | `''` |
+| `string`, `text`, `multiline`, `email`, `url`, …  | `TEXT` | `''` |
 | `int32`, `int64`, `integer` | `INTEGER` / `BIGINT` | `0` |
 | `number`, `float`, `double` | `NUMERIC` / `REAL` | `0.0` |
 | `boolean` | `BOOLEAN` | `FALSE` |
