@@ -271,9 +271,9 @@ export function formatToolResult(result: unknown, diag = false): string {
           );
         }
 
-        throw new Error(
-          `Unexpected tool response: missing response.data. Use --diag to see the raw output.\n${text}`,
-        );
+        // No postgrestRequest-style envelope — tool returned bare JSON
+        // (e.g. crud tools). Pretty-print it as-is.
+        return JSON.stringify(parsed, null, 2);
       }
     }
   }

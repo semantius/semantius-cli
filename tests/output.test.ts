@@ -155,12 +155,24 @@ describe('output', () => {
       expect(() => formatToolResult(result)).toThrow('not valid JSON');
     });
 
-    test('throws when JSON response has no response.data', () => {
+    test('returns bare JSON when response has no envelope', () => {
+      const payload = { something: 'else' };
       const result = {
-        content: [{ type: 'text', text: JSON.stringify({ something: 'else' }) }],
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
       };
 
-      expect(() => formatToolResult(result)).toThrow('missing response.data');
+      const output = formatToolResult(result);
+      expect(output).toBe(JSON.stringify(payload, null, 2));
+    });
+
+    test('returns bare JSON array (crud tool shape)', () => {
+      const payload = [{ id: 1, name: 'foo' }];
+      const result = {
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
+      };
+
+      const output = formatToolResult(result);
+      expect(output).toBe(JSON.stringify(payload, null, 2));
     });
 
     test('falls back to JSON for non-text content', () => {
