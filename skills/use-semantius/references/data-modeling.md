@@ -202,6 +202,58 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 
 The rule passes on INSERT (no prior row), passes when the prior status was anything but `released`, and on UPDATE from `released` only passes when the new status is still `released`.
 
+#### Platform-extension operators
+
+In addition to standard JsonLogic operators, the platform provides three extension operators usable in `computed_fields`, `validation_rules`, `select_rule`, and `input_type_rule`:
+
+| Operator | Shape | Returns | Use in |
+|---|---|---|---|
+| `{"value_changed": "<field>"}` | unary, takes a field name string | boolean — `true` when the field's value differs from `$old.<field>` (always `true` on INSERT) | `validation_rules`, `computed_fields`. Scope a rule to the moment a specific column changes (e.g. an approval gate fires only on the transition into `approved`, not on every subsequent edit). |
+| `{"require_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — returns `true` when the caller holds the permission, **throws** otherwise (surfacing the throw as a validation failure with the rule's `code` / `message`) | `validation_rules`. Use only inside `if` so the throw is conditional, not unconditional. Wrong shape for `select_rule` (a per-row throw during SELECT would be a disaster) — use `has_permission` there instead. |
+| `{"has_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — `true` when the caller holds the permission, `false` otherwise (never throws) | `select_rule` (primary use — added specifically so `select_rule` can broaden visibility for elevated roles without throwing per row), `input_type_rule`, and `validation_rules` (when a non-throwing check is preferable, e.g. composing with `or` to allow the permission *or* an ownership match). |
+
+**Choosing between `require_permission` and `has_permission` in `validation_rules`.** Both work on the write side. `require_permission` throws on miss, surfacing the rule's `message` to the caller — the right shape when the permission is a hard requirement and the failure message *is* the explanation ("Only an approver can move an offer to `approved`"). `has_permission` returns boolean — the right shape when the permission is one branch of a wider predicate ("the caller is the owner *or* holds the override permission"), because `or([owner_match, require_permission(...)])` would throw on every non-owner, defeating the disjunction; `or([owner_match, has_permission(...)])` correctly returns truthy whenever either branch matches.
+
+**Example — conditional approval gate (uses `value_changed` + `require_permission`):**
+
+```json
+{
+  "code": "approve_offer_requires_approver_permission",
+  "message": "Only users with the offer-approver permission can mark an offer approved.",
+  "jsonlogic": {
+    "if": [
+      { "and": [
+        { "value_changed": "status" },
+        { "==": [{ "var": "status" }, "approved"] }
+      ]},
+      { "require_permission": "ats:approve_offer" },
+      true
+    ]
+  }
+}
+```
+
+**Example — owner-or-elevated edit scope (uses `has_permission`):**
+
+```json
+{
+  "code": "edit_restricted_to_author_or_manager",
+  "message": "Only the note's original author or a user with the manage-all-notes permission can edit this note.",
+  "jsonlogic": {
+    "if": [
+      { "==": [{ "var": "$old" }, null] },
+      true,
+      { "or": [
+        { "==": [{ "var": "$old.author_user_id" }, { "var": "$user_id" }] },
+        { "has_permission": "ats:manage_all_notes" }
+      ]}
+    ]
+  }
+}
+```
+
+INSERT passes trivially (no `$old`); UPDATE / DELETE passes when the caller is the original author or holds the override permission. Using `has_permission` here (not `require_permission`) is essential — the `or` needs a non-throwing branch so the owner-match path works for callers without the override.
+
 #### Deploy-time guarantees
 
 When `create_entity` / `update_entity` accepts these properties, the platform verifies:
@@ -302,6 +354,8 @@ A non-boolean result is treated as falsy, so the row is hidden — that fails cl
 | `$user_id` | `uuid` | Authenticated user performing the read (`null` for system-initiated reads). |
 | `$old` | `object` or `null` | Not meaningful on reads; present for vocabulary parity with validation_rules. Do not rely on it in `select_rule`. |
 
+**Platform-extension operators usable in `select_rule`.** The `has_permission` operator (documented in the platform-extension operators section above) is the canonical way to broaden row visibility for elevated roles. It returns boolean (never throws), which is essential — a throwing operator like `require_permission` would fail per-row during a SELECT scan and is not the right shape for read context. `value_changed` and `$old` are also available syntactically but are not meaningful for read rules.
+
 **Relationship to `view_permission`.** `view_permission` is the coarse all-or-nothing gate ("does the caller have read access to this table at all?"); `select_rule` adds per-row filtering on top of it. Both apply. A caller without `view_permission` sees nothing regardless of `select_rule`; a caller with `view_permission` still sees only rows where `select_rule` evaluates truthy.
 
 **Performance note.** `select_rule` is evaluated on every read of every row of this entity. Keep the expression simple: direct column comparisons, `$user_id` matches, enum / boolean checks. Avoid deeply nested arithmetic. Cross-row lookups and FK traversals are not available and would be unworkable at scale anyway.
@@ -331,16 +385,48 @@ A caller sees a row when they own it OR when the row is marked public.
 }
 ```
 
-**Critical: this rule applies uniformly to every caller with `view_permission`.** The platform evaluates the JsonLogic body per row with `$today` / `$now` / `$user_id` as reserved variables; **there is no documented mechanism by which holding a specific permission causes the rule to be skipped for that caller**. A manager calling the API hits the same filter as an agent and a regular user — every caller sees only tickets where the predicate is truthy for them.
+**Broadening visibility for elevated roles — `has_permission` is the canonical mechanism.** The previous version of this section claimed permission-based visibility could not be encoded inside `select_rule`; that was wrong. The platform exposes `{"has_permission": "<code>"}` (documented in the platform-extension operators section above) specifically so a per-row SELECT rule can check the caller's permissions and broaden the visible row set without throwing. The two patterns:
 
-If the design requires a broader audience for some roles ("manager sees every ticket"), that is an architectural decision that goes **outside** the `select_rule` body. Four documented paths:
+**Example — tiered audience (uniform per-row OR elevated-permission bypass):** A ticket is visible to its submitter, its assignee, unassigned tickets are visible to everyone, AND holders of `helpdesk:view_all_tickets` see every row regardless:
 
-- Encode the broadening in a column the rule reads (e.g. `visibility` enum with a `team` value the rule treats as visible to everyone).
-- Provide a separate cube view or entity surface for the broader audience, with its own `view_permission` granted only to the elevated roles.
-- Configure a Postgres role with the `BYPASSRLS` attribute (DBA-side, outside Semantius); holders of that role skip the RLS policy entirely.
-- Accept the uniform filter and use a separate reporting tool for cross-record visibility needs.
+```json
+{
+  "or": [
+    { "==": [{ "var": "submitter_user_id" }, { "var": "$user_id" }] },
+    { "==": [{ "var": "assignee_user_id" }, { "var": "$user_id" }] },
+    { "==": [{ "var": "assignee_user_id" }, null] },
+    { "has_permission": "helpdesk:view_all_tickets" }
+  ]
+}
+```
 
-**Do not write `select_rule` JsonLogic that references a `<slug>:view_all_<plural>`-style permission as a bypass.** The platform does not honor permission-based bypass of `select_rule` as a documented feature; the rule body is the only thing the platform evaluates per row. A rule that names such a permission either has nothing to evaluate (the operator doesn't exist in SELECT context) or evaluates to the bare per-row predicate ignoring the permission — either way, the prose claim about elevated visibility is not what the platform implements. Resolve the broadening mechanism explicitly before writing the rule.
+A regular caller sees only the rows the first three clauses cover; an `ats:view_all_tickets` holder sees every row because the fourth clause shortcuts to truthy. This is the standard way to encode "regular sees own; manager sees all" — the rule body is the single source of truth.
+
+**Example — visibility column with conditional elevation:**
+
+```json
+{
+  "or": [
+    { "==": [{ "var": "visibility" }, "public" ] },
+    { "==": [{ "var": "author_user_id" }, { "var": "$user_id" }] },
+    { "and": [
+      { "==": [{ "var": "visibility" }, "team" ] },
+      { "has_permission": "roadmap:view_team_notes" }
+    ]},
+    { "has_permission": "roadmap:view_all_notes" }
+  ]
+}
+```
+
+**Use `has_permission`, not `require_permission`, in `select_rule`.** Both are documented above. The throwing semantics of `require_permission` are wrong for SELECT: a throw per row of a scan would fail the whole query for any caller missing the permission, even when other clauses of the rule would have admitted some rows. `has_permission` returns boolean, which composes correctly with `or` to broaden visibility.
+
+**Out-of-rule alternatives are still useful when in-rule encoding doesn't fit.** Some access patterns are easier or cleaner outside the rule body:
+
+- Provide a separate cube view or entity surface for the broader audience, with its own `view_permission`, when the elevated read returns a different *shape* (aggregates, redacted columns) than the row-level read.
+- Configure a Postgres role with the `BYPASSRLS` attribute (DBA-side, outside Semantius) when an operational role legitimately needs unconstrained read across many entities — adding `has_permission` clauses to every entity's `select_rule` is correct but tedious.
+- Accept a uniform filter without elevation when nobody actually needs broader access; not every entity needs a tiered read.
+
+The first instinct should still be: encode the broadening inside the rule with `has_permission`. The out-of-rule paths are for cases where in-rule encoding is awkward, not for cases where it is impossible — it isn't.
 
 **Setting and removing.** Pass `select_rule` on `create_entity` to declare it at creation, or on `update_entity` to attach / replace / remove it later. Sending `{}` (or omitting the property on `create_entity`) leaves the rule disabled.
 

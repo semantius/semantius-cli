@@ -8,6 +8,56 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## `2.4` — `has_permission` IS available in `select_rule` (and `input_type_rule`)
+
+Correction release. The 2.2 / 2.3 contract claimed `select_rule` could not reference permissions: "There is no `has_permission` / `require_permission` operator confirmed for the SELECT context", and prose naming a permission as a broadening mechanism inside `select_rule` was treated as a 🔴 Blocker. That claim was wrong. The platform exposes a `{"has_permission": "<code>"}` operator specifically designed for the SELECT context (returns boolean, never throws — `require_permission`'s throw-on-miss semantics are wrong for SELECT, but `has_permission` was added precisely so `select_rule` *can* check the caller's permissions and broaden visibility for elevated roles).
+
+The same `has_permission` operator is also available in `input_type_rule` (the I5 "permission-driven UI mode" family was previously deferred to a §7.1 question; it now emits a rule directly) and inside `validation_rules` (as a non-throwing alternative to `require_permission`, important when a permission check is one branch of a wider `or`).
+
+The shipped 2.3 content treated tiered visibility ("regular sees own; manager sees all") as a 🔴 Blocker requiring user resolution via a four-option architectural-decision matrix. That entire framing was downstream of the wrong-premise claim and quietly forced authors into out-of-rule mechanisms (Postgres `BYPASSRLS`, separate cube views) when the in-rule encoding was available all along.
+
+**The new convention** (for authors):
+
+1. **`has_permission` is the canonical SELECT-context permission operator.** Use it inside `select_rule` `or` clauses to broaden row visibility for elevated roles. The rule body remains the single source of truth, but it can now correctly encode tiered audiences.
+2. **`require_permission` does NOT belong in `select_rule`.** Its throw-on-miss semantics would fail the entire SELECT for any caller missing the permission. Use `has_permission` for SELECT and reserve `require_permission` for `validation_rules` where the throw surfaces as the rule's validation message.
+3. **Stage 12 Option B (per-row predicate + `has_permission` broadening) is the recommended default for tiered audiences.** Options C / D / E (separate cube view, Postgres `BYPASSRLS`, accept uniform filter) become fallbacks for cases `has_permission` can't express (FK traversal, shape-changing redaction).
+4. **Stage 12.5 consistency gate's permission-in-prose-without-clause rule reverses direction.** Previously: prose naming a permission inside `select_rule` was almost always fabrication and a 🔴. Now: prose naming a permission must be matched by a `has_permission` clause in the JsonLogic body (still a 🔴 if missing), but the typical fix is *adding the clause to the body* rather than weakening the prose.
+5. **Stage 11 I5 family fires by default and emits a rule.** No more deferring to §7.1.
+6. **Files written under 2.3 should be reviewed in Mode B for `select_rule` defects:** §7.2 entries that defer read scoping to "platform-layer concern" are typically resolvable by adding a `has_permission` broadening clause to the relevant `select_rule` body.
+
+**Minor bump justification:** files written under 2.3 are still readable by 2.4 tools (no shape change); the modeling convention is tightened (a 2.3 file that left tiered visibility in §7.2 is now defective when it could have encoded the broadening in-rule, but the file structure is unchanged). No major bump because the §3 sub-block shapes (`Computed fields`, `Validation rules`, `Input type rules`, `Select rule`), §2 Permissions summary structure, and front-matter keys are all stable.
+
+**Companion change in use-semantius/data-modeling.md.** A "Platform-extension operators" sub-section was added documenting `value_changed`, `require_permission`, and `has_permission` (none of which were previously documented in the reference). The `select_rule` section's "Critical: this rule applies uniformly... there is no documented mechanism by which holding a specific permission causes the rule to be skipped" claim was rewritten against the corrected vocabulary. Analyst skill cross-references the corrected reference.
+
+---
+
+## `2.3` — formalize the in-place v2.2 corrections under a real version stamp
+
+Bump-only release. No new modeling conventions beyond what v2.2-late already documented on disk. The reason for the bump is structural: between the initial v2.2 ship and this entry, three substantive corrections were rolled into SKILL.md in-place under the same `2.2` stamp:
+
+1. The "Critical limit (load-bearing)" rule in Stage 12 — `select_rule` applies uniformly to every caller with `view_permission`, there is no documented platform mechanism by which holding a permission causes the rule to be skipped, and prose promising "callers holding `<slug>:view_all_X` bypass the filter" is **forbidden** absent platform confirmation. The §7.1 four-option matrix (accept uniform / encode in column / split entities / DBA-side `BYPASSRLS`) was added as the canonical resolution flow.
+2. A new mandatory **Stage 12.5 view & edit rules consistency check** gate whose explicit purpose is catching the canonical v2.2 defect — prose claiming a permission bypasses `select_rule` while the JsonLogic encodes nothing of the kind — before Stage 13 writes the file.
+3. `Input type rules` sub-block format unified from YAML to JSON, so all four §3 sub-blocks (`Computed fields`, `Validation rules`, `Input type rules`, `Select rule`) share one parser.
+
+Each of those is "a new modeling convention authors must follow when writing content" or "a new mandatory gate", which the skill's own bump rules call out as MUST-bump-minor triggers. They shipped in-place anyway because the maintainer treated "no production files have shipped yet under the YAML shape" as equivalent to "no contract change has occurred". That reasoning is wrong: the bump stamp's job is to mark *when the contract changed*, not *when somebody started consuming it*. Slash-command-loaded skills make the gap especially expensive — every active session is a frozen-snapshot consumer the maintainer can't see, and an "in-place fix" stops being equivalent to "everyone gets the fix tomorrow" and becomes "every session loaded before the fix is permanently wrong, with no way for the session to detect that its embedded copy is stale".
+
+The 2.3 stamp closes that gap. Files written under any in-disk SKILL.md that contained the three corrections above are *content*-equivalent to files written under 2.3; stamping them 2.3 just makes that equivalence visible to readers and to the consistency-check gate.
+
+**The new convention** (for maintainers, not authors):
+
+1. **Treat new mandatory gates as MUST-bump-minor.** A new Stage-N walk that must produce an artifact, or a new audit pass that runs before Stage 13, is a contract change for authors even when it doesn't change any file's shape. Add a row to the "Bump *minor* when ..." trigger list in SKILL.md explicitly naming this case.
+2. **Treat new authoring prohibitions as MUST-bump-minor.** A rule that *forbids* analysts from writing prose they used to be allowed to write (here: the fabricated-bypass prose) is the same kind of contract change as a rule that requires new prose. The asymmetry was implicit before and should be explicit.
+3. **Treat "no production files yet" as irrelevant to the bump decision.** The bump stamp tracks the contract, not its adoption. Frozen-snapshot consumers (slash-command embeddings, copies pasted into other tools, agent SDK skill bundles) make the "nobody is affected" reasoning unsafe.
+4. **Slash-command-embedded skills cannot detect their own staleness.** This is a known structural failure mode. Bumps are the only signal that propagates — a session embedded with v2.2-early skill content and one with v2.2-late skill content both report `CURRENT_VERSION = "2.2"` and behave divergently with no way to tell. Bump conservatively as a result.
+
+**The body of SKILL.md** stamps `CURRENT_VERSION = "2.3"`. The body content is otherwise identical to the v2.2-late state on disk before this bump.
+
+**Mode B audit cross-checks under v2.3.** No new audit rules. Files stamped `2.2` parse cleanly under v2.3; the major comparison still passes. Files stamped `2.2` should be re-saved as `2.3` on the next Mode B/C/D pass so the equivalence is recorded. The downstream deployer's `EXPECTED_MAJOR` stays at `2`.
+
+Minor bump, not major: front-matter shape is unchanged; the §3 sub-section structure is unchanged; the deployer parses 2.2 and 2.3 files identically.
+
+---
+
 ## `2.2` — read-side rules + view/edit consistency gate
 
 Two new mandatory mechanical scans, mirroring the v1.12 (workflow-permission) and v1.4/1.5 (validation-rules) pattern: a per-field **conditional input-type scan** and a per-entity **row-level read-access scan**. Each produces a structured table the analyst must walk, with empty cells as visible misses; matching results become a new optional §3 `Input type rules` sub-block (per field) and a new optional §3 `Select rule` sub-block (per entity).
