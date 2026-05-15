@@ -84,9 +84,9 @@ If you find yourself writing a sentence that names how the model *used to* be sh
 
 ---
 
-## Skill version: `CURRENT_VERSION = "2.4"`
+## Skill version: `CURRENT_VERSION = "3.1"`
 
-This skill stamps every model file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"2.4"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
+This skill stamps every model file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"3.1"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
 
 The history of how the contract evolved (every minor / major bump, the failure mode each version fixed, the new conventions each introduced) lives in [`CHANGELOG.md`](./CHANGELOG.md). That file is not loaded into Claude's context when the skill triggers — runtime behavior never depends on it. Maintainers read it when planning a bump; users read it when investigating an older-major file. The body of this SKILL.md is the **current contract**; the CHANGELOG is the **history**. Apply writing-convention #5 ("no historic / decision-log prose anywhere in a written model") to this skill file itself: keep current-state rules here and route history to CHANGELOG.md.
 
@@ -211,7 +211,25 @@ If the domain has no meaningful SaaS incumbents (e.g., a niche internal tool), s
 
 In either mode, `table_name` in the model is always **plural** snake_case (e.g., `campaigns`, `leads`, `campaign_members`, never singular). This is a hard Semantius platform requirement.
 
-**The semantic model is self-contained, include every entity the domain needs.** If the domain requires users, roles, permissions, or anything else that happens to overlap with a Semantius built-in, model those entities *fully* in the semantic model with the fields the domain requires. Do **not** silently omit them. The downstream semantic-model-deployer skill is responsible for comparing each entity in the model against Semantius's built-in tables at deploy-time and deduplicating (skipping the create for built-ins, reusing them as `reference_table` targets). Your job is to produce a complete, platform-agnostic model; dedup is the deployer's concern, not yours. See `./references/data-modeling.md` for the list of Semantius built-ins the deployer will deduplicate against, use that only as context when naming (match the built-in `table_name` exactly so dedup works), not as a reason to exclude.
+**The semantic model is self-contained, include every entity the domain needs.** If the domain requires users, roles, permissions, or anything else that happens to overlap with a Semantius built-in, model those entities *fully* in the semantic model with the fields the domain requires. Do **not** silently omit them. The downstream semantic-model-deployer skill is responsible for comparing each entity in the model against Semantius's built-in tables at deploy-time and deduplicating (skipping the create for built-ins, reusing them as `reference_table` targets). Your job is to produce a complete, platform-agnostic model; dedup is the deployer's concern, not yours.
+
+**Field-level alignment with built-ins is your job, not the deployer's.** When you declare a built-in entity in §3, use the built-in's actual field names for concepts the built-in already covers, and only invent new field names for genuinely additive fields. Re-declaring a built-in concept under a different name (`user_name` when the built-in has `display_name`, `is_active` when the built-in has `is_disabled`, `username` when the built-in has `email`) produces a noisy deploy where the user has to confirm a list of skipped-as-equivalent fields. Worse, it pollutes the §3 prose with synonyms that diverge from the platform's vocabulary, making downstream agents reason about phantom fields.
+
+The canonical built-in field shapes live in `use-semantius/references/data-modeling.md` under "Semantius built-in entities: shapes" — load that reference before writing §3 for any built-in entity. Quick cheat-sheet:
+
+| Built-in | Use the existing field for… | …instead of inventing |
+|---|---|---|
+| `users.display_name` | the user's human-readable name | `name`, `full_name`, `user_name` |
+| `users.is_disabled` | account suspension state (inverted) | `is_active`, `enabled`, `active` |
+| `users.email` | login identifier | `username`, `login` |
+| `users.settings` | per-user preferences blob | `preferences`, `config` |
+| `roles.role_name` | role display name | `name`, `title` |
+| `roles.slug` | stable snake_case handle | `code`, `role_code`, `key` |
+| `permissions.permission_name` | permission code (`<slug>:<action>`) | `name`, `code` |
+
+When the model legitimately needs an extra field on a built-in (e.g. `users.is_agent` to distinguish service accounts, `users.primary_team_id` to point at a domain entity, `users.job_title`), include it normally — the deployer adds these additively to the live built-in via `create_field`.
+
+When in doubt about whether a concept is already covered by a built-in, **read the field-shape table in `data-modeling.md`** before writing §3. Don't guess and let the deployer's confirmation prompt sort it out later.
 
 ### Stage 3: Propose the entity list
 
@@ -275,32 +293,18 @@ For each confirmed entity, draft a field list. Present each entity as its own ta
 
 2. **Junction-table FKs.** A junction row is a connection between two parents and is meaningless if either endpoint is gone. Both FK columns on a junction are `parent` (e.g. `feature_votes.feature_id → features` and `feature_votes.user_id → users` are both `parent`). When you delete a feature you delete its votes; when you delete a user you delete their votes too. If one side genuinely *should* survive (e.g. you want vote rows to outlive a deleted user as historical record), the relationship isn't actually a junction, restructure it.
 
-**Permission-scope override): `parent` requires shared permission scope.** Even when a child looks master-detail by the two cases above, **demote it to `reference` whenever the child carries its own conditional permission gate that diverges from the parent's `edit_permission`.** Concretely, the override fires when **any** of the following is true for the child entity:
+**Conditional permissions don't change the FK shape (analyst v3.1+).** The permission rules an entity carries (`require_permission` in family-12 transition gates and family-13 owner-edit rules from Stage 8) are orthogonal to whether the FK is `parent` or `reference`. The shape declares **lifecycle binding** (does the child's existence depend on the parent? does deleting the parent remove the child?); the rules declare **write-gating** (who can write which transition or own which row). These are independent. A `parent`-shaped child can carry any conditional-permission rule the analyst likes; Semantius enforces the rules on writes regardless of FK shape. The view-side `select_rule` and the per-row `validation_rules` already constrain what each caller can read and write; the FK shape doesn't need to mirror those constraints to be correct. Earlier versions of this skill (v1.13 through v3.0) demoted `parent → reference` whenever a conditional-permission rule diverged from the parent's `edit_permission`; that rule conflated two unrelated concerns and silently surfaced master-detail children (comments, line items, attachments) as standalone navigation entries. It is removed.
 
-- Its `validation_rules` carry a family-12 (transition-gated) or family-13 (owner-or-manager edit scope) rule whose `require_permission` argument is a workflow permission *different from* the parent's static `edit_permission`. The interview-feedback `feedback_edit_restricted_to_interviewer` rule references `ats:manage_all_feedback`; the parent interview is gated by `ats:manage`; those tiers diverge, so `interview_feedback.interview_id` should be `reference`, not `parent`.
-- Its §3 description names a *personal / individual / authored-by* framing distinct from the parent's framing. Notes are author-owned; the parent application is team-owned. The framings diverge.
-- Its §3 `**Edit permission:**` annotation is different from the parent entity's. (Rare in practice for child entities, but if it shows up, parent is wrong.)
-
-**The reasoning.** `parent` semantically asserts *"I am wholly owned and governed by my parent's permission model"* — that's what reads when an agent or a human encounters the relationship. The platform doesn't enforce this, but the modeling contract is real, and it is broken when the child has its own ownership. Family-13 in particular says "the child has a per-row owner who is not the parent's owner"; that contradicts the `parent` claim directly. Use `reference` and pick a delete mode (next paragraph), the cascade behavior can still be cascade, but the shape declaration tells the truth about permissions.
-
-**Delete-mode choice when the override fires.** When you flip from `parent (cascade)` to `reference (X)`, pick `X` carefully — this is where the high-risk decision lives:
-
-| Delete mode | Behavior on parent delete | When to pick it |
-|---|---|---|
-| `restrict` | Parent delete fails until children are explicitly deleted first | **Recommended default.** Forces explicit cleanup of decision evidence (scorecards, signed offers, posted entries) so deletion is never silent. Right for audit-logged entities and any record whose loss would be a defect. |
-| `clear` | Parent delete succeeds; children survive with the FK column set to `null` | Right when the child should outlive an accidental parent delete as historical record. Children become orphans — that's the feature. |
-| `cascade` | Parent delete silently deletes all children | **High-risk option, possible but not the default.** Same delete behavior as `parent (cascade)` had. Pick only when (a) the lifecycle binding really is identical AND (b) the user has explicitly opted in to the silent-delete behavior. The shape declaration (`reference`) tells humans and tools that the permission model is divergent; the delete mode says "cascade anyway". The risk is real: a parent delete with this mode can silently drop hundreds of permission-scoped child rows. Surface the trade-off explicitly when proposing this combination. |
-
-Recommended default is `reference + restrict`. Use `reference + clear` for orphan-safe history. Use `reference + cascade` only on explicit user confirmation, with the high-risk caveat surfaced.
+**Navigation consequence — the most visible reason to pick the right shape.** Semantius derives `is_child = true` from the presence of any `format: parent` FK on the entity, and uses it to suppress the entity from the module's top-level navigation sidebar. Master-detail children (comments, line items, attendees) declared as `format: parent` are reached only through their parent's detail view, which is what the user expects. Declaring the same entity as `format: reference` makes Semantius treat it as a standalone resource and renders it as a top-level sidebar entry, a real UX regression. When in doubt, ask: *"should an end user be able to browse this entity from the module sidebar without first opening a parent record?"* If no, `format: parent`. The conditional-permission rules don't enter into this question.
 
 **Everything else is `reference`.** A `task → user` link, a `product → category` link, an `incident → asset` link, an `account → owner_user` link, the child has its own life, it just happens to point at something. The default is `reference`. If you find yourself reaching for `parent` because "deleting the parent should probably delete the child," ask: would the child be coherent on its own if I never deleted the parent? If yes, it's `reference`.
 
-**Format and delete-mode are coupled.** `parent` implies cascade-on-delete (the child goes with the parent, that is the whole point). `reference` is independent by default (a reference is a non-owning link; deleting the target should not silently nuke the source, so `clear` or `restrict` are the typical modes). As of analyst v1.13, `reference + cascade` is also permitted as a high-risk option — the cascade behavior of `parent`, but with the shape declaration acknowledging that permission scope is divergent (see the permission-scope override above). The §4 `Delete behavior` column reflects this:
+**Format and delete-mode are coupled.** `parent` implies cascade-on-delete (the child goes with the parent, that is the whole point). `reference` is independent by default (a reference is a non-owning link; deleting the target should not silently nuke the source, so `clear` or `restrict` are the typical modes). The §4 `Delete behavior` column reflects this:
 
 - `format: parent` in §3 ↔ `Kind: parent` in §4 ↔ `Delete behavior: cascade` (rare cases use `restrict` to block parent deletion when children exist; never `clear`).
-- `format: reference` in §3 ↔ `Kind: reference` in §4 ↔ `Delete behavior: clear`, `restrict`, or), high-risk, explicit opt-in) `cascade`.
+- `format: reference` in §3 ↔ `Kind: reference` in §4 ↔ `Delete behavior: clear` or `restrict`.
 
-A row that contradicts this coupling is an authoring bug. Catch it before save, Stage 11's self-audit pass enforces the impossible combinations as 🔴 Blockers: `parent` with `clear` is always wrong (a parent-owned child cannot orphan-survive its parent). The `reference + cascade` combination is allowed but is itself a high-risk shape (silent cascade-delete with divergent permission scope); the audit surfaces it as a 🟡 Warning when it appears, asking the user to confirm the trade-off explicitly. See the permission-scope override above for when this combination is the right choice.
+A row that contradicts this coupling is an authoring bug. The audit enforces the impossible combinations: `parent + clear` is a 🔴 Blocker (a parent-owned child cannot orphan-survive its parent). `reference + cascade` is a 🟡 Warning under the lifecycle-only test, the shape declares a standalone entity but the cascade says "delete with parent"; almost always the right fix is `format: parent`, and the audit asks the user to flip rather than accept the contradiction. The pre-v3.1 framing of `reference + cascade` as "the right shape when permission scope diverges" no longer applies.
 
 **Automatic fields, omit them from the table.** Semantius auto-creates `id`, `created_at`, `updated_at`, and a `label` for every entity. Don't redeclare. Do declare the `label_column` field (the human-identifying name, e.g. `account_name` for an Account, `case_number` for a Case) as a normal row, mark it with label = "Name" (or whatever reads naturally) and call out in the Notes that it's the entity's label column.
 
@@ -398,6 +402,22 @@ The §2 Entity summary includes a Mermaid **flowchart** that visualises every en
 - Use the full conventions table in `references/semantic-model-template.md`.
 - **Every edge gets a labeled verb, copied verbatim from the FK field's `relationship_label`** — `A -->|verb| B` or `A ---|verb| B` (e.g. `accounts -->|owns| opportunities`). The verb is **read straight from the §3 `relationship_label: "<verb>"` annotation**; this stage just renders what's already there. **Never invent a verb that doesn't appear in §3, and never paraphrase, shorten, or "polish" the §3 verb when copying it into the diagram** — `|owns|` stays `|owns|`, not `|has_one_or_more|`. Unlabeled edges mean a missing `relationship_label` and the audit will flag them as 🟡 (or 🔴 if the FK names alone are too generic to disambiguate).
 - The §2 Mermaid edge label and the §3 `relationship_label: "<verb>"` annotation must agree byte-for-byte. The downstream deployer persists the field annotation; the optimizer reads it back from live state when it regenerates the model. A diagram label that disagrees with the §3 annotation will not survive the round-trip.
+- **Visually distinguish shared / external entities (analyst v3.1+).** Two classes of entity belong in green-family styling so a reader sees at a glance which entities are not solely owned by this module:
+  - `:::builtin` — entities that will be dedup'd against a Semantius platform built-in at deploy time (`users`, `roles`, `permissions`, etc.). The deployer skips `create_entity` for these and reuses the built-in as the FK target.
+  - `:::master` — entities carrying a `**Shared master cluster:** <cluster>` annotation in §3 (per analyst v3.0+). Created here by default; the deployer may offer to host them in a shared master module so other domain modules can FK to the same row.
+
+  Define both classes near the top of the Mermaid block (immediately after `flowchart LR`) and tag the relevant nodes:
+
+  ```mermaid
+  flowchart LR
+    classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;
+    classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;
+    users:::builtin
+    vendors:::master
+    %% all other entities render with default styling
+  ```
+
+  Omit each `classDef` and its `class` tags entirely when no entity in the model qualifies (most domain models won't have any built-in dedup targets; many won't have any master-cluster candidates either). Keep `classDef builtin` and `classDef master` exactly as written above so reviewers across model files see consistent shades.
 
 **Build-then-verify procedure (mandatory):**
 
@@ -661,6 +681,28 @@ Common operational shapes (default, no annotation needed): the records that capt
 > The three admin-tier entities will be writeable by `<slug>:admin`; everything else by `<slug>:manage`. The hierarchy chain (`admin → manage → read`) means anyone with `admin` can also do `manage`-level work. Look right?
 
 Loop on user feedback until they confirm. The classification feeds the §3 `**Edit permission:** admin` annotations (added in Stage 13 when the file is written) and the §8 step 1 enumeration.
+
+**Master-concept cluster hints (analyst v3.0+).** During the same Stage 9 walk, also identify entities that are classic **master concepts** — entities that other domain modules across the catalog are likely to reference as shared data rather than redeclaring locally. Emit a `**Shared master cluster:** <cluster>` annotation in §3 for each one. The hint travels inside the self-contained model and shapes the deployer's default suggestions at the master-promotion prompt, without binding the tenant to any specific taxonomy.
+
+The hint is **optional and per-entity**; omit it when the entity is not a master concept. Default cluster names the analyst should use when one fits:
+
+| Entity examples | Suggested cluster |
+|---|---|
+| `currencies`, `cost_centers`, `budget_periods`, `ledger_accounts`, `fiscal_years`, `tax_rates`, `gl_accounts` | `finance` |
+| `vendors`, `customers`, `partners`, `suppliers` | `parties` |
+| `departments`, `business_units`, `locations`, `sites` | `organization` |
+| `products`, `product_categories`, `skus` | `products` |
+| `employees`, `job_titles` | `employees` |
+
+The mapping is not closed; coin a new cluster name when the entity is a recognizable master concept that doesn't fit one of the above (e.g. `pricing` for `price_lists`, `pricing_tiers`; `geo` for `countries`, `regions`, `time_zones`). Use snake_case. Prefer a domain noun the user would recognize at the prompt over an entity-name suffix.
+
+The hint never overrides the user — the deployer surfaces it as a recommendation at Stage 2d follow-up 1, and the user can always pick a different host module or type a custom name at the prompt. **Authors review the cluster classification at confirmation time, same as the admin-tier classification.** Surface both classifications in the same Stage 9 confirmation table when masters are present:
+
+> | Entity | Tier | Reason | Master cluster |
+> |---|---|---|---|
+> | `vendors` | admin | small lookup, shipped seeded values | `parties` |
+> | `cost_centers` | admin | reference data, ships seeded | `finance` |
+> | `(other entities)` | operational | bulk records, changes continuously | (none) |
 
 **Narrow-tier override).** Stage 9 classifies every entity as either `manage` (operational, default) or `admin` (reference/config). Stage 10's W4n family may override the `manage` classification for a specific entity to a declared `workflow-narrow` tier (e.g. `interview_feedback` → `ats:interview` rather than `ats:manage`). The override is a Stage 10 decision, not a Stage 9 one — Stage 9 still classifies the entity as conceptually-operational; Stage 10 then declares the narrow tier and rebinds the `Edit permission:` annotation. Admin-tier entities are never narrow-tier-overridden (the two classifications are mutually exclusive in opposite directions on the authority axis).
 
@@ -993,6 +1035,7 @@ Use the template in `references/semantic-model-template.md` — it has the exact
 Detail per key:
 
 - `version` (**required** — set to the value of `CURRENT_VERSION` from the "Skill version" section near the top of this file, as a quoted string (e.g. `"1.0"`). Stamp this on every save in every mode; never let it drift behind the skill's actual version. The downstream deployer rejects files whose major differs from its expected major, and the analyst itself routes older-major files into archived-knowledge mode rather than editing them. See "Skill version" for what counts as a major vs minor bump.
+- `module_type` (**optional**, analyst v3.0+) — `"domain"` (default, omit when this value applies) or `"master"`. **Emit `module_type: master` only when authoring a master model** — a self-contained spec for a master-data module that hosts shared concepts consumed by multiple domain modules (e.g. `vendor_management` declaring `vendors` + sibling entities, `finance` declaring `currencies` + `cost_centers` + `ledger_accounts`). Master models are the formalization path for entities that have been promoted to shared via the deployer's runtime promotion gate, or upfront declarations when the team starts with master data. For everyday domain modeling (the common case), omit the key entirely — the deployer defaults to `"domain"`. The downstream deployer's Stage 2a master-model branch reads this key to decide create-vs-extend logic on existing master modules. See the Mode A guidance below for when to emit it.
 - `entities` (**required** — the complete list of `table_name` values from the §2 entity summary, in §2 order. Mechanical to populate from the confirmed entity list.
 - `departments` (**optional** — the department(s) where this system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments; cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant — do not write an empty list.
 - `industries` (**optional** — the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when industry-agnostic — do not write an empty list.
@@ -1001,6 +1044,26 @@ Detail per key:
 Infer `departments` and `industries` the same way you infer `domain` — from everything captured in Stage 1 (the full conversation by the end of capture, not just the verbatim `initial_request`). The opening ask is rarely enough on its own; the org-size cues, sector hints, and follow-up clarifications gathered through Stage 1 are what make the call reliable. If you can confidently propose a value from those signals, include it; if you have low or no confidence, omit the key — don't ask the user a separate question just to tag the file.
 
 **`domain` follows the same rule.** Always Title-case / acronym form. Common values to prefer when they fit: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. These are seed examples — pick one when it genuinely matches (keeps the discovery vocabulary tight and groups similar systems together). When none fit, coin a new Title-case / acronym value that captures the system shape (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). Only omit `domain` when you genuinely can't categorize the system. **Never write `custom`** — it adds zero discovery signal; an absent key already means "uncategorized".
+
+**Highlight master-concept entities in the §2 Mermaid diagram (analyst v3.0+).** For every entity whose §3 carries a `**Shared master cluster:** <name>` annotation, append a `class <table_name> master;` line inside the same `mermaid` block, after the relationship edges. Also include the `classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;` directive once (anywhere after the flowchart body; conventionally right before the `class` lines). Skip both when no entity in the model carries the annotation — most domain models won't, and emitting an empty `classDef` looks like accidental boilerplate. Example with two flagged entities:
+
+```mermaid
+flowchart LR
+    leads --> opportunities
+    opportunities --> vendors
+    contracts --> vendors
+    classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;
+    class vendors master;
+    class cost_centers master;
+```
+
+**Why this is worth emitting.** The highlight is a review aid for the cross-domain reviewer — the architect, agent author, or new team member trying to understand the shape of a model they didn't write. Their first implicit question is "which entities here are shared infrastructure vs domain-specific operations?", and green nodes answer that in one visual pass, before the reviewer has to open §3 and audit each `**Shared master cluster:**` line individually. For a model author who's already steeped in the domain, the highlight is redundant; for a reviewer parachuting in, it's the difference between "where do I start?" and "obviously start with the green nodes."
+
+**Diagnostic side benefit.** The highlight makes the analyst's master classifications **visible**. If the analyst tags `customers` as `parties`-cluster master and the model author disagrees, the green node draws attention and prompts an early "wait, why is that green?" conversation at review time — long before the deployer's Branch B promotion gate fires and makes the misclassification a deploy-time decision. Under-tagging also surfaces visually (an obviously-shared entity like `currencies` showing up without green is a tell). This catches both over- and under-classification at the cheapest possible point in the flow.
+
+**Cosmetic only, structurally inert.** Deploy behavior keys off the §3 `**Shared master cluster:**` annotation directly, not off the `class` lines. Stripping or editing the `classDef` / `class` directives never changes how the deployer treats the model. That's a feature: the analyst can extend the pattern later (e.g. a separate `master_module` class for entities already in a `module_type=master` module after a round-trip via the optimizer, or an `master_renamed` class flagging entities whose home master was recently renamed) without affecting deployer semantics.
+
+Use the exact green above (`#d4f4dd` fill, `#27ae60` stroke, `#1a4d2e` text) for consistency across model files — when reviewers see the same green in CRM, ITSM, and ATS models, they internalize it as the universal "this is shared master data" signal.
 
 **Write the mandatory `### Permissions summary` sub-section under §2**. Place it after the §2 entity-summary table and after the Mermaid diagram, before §3 begins. This table is the single source of truth for the module's permission catalog; the deployer reads it as authoritative and creates permissions and hierarchy rows directly from it.
 
@@ -1176,6 +1239,7 @@ After listing findings, give an overall summary: how many issues of each severit
 - 🟡 A filler verb (`"has"`, `"references"`, `"belongs to"`, `"relates to"`) is a Warning, these reproduce on every UI breadcrumb and add no information. Propose a domain-specific verb in the parent's voice.
 - 🔴 An edge label that disagrees with the FK row's `relationship_label: "<verb>"` annotation in §3 is a Blocker, the diagram and the field metadata must agree byte-for-byte or the deployer/optimizer round-trip drops the verb.
 - 🔴 Two FKs from the same child to the same parent (e.g. `tasks.created_by_user_id` and `tasks.assigned_to_user_id` both → `users`) where the two `relationship_label` values are identical or one is missing, they must differentiate (`"created"` vs `"assigned"`).
+- 🟢 **Diagram doesn't visually distinguish built-in or master entities (analyst v3.1+).** When the model declares an entity that the deployer dedups against a Semantius platform built-in (`users`, `roles`, `permissions`, etc.) AND the diagram has no `classDef builtin` directive plus matching `<entity>:::builtin` class tag, suggest adding both. Same for entities carrying a `**Shared master cluster:**` annotation in §3 and missing the `classDef master` / `<entity>:::master` pair. Suggestion only (🟢), not a Warning, the diagram still functions correctly without the styling but loses the at-a-glance shared/external signal.
 
 **Entity health (for each entity in §3)**
 - A `label_column` field is declared (notes say it's the entity's label)
@@ -1214,8 +1278,8 @@ After listing findings, give an overall summary: how many issues of each severit
 - Delete behavior is specified in §4 for every parent/reference
 - 🔴 **§3 `format` and §4 `Kind` agree byte-for-byte for every FK row.** The valid pairings are `format: reference` ↔ `Kind: reference`, and `format: parent` ↔ `Kind: parent` (or `Kind: parent (junction)` when the entity is a junction). Any disagreement is a Blocker, the deployer reads `format` from §3 to call `create_field`, reads `Kind` from §4 to sanity-check, and cannot silently pick one when they conflict.
 - 🔴 **`format: parent` with `Delete behavior: clear` is a Blocker** — a parent-owned child cannot orphan-survive its parent; the combination contradicts ownership semantics. The platform couples these.
-- 🟡 **`format: reference` with `Delete behavior: cascade` is a Warning**. This combination is permitted (it's the right shape when the lifecycle is bound but permission scope is divergent — see the permission-scope override rule below), but is high-risk: a parent delete silently cascade-deletes every child despite the `reference` declaration. Surface for explicit user confirmation, with the alternatives (`reference + restrict` for explicit cleanup, `reference + clear` for orphan-safe).
-- 🟡 **`format: parent` on a child entity whose permission scope diverges from the parent's** (propose-fix). The `parent` shape declaration claims "I am wholly owned and governed by my parent's permission model"; the claim is broken when the child carries its own conditional permission gate. Specifically, the check fires when **all three** are true: (a) the §3 row has `format: parent`; (b) the child entity has a `validation_rules` rule whose JsonLogic invokes `require_permission` against a code that is not the parent entity's static `edit_permission`, OR the child entity carries a §3 `**Edit permission:**` annotation different from the parent's; (c) the rule is family-12 (transition-gated) or family-13 (owner-or-manager edit scope), as identified by Stage 8's signal-scan or the JsonLogic shape. The proposed fix is to flip the FK to `format: reference` and pick a delete mode (`restrict` recommended default for decision-evidence entities like scorecards or signed offers, `clear` for orphan-safe history, `cascade` only on explicit opt-in given the high-risk warning above). Surface the proposed fix as a 🟡 Warning, do not auto-flip without user confirmation, the cascade-delete behavior may change depending on which mode the user picks.
+- 🟡 **`format: reference` with `Delete behavior: cascade` is a Warning** (analyst v3.1+ rule, replacing the earlier "permission-scope override" framing). The shape declares the child is a standalone entity, but the cascade says "delete with parent" — those are contradictory in almost every realistic case. The fix is almost always `format: parent` (which also drops the entity from top-level navigation, the typical desired outcome for master-detail children like comments / line items / attendees / attachments). Propose the flip; do not auto-apply. The pre-v3.1 rationale ("the right shape when permission scope diverges") is removed: conditional-permission rules are orthogonal to FK shape and never require demoting `parent` to `reference`.
+- 🟡 **`format: reference` on a structurally-child entity is a Warning** (analyst v3.1+). The fingerprint: a single required non-self FK to one parent table, a caller-populated label composed from the parent's identifier (label like `"{parent_number} #{seq}"`, table name like `<parent>_<noun>`), no plausible standalone existence — the entity exists only to attach data to its parent. Almost always means `format: parent` was the right shape, mis-declared as `reference` because of the pre-v3.1 permission-scope override rule. Side effect of the mis-declaration: the entity surfaces as a top-level navigation entry in the module sidebar instead of being reached only through its parent's detail view. Propose the flip to `format: parent` (cascade); the entity's `validation_rules` (including any family-13 `require_permission` gate) and `select_rule` continue to work unchanged on parent-shaped children.
 - 🔴 **`parent` is the exception, not the default.** `parent` is valid in two cases only: (a) **master-detail children** where the child has no meaning outside its parent (`order_lines.order_id`, `comments.post_id`, `meeting_attendees.meeting_id`); (b) **junction-table FKs**, where both FKs on the junction are `parent` because the junction row is meaningless if either endpoint is gone. Every other FK is `reference`. A field that uses `parent` outside these two cases is a Blocker; propose `reference` and adjust §4's delete mode to `clear` (or `restrict` if the link must block target deletion).
 - **No obvious missing relationships**, for each entity, consider whether it should link to other entities in the model but doesn't. Common gaps: an entity that represents work or activity with no link to the person/thing it's about; a junction that should exist for an M:N relationship but is missing. Flag gaps as 🟡 Warning with a suggested fix.
 

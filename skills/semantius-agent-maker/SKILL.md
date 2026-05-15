@@ -44,6 +44,18 @@ touches, and write a tight, model-aware SKILL.md around it.
 
 ---
 
+## Schema compatibility: `EXPECTED_MAJOR = 3`
+
+This skill expects model files written by `semantic-model-analyst` major `3`. Check the model file's frontmatter `version: "MAJOR.MINOR"` at the start of Step 1. **Major must equal `EXPECTED_MAJOR`**, minor is informational. Mismatch handling mirrors `semantius-skill-maker`:
+
+- **Older major** — route the user back to the analyst's Mode D (Rebuild) to migrate the file, then re-run agent-maker.
+- **Newer major** — tell the user to update `semantius-agent-maker` before retrying.
+- **Missing `version` key** — treat as major `0`; same response as older-major.
+
+When the analyst's major bumps, this skill's `EXPECTED_MAJOR` must move in lock-step with `semantic-model-analyst`, `semantic-model-deployer`, and `semantius-skill-maker`. The quartet shares the major.
+
+---
+
 ## Inputs (ask for these up front if not provided)
 
 1. **Path to a `*-semantic-model.md`** in the working directory. Required.
@@ -67,11 +79,15 @@ task, interview them (next section) before drafting anything.
 
 ### Step 1 — Read the model and `use-semantius` references
 
-Read the supplied model file end to end. Build a mental index of:
+Gate on the model file's frontmatter `version` major first (see "Schema compatibility" above). Refuse and route the user if the major doesn't match `EXPECTED_MAJOR = 3`; do not parse anything else when the gate fails.
+
+Once the version gate passes, read the supplied model file end to end. Build a mental index of:
 
 - Entity table names and singular labels
 - Fields per entity (especially required fields, enums, FK shapes)
 - Module slug (URLs use `module_slug`, lowercase)
+- **Module type** — read frontmatter `module_type` (`"domain"` or `"master"`, default `"domain"` when absent). A `master` module hosts shared / master data consumed by multiple domain modules; writes to its entities are visible to every consuming domain via cross-module `permission_hierarchy` rows. When the task's slice (Step 3) touches a master module, the generated skill must surface a cross-domain-impact callout on every write recipe.
+- **Per-entity `**Shared master cluster:** <cluster>` annotation** — note which entities in this (domain) module are flagged as classic master concepts. This is an authoring hint: those entities may have been (or may soon be) promoted to a master module on re-deploy. Treat the annotation as informational; if the user's task writes to such an entity, include a one-line "shared concept across domains" note in the generated skill so the calling agent is aware.
 - Label composition rules and lookup conventions
 - Cross-cutting data rules and guardrails
 - **Entity-level `Select rule` sub-blocks** — note which entities carry a non-empty `select_rule`. Capture the rule's plain-English **uniform per-row predicate** (from the sub-block's `description`, the entity's §3 prose, or a paraphrase of the JsonLogic intent). **The rule applies uniformly to every caller with `view_permission`** — the platform evaluates the JsonLogic body per row with `$today` / `$now` / `$user_id` as reserved variables; there is no documented mechanism by which holding a specific permission causes the rule to be skipped. If the model's §7 carries an explicit architectural-decision entry naming a documented broadening mechanism (a separate cube view / entity surface admins read, or a Postgres `BYPASSRLS` role attribute), capture that mechanism alongside the predicate. **Never read the §2 Permissions summary for a `<slug>:view_all_<plural>`-style permission and assume the platform honors it as a bypass — that mechanism is not in the current platform spec; promising it in the generated skill ships broken RBAC.**
@@ -148,6 +164,7 @@ For each entity in the slice, the generated skill will need:
 - FK fields with the target entity and its key column
 - Label composition rule (so the generated skill can build display labels)
 - Any cross-cutting rule that applies (e.g. "soft-deactivate, never hard-delete")
+- **Master-module / shared-concept callout** — when the entity sits in a `module_type: master` module, OR carries a `**Shared master cluster:** <cluster>` annotation in §3, record this on the slice. The generated SKILL.md surfaces a one-line "Writes to this entity are visible across consuming modules" guardrail on every write recipe touching it; the calling agent should treat the data as shared, not module-private. The slice note does not change the recipe shape (the CLI call is identical), only the surrounding prose.
 - **Row-level read scope** when the entity carries a non-empty `select_rule`. Pull the uniform per-row predicate from the Step 1 mental index. The slice notes this so the generated SKILL.md can surface the visibility callout. If the model's §7 named a documented broadening mechanism, capture it; if §7 did NOT, the slice notes only the uniform predicate and routes broader-access requests to escalation — **never invents a `view_all_<plural>` permission bypass**.
 - **Conditional UI states** for any field on the entity that carries a non-empty `input_type_rule` AND whose trigger or target lies on the user's task path. Cross-check the user's task against the rule's trigger condition: when the task drives the transition the rule keys on (e.g. the task is "approve the offer" and `approved_at` has `input_type_rule: hidden until status=approved`), record `(entity, field, trigger_field, trigger_value)` as a paired side-effect — the recipe must set the dependent field in the same PATCH as the trigger. Fields whose rule is unrelated to the task path are noise; keep the slice tight.
 
@@ -240,6 +257,13 @@ Before showing the draft to the user, check:
       who holds the role". A prose promise of a permission bypass that
       the platform does not honor is the canonical v2.2 defect — the
       generated skill looks right but silently ships broken RBAC.
+- [ ] (Analyst v3.0+) Every write recipe against an entity sitting in a
+      `module_type: master` module, or carrying a `**Shared master cluster:**`
+      annotation in the source model, includes a one-line cross-domain-impact
+      callout ("writes to `<entity>` are visible to every consuming domain
+      module"). A silent write against a shared entity is a recipe defect:
+      the calling agent may assume the data is module-private and reason
+      incorrectly about what its write touches.
 
 ### Step 7 — Confirm output path and write
 

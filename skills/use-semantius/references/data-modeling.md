@@ -86,6 +86,76 @@ semantius call crud create_entity '{
 - **`table_name` is always plural snake_case**, `products`, `orders`, `order_lines`, not `product`, `order`, `orderLine`
 - **Never create a `users` entity**, Semantius has a built-in `users` table. Any module that needs to reference users must use `reference_table: "users"` pointing at the existing table. Creating a competing `users` or `user` entity will conflict with the built-in table and break authentication.
 
+### Semantius built-in entities: shapes
+
+The platform ships with built-in tables for authentication, RBAC, and integration. **Domain models reference these by `table_name`, never recreate them.** If a domain genuinely needs an extra field on a built-in (e.g. `users.is_agent`), add it via `create_field` after dedup. Never modify or rename existing built-in fields, never change their formats, never replace built-in entities.
+
+#### `users` — authenticated principals
+
+| Field | Format | Notes |
+|---|---|---|
+| `id` | int32 | PK |
+| `external_id` | text NOT NULL | Identifier from the auth provider (IdP) |
+| `email` | email NOT NULL | The user's email (login identifier) |
+| `display_name` | text NOT NULL | Human-readable name shown across the UI (use this — NOT `name`, `full_name`, `user_name`) |
+| `is_disabled` | boolean NOT NULL | True when the account is suspended (inverse of "is_active" — use this name, not `is_active` or `is_enabled`) |
+| `settings` | json | Per-user preferences blob |
+| `last_seen` | date-time | Last activity timestamp |
+| `created_at` / `updated_at` | date-time | Auto |
+
+**Common author mistakes when extending `users` (the deployer skips these as overlapping with built-ins):**
+
+| Don't add | Reason |
+|---|---|
+| `name`, `full_name`, `user_name` | Use existing `display_name`. |
+| `is_active`, `active`, `enabled`, `is_enabled` | Use existing `is_disabled` (inverted semantics, same concept). |
+| `username`, `login` | Use existing `email`. |
+| `preferences`, `config` | Use existing `settings` json. |
+| `disabled_at`, `deactivated_at` | Use `is_disabled` + audit log; no separate timestamp. |
+
+**Legitimately additive fields a domain may want:** `is_agent` (boolean — distinguishes service accounts from humans), `primary_team_id` / `department_id` / `manager_id` (FKs to domain entities), `job_title` (text), `employee_id` (text, external HRIS link). These don't overlap with built-in fields and should be added.
+
+#### `roles` — RBAC roles, system-managed slugs
+
+| Field | Format | Notes |
+|---|---|---|
+| `id` | int32 | PK |
+| `role_name` | text NOT NULL | Human-readable display name (e.g. `"CRM Manager"`) |
+| `slug` | text NOT NULL UNIQUE | Stable snake_case handle (e.g. `crm_manager`); acts as a natural-key second primary key |
+| `description` | multiline NOT NULL | What this role does |
+| `origin` | enum NOT NULL | `system` / `model` / `model_master` / `user`. Strictly immutable after INSERT. Set by whoever creates the role; default `user`. |
+| `module_id` | reference → modules | Which module owns the role |
+
+> **Origin semantics.** `system` rows are platform built-ins (DB-init seeded, never deleted). `model` rows are created by `semantic-model-deployer` on a domain module's scaffold. `model_master` rows are scaffold roles on a master module (see master-data promotion design). `user` rows are admin-created via the UI/API. **Slug rename is permitted for `model` / `model_master` / `user`; locked for `system`.**
+
+#### `permissions` — RBAC permissions, natural-key by name
+
+| Field | Format | Notes |
+|---|---|---|
+| `id` | int32 | PK |
+| `permission_name` | text NOT NULL UNIQUE | Code in form `<module_slug>:<action>` (e.g. `crm:read`); the unique index makes this a natural-key second primary key |
+| `description` | multiline NOT NULL | What this permission grants |
+| `module_id` | reference → modules | Owning module |
+
+#### `permission_hierarchy` — RBAC inclusion graph
+
+| Field | Format | Notes |
+|---|---|---|
+| `parent_permission_id` / `child_permission_id` | parent → permissions | Holding parent transitively grants child |
+| `origin` | enum NOT NULL | `system` / `model` / `model_master` / `user`. Strictly immutable after INSERT. |
+
+#### `user_roles`, `role_permissions` — junctions
+
+Auto-shape with `user_id` / `role_id` / `permission_id` FKs plus `assigned_at` / `granted_at` audit timestamps. Don't redeclare; reference via FK from your domain entities only if you need to surface RBAC state in a domain query.
+
+#### `webhook_receivers`, `webhook_receiver_logs` — inbound HTTP intake
+
+Used by the integration runtime; domain models almost never touch these.
+
+#### `modules`, `entities`, `fields`, `queues`, `queue_table_events`, `dashboards`
+
+Platform meta-schema. **Never declare in a domain model.** The deployer manages these as a side effect of `create_entity` / `create_field` / `create_module`.
+
 ### Key Entity Fields
 
 | Field | Notes |

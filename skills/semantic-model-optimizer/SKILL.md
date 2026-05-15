@@ -49,9 +49,18 @@ These rules apply to chat output, the regenerated semantic-model markdown file, 
 
 ## Schema compatibility
 
-This skill writes files at the analyst skill's `CURRENT_VERSION`. At Step 0 it reads `semantic-model-analyst/SKILL.md`; the "Skill version" section at the top of that file declares the canonical version (currently `CURRENT_VERSION = "2.0"`). The optimizer stamps that exact value on every file it writes via the front-matter `version` key. The downstream `semantic-model-deployer` carries an `EXPECTED_MAJOR` constant (currently `2`) and rejects files whose major doesn't match; as long as the optimizer stamps the analyst's current value, the round-trip stays clean. Major bumps in the analyst force a coordinated update of this skill *and* the deployer: a major bump means section numbers, table shapes, or required front-matter keys have changed, and the optimizer's output template must follow.
+This skill writes files at the analyst skill's `CURRENT_VERSION`. At Step 0 it reads `semantic-model-analyst/SKILL.md`; the "Skill version" section at the top of that file declares the canonical version (currently `CURRENT_VERSION = "3.0"`). The optimizer stamps that exact value on every file it writes via the front-matter `version` key. The downstream `semantic-model-deployer` carries an `EXPECTED_MAJOR` constant (currently `3`) and rejects files whose major doesn't match; as long as the optimizer stamps the analyst's current value, the round-trip stays clean. Major bumps in the analyst force a coordinated update of this skill *and* the deployer: a major bump means section numbers, table shapes, or required front-matter keys have changed, and the optimizer's output template must follow.
 
 **`v2.0` shape addition the optimizer must emit.** v2 files carry a mandatory `### Permissions summary` sub-section under `## 2` (after the entity-summary table and the Mermaid diagram). When reverse-engineering from live Semantius state, the optimizer reads the module's permissions (via `read_permission` filtered by `module_id`), the per-permission hierarchy rows (via `read_permission_hierarchy`), and per-entity `edit_permission` values (already gathered in Stage 2 for the entity walks), then assembles the table: one row per permission, with `Type` derived from suffix (`:read` → `baseline-read`, `:manage` → `baseline-manage`, `:admin` → `baseline-admin`, anything else → `workflow`), `Description` carried over from the live `permission.description` field, `Used by` derived by walking entities (`view_permission` / `edit_permission`) and `validation_rules` (every `require_permission` argument), and `Hierarchy parent` derived from the hierarchy rows. The table goes between the §2 Mermaid diagram and the start of §3.
+
+**`v3.0` shape additions the optimizer must emit.** v3 introduces two optional authoring keys that the optimizer reverse-engineers from live state:
+
+- **`module_type` frontmatter key.** Read `modules.module_type` for the picked module. When the live value is `"master"`, emit `module_type: master` in the frontmatter. When `"domain"` (the platform default), omit the key entirely — analyst v3.0 treats absence as `"domain"`, so emitting it would be noise. The key sits next to `system_slug` in the frontmatter block (see Stage 4 template).
+- **`**Shared master cluster:** <name>` per-entity annotation.** For every §3 entity, check whether it lives in a `module_type = "master"` module. If yes, the master module's `module_slug` IS the cluster name (e.g. an entity in a `parties` master module gets `**Shared master cluster:** parties`); emit the annotation alongside `**Audit log:**` and `**Edit permission:**`. The annotation is optional in analyst v3.0; the optimizer's rule is "emit it when the live module says master, omit it otherwise" so the round-trip stays clean.
+
+**Module scaffold awareness.** v3 standardizes every module's scaffold to three permissions (`<slug>:read`, `<slug>:manage`, optionally `<slug>:admin`) and three default roles (`<slug>_viewer`, `<slug>_manager`, optionally `<slug>_admin`). New schema columns the optimizer must be aware of: `roles.slug` (snake_case, unique, NOT NULL on INSERT, immutable for `origin in ("system", "model", "model_master")` roles), `roles.origin` (enum: `"system"` / `"model"` / `"model_master"` / `"user"`, strictly immutable after INSERT), `modules.module_type` (enum: `"domain"` / `"master"`, default `"domain"`), and five new module-level FK columns (`manage_permission_id`, `admin_permission_id`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`). The optimizer never writes any of these (read-only against Semantius), but the §2 Permissions summary parsing and the per-entity master-cluster detection both depend on reading them correctly.
+
+**Cross-module permission_hierarchy rows.** v3 introduces `permission_hierarchy` rows tagged `origin = "model_master"` that bridge a domain module's permission (e.g. `itsm:read`) to a master module's permission (e.g. `parties:read`). These rows are how a consumer module gets visibility into a master module's entities. When assembling the §2 Permissions summary table, walk every hierarchy row whose `parent_permission_id` resolves to a permission in a *different* module (the master) AND whose `origin = "model_master"`; the master-permission shows up in the `Hierarchy parent` cell exactly as a same-module rollup would (e.g. an ITSM module's `itsm:read` row carries `Hierarchy parent: parties:read` when consuming the `parties` master). Cross-module rows are not invented by the optimizer; they are live state that the round-trip must preserve.
 
 When this skill reads a prior file (for `initial_request` / `departments` / `industries` carry-over), it does **not** route on the prior file's `version`. The live module is the source of truth; the new file is regenerated from live state and stamped with the current analyst version regardless. If the prior file's major is older than `CURRENT_VERSION`, the carry-over still happens (those keys haven't changed shape), and the resulting new file is current-major.
 
@@ -86,11 +95,11 @@ If the user named a module, resolve it directly with `read_module`. Otherwise li
 semantius call crud read_module '{"order": "module_name.asc"}'
 ```
 
-> **Module schema reminder.** Modules carry both `module_name` (unique human-facing display name shown in the UI selector, e.g. `CRM`, `ITSM`, `CMDB`) and `module_slug` (lowercase URL/permission handle, e.g. `crm`, `itsm`, `cmdb`). The earlier `alias` field is **removed** from the schema; the earlier `label` field is also gone. The compact tagline lives on `description` (≤40 chars, the analyst's `system_description`).
+> **Module schema reminder.** Modules carry both `module_name` (unique human-facing display name shown in the UI selector, e.g. `CRM`, `ITSM`, `CMDB`) and `module_slug` (lowercase URL/permission handle, e.g. `crm`, `itsm`, `cmdb`). The earlier `alias` field is **removed** from the schema; the earlier `label` field is also gone. The compact tagline lives on `description` (≤40 chars, the analyst's `system_description`). Under v3, the row also carries `module_type` (`"domain"` or `"master"`, default `"domain"`) and five new FK columns linking the standard scaffold: `manage_permission_id`, `admin_permission_id` (nullable), `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id` (nullable). The legacy `view_permission` text column still carries the read permission's `permission_name` (e.g. `"itsm:read"`).
 
-Present the list as a compact table (`module_name`, `module_slug`, `description`). Ask the user which module to extract. Do not guess when multiple candidates match, ask.
+Present the list as a compact table (`module_name`, `module_slug`, `module_type`, `description`). Ask the user which module to extract. Do not guess when multiple candidates match, ask. Master modules are valid extract targets — the resulting model file will declare `module_type: master` in its frontmatter (see Stage 4).
 
-Capture `module_id`, `module_name`, `module_slug`, and `description` for the rest of the pipeline. Never create a module here; this skill is read-only.
+Capture `module_id`, `module_name`, `module_slug`, `module_type`, and `description` for the rest of the pipeline. Never create a module here; this skill is read-only.
 
 ---
 
@@ -112,9 +121,10 @@ semantius call crud read_field '{}'
 
 Build in memory:
 
-- **module**, `module_name` (display name, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `description` (compact tagline, ≤40 chars)
+- **module**, `module_name` (display name, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `module_type` (`"domain"` or `"master"`), `description` (compact tagline, ≤40 chars)
 - **entities[]**, each with `table_name`, `singular`, `plural`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `edit_mode`, `cube_mode`, `module_id`, **`computed_fields`** (JSON array, may be empty), **`validation_rules`** (JSON array, may be empty). `searchable` and `is_child` are read-only / auto-computed and only used for sanity checks; do not round-trip them.
 - **fields_by_table**, map keyed by `table_name`, per field: `field_name`, `format`, `title`, `description`, `unique_value`, `reference_table`, `reference_delete_mode`, `relationship_label`, `singular_label_parent`, `plural_label_parent`, `cube_type`, `enum_values`, `default_value`, `ctype`, `field_order`, `searchable`
+- **master_modules_by_slug**, map of every `module_type = "master"` module in the catalog keyed by `module_slug`. Read once via `semantius call crud read_module '{"filters": "module_type=eq.master"}'` and hold for Stage 3 (related-table classification) and Stage 4 (per-entity `**Shared master cluster:**` annotation emission). Includes the module being extracted when it is itself a master.
 
 **Strip auto-generated fields** before rendering. Do not render these in §3:
 
@@ -167,12 +177,14 @@ Follow `semantic-model-analyst/references/semantic-model-template.md` verbatim. 
 |---|---|
 | `module.module_name` | front-matter `system_name`, top-level `#` heading |
 | `module.module_slug` | front-matter `system_slug`, §8 module name |
+| `module.module_type` | front-matter `module_type` (emit only when value is `"master"`; omit entirely when `"domain"`) |
 | `module.description` | front-matter `system_description` (verbatim, it is already the compact tagline) **and** §1 Overview seed (see §1 Overview rules below; do not invent facts, stay faithful) |
 | `entity.table_name` | §2 Table name, §3 sub-heading, §4 From/To |
 | `entity.singular_label` | §2 Singular label, §3 sub-heading suffix |
 | `entity.plural_label` | §3 Plural label line |
 | `entity.description` | §3 Description |
 | `entity.label_column` | §3 Label column |
+| (derived from `entity.module_id` + `master_modules_by_slug`) | §3 `**Shared master cluster:** <slug>` line, emit when the entity's home module is `module_type: master`; the cluster name IS the master module's slug. Omit the line entirely otherwise. |
 | `entity.audit_log` | §3 `**Audit log:** yes \| no` line, render `yes` when `true`, `no` when `false`/null |
 | `entity.edit_mode` | §3 `**Edit mode:** auto \| sidebar \| modal \| page` line, render the live value as-is. **Omit the line entirely when the live value is `auto`** (the platform default), so the round-trip through the deployer stays clean (the deployer also defaults `auto` when the line is absent). |
 | `entity.cube_mode` | §3 `**Cube mode:** disabled \| auto` line, render the live value as-is. **Omit the line entirely when the live value is `disabled`** (the platform default), same rationale as `edit_mode`. |
@@ -208,6 +220,7 @@ version: "<CURRENT_VERSION from analyst SKILL.md>"
 system_name: <module.module_name>
 system_description: <module.description>
 system_slug: <module.module_slug>
+# module_type: master   # emit only when module.module_type == "master"; omit when "domain"
 # domain: see inference rule below — omit when no canonical category fits
 naming_mode: agent-optimized
 created_at: <today, YYYY-MM-DD>
@@ -217,6 +230,8 @@ entities:
 # departments, industries, related_domains: see carry-over / inference rule below
 ---
 ```
+
+**`module_type` is taken directly from `module.module_type`.** When the live value is `"master"`, emit the key with value `master`. When `"domain"` (the platform default), omit the key entirely — analyst v3.0 treats absence as `"domain"`, and emitting `module_type: domain` on every file would just be noise. Master modules are formalized domain clusters that host shared / master data (vendors, currencies, departments) consumed by multiple domain modules; the round-trip through the optimizer preserves that classification.
 
 **`version` is required.** Read the analyst's "Skill version" section (loaded in Step 0) and copy the `CURRENT_VERSION` value verbatim, as a quoted string `"MAJOR.MINOR"`. Every file written by the optimizer is stamped with the current analyst version, regardless of any prior file's value. The downstream deployer will reject files whose major doesn't match its expected major, so this stamp is what keeps the round-trip clean.
 

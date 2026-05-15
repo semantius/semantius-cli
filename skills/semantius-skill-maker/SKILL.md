@@ -57,9 +57,9 @@ These rules apply to chat output, the generated SKILL.md, the generated README.m
 
 ---
 
-## Schema compatibility: `EXPECTED_MAJOR = 2`
+## Schema compatibility: `EXPECTED_MAJOR = 3`
 
-This skill expects model files written by `semantic-model-analyst` major `2`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Step 2. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected; the resulting per-domain skill would bake in stale recipes. Three cases:
+This skill expects model files written by `semantic-model-analyst` major `3`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Step 2. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected; the resulting per-domain skill would bake in stale recipes. Three cases:
 
 - **Older major**, the file was written using a structure this skill no longer understands (different section numbering, different table shapes, missing fields). Tell the user to run `semantic-model-analyst`; its archived-knowledge mode reads the older file and re-authors a current-major file from the same semantic content. Re-run skill-maker against the new file.
 - **Newer major**, the file was written by a newer analyst than this skill knows. Tell the user to update `semantius-skill-maker` before retrying.
@@ -184,13 +184,15 @@ Read `MODEL_PATH` and **gate on the version first** before extracting anything e
 
 Once the version gate passes, extract:
 
-- `system_slug`, `system_name`, `domain` from frontmatter.
+- `system_slug`, `system_name`, `domain`, and **`module_type`** (`"domain"` or `"master"`; absent → treat as `"domain"`) from frontmatter. `module_type` controls two things downstream: the generated SKILL.md's "Module type" preamble line (Step 5), and the JSON-array merge note (master-module entities' `computed_fields` / `validation_rules` entries carry an extra `source_module` reconciliation tag — see the per-entity extraction note below).
 - Entity list with `singular_label`, `label_column`, fields (name, format,
   required), enum values (§5), FK relationships (§4), parent/cascade-child
-  flags, `audit_log`, **`computed_fields`** array, and **`validation_rules`**
-  array. The two latter blocks are platform-enforced JsonLogic — they change
-  what the calling agent must do and what the calling agent must NOT do.
-  See "Pass 2" merit-test adjustments below.
+  flags, `audit_log`, **`computed_fields`** array, **`validation_rules`**
+  array, and (analyst v3.0+) any **`**Shared master cluster:** <name>`** annotation under the §3 entity heading. The two latter JSON blocks are platform-enforced JsonLogic — they change what the calling agent must do and what the calling agent must NOT do. See "Pass 2" merit-test adjustments below.
+
+  When the entity belongs to a master module (`module_type: master` in frontmatter), its `computed_fields` and `validation_rules` entries may each carry a `source_module` key naming the consuming module that contributed the entry. Treat `source_module` as opaque reconciliation metadata: surface its existence in the preamble note but never use it to filter entries (every entry applies regardless of which module contributed it). Domain-module entities never carry `source_module`.
+
+  Record the cluster annotation per-entity into a `master_cluster_by_entity` index. The annotation is informational for skill-maker: it signals that the entity is a classic master concept (vendors → `parties`, cost_centers → `finance`, etc.) and that writes to it may have cross-domain visibility. Use it to surface a "shared across domains" callout in the generated skill's preamble (Step 5) and as a guardrail on every write recipe touching the entity (Step 6).
 
   Treat each entry's **JsonLogic body as opaque** and read only the
   human-readable metadata (`name` and `description` for `computed_fields`;
@@ -209,6 +211,8 @@ Once the version gate passes, extract:
   - **`value_changed`**, i.e. `{"value_changed": "<field>"}` somewhere inside the rule body. Note `(entity, field)` pairs into a `transition_gated_fields` index. This is informational, not a merit signal on its own; it helps Pass 2 confirm that a `require_permission` rule actually fires on transition rather than on every write (a quality check that the analyst's audit also runs).
 
   In analyst v2.0+ files, the **§2 Permissions summary table is the canonical source** for the module's full permission catalog (not §8 step 1). Parse the table verbatim — five columns: `Permission | Type | Description | Used by | Hierarchy parent`. Build a `permissions_catalog` index from the rows. Use this index for everything: the SKILL.md "Platform-enforced permissions" preamble (one row per workflow permission), the role-hint lookup for each `conditional_permissions` entry (the `Description` and `Used by` cells give the role-hint richer than v1.11's §8 prose), and the cross-check that every `conditional_permissions[].permission_code` appears in the table. A mismatch is a model defect; refuse to generate and route back to the analyst. §8 step 1 in a v2 file is a procedural pointer to the table and no longer enumerates permissions itself; do not parse §8 for the permission list.
+
+  **v3.0 cross-module hierarchy rows.** The `Hierarchy parent` cell may reference a permission in a *different* module (e.g. an ITSM module's `itsm:read` row carrying `Hierarchy parent: parties:read`); this is a cross-module bridge to a master module that the deployer materializes via `permission_hierarchy` rows tagged `origin = "model_master"`. Recognize these by the presence of a `<other_slug>:<suffix>` value in the cell where `<other_slug>` is not this module's `system_slug`. Record cross-module parents into a `master_inclusions` index keyed by `(this_permission, master_permission)`. The index drives a one-line note in the SKILL.md "Platform-enforced permissions" preamble: every permission with at least one cross-module parent gets a *"includes <master>:<suffix> from the `<master>` master module"* sub-note so the calling agent knows that holding it grants visibility into shared data. Same-module hierarchy rows still surface as the regular rollup chain; the index split only matters for the preamble note.
 
 - **Inbound-FK delete-mode index).** Walk the §4 relationship table once more and build a `restrict_inbound` index per entity: for every row whose `Kind` is `reference` and `Delete` is `restrict`, record `(child_entity, fk_field)` against the *target* (the entity on the right side of the relationship). This index drives the new "Restrict-chained cleanup" merit signal in Pass 2 and is consumed by Pattern J (delete / archive of a parent entity that has restrict-children). The pattern matters because the platform refuses to delete a row that has live `reference + restrict` children; the calling agent must clean them up first, in dependency order, and a generic `use-semantius` `DELETE` will surface only a single per-row constraint failure rather than the full chain. Also note inbound `reference + cascade` and `reference + clear` rows separately; they don't trigger Pattern J but the SKILL.md preamble should still call out the cascade-delete / orphan-clear behavior for downstream awareness.
 
@@ -1076,6 +1080,32 @@ alongside; do not re-explain CLI basics here.
 If a task is purely about defining schema, managing permissions, or
 running ad-hoc queries against tables you already know, call
 `use-semantius` directly, going through this skill adds nothing.
+
+**Module type**: <`domain` or `master`, copied from frontmatter
+`module_type` (default `domain` when absent)>. A `master` module is a
+neutral host for shared / master data (e.g. vendors, currencies,
+departments) consumed by multiple domain modules via cross-module
+`permission_hierarchy` rows tagged `origin = "model_master"`. Writes to
+entities in a master module have cross-domain visibility: every
+consuming domain module sees the write through the bridge. The recipes
+in this skill treat master entities the same as domain entities at the
+CLI level; the only practical difference is the "shared across domains"
+guardrail surfaced on each write recipe touching one. Skip this line
+entirely when the model is a plain domain module.
+
+**Shared master entities** (entities authored under this domain module
+that the analyst flagged as classic master concepts via the
+`**Shared master cluster:** <cluster>` annotation; writes to these
+entities are likely candidates for promotion to a master module on
+re-deploy, and the live module may already have routed them through a
+master via the deployer's Stage 2d Branch B path. Recipes that touch
+them include a one-line note that the data is shared across the named
+cluster):
+<list each entity in the `master_cluster_by_entity` index from Step 2.
+Skip the section entirely when no entity in the model carries the
+annotation AND the module itself is not `module_type: master`.>
+
+- `<table>` is part of the `<cluster>` shared master cluster.
 
 **Auto-managed fields** (set by Semantius on every table; never include
 in POST/PATCH bodies): `id`, `created_at`, `updated_at`. The

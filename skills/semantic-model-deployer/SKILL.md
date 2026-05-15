@@ -1,6 +1,6 @@
 ---
 name: semantic-model-deployer
-description: Safely deploys a *-semantic-model.md file (produced by the semantic-model-analyst skill) to a live Semantius instance using the semantius. Before any writes, reconciles the model against the existing catalog, updates an existing module in place when the slug matches, extends Semantius built-ins (`users`, `roles`, `permissions`, …) additively instead of replacing them, refuses duplicate entity names across modules, and surfaces explicit merge/rename decisions for near-duplicates (e.g. `contracts` vs `saas_contracts` vs `vendor_contracts`). Use whenever a semantic-model file exists and the user wants to deploy, apply, push, sync, integrate, reconcile, or roll out the model, including phrasings like "implement the model", "deploy the model", "apply the schema", "set up the entities", "create the entities in Semantius", "push this to Semantius", "integrate this model with what's already there", or "now make it real". Also trigger when the user uploads or references a *-semantic-model.md and asks to do anything that would materialize it. Trigger proactively when such a file is present and the user's intent is clearly to deploy it.
+description: Safely deploys a *-semantic-model.md file (produced by the semantic-model-analyst skill) to a live Semantius instance using the semantius. Before any writes, reconciles the model against the existing catalog, updates an existing module in place when the slug matches, extends Semantius built-ins (`users`, `roles`, `permissions`, …) additively instead of replacing them, refuses duplicate entity names across modules, surfaces explicit merge/rename decisions for near-duplicates (e.g. `contracts` vs `saas_contracts` vs `vendor_contracts`), and offers master-data promotion when two modules collide on a shared concept (`vendors`, `cost_centers`, `currencies`) so the entity moves to a neutral master module both can consume. Applies a standard module scaffold (three permissions, three default roles, six FK columns) to every module, domain or master. Supports master models (`module_type: master` in frontmatter) to formalize an ad-hoc master into a proper domain cluster, including in-place rename cascade and multi-master consolidation. Use whenever a semantic-model file exists and the user wants to deploy, apply, push, sync, integrate, reconcile, or roll out the model, including phrasings like "implement the model", "deploy the model", "apply the schema", "set up the entities", "create the entities in Semantius", "push this to Semantius", "integrate this model with what's already there", "now make it real", "promote vendors to a master module", "this entity should be shared", "extend vendors with more entities", or "formalize the finance master". Also trigger when the user uploads or references a *-semantic-model.md and asks to do anything that would materialize it. Trigger proactively when such a file is present and the user's intent is clearly to deploy it.
 ---
 
 # semantic-model-deployer Skill
@@ -13,7 +13,7 @@ This skill bridges the gap between a self-contained semantic model (produced by 
 
 ## Writing conventions (apply to every output this skill produces)
 
-These rules apply to chat output, plan summaries, verification reports, and anything else this skill writes for the user to read. They are not optional style preferences.
+These rules apply to chat output, plan summaries, verification reports, and anything else this skill writes **for the user to read**. They are not optional style preferences. **They do NOT apply to data the deployer sends to Semantius** — model text (entity descriptions, field descriptions, JsonLogic, enum values, rule messages, etc.) is the user's data and is governed by the "Data fidelity" section below. Never apply em-dash rewrites, US-spelling fixes, or any other house-style edit to a payload bound for `create_entity` / `update_entity` / `create_field` / `update_field` / `create_permission`. The model's content travels untouched into the catalog; the deployer's prose styling stays in chat.
 
 **1. US English spellings, always.** Never British English. Examples that come up often (left = correct US form, right in backticks = banned British form): optimize (not `optimise`), behavior (not `behaviour`), modeling (not `modelling`), customize (not `customise`), recognize (not `recognise`), labeled (not `labelled`), materialize (not `materialise`), organization (not `organisation`), summarize (not `summarise`), categorize (not `categorise`), uncategorized (not `uncategorised`), normalize (not `normalise`), harmonize (not `harmonise`), analyze (not `analyse`). When in doubt between two spellings, pick the `-ize` / `-or` / `-er` form.
 
@@ -25,13 +25,90 @@ These rules apply to chat output, plan summaries, verification reports, and anyt
 
 ---
 
+## Data fidelity: model text is user data
+
+Every string the deployer extracts from the model and sends to Semantius (`description`, `singular_label`, `plural_label`, `title`, JsonLogic `message` / `description` cells, enum value labels, `permission` descriptions, `select_rule` and `input_type_rule` JsonLogic, `computed_fields` / `validation_rules` arrays) is **user data**, not deployer prose. It travels into the catalog **byte-for-byte unchanged**. The rules below are not stylistic preferences; they are correctness invariants. A deploy that violates any of them produces silent catalog drift the user cannot see until they read the record in the UI.
+
+**1. No truncation. Ever.** Entity and field descriptions in the model are often multi-sentence (3–6 sentences is normal for entities like `service_requests`, `incidents`, `change_requests`). Every sentence is part of the meaning — typically sentence 2+ encodes invariants, lifecycle rules, terminal states, and gating constraints. Sending only the first sentence loses that information. **Read the full description through to the next blank line / next `**...**` heading / next markdown structural element, and pass the entire span.** If the description spans markdown paragraphs, include the blank line and the second paragraph. Do not summarize for "brevity," do not paraphrase, do not synthesize a shorter version.
+
+**2. No normalization.** The model's text passes through verbatim. Specifically:
+- **Backticks** (`` ` ``) around enum tokens, table names, status values stay backticks. *Do not* strip them. They render as inline code in the UI and carry semantic emphasis ("the value `retired` is terminal"). Stripping them turns the prose into "the value retired is terminal" which reads as a different sentence.
+- **Apostrophes** (`'`) in possessives (`team's`, `user's`, `incident's`) stay apostrophes. Do not delete them, do not convert to "smart" quotes, do not rewrite the possessive.
+- **Em-dashes** (`—`), if the model contains them, stay em-dashes. The Writing Conventions ban on em-dashes applies to deployer chat output only.
+- **Quotes** stay as the model wrote them (straight `"`, curly `"`/`"`, doesn't matter — whatever is in the source byte-for-byte).
+- **Unicode** characters stay. The platform stores UTF-8; the model is UTF-8; no transliteration is needed.
+
+**3. Shell-safe transport for any text containing special characters.** Backticks, apostrophes, double quotes, dollar signs, multi-line content, and Unicode all break inline shell-arg quoting in subtle ways:
+- Double-quoting the JSON (`"{...}"`) makes bash evaluate backticks (`` `cmd` ``) as command substitution. **Disastrous.**
+- Single-quoting the JSON (`'{...}'`) breaks the moment any value contains a single quote / apostrophe.
+- Escaping is fragile and easy to get wrong field-by-field.
+- **Heredocs (`<<'EOF'`) inside an *inline* Bash invocation are NOT enough.** The agent harness transports the entire Bash command as a string through its own quoting layer; an apostrophe inside a heredoc body can still trip the outer parser before bash ever sees the heredoc as a heredoc. Heredocs are safe inside a *file* that bash then reads, not inside a command argument bash is being told to evaluate.
+
+**Canonical pattern: write a script file with the Write tool, then run it.** This is the only form that fully decouples the model's text from any shell quoting layer. The script file is opaque bytes to the harness; bash reads it from disk and parses the heredocs locally.
+
+```python
+# Write tool target: <cwd>/.tmp_deploy/deploy_xxx.py  (see Cross-platform path note below)
+import json, subprocess, os, tempfile
+
+def call(tool, payload):
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="deploy-")
+    with os.fdopen(fd, "w") as f:
+        json.dump(payload, f)
+    try:
+        return subprocess.run(["semantius", "call", "crud", tool],
+                              stdin=open(path), capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+
+call("create_entity", {"data": {"description": "Multi-sentence text with `backticks`, apostrophes (team's), and \"quotes\" — all safe."}})
+```
+
+```bash
+# Bash: just runs the file, no inline content
+python3 <cwd>/.tmp_deploy/deploy_xxx.py
+```
+
+**Inline heredoc is a fallback for short ASCII-only payloads only.** When the payload is small and contains no apostrophes, backticks, or Unicode, an inline heredoc is fine:
+
+```bash
+semantius call crud create_module <<'JSON'
+{"data":{"module_name":"ATS","module_slug":"ats","description":"Applicant Tracking System","module_type":"domain"}}
+JSON
+```
+
+**Other supported transport forms (when the file already exists on disk, e.g. produced by an earlier Write call):**
+
+```bash
+cat /tmp/payload.json | semantius call crud create_entity
+semantius call crud create_entity < /tmp/payload.json
+```
+
+Build the payload with a JSON encoder (`python3 -c "import json,sys; json.dump(obj, sys.stdout)"` or the in-script wrapper above) writing to a temp file. **Never** string-concatenate the model's text into a shell-quoted JSON literal — that's the path that forces character stripping to keep the command parseable. If you find yourself trying to "clean" the model text so it fits an inline command, stop, write a script file via the Write tool, and run it.
+
+**Cross-platform path note (Windows / Git Bash).** Git Bash's `/tmp/` and Windows-side Python's `/tmp/` resolve to *different* directories — a Write call to `/tmp/foo.py` may land in `C:\Users\<user>\AppData\Local\Temp\foo.py` (Windows view) while the same path under Git Bash sees an empty `/tmp/`. Two robust options:
+- **Preferred:** Write the script under a deploy-scratch folder inside the **current working directory** (e.g. `<cwd>/.tmp_deploy/script.py`) — both shells agree on `<cwd>`. Add `.tmp_deploy/` to `.gitignore` once and never think about path mapping again. Clean up the file after the run.
+- Use `$(mktemp -t deploy-XXXXXX.py)` *from inside Bash* and pass the resolved path through to subsequent Write/Read calls — `mktemp` returns a path bash and the local Python both understand because it lives under bash's view of `/tmp/`. Don't write to a literal `/tmp/foo.py` from the Write tool blind; the path may resolve elsewhere.
+
+This applies to every write call where the payload contains *any* model-authored text: `create_entity`, `update_entity`, `create_field`, `update_field`, `create_permission`, `update_permission`, anything else that carries user prose or JsonLogic.
+
+**4. Each call carries its own complete payload.** When iterating over multiple entities or fields whose model declarations *look similar* (e.g. the four `*_comments` entities each declare a `visibility` field with the same description and the same `input_type_rule`), do not "optimize" by writing one full payload then short payloads for the rest. Every `create_field` call carries every column the model declares for that field — `description` included — every time. The four comment entities each get their own complete `create_field` for `visibility`, each with the full description string. Identical text repeated across entities is the **expected case**, not a redundancy to eliminate. Generating a batch script that re-uses the first entity's payload as a template and elides "duplicate" keys for subsequent entities is exactly how the `service_request_comments.visibility.description` empty-string regression happens.
+
+**5. `update_*` calls are minimal.** PostgREST PATCH semantics: keys you send are written, keys you omit are left alone. When Stage 4f issues `update_field` to set `data.input_type_rule = <jsonlogic>`, the payload contains **only** `input_type_rule` — never include `description`, `title`, `format`, or any other column unless the model genuinely declares a drift on that column too. **Specifically: the rule-entry's own `description` field** (the analyst's commentary about *the rule itself*, like `"Visibility is editable for the author..."`) **is not the same thing as the field-column's `description`** (the analyst's description of *what the column stores*, like `"Public replies are visible to the requester; internal notes are agent-only"`). The rule-entry's `description` lives **inside** `input_type_rule`'s JsonLogic-array entry and travels into Semantius as part of that array. It must never leak out to become the field's `description` column. Two different surfaces, two different meanings, never crossed.
+
+**Verification posture.** Stage 5's per-entity check (see "Per-area checks") should round-trip every `description` (entity-level and field-level) the model declared and assert byte-equality with the live catalog value. A mismatch is a Stage 5 defect — quote the diff and offer a retry of the offending write. This is the only way truncation / normalization regressions surface before the user notices them in the UI.
+
+---
+
 ## Generated artifacts (scripts, intermediate files)
 
 This skill emits shell and Python helper scripts during a deploy (e.g. the bulk seeders described in Stage 5, ad-hoc `update_entity` rule appliers, batch field creators when a model has many fields). These are **ephemeral one-shots**, tied to a single model and a single deploy run. They are not skill source.
 
 **Where they go:**
-- Unix / Git Bash: `mktemp -t deploy-XXXXXX.sh` (or `.py`). The OS reaps `/tmp` automatically.
+- **Preferred (cross-shell safe):** under the current working directory in a scratch folder, e.g. `<cwd>/.tmp_deploy/deploy_<short>.py`. Both Git Bash and Windows-side Python agree on `<cwd>` paths, so a script created via the Write tool can be executed by either runtime without path mismatch. Add `.tmp_deploy/` to `.gitignore` once. Delete the file after a successful run.
+- Unix / Git Bash (Linux/macOS or pure Git Bash workflows): `mktemp -t deploy-XXXXXX.sh` (or `.py`). The OS reaps `/tmp` automatically.
 - PowerShell: `Join-Path $env:TEMP "deploy-$(Get-Random).sh"`. Delete after a successful run.
+
+**Cross-platform path warning (Windows / Git Bash):** Git Bash's `/tmp/` and Windows-side Python's `/tmp/` may resolve to different directories. A Write call to literal `/tmp/foo.py` can land somewhere bash later cannot find. Use the `<cwd>/.tmp_deploy/` form, or use `$(mktemp -t ...)` from inside Bash to resolve a path *first*, then pass the resolved path to Write — never blindly write to a literal `/tmp/...` from a tool that may use a different mount view.
 
 **Where they must not go:**
 - ❌ The skill folder (`.claude/skills/semantic-model-deployer/`). Past sessions have leaked files like `_ats_deploy_entities.sh`, `_seed_v2.py`, `_apply_rules.sh` into this folder — that's a discipline failure, not a convention. The skill folder is read-only at runtime; only the maintainer edits it.
@@ -44,9 +121,11 @@ This applies to every script this skill writes, not just the seed script at Stag
 
 ---
 
-## Schema compatibility: `EXPECTED_MAJOR = 2`
+## Schema compatibility: `EXPECTED_MAJOR = 3`
 
-This skill expects model files written by `semantic-model-analyst` major `2`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Stage 1. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected with a request to update the model via the analyst before retrying.
+This skill expects model files written by `semantic-model-analyst` major `3`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Stage 1. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected with a request to update the model via the analyst before retrying.
+
+Analyst major `3.0` adds two forward-compatible authoring conventions on top of `2.x`: an optional `module_type: master` frontmatter directive (default `"domain"`), and an optional per-entity `**Shared master cluster:** <name>` annotation in §3. Pre-3.0 files parse with both fields defaulted, but a pre-3.0 deployer reading a 3.0 master-typed model would silently create a regular domain module instead of a master, producing the wrong shape rather than a missed optimization. The major bump is the honest signal that the two skills must move in lockstep.
 
 The history of the deployer's contract changes lives in [`CHANGELOG.md`](./CHANGELOG.md) — what each analyst-lockstep bump changed in the deployer's parser, stage numbering, and audit checks. That file is not loaded at runtime; the body of this SKILL.md is the **current contract**, the CHANGELOG is the **history**.
 
@@ -120,6 +199,7 @@ Locate the `*-semantic-model.md` file. The very first check is the schema-versio
 Once the version gate passes, extract the rest:
 
 - **`system_slug`** from YAML frontmatter, this is the module name
+- **`module_type`** from YAML frontmatter, optional. Accepted values: `"domain"` (default when the key is absent) or `"master"`. When `"master"`, this is a **master model** and Stage 2a runs the master-model branch (look up existing master by slug match then entity-overlap match, decide create-vs-extend, coordinate rename cascade if applicable). When `"domain"`, normal create-or-update path. Any other value is a 🛑 High blocker.
 - **Human-readable system name**, from the top-level heading (`# ... — Semantic Model`)
 - **Entity list**, from the §2 entity summary table, in order
 - **Per-entity details** from each §3 entity subsection:
@@ -133,6 +213,7 @@ Once the version gate passes, extract the rest:
     - `<narrow_suffix>` matching a `Type: workflow-narrow` row in the §2 Permissions summary → `edit_permission = <system_slug>:<narrow_suffix>`. The parser checks the §2 table for a row whose `Permission` cell equals `<system_slug>:<narrow_suffix>` and whose `Type` is `workflow-narrow`; if no such row exists, this is a 🛑 High blocker (undeclared narrow tier).
 
     Carry the resolved value through to Stage 4c's `create_entity` call. The line is not required; treat every entity as `manage` when the line is absent.
+  - **`**Shared master cluster:**`** line, when present (analyst v3.0+). Optional per-entity annotation emitted by the analyst for entities recognized as classic master concepts (finance reference data, parties, organization data, products, employees). Free-form snake_case identifier (e.g. `finance`, `parties`, `organization`, `products`, `employees`). The hint is **only** consulted at Stage 2d follow-up 1 when this entity becomes a Branch B promotion candidate (host-module name suggestion / recommended-master selection). It has no effect when the entity is not promoted to a master. Missing line means no hint — defaults apply (bare entity name as the master host's default new-module name). Carry through to Stage 2d but do not validate further.
   - **`Computed fields`** sub-block, when present: parse the fenced ```` ```json ```` array verbatim; default to `[]` when the heading is absent. Each entry has `name` (existing scalar field on this entity), `jsonlogic` (object), optional `description`. The deployer passes the array as-is to `create_entity` / `update_entity`.
   - **`Validation rules`** sub-block, when present: parse the fenced ```` ```json ```` array verbatim; default to `[]` when the heading is absent. Each entry has `code` (snake_case, unique within entity), `message` (required), `jsonlogic` (object), optional `description`. The deployer passes the array as-is to `create_entity` / `update_entity`. JsonLogic in this array may invoke two platform-extension operators: `{"value_changed": "<field>"}` (true when the field's value differs from `$old`, true on INSERT) and `{"require_permission": "<permission_code>"}` (returns `true` when the caller holds the permission, throws otherwise). Both are passed through verbatim, no special encoding. **However**, the deployer must cross-check every `require_permission` argument against the §2 **Permissions summary** table (the canonical source): collect every distinct `<permission_code>` referenced across all entities' `validation_rules`, verify each one appears as a `Permission` row in the table. Mismatch is a 🛑 High blocker (see the precedence table below); refuse to deploy and send the user back to the analyst skill rather than calling `create_permission` ad hoc, the analyst's audit should have caught this and the model may have other gaps if it didn't.
   - **`Input type rules`** sub-block, when present: parse the fenced ```` ```json ```` **array of objects** verbatim into a list of `{field, jsonlogic, description?}` entries; default to `[]` when the heading is absent. Same shape as `Computed fields` and `Validation rules` — one parser handles all three. Each entry's `field` must resolve to a real field declared in this entity's §3 field table (Stage 1 enforces; a typo or auto-field name is a 🛑 High blocker). Each entry's `jsonlogic` is an object that the platform evaluates client-side at form render against the current record; the return value must be one of the five `input_type` enum values (`"default"`, `"required"`, `"readonly"`, `"disabled"`, `"hidden"`), with the static `input_type` as the platform-side fallback for empty / malformed / out-of-enum returns. The deployer passes each entry's `jsonlogic` verbatim to `update_field`'s `data.input_type_rule` in Stage 4f. JsonLogic shape is not deeply validated at parse time (the platform handles the fallback gracefully); only structural integrity (`field` references a real field, `jsonlogic` is an object) is enforced here. If the deployer encounters a YAML-shaped `Input type rules` block (sometimes seen in older drafts), it's a 🛑 High parse error: route the user to the analyst's audit to regenerate.
@@ -145,6 +226,7 @@ Once the version gate passes, extract the rest:
   - exactly one row with `Type: baseline-read` and `Permission = <slug>:read`;
   - exactly one row with `Type: baseline-manage` and `Permission = <slug>:manage`;
   - at-most-one row with `Type: baseline-admin` and `Permission = <slug>:admin`;
+  - **every row has a non-empty `Description` cell** (whitespace-only counts as empty; `—` is rejected). The deployer writes the cell verbatim to `permissions.description` without templating or fallback (see Stage 2a-scaffold step 2 and Stage 4b), so an empty cell would land an empty string in the catalog — route the user back to the analyst skill to fill it in;
   - every `Type` value in `{baseline-read, baseline-manage, baseline-admin, workflow, workflow-narrow}` (the `workflow-narrow` value was added in analyst v2.1; files stamped older than `2.1` that include it should not exist in the wild, refuse and route to the analyst);
   - every `Hierarchy parent` cell either `—` or a `Permission` value that also appears in the table;
   - **no `Type: workflow` (elevated) row whose `Hierarchy parent` is `<slug>:manage`** — rolling an elevated permission under `manage` auto-grants every manager the gated authority and defeats the conditional check;
@@ -229,6 +311,8 @@ This stage does four things in order: (a) resolve the module, (b) inspect built-
 
 ### 2a. Resolve the module: update if it already exists
 
+**Branch on `module_type` from Stage 1.** A `module_type: master` model takes the master-model branch (subsection 2a-master below); a `module_type: domain` model (default) takes the standard domain branch.
+
 Look up the module by its slug (lowercase URL handle), since `system_slug` is the model's URL-shaped identifier:
 
 ```bash
@@ -237,12 +321,56 @@ semantius call crud read_module --single '{"filters": "module_slug=eq.<system_sl
 
 Exit 0 = exists (reuse the returned `id`); exit 1 = missing (plan a `create_module`); exit 2 = duplicate (a hard catalog bug — surface and stop).
 
-> **Module schema note.** Modules carry both a **`module_name`** (unique human-facing display name shown in the UI selector and landing page header, keep acronyms as acronyms, e.g. `CRM`, `ITSM`, `CMDB`) and a **`module_slug`** (lowercase URL/permission handle, e.g. `crm`, `itsm`, `cmdb`). The earlier `alias` field is **removed**. `module_name` maps to the model's `system_name`; `module_slug` maps to the model's `system_slug`; the module's `description` maps to the model's `system_description` (compact tagline, ≤40 chars, e.g. `Customer Relationship Management`). The §1 Overview prose does **not** go on the module record, it is too long for the selector chip; keep it in the markdown file only.
+> **Module schema note.** Modules carry both a **`module_name`** (unique human-facing display name shown in the UI selector and landing page header, keep acronyms as acronyms, e.g. `CRM`, `ITSM`, `CMDB`) and a **`module_slug`** (lowercase URL/permission handle, e.g. `crm`, `itsm`, `cmdb`), plus a **`module_type`** enum (`"domain"` or `"master"`, default `"domain"`). The earlier `alias` field is **removed**. `module_name` maps to the model's `system_name`; `module_slug` maps to the model's `system_slug`; the module's `description` maps to the model's `system_description` (compact tagline, ≤40 chars, e.g. `Customer Relationship Management`); `module_type` maps to the model's frontmatter `module_type` (default `"domain"`). The §1 Overview prose does **not** go on the module record, it is too long for the selector chip; keep it in the markdown file only.
 
-- **Exists** → plan an `update_module` to refresh `module_name`, `description`, and (if missing on the existing record) `module_slug`, drawing them from the model's `system_name`, `system_description`, and `system_slug` respectively. Capture the existing `module_id` to reuse. **Never create a second module with the same slug.** On re-run, also reconcile permissions: if the model now requires `<system_slug>:admin` (per Stage 1's parsed §3 `**Edit permission:**` annotations) but the live module only has `<system_slug>:read` and `<system_slug>:manage` (the legacy two-permission baseline), plan an additive permission create plus the missing hierarchy row. See Stage 4b for the full reconciliation rules.
-- **Missing** → plan a `create_module` with `module_name: "<system_name>"`, `module_slug: "<system_slug>"`, `description: "<system_description>"`, followed by the permissions and hierarchy rows derived directly from the §2 **Permissions summary** table (parsed in Stage 1):
-  - **Create each permission, in table order.** For each row in the table, call `create_permission` with `permission_name = row.Permission` and `description = row.Description`. Permission creation happens before hierarchy because hierarchy rows reference both ends. There is no separate "baseline vs workflow" branching here — the table is a flat list and the deployer iterates it once. The parse-time validation has already enforced shape (exactly one baseline-read row, exactly one baseline-manage row, at-most-one baseline-admin row, valid `Type` values, etc.); if parse passed, this step is mechanical.
-  - **Create each hierarchy row.** Iterate the table again and for every row whose `Hierarchy parent` cell is non-`—`, call `create_permission_hierarchy` with `parent_permission = row["Hierarchy parent"]` and `child_permission = row.Permission`. The `manage includes read` baseline chain, the `admin includes manage` rollup (when baseline-admin exists), and every workflow rollup under `<slug>:admin` are all encoded in the table column; the deployer does not need a separate enumeration. Parse-time validation has already rejected any `Hierarchy parent = <slug>:manage` for a workflow row (defeats the conditional gate).
+#### Domain module (`module_type: domain`, default)
+
+- **Exists** → plan an `update_module` to refresh `module_name`, `description`, and (if missing on the existing record) `module_slug`, drawing them from the model's `system_name`, `system_description`, and `system_slug` respectively. Capture the existing `module_id` to reuse. **Never create a second module with the same slug.** **Never flip `module_type` on `update_module`** — a domain module's type cannot be promoted to master via re-deploy; promotion is the explicit Stage 2d Branch B flow. On re-run, also reconcile permissions: if the model now requires `<system_slug>:admin` (per Stage 1's parsed §3 `**Edit permission:**` annotations) but the live module only has `<system_slug>:read` and `<system_slug>:manage` (the legacy two-permission baseline), plan an additive permission create plus the missing hierarchy row, plus the matching scaffold role (`<slug>_admin`) and FK update. See Stage 4b for the full reconciliation rules.
+- **Missing** → plan a `create_module` with `module_name: "<system_name>"`, `module_slug: "<system_slug>"`, `description: "<system_description>"`, `module_type: "domain"`, followed by the **scaffold pass** (subsection 2a-scaffold below).
+
+#### Master model (`module_type: master`, analyst v3.0+)
+
+A master model is a self-contained spec for a master-data module — either declaring a new master upfront (rare), or formalizing an ad-hoc runtime-promoted master into a properly-modeled domain cluster (more common). Stage 2a's master-model branch tries three match strategies in order:
+
+1. **Exact slug match.** `read_module --single` by `module_slug=eq.<system_slug>`. If the matched module exists and is already `module_type = "master"`, this is a master-model **extend-in-place** deploy. No rename needed. Capture the `module_id` and proceed to scaffold reconciliation + entity diffs. If the matched module exists but is `module_type = "domain"`, surface a 🛑: a master model's slug collides with a live domain module — the user must either rename the model's `system_slug` (via the analyst) or abort. Do not flip `module_type` silently.
+
+2. **Entity-overlap match.** If no exact slug match, query master modules whose `module_type = "master"` and load each one's entities. If any of the model's declared entities (from §2) already live in an existing master, that master is a candidate. Build a candidate list:
+
+   ```bash
+   semantius call crud read_entity '{"filters": "table_name=in.(<entity_1>,<entity_2>,...)&select=table_name,module_id"}'
+   semantius call crud read_module '{"filters": "module_type=eq.master&id=in.(<distinct_module_ids>)"}'
+   ```
+
+   - **One candidate.** Use it as the target master. If its `module_slug` differs from the model's `system_slug`, ask via `AskUserQuestion`: (a) rename master to model slug (recommended when the model's slug is more descriptive, e.g. `vendor_management` over bare `vendors` — coordinate the cascade per Stage 4b-rename); (b) keep existing slug, apply only cosmetic updates from the model. After the user picks, capture the (possibly renamed) module's id.
+   - **Multiple candidates.** Surface to the user via `AskUserQuestion` with one question per candidate master ("which master should `<entity>` consolidate into?"), then for the chosen target master apply the same rename / keep prompt. The unchosen candidates become Path-2 master-merge sources: for each, fire the per-source consolidate / skip / abort prompt described in Stage 4c-merge-master.
+
+3. **No match.** No existing master holds any declared entity, and no exact slug match. This is the upfront-master-deploy case. Plan `create_module` with `module_type: "master"` and the model's `system_name` / `system_slug` / `system_description`.
+
+After the module is identified (or planned), run the scaffold pass.
+
+#### 2a-scaffold: standard module scaffold
+
+Every module (domain or master) carries a standard scaffold: three permissions (`<slug>:read`, `<slug>:manage`, optionally `<slug>:admin`), three default roles (`<slug>_viewer`, `<slug>_manager`, optionally `<slug>_admin`), and six FK / column references on the module record (`view_permission`, `manage_permission_id`, `admin_permission_id`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`).
+
+The scaffold pass is **idempotent** — on re-run, the deployer reads what's already in place and creates only the missing pieces. For each module touched by this deploy:
+
+1. **Determine the required tier set.** Two-permission baseline (`read`, `manage`) unless any entity carries `**Edit permission:** admin` in the model, in which case three-permission baseline (`read`, `manage`, `admin`).
+
+2. **Create permissions from §2.** Iterate the model's §2 Permissions summary index (built in Stage 1) in table order. For each row, `read_permission --single` by `permission_name=eq.<row.permission>`; `create_permission` only on exit 1, passing `permission_name = <row.permission>` and `description = <row.description>` (the §2 `Description` cell, verbatim). **The model is the single source of truth for every permission code and every description** — baseline tiers (`<slug>:read`, `<slug>:manage`, `<slug>:admin`) and workflow tiers (`<slug>:approve_*`, `<slug>:publish_*`, narrow tiers, etc.) all follow the same rule. There is no per-tier template, no fallback string, and no synthesized text; if the §2 cell is empty Stage 1 has already rejected the file. Treating baselines specially is the exact failure mode that caused descriptions like *"View IT Service Management data"* to overwrite the model's own *"Read access to ticketing, knowledge base, and reference data..."* — `<slug>:read` is not more deserving of a default than `<slug>:approve_change`.
+
+3. **Create permission-hierarchy chain.** `read_permission_hierarchy` by the `(parent, child)` pair; `create_permission_hierarchy` only on exit 1. Tag the row's `origin`:
+   - `"model"` when the module's `module_type = "domain"` (rows correspond to the model's §2 Permissions summary table, plus the standard baseline chain).
+   - `"model_master"` when the module's `module_type = "master"` (covers the master's internal `<master>:admin → <master>:manage → <master>:read` chain and any workflow rollups declared in a master-model's §2 Permissions summary).
+
+4. **Create default roles per tier, with stable slugs.** Roles use the convention `<slug>_viewer`, `<slug>_manager`, `<slug>_admin`. For each tier:
+   - `read_role --single` by `slug=eq.<module_slug>_<tier_role>`.
+   - **Slug collision check.** If a live row exists with that slug AND its `origin = "user"`, this is a 🛑 (the deployer never modifies user-created roles). Surface as `AskUserQuestion` with two options: (a) "Rename existing user role first" — admin renames in the UI to free the slug; deploy aborts and resumes on re-run, or (b) "Abort deploy." No silent claim, no `origin` flip, no auto-adoption.
+   - `create_role` if exit 1, passing `slug = "<module_slug>_<tier_role>"`, `role_name = "<Module Name> <Tier Role>"` (e.g. `"CRM Viewer"`), `label = "<Module Name> <Tier Role>"`, `description = "Default <tier_role> role for <Module Name>"`, `module_id = <module_id>`, `origin = "model"` (domain) or `"model_master"` (master).
+   - `create_role_permission` to attach the matching permission (`<slug>:read` to viewer, `<slug>:manage` to manager, `<slug>:admin` to admin). Idempotent: read first.
+
+5. **Populate the six module-record references.** After permissions and roles exist, `update_module` to set `view_permission = "<slug>:read"` (text, holds the permission_name — natural-key link via the unique index on `permissions.permission_name`), `manage_permission_id = <id of <slug>:manage>` (integer FK), `admin_permission_id = <id of <slug>:admin>` (nullable, only when three-tier), `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id` (nullable, only when three-tier). Idempotent: write only the fields whose live value differs from the planned value.
+
+6. **Master-model entity-overlap re-points.** When a master-model deploy resolved via entity-overlap match and consolidates from multiple sources (Path 2 in plan §5.4.5), the per-source consolidate / skip / abort decisions inform Stage 4c-merge-master. Record them on the plan.
 
 > **Required model keys.** `system_name`, `system_slug`, and `system_description` are all required front-matter keys. If the model file is missing `system_description`, stop and route the user back to the analyst skill (Mode B audit) to backfill it before deploying, the deployer will not invent a description.
 
@@ -270,14 +398,15 @@ Build an index of every existing entity keyed by `table_name`, carrying at least
 
 ### 2d. Classify each model entity
 
-For every entity declared in the model's §2, determine which bucket it falls into. **Buckets marked 🛑 are ambiguity gates, the user must make an explicit decision in Stage 3 before any writes happen.**
+For every entity declared in the model's §2, determine which bucket it falls into. **Buckets marked 🛑 are ambiguity gates, the user must make an explicit decision in Stage 3 before any writes happen.** The 🟢 shared-master bucket is the auto-wired Branch A — it never raises a collision widget.
 
 | Bucket | Condition | Action |
 |---|---|---|
 | 🔒 Built-in | `table_name` matches a Semantius built-in | Reuse. Offer additive fields only (see 2b). |
 | ♻️ Same-module match | Entity exists and its `module_id` equals our module's id | Re-run case, proceed to field-level diff (see "What to compare" below). |
-| 🛑 Cross-module exact name | Entity exists with the **same `table_name`** but `module_id` ≠ our module | **Gatekeeper decision required.** Never silently coexist, see 2e. |
-| 🛑 Similar name | An existing entity's `table_name` is *near* a model entity's name (see heuristic below) | **Gatekeeper decision required.** Similarity is a hint, not a verdict; the user decides. |
+| 🟢 Shared-master match (Branch A) | Entity exists with the **same `table_name`** AND its owning module's `module_type = "master"` | **Auto-wire as a consumer.** No collision widget. Plan a cross-module `permission_hierarchy` row `<consumer>:read → <master>:read` (always, tagged `origin = "model_master"`). Stage 2d follow-up fires the Branch A binary manage prompt (see 2d-branch-a) to decide whether to add `<consumer>:manage → <master>:manage`. Field-level diff still runs on the master entity if the model declares additive fields, but field changes on a master are merged-with-source-tagging per Stage 4e. |
+| 🛑 Cross-module exact name (Branch B) | Entity exists with the **same `table_name`** AND its owning module's `module_type = "domain"` (i.e. it's in another domain module, not a master) | **Gatekeeper decision required.** Never silently coexist, see 2e. The Stage 3 collision widget surfaces **four** options: promote to shared master module (the master-promotion path described in 2d-branch-b), rename the incoming entity, use the existing entity directly, abort. |
+| 🛑 Similar name | An existing entity's `table_name` is *near* a model entity's name (see heuristic below) | **Gatekeeper decision required.** Similarity is a hint, not a verdict; the user decides. The "Promote to shared master" option is **not** offered for similar-name flags — promotion is only sensible for an exact concept match. |
 | ✨ New | No match of any kind | Create normally in Stage 4. |
 
 For field-level checks on a same-module match, run the usual reads:
@@ -300,6 +429,84 @@ You, the agent, are responsible for detecting near-names. Flag any pair where:
 - Edit distance is small and the tokens look related (not just typos of unrelated words)
 
 If you're uncertain whether two names refer to the same concept, **flag it**. A false positive costs the user one confirmation click; a missed collision pollutes the catalog permanently and cannot be cleaned up without data migration.
+
+### 2d-branch-a. Wiring up a new consumer to an existing master
+
+The 🟢 shared-master bucket fires automatically when an incoming entity matches a live entity already in a `module_type = "master"` module. No collision widget. The deploy plans two pieces of wiring per consumer:
+
+1. **Cross-module read inclusion (always).** A `permission_hierarchy` row with `parent_permission = <consumer>:read`, `child_permission = <master>:read`, `origin = "model_master"`. Without this row, consumers can't see the shared entity through their own module's `:read` permission; users would have to be added to `<master>_viewer` individually, defeating the point of the shared host.
+
+2. **Cross-module manage inclusion (conditional).** Asked via `AskUserQuestion` as a per-consumer binary prompt. The prompt fires for each consuming module — each consumer's decision is recorded independently, in its own `<consumer>:manage → <master>:manage` row when applicable. Previous consumers' inclusion decisions are never modified by a later consumer's deploy.
+
+Prompt shape (Branch A):
+
+> *Should `<consumer>` managers be able to edit `<master>` records?*
+>
+> 1. **No — read-only via the inclusion already created. Edits only by `<master>_manager` members.** (recommended)
+> 2. **Yes — add `<consumer>:manage → <master>:manage` hierarchy inclusion.** `<consumer>` managers can edit; no role-membership change.
+
+Default-recommended option is `No`: proper MDM governance keeps edit rights inside `<master>_manager`, and consumers see master records through the read inclusion plus optional individual membership in `<master>_manager` for stewards.
+
+Idempotency: on re-run, the deployer checks for existing rows matching `(parent, child)` before creating; never duplicates a bridge. Rows tagged `origin = "model_master"` may be updated by the deployer (FK adjustments during master-rename or master-merge) but are **never deleted by the deployer** (see "No auto-deletion" below).
+
+### 2d-branch-b. Promotion of a domain-owned entity to shared
+
+When the incoming entity collides exact-name with a live entity in another **domain** module (not a master), surface a **four-option** widget. Phrase every option in plain outcome + risk language — never in scaffold / module / additive terms the user shouldn't have to understand. Order is promote first (the path that solves the cross-domain case cleanly), then the two single-domain alternatives ranked by safety (silo before gatekeeper), then abort:
+
+> 1. **Promote `<entity>` to shared `<host>` module** — both `<original_module>` and `<incoming_module>` read the same `<entity>` table. No duplication, no gatekeeper, each team's permissions automatically extend. Adds one neutral master module to the catalog.
+> 2. **Rename new `<entity>` to `<incoming>_<entity>`** — creates a data silo. Each module gets its own copy. Reports can't combine them, and the two will drift apart. Pick this only when the two concepts are genuinely different (e.g. SaaS subscription agreements vs facility leases).
+> 3. **Use existing `<original_module>.<entity>` directly** — requires manual permission review afterwards. `<incoming_module>` users need explicit grants to read `<original_module>`'s table, and `<original_module>` becomes the gatekeeper for any future schema changes to `<entity>`.
+> 4. **Abort the deploy.**
+
+The `(Recommended)` annotation is **dynamic**, placed on the option that fits the actual situation as inferred from Stage 1 / Stage 2f:
+
+- **Cluster hint matches** (model carries `**Shared master cluster:** <cluster>` on this entity): annotate option 1. This is the universal Path 1 lifecycle (see master-data sharing reference). The host module suggestion in follow-up 1 is the cluster name.
+- **No cluster hint, comparison block shows non-overlapping fields and clearly different concepts**: annotate option 2. Silo is the correct call when the entities just happen to share an English word.
+- **No cluster hint, comparison block shows substantial overlap / same concept**: annotate option 1 anyway; the deployer's recommendation favors shared-master over single-domain ownership whenever sharing makes sense.
+- **Default fallback** (analysis inconclusive): no `(Recommended)` annotation, force the user to make a deliberate choice.
+
+Picking option 1 triggers two follow-up questions (host module + manage decision) in the same `AskUserQuestion` batch (per the batching rule at Stage 3).
+
+**On the dropped options.** Earlier drafts of this widget surfaced two additional choices: *rename existing* (rename `<original_module>.<entity>` to a domain-prefixed name) and *rename both*. Both are dead once promote-to-shared exists — *rename existing* touches live records and FKs and breaks every saved view, report, integration, and skill that referenced the old name; *rename both* combines silo duplication with rename-existing breakage. If a user has a niche reason for either, the auto-`Other` slot accepts a custom answer and the mechanics described under "Merge / rename rules" still apply.
+
+**Follow-up 1: which host module.** The default-name and recommendation logic uses two inputs: existing master modules in the catalog, and the optional `**Shared master cluster:**` annotation from the model file's §3 entity definition (parsed in Stage 1).
+
+> *Where should `<entity>` live?*
+>
+> **Case A — no master modules exist yet, no cluster hint:**
+>   - Create new module, name: `<entity>` (default, editable in the "Other" slot)
+>
+> **Case B — no master modules exist yet, cluster hint `<cluster>`:**
+>   - Create new module, name: `<cluster>` (recommended, from cluster hint)
+>   - Create new module, name: `<entity>` (entity-style alternative)
+>
+> **Case C — masters exist, cluster hint matches one:**
+>   - Existing master module `<cluster>` (recommended, matches cluster hint)
+>   - Other existing masters (in slug order)
+>   - Create new module, name: `<entity>` or `<cluster>` if different from any existing master
+>
+> **Case D — masters exist, cluster hint doesn't match any:**
+>   - Existing masters listed in slug order, no recommendation annotation
+>   - Create new module, name: `<cluster>` (recommended) or `<entity>`
+
+Defaults are suggestions, not bindings. The user can always type a custom name in the "Other" slot. The bare entity name (`vendors`, not `vendors_master`) is the default new-module suggestion when no cluster hint is available — the `module_type: "master"` flag is the actual marker of shared status, not the name.
+
+When neither a cluster hint nor an existing master applies, this is what lets `cost_centers` join an existing `finance` master rather than spawning `cost_centers_master`: the user picks at the prompt. With cluster hints, the analyst contributes its domain knowledge so the recommendation is correct the first time.
+
+**Follow-up 2: who manages the master entity.** Branch B is the initial promotion (two modules in play). The user is deciding for both modules at once. Surface the seed size up front so the user knows exactly who is about to be promoted to master steward:
+
+> *Who can create / edit `<entity>`?*
+>
+> *`<original>_manager` currently has **N members**. Picking the recommended option seeds all N as `<master>_manager` members. If the original role is broad, prune the seeded set after deploy via the role-members UI, or pick option 2/3/4 to grant manage via hierarchy without copying membership.*
+>
+> 1. **`<master>_manager` role only** (recommended) — proper MDM governance. Seeded with all N current members of `<original>_manager`. Add or remove members in the UI after deploy.
+> 2. **`<master>_manager` plus both modules' managers** — add hierarchy inclusions so `<original>:manage` and `<incoming>:manage` both transitively grant `<master>:manage`. Seed still runs.
+> 3. **`<master>_manager` plus original module's managers only** — inclusion from `<original>:manage` to `<master>:manage`. The incoming module is read-only. Seed still runs.
+> 4. **`<master>_manager` plus incoming module's managers only** — inclusion from `<incoming>:manage` to `<master>:manage`. Rare. Seed still runs.
+
+The role exists in all four options. The seed (Stage 4j) runs unconditionally regardless of option, so options 2–4 layer hierarchy on top of seeded role membership. The read inclusion is always created for both modules; only the manage inclusion edge is conditional on the user's choice.
+
+> **Continuity at promotion.** Picking option 1 requires that `<master>_manager` has at least one member or the entity is unmanageable. The seed (Stage 4j) handles this for the typical case. If the original module's manager role is empty, **Gate B** fires (see Stage 5/6 Gates).
 
 ### 2f. For each 🛑, compare the concepts before asking the user
 
@@ -409,6 +616,39 @@ If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12)
 
 Use `~` for drifted properties (with `old → new`), `+` for additions, and surface `🛑` separately for anything that blocks the fast-path (enum removals, cross-primitive format changes, field deletions, tier flips). The 🛑 deltas route through the normal Stage 3 ambiguity dialog; the `~` and `+` deltas are informational and apply automatically once the plan is approved (or under the clean re-run fast-path, immediately). The `⚠️ select_rule` line is **not** auto-applied even under the fast-path — read-visibility changes always pause for explicit user confirmation (same rule as `edit_permission` tier flips).
 
+### Plan-summary lines for master-data flows
+
+The Stage 3 plan emits these standardized line types when master-data operations are in play. They appear alongside the normal `📦 ✨ ♻️ 🔑 🔗 🛠 🗂 🔒 🧠 👁 🎛 💤` vocabulary; each is a discrete decision the user sees before approval.
+
+| Line | Meaning |
+|---|---|
+| `🟢 <entity> → already shared in <master_module>` | Branch A wire-up. Entity exists in a master module; this consumer is being added. Includes the read inclusion (always) and notes whether manage inclusion is also planned (depends on the per-consumer manage prompt). |
+| `🔗 Permission inclusions (cross-module, new)` block | Lists every `permission_hierarchy` row this deploy will create across module boundaries, with `[origin=model_master]` annotations and the manage-option label from Stage 2d's follow-up. |
+| `🆕 Master module created: <slug>` | A new `module_type = "master"` module will be created (either by promotion at Stage 2d Branch B, or by an upfront master-model deploy). |
+| `🔁 Renaming master module:` block | A master-model deploy is renaming an existing master in place (cascade per Stage 4b-rename: module slug + per-tier permission codes + per-tier role slugs). Old → new on each line. |
+| `📥 Merging master modules:` block | A master-model deploy is consolidating multiple single-entity masters into one domain cluster (Path 2, plan §5.4.5). Lists each source master being merged in and the target. Source masters are left as quiet orphans (never deleted per "No auto-deletion"). |
+| `✨ <slug>:admin / <slug>_admin role` | Three-permission upgrade case: the model now needs `:admin` where the live module only had `:read` / `:manage`. Adds the missing permission, role, hierarchy row, and module FK columns. |
+| `🌱 Seeded <master>_manager with N members from <original>_manager` | Branch B promotion seeds the master's manager role from the original module's manager-role members. Snapshot-time copy; new `<original>_manager` members added later don't auto-inherit master stewardship. |
+| `💡 Cluster hint: <entity> → <cluster>` | An entity in this deploy carries an analyst-emitted `**Shared master cluster:**` annotation, and the hint is shaping a Stage 2d follow-up 1 default (existing-master match or new-module name suggestion). Informational; the user can override at the prompt. |
+
+Example master-data plan block (Branch B promotion + Branch A wire-up + cluster hint):
+
+```
+🗂 Master-data operations:
+  🛑 vendors — cross-module collision with `itsm.vendors` (domain module)
+     💡 Cluster hint: vendors → parties
+     ⚠️ Will request: 4-option resolution (promote / rename incoming / use existing / abort) + follow-ups (host module, manage decision)
+  🟢 cost_centers → already shared in `finance` master (auto-wire)
+  💡 Cluster hint: cost_centers → finance (matched existing master `finance`, recommended)
+  🌱 (planned) Seed `parties_manager` with 3 members from `itsm_manager` if option 1 picked
+🔗 Permission inclusions (cross-module, new):
+   itam:read    → parties:read         [origin=model_master, always]
+   itam:manage  → parties:manage       [origin=model_master, pending manage-option pick]
+   itsm:read    → parties:read         [origin=model_master, always]
+   itsm:manage  → parties:manage       [origin=model_master, pending manage-option pick]
+   itam:read    → finance:read         [origin=model_master, Branch A read inclusion]
+```
+
 ### Cross-model link suggestions (additive, reversible)
 
 §6 link proposals are **additive and reversible**: adding an optional cross-module FK never breaks the local module, never deletes data, and can be removed later by editing the model and redeploying. Because of that the deployer's posture is *err toward implementing*. Don't drag the user through individual confirmation when the analyst has already drafted a hint and the target exists in the catalog.
@@ -448,7 +688,7 @@ This flow is **distinct from the 🛑 ambiguity protocol below for entity name c
 **The protocol for each 🛑:**
 
 1. **Print the comparison block first as prose**, so the user has the facts in front of them before the widget appears. Comparison blocks carry information; the tool carries only the choice.
-2. **Then call `AskUserQuestion`** with the decision as a single question. Use 4 explicit options; the runtime auto-adds an "Other" slot you can use for free-text renames or "abort".
+2. **Then call `AskUserQuestion`** with the decision as a single question. Use 4 explicit options; the runtime auto-adds an "Other" slot you can use for free-text renames or to type a custom answer outside the four prepared paths.
 3. **Batch multiple 🛑 gates into one `AskUserQuestion` call** with one question per gate. Never drip decisions one turn at a time. Never squash two decisions into the same prose paragraph (the screenshot of "(a or b) and (yes/no)" is exactly the failure mode this directive prevents).
 
 **Example, comparison block (prose, shown first):**
@@ -473,18 +713,22 @@ This flow is **distinct from the 🛑 ambiguity protocol below for entity name c
   the entities model different concepts that happen to share an English word.
 ```
 
-**Example, the matching `AskUserQuestion` call:**
+**Example, the matching `AskUserQuestion` call** (concepts genuinely differ, so `(Recommended)` lands on rename — not on promote):
 
 - **question**: `"How should I resolve the name collision on `contracts`?"`
 - **header**: `"Ambiguity: contracts"`
 - **multiSelect**: `false`
 - **options** (4; the runtime appends Other):
-  1. label `"Rename incoming → saas_contracts"`, description `"Keep the two concepts isolated. Recommended when they are genuinely different — the facility-management lease is not the same thing as a SaaS subscription agreement."`
-  2. label `"Rename both (saas_contracts + facility_contracts)"`, description `"Most conservative. Removes ambiguity entirely by marking the catalog explicitly domain-scoped. High-risk second half — renaming the existing entity touches live records and FKs."`
-  3. label `"Merge into existing `contracts`"`, description `"Treat as the same entity. Non-overlapping fields are added additively. Only safe when the two truly represent the same business concept (does not look like it here)."`
-  4. label `"Rename existing → facility_contracts"`, description `"Keep the incoming name as `contracts`. High-risk — touches live records and any FK pointing at the existing table; may require data migration. Confirm twice before proceeding."`
+  1. label `"Promote contracts to shared module"`, description `"Both modules would read the same contracts table. Not the right call here — the comparison block shows two genuinely different concepts (SaaS subscriptions vs facility leases) with disjoint fields. Promote is correct only when both sides really mean the same thing."`
+  2. label `"Rename new contracts to saas_contracts (Recommended)"`, description `"Keep concepts isolated. Each module owns its own contracts table. Loses cross-module reporting, but that's correct when the two represent different business concepts."`
+  3. label `"Use existing facility_management.contracts directly"`, description `"Requires manual permission review afterwards. SaaS users would need explicit grants to read facility_management's table, and facility_management would become the gatekeeper for any future schema changes contracts needs."`
+  4. label `"Abort the deploy"`, description `"Stop now, fix the model file via the analyst skill, re-run."`
 
-The auto-"Other" slot handles: the user wants to abort, or the user wants a different custom name than the four suggested ones.
+**Counter-example, same widget when the cluster hint says `organization` and the comparison shows substantial overlap** (e.g. ATS's `departments` vs HRIS's `departments`): `(Recommended)` moves to option 1 and the host suggestion is `organization`. Options 2 and 3 keep their warning-style descriptions (silo / gatekeeper) so the user understands why they're not the recommended path.
+
+The auto-"Other" slot handles: the user wants a custom rename qualifier, or insists on rename-existing / rename-both despite their being dropped from the surfaced options (the mechanics under "Merge / rename rules" still apply if they type one in).
+
+When option 1 (promote) is picked, follow-up 1 (host module) and follow-up 2 (manage decision) batch into the same `AskUserQuestion` call. See Stage 2d-branch-b for prompt shapes. For Branch A (incoming matches an entity already in a master module), the binary manage prompt fires alone (no host-module follow-up); see Stage 2d-branch-a.
 
 ### If multiple 🛑 were raised
 
@@ -544,7 +788,11 @@ Module → Permissions → Entities → Fields (per entity, in model order)
 
 Refer to `use-semantius/references/data-modeling.md` for the exact CLI syntax for each operation. **Before executing, apply every ambiguity decision from Stage 3** to the in-memory plan, renames propagate to every `reference_table` and relationship reference in the model. The sequence:
 
-**4a. Module**, If missing, `create_module` with `module_name: "<system_name>"`, `module_slug: "<system_slug>"`, `description: "<system_description>"`. If it already exists, `update_module` to refresh those three fields from the model (and to add `module_slug` if the existing record is missing it). Never create a duplicate module with the same `module_slug`. The `alias` field is gone, do not pass it.
+**4a. Module**, If missing, `create_module` with `module_name: "<system_name>"`, `module_slug: "<system_slug>"`, `description: "<system_description>"`, `module_type: "<frontmatter_module_type>"` (defaulting to `"domain"`). If it already exists, `update_module` to refresh `module_name`, `description`, and (if missing) `module_slug` from the model. **Never flip `module_type`** on a re-deploy of a domain module — promotion is the explicit Stage 2d Branch B flow, not an inferred update. Never create a duplicate module with the same `module_slug`. The `alias` field is gone, do not pass it.
+
+**Master-model branch.** When frontmatter `module_type: master`, 4a takes the master-model resolution from Stage 2a (exact-slug match → entity-overlap match → create-new). For the exact-slug-match branch with a slug rename approved by the user, also run the rename cascade in 4b-rename below. For entity-overlap consolidation of multiple sibling masters, the per-source consolidate decisions feed into 4c-merge-master.
+
+**Scaffold pass.** After 4a's module create-or-update, run the standard scaffold (Stage 2a-scaffold steps 2–5): create permissions per tier (idempotent), create the hierarchy chain tagged `origin = "model"` (domain) or `"model_master"` (master), create default roles per tier with stable slugs and `origin` tagged matching the module type, attach `role_permissions`, and populate the six module-record FK / column references. Each step is idempotent on re-run. Surface the three-permission upgrade case as `✨ <slug>:admin / <slug>_admin role` plan lines.
 
 **`logo_color` fallback.** After the create-or-update, read the module's live `logo_color`. If it is empty (`""` or null), compute one random dark shade of red, green, blue, or orange at runtime and write it back via `update_module`. Use HSL so the dark-and-readable constraint is enforced uniformly across hues, then convert to hex.
 
@@ -561,7 +809,7 @@ Recipe:
 
 Only fill the gap — never overwrite a `logo_color` the user (or an earlier deploy) already set. This is purely a cosmetic guardrail so module selector chips get a dark, readable backdrop instead of the platform's empty-string default. Picking a fresh shade per deploy means re-runs against the same empty-state module will land different colors; that's intentional — once set, it sticks, and the user can override at any time.
 
-**4b. Permissions and hierarchy**, Determine the required permission set from Stage 1's parsed §3 `**Edit permission:**` annotations: if any entity carries `admin`, the model needs three permissions (`<slug>:read`, `<slug>:manage`, `<slug>:admin`); otherwise two (`<slug>:read`, `<slug>:manage`). For each required permission, `read_permission` first; `create_permission` only for the missing ones. Pass `description` strings that match the tier semantics: `read` → *"View <System Name> data"*; `manage` → *"Create, update, and delete operational <System Name> records"*; `admin` → *"Create, update, and delete reference / configuration <System Name> records"*.
+**4b. Permissions and hierarchy.** Permission creation itself is owned by the Stage 2a-scaffold pass (run as part of 4a's create-or-update): it iterates the §2 Permissions summary index in table order and creates every missing row, passing the §2 `Description` cell verbatim — baseline tiers (`<slug>:read`, `<slug>:manage`, `<slug>:admin`) and workflow tiers alike. **Do not restate or override those descriptions here.** 4b's responsibility is the **permission hierarchy chain** plus the re-run reconciliation that follows.
 
 Then ensure the **permission hierarchy chain** exists via `create_permission_hierarchy` so higher tiers transitively grant lower ones (see use-semantius `references/rbac.md` § "Set Up Permission Hierarchy"):
 
@@ -572,16 +820,53 @@ Then ensure the **permission hierarchy chain** exists via `create_permission_hie
 
 **Re-run reconciliation.** When the module already exists with the legacy two-permission baseline but the current model has been upgraded to need three (any §3 entity now carries `**Edit permission:** admin`), the deploy adds the missing `<slug>:admin` permission and the missing `admin → manage` hierarchy row additively. Surface this in the Stage 3 plan as `✨ saas_expense_tracker:admin` and `✨ admin → manage` so the user can see the upgrade. Never delete or rename existing permissions or hierarchy rows.
 
+**4b-rename: master-model rename cascade.** When a master-model deploy resolved Stage 2a via exact-slug or entity-overlap match AND the user opted to rename the existing master to the model's `system_slug` (e.g. `vendors` → `vendor_management`), coordinate the cascade. Platform behavior (confirmed):
+
+- `modules.module_slug` rename works on populated modules.
+- Permission codes whose names embed the slug (`vendors:read`) do not auto-rename. The deployer explicitly calls `update_permission`.
+- Default-role slugs (`vendors_viewer`) do not auto-rename. The deployer explicitly calls `update_role`. (Permitted by `system_role_slug_immutable` v3.0+: only `origin = "system"` slugs are locked; `model` / `model_master` are deployer-rewritable.)
+- Role-permission links are FK-based and don't need to be touched.
+- Entity `module_id` FKs and cross-module `permission_hierarchy` rows reference by id; no rename needed.
+
+Orchestration sequence per rename:
+
+1. `update_module` to set new `module_slug`, `module_name`, `description`, AND `view_permission = "<new>:read"` together (the text-column natural-key reference embeds the slug; write it in the same update).
+2. `update_permission` for each of `<old>:read`, `<old>:manage`, `<old>:admin` (the latter only when it exists). New `permission_name` reflects the new slug.
+3. `update_role` for each of `<old>_viewer`, `<old>_manager`, `<old>_admin` (the latter only when it exists). New `slug` reflects the new module slug.
+
+Roughly 6–8 writes for a typical master rename. Each step is a pure name swap with no FK changes, so the cascade is **forward-recoverable**: if any step fails partway, the catalog is in a half-renamed state (some records on the new slug, others still on the old), and re-running the deploy completes the cascade. At the start of each rename pass the deployer reads the current `module_slug`, `permission_name`, and `role.slug` values and only issues `update_*` calls for records still pointing at the old slug. No rollback path (PostgREST is stateless and has no transaction envelope); forward recovery is the only recovery model.
+
+Surface in the Stage 3 plan as a `🔁 Renaming master module:` block listing each old → new pair (module + permission codes + role slugs). If any `update_*` call fails for a structural reason (e.g. `update_module` rejects the slug rename), stop and surface a 🛑 with the platform error.
+
 **4c. Entities**, Walk model §2 in order and apply each entity's bucket decision:
 
 - 🔒 Built-in → skip entirely. Do not `create_entity` for `users`, `roles`, etc. The §3 `**Edit permission:**` annotation, if any, has no effect on built-ins.
-- ♻️ Same-module match → skip `create_entity`. If the model's `**Audit log:**`, `**Edit permission:**`-derived `edit_permission`, `singular_label`, `plural_label`, `description`, **`computed_fields`**, or **`validation_rules`** differ from the live entity, call `update_entity` to sync. Treat `computed_fields` and `validation_rules` as **wholesale replacements**: send the model's array as-is, the platform replaces (does not merge). When the model carries the heading but with an empty array, pass `[]` so the platform drops any existing trigger; when the model omits the heading entirely, omit the key from the `update_entity` payload (do not silently clear an array a maintainer added live, unless the model authoritatively states there should be none — see "Conflict Resolution Reference"). For `edit_permission` specifically: read the live entity's current `edit_permission` first, and only `update_entity` when the resolved permission name (e.g. `<slug>:admin` vs `<slug>:manage`) differs; surface the change to the user in the Stage 3 plan as a tier flip so they can sanity-check (a tier flip is a real RBAC change). Then fall through to 4d (field diff).
-- ✨ New → `create_entity`. Pass `audit_log` from the §3 `**Audit log:**` line (default `false` when the line is missing or says `no`). Pass `view_permission: "<system_slug>:read"` and `edit_permission` derived from the §3 `**Edit permission:**` line: `"<system_slug>:admin"` when the line says `admin`, `"<system_slug>:manage"` otherwise (default, or when the line is absent in a pre-v1.10 file). Pass `computed_fields` and `validation_rules` from the §3 sub-blocks (default `[]` when absent). After creation, correct the `label_column` field title if needed with `update_field`.
+- 🟢 Shared-master match (Branch A) → skip `create_entity`. The target is the existing entity in the master module. Field diffs on the master entity are applied additively in 4d as usual. JSON arrays (`computed_fields`, `validation_rules`) are merged with `source_module` tagging per 4e-merge instead of wholesale-replaced. The cross-module wire-up happens in 4i.
+- ♻️ Same-module match → skip `create_entity`. If the model's `**Audit log:**`, `**Edit permission:**`-derived `edit_permission`, `singular_label`, `plural_label`, `description`, **`computed_fields`**, or **`validation_rules`** differ from the live entity, call `update_entity` to sync. **Behavior depends on the host module's `module_type`:** for `module_type = "domain"`, `computed_fields` and `validation_rules` are **wholesale replacements** (existing behavior, see 4e); for `module_type = "master"`, they are **merged by `source_module` tag** (see 4e-merge). For `edit_permission` specifically: read the live entity's current `edit_permission` first, and only `update_entity` when the resolved permission name (e.g. `<slug>:admin` vs `<slug>:manage`) differs; surface the change to the user in the Stage 3 plan as a tier flip so they can sanity-check (a tier flip is a real RBAC change). Then fall through to 4d (field diff).
+- ✨ New → `create_entity`. Pass `audit_log` from the §3 `**Audit log:**` line (default `false` when the line is missing or says `no`). Pass `view_permission: "<system_slug>:read"` and `edit_permission` derived from the §3 `**Edit permission:**` line: `"<system_slug>:admin"` when the line says `admin`, `"<system_slug>:manage"` otherwise (default, or when the line is absent in a pre-v1.10 file). Pass `computed_fields` and `validation_rules` from the §3 sub-blocks (default `[]` when absent). For a master-module deploy (`module_type: master`), each `computed_fields` / `validation_rules` entry is tagged with `source_module = "<system_slug>"` before send. After creation, correct the `label_column` field title if needed with `update_field`.
 - 🛑 Resolved as **merge** → skip `create_entity`. The target is the existing entity in the other module. Record the mapping; the merge is realized in 4d by adding the non-overlapping fields additively to the existing entity.
 - 🛑 Resolved as **rename incoming** → `create_entity` using the new name. (Plan-level rewrite of `reference_table` values has already happened before this stage.)
 - 🛑 Resolved as **rename existing** → attempt `update_entity` on the existing entity's `table_name` first, before any new creates. If the platform rejects the rename, stop and return to Stage 3, never continue silently. Once the rename succeeds, Semantius repoints every catalog-side `reference_table` automatically; no follow-up `update_field` pass is needed.
 - 🛑 Resolved as **rename both** → do the existing-rename first, then `create_entity` for the incoming under its new name.
+- 🛑 Resolved as **promote to shared master** (Branch B, option 1 of the four-option widget) → run 4c-promote (below). Plan line `📥 Promoting <entity> → <master>`.
 - 🛑 Resolved as **abort** → stop Stage 4 entirely; tell the user to iterate on the model with the analyst skill.
+
+**4c-promote: Branch B promotion.** When the user picked "Promote to shared master module" at Stage 2d-branch-b, the follow-up answers carry the host-module decision (existing master to join OR new master to create) and the manage option (1–4). 4c-promote orchestrates the move:
+
+1. **Ensure the master module exists.** If the user picked "create new master," issue `create_module` with `module_type: "master"` and the chosen slug / name (`<system_name>` defaults to the slug humanized, e.g. `parties` → `Parties`). Then run the scaffold pass (Stage 2a-scaffold steps 2–5) so the master has its three permissions, three default roles, and six module-record references. If the user picked an existing master, capture its id and skip create; if its scaffold has gaps (a master created in a prior tenant lifecycle before scaffolding was standard), the scaffold pass fills them now. Plan line: `🆕 Master module created: <slug>` for new masters, omitted for existing.
+2. **Move the entity.** `update_entity` setting `module_id` to the master module's id. The platform repoints every catalog-side FK that references this `table_name` automatically. **Confirmed:** `update_entity` accepts `module_id` change on a populated table; no DDL needed, FKs survive.
+3. **Tag JSON arrays with source.** For each entry in the moved entity's `computed_fields` and `validation_rules`, set `source_module = "<original_module_slug>"` so re-runs of either module can merge correctly (see 4e-merge). Done via `update_entity` setting the arrays.
+4. **Cross-module wire-up** runs in 4i (every consumer gets its read inclusion, plus manage inclusion per the picked option).
+5. **Seed master manager role** runs in 4j (snapshot copy of `<original>_manager` members into `<master>_manager`).
+
+**4c-merge-master: master-vs-master consolidation (Path 2 cleanup).** When a master-model deploy resolved Stage 2a via entity-overlap match AND multiple source masters host the model's declared entities, the per-source consolidate decisions from Stage 2a feed in here. For each source master the user opted to consolidate:
+
+1. **Move each affected entity.** `update_entity` to change `module_id` to the target master.
+2. **Re-point consumer cross-module bridges.** For every cross-module `permission_hierarchy` row `(parent, child)` whose child is one of the source master's read/manage permissions (`<source_master>:read` or `<source_master>:manage`) AND whose parent is in a *different* module (i.e. an outside consumer, not the source master's own internal chain), check whether the equivalent target-master bridge already exists. If it does (e.g. the consumer was already wired to the target master via a prior merge or a Branch A wire-up), **leave the source bridge alone** — it now points at the orphan source-master permission, which is harmless because the source master is itself an orphan, and the deployer never deletes catalog rows. If the target bridge does not yet exist, call `update_permission_hierarchy` to set the child to the corresponding target-master permission (the row's id stays the same). Result: the consumer ends up with exactly one live bridge per tier to the target master, and any duplicate source-side bridges are left as inert orphans referencing the orphan source master.
+   The source master's **internal** chain rows (`<source_master>:manage → <source_master>:read` tagged `origin = "model_master"`) are also left alone — they point at orphan permissions inside an orphan module, no functional effect.
+3. **Leave source masters alone.** The deployer never deletes the now-empty source master, its permissions, its default roles, its `role_permissions`, or its intra-master hierarchy rows. They remain as quiet orphans in the catalog (see "No auto-deletion" rule below). An admin who notices may drop them manually; the verification report does not flag them.
+
+Plan line: `📥 Merging master modules:` block listing each source → target pair. With universal Path-1 lifecycles (every 3.0 model carries reviewed cluster hints, see analyst v3.0), Path 2 should approach zero in practice; this branch exists for the rare misauthored or pre-3.0 case.
 
 **4d. Fields**, For each entity, create missing fields in model order with `create_field`. Skip auto-generated ones (`id`, `label`, `created_at`, `updated_at`, and the `label_column` field). Always include `width: "default"` and `input_type: "default"`. For FK fields whose `reference_table` is a built-in (`users`, `roles`, …) or a merged existing entity, point directly at that `table_name`, the platform doesn't care whose module owns it.
 
@@ -610,6 +895,28 @@ The readonly rule from Stage 4d's create path also applies on re-runs: for every
 - For 🔒 **built-ins**, never push `computed_fields` or `validation_rules` from the model onto a built-in entity — those tables run platform logic and the model's rules would conflict. Stop and surface this to the user before any write.
 
 After the call, surface to the user: *"Applied N computed_fields and M validation_rules on `<table_name>`."* If `update_entity` rejects the arrays (malformed JsonLogic, unresolved field name, duplicate `code`), the error message names the offending entry's array index — quote it back to the user and ask the analyst skill to fix the model before re-running. Do not attempt to repair JsonLogic in the deployer.
+
+**4e-merge: master entity JSON-array merge with `source_module` tagging.** For entities whose host module's `module_type = "master"` — which includes Branch A wire-ups, 4c-promote target masters, and master-model deploys — `computed_fields` and `validation_rules` are **merged**, not wholesale-replaced. The merge model lets multiple consuming models contribute rules to the same master entity without trampling each other.
+
+Each entry carries an optional `source_module` field. The deployer sets it automatically when emitting an entity update: the value is the `system_slug` of the model currently being deployed. Legacy entries without `source_module` (created before this design, or admin-edited via the UI) are treated as `source_module = "user"` for rule purposes.
+
+**Merge logic (per array, per master entity).** Read the live entity's arrays first; build the merged result by walking each incoming entry against the live state. The natural key is `name` for `computed_fields` and `code` for `validation_rules`, treated **globally within the entity** — `source_module` is reconciliation metadata, not part of the uniqueness key.
+
+1. **Incoming entry, same key, same `source_module` as a live entry** → incoming replaces the live entry (per-source wholesale replacement; existing behavior, scoped). Tag the merged entry with the same `source_module`.
+2. **Incoming entry, same key, different `source_module` from a live entry** → conflict. Surface as a 🛑 via `AskUserQuestion` with the comparison block printed as prose first:
+   - keep live (drop incoming, recommended when live is admin-authored or from a stable source);
+   - keep incoming (replace live, sets `source_module` to the incoming model's slug);
+   - rename the incoming code (e.g. `vendor_email_required` → `<incoming_slug>_vendor_email_required`) and add as a new entry;
+   - abort the deploy.
+   Rule 2 always beats rule 4: a key collision is a real conflict even when the live owner isn't part of this deploy.
+3. **Incoming entry, no key match in live** → additive: append to the merged array, tagged with the incoming model's `source_module`.
+4. **Live entry whose key is not touched by any incoming entry** → leave alone, regardless of `source_module`. Entries from other consumers and admin-created entries (`source_module = "user"`) are preserved across re-runs.
+
+Send the merged array via `update_entity`. The platform replaces the column wholesale (it does not know about the merge); the deployer is the entity that owns reconciliation.
+
+**Source-tagging the platform's own rules.** The three platform-installed validation rules (`origin_immutable_roles`, `system_role_slug_immutable`, `origin_immutable_hierarchy`) are tagged `source_module: "platform"`. Treat `"platform"` as a reserved source name: the deployer never emits it for model-driven rules, and the merge always leaves `"platform"`-tagged entries alone (rule 4).
+
+**Where the merge applies.** Only to entities hosted in a `module_type = "master"` module. Domain entities keep wholesale-replacement semantics from the existing 4e flow. Branch A wire-ups never `create_entity` the master entity (it already exists); they only contribute additive fields (4d) and merged JSON entries (4e-merge).
 
 **4f. Apply read-side rules (select_rule, input_type_rule).** Analyst v2.2+. Read-side rules sit one layer up from write-side rules: `select_rule` filters per-row visibility (an entity-level RLS policy), and `input_type_rule` overrides each field's UI mode per-record at form render. Same prerequisite as 4e — every field referenced inside either rule's JsonLogic must already exist — so 4f runs **after** 4d (field diff) and **after** 4e (write-side rules) so error messages stay attributable to the right rule type.
 
@@ -677,22 +984,156 @@ For each created field, share the UI link to the source table so the user can in
 
 **Stale rows in the model.** §6 rows whose target is dormant today may resolve on a later deploy of any model. The user can refresh by re-running this skill against any model whose §6 references the newly-arrived target; nothing is persisted on module metadata, so the redeploy is the trigger.
 
+**4i. Cross-module permission inclusions.** After in-module hierarchy is set up (4b), and after any master-promotion entity moves (4c-promote, 4c-merge-master), wire up the cross-module `permission_hierarchy` rows that bridge consumers to masters. The shape:
+
+- **Read inclusion (always).** For every consumer module of a master entity: a row with `parent_permission_id = <consumer>:read.id`, `child_permission_id = <master>:read.id`, `origin = "model_master"`. Created at Branch B promotion (for both `<original>` and `<incoming>`) and at every Branch A wire-up (one per new consumer). Without this row, consumers can't see the shared entity through their own module's read permission.
+- **Manage inclusion (conditional, per consumer).** A row with `parent_permission_id = <consumer>:manage.id`, `child_permission_id = <master>:manage.id`, `origin = "model_master"`. Created only when this consumer's manage answer (Stage 2d-branch-a binary prompt, or Stage 2d-branch-b option 2/3/4) opts the consumer into write access via hierarchy rather than role membership. Branch A never modifies prior consumers' inclusions — each consumer's decision is recorded independently.
+
+Idempotency: `read_permission_hierarchy` filtered by `(parent_permission_id, child_permission_id)` first; create only on exit 1. Rows tagged `origin = "user"` are never touched (admin's manual additions are sovereign). Rows tagged `origin = "model_master"` may be updated by the deployer (parent / child FK adjustments during master-rename via 4b-rename or master-merge via 4c-merge-master) but **never deleted by the deployer** (see "No auto-deletion" below).
+
+Plan line: `🔗 Permission inclusions (cross-module, new)` block (see Stage 3 plan vocabulary).
+
+**4j. Seed master manager role (Branch B only).** Right after 4c-promote moves the entity into the master, snapshot the current members of `<original_module>_manager` into `<master>_manager`. One-time copy at promotion (not a dynamic link; new `<original>_manager` members added later don't auto-inherit master stewardship). Runs unconditionally regardless of which Stage 2d-branch-b option (1–4) the user picked — the role exists in all four; the seed is independent of any hierarchy inclusion the user added on top.
+
+Mechanics:
+
+```bash
+# Read original manager role members
+semantius call crud read_user_role '{"filters": "role_id=eq.<original_manager_role_id>"}'
+# For each member, create_user_role into <master>_manager (idempotent: read first, skip if user already in master_manager)
+semantius call crud create_user_role '{"data": {"user_id": <user_id>, "role_id": <master_manager_role_id>}}'
+```
+
+Plan line: `🌱 Seeded <master>_manager with N members from <original>_manager`.
+
+**Gate B fires** if the seed produces zero members (the original module's manager role is empty). Surface as 🟡 in the plan with explicit user confirmation per Stage 5/6 Gates.
+
+**No auto-deletion of catalog records (load-bearing safety rule).** The deployer never deletes roles, permissions, `role_permissions`, `permission_hierarchy` rows, or modules, regardless of `origin`. This is symmetric across every catalog-record kind the deployer can write. Even `model_master` rows the deployer wrote in a previous run are off-limits for deletion in subsequent runs. The only legal mutation on them is FK adjustment (parent / child ids) during master operations.
+
+Specifically:
+- **Master-merge** (4c-merge-master): leaves source masters and their unused permissions, default roles, `role_permissions`, and intra-master hierarchy rows in place as quiet orphans. The deployer does not actively detect or report these as orphans either.
+- **Master-rename** (4b-rename): updates slugs and names; no deletions, no orphans (rename is in-place updates).
+- **Any reduction in the model file** (entity removed, permission removed, role removed): treated as a no-op against the live catalog. The model file shrinking is not a signal to delete; it might be a typo, a refactor in progress, or the author thinking the entity is now obsolete but other consumers still depend on it.
+
+The deployer does not maintain an orphan registry, does not detect orphans in re-runs, and does not surface orphan candidates in the verification report. The rule is a safety boundary against accidentally destroying admin work, not a feature for catalog hygiene.
+
 ---
 
 ## Stage 5: Verify
 
-After all creates are done:
+After all creates are done, emit a **structured verification report** with explicit counts and FK consistency checks, not a single ✓. The report groups facts by category so any drift between intended and actual deploy is visible at a glance.
 
-1. `read_entity` on each custom entity, confirm `label_column` is set
-2. `read_field` per entity, confirm field count matches the model (minus auto-generated)
-3. Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`)
-4. **Read-side rules round-trip**: for every entity whose model carried a `Select rule` block, `read_entity` and confirm the live `select_rule` equals the model's parsed object. For every field whose model carried an `Input type rules` entry, `read_field` and confirm the live `input_type_rule` equals the entry's `jsonlogic`. A round-trip mismatch is a Stage 5 defect — quote the diff to the user and offer a retry of the offending `update_*` call. The platform's constraint checks usually surface the failure at Stage 4f instead, so a Stage 5 catch here is rare; when it does fire, it's almost always a transient/concurrency issue worth a single retry before escalating.
+### Per-area checks
 
-Print a final summary: "✅ Done. Created 1 module, 3 permissions, 2 hierarchy rows, 5 entities (2 admin-tier, 3 operational), 47 fields. Reused built-ins: users. Additive fields on built-ins: 2. Applied 2 `select_rule`(s) and 7 `input_type_rule`(s)."
+1. **Module scaffold integrity (every module touched).**
+   - `module.view_permission` (text) equals `<slug>:read` and resolves to a live permission with that `permission_name`.
+   - `module.manage_permission_id` resolves to `<slug>:manage`.
+   - `module.admin_permission_id` is null OR resolves to `<slug>:admin`.
+   - `module.default_viewer_role_id` resolves to a role with `origin ∈ {"model", "model_master"}` matching the module's type, slug `<slug>_viewer`, carrying exactly `<slug>:read`.
+   - Same for manager and admin roles.
+   - If any FK is null where the model expected a value, surface as 🛑.
+
+2. **Master promotion (per promoted entity).**
+   - Entity's `module_id` matches the master module's id.
+   - Master module's `module_type = "master"`.
+   - Count of live records in the entity matches the pre-move count.
+   - Every `reference_table = "<entity>"` FK across the catalog still resolves (no orphans).
+   - `<master>_manager` role member count >= seed count.
+
+3. **Cross-module hierarchy (per inclusion created).**
+   - Row exists with the expected `(parent, child)` pair.
+   - Cross-module bridge rows have `origin = "model_master"` (covers both intra-master chains and consumer-to-master bridges).
+   - No rows were created with `origin = "user"` overwriting prior admin intent (paranoia check; should be impossible per Stage 4i idempotency).
+
+4. **Merged JSON arrays (master entities only).**
+   - Every entry has a non-null `source_module` (legacy entries treated as `"user"`).
+   - **No `code` duplicates** within `validation_rules` on an entity, regardless of `source_module`. The natural key is `code` alone; `source_module` is reconciliation metadata, not part of the uniqueness key.
+   - **No `name` duplicates** within `computed_fields` on an entity, same rule.
+   - Pre-merge entries from non-current sources are still present (preserved across re-runs per 4e-merge rule 4).
+
+5. **Per-entity field counts and labels** (existing behavior):
+   - `read_entity` on each custom entity, confirm `label_column` is set.
+   - `read_field` per entity, confirm field count matches the model (minus auto-generated).
+   - Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`).
+
+5a. **Text-fidelity round-trip (every entity and every field this deploy touched).** For each entity, compare live `description`, `singular_label`, `plural_label` against the parsed model values **byte-for-byte**. For each field declared in the model, compare live `description` and `title` against the model byte-for-byte. Any mismatch is a Stage 5 defect — surface the entity / field, quote both strings with their byte counts, and recommend re-issuing the offending `create_*` / `update_*` with the model-sourced text. Catches every failure mode the "Data fidelity" section enumerates: truncation (live byte-count shorter than model), normalization (live missing backticks / apostrophes / Unicode the model carried), and empty-string-clobber on `update_field` (live empty where model is non-empty). Equivalent round-trip applies to permission `description` against the §2 Permissions summary `Description` cell. The check is cheap (every relevant column is already in the `read_entity` / `read_field` / `read_permission` response from earlier verification steps) and is the single load-bearing assertion that catches data-mutation regressions before the user does.
+
+6. **Read-side rules round-trip**: for every entity whose model carried a `Select rule` block, `read_entity` and confirm the live `select_rule` equals the model's parsed object. For every field whose model carried an `Input type rules` entry, `read_field` and confirm the live `input_type_rule` equals the entry's `jsonlogic`. A round-trip mismatch is a Stage 5 defect — quote the diff to the user and offer a retry of the offending `update_*` call. The platform's constraint checks usually surface the failure at Stage 4f instead, so a Stage 5 catch here is rare; when it does fire, it's almost always a transient/concurrency issue worth a single retry before escalating.
+
+### Structured Stage 5 report
+
+```
+=== Verification report ===
+
+Modules:
+  itsm                       ✓ module_type=domain    permissions=2/2  default_roles=2/2
+  vendors_master  (NEW)      ✓ module_type=master    permissions=2/2  default_roles=2/2
+
+Roles (deployer-managed, origin ∈ {model, model_master}):
+  itsm_viewer                ✓ origin=model         12 members   carries itsm:read
+  itsm_manager               ✓ origin=model         3 members    carries itsm:manage
+  vendors_master_viewer      ✓ origin=model_master  0 members    carries vendors_master:read
+  vendors_master_manager     ✓ origin=model_master  3 members    carries vendors_master:manage  [seeded from itsm_manager]
+
+Entities:
+  vendors                    ✓ moved itsm → vendors_master   247 records intact   12 FKs repointed
+  incidents                  ✓ 8 fields added                 no drift
+
+Permission hierarchy:
+  itsm:admin → itsm:manage           ✓ origin=model
+  itsm:manage → itsm:read            ✓ origin=model
+  itsm:read → vendors_master:read    ✓ origin=model_master    (NEW)
+
+Merged JSON arrays:
+  vendors.computed_fields:    4 entries  (3 from itsm, 1 from itam, 0 conflicts)
+  vendors.validation_rules:   7 entries  (5 from itsm, 2 from itam, 1 conflict resolved)
+  conflicts:
+    - validation_rules code 'email_required' had two source models;
+      kept itsm version, renamed itam version to 'email_required_itam'
+
+Counters:
+  modules created:    1
+  modules updated:    1
+  entities moved:     1
+  entities updated:   1
+  fields added:       8
+  permissions added:  2  (origin=model)
+  roles added:        2  (1 origin=model, 1 origin=model_master)
+  hierarchy added:    3  (2 origin=model, 1 origin=model_master)
+  warnings (🟡):      0
+  blockers (🛑):      0
+
+✓ Verification passed.
+```
+
+Counters at the bottom break down by `origin` so any drift between what the deployer was supposed to create and what actually landed is visible in one place. No orphan section; the deployer does not detect or report orphans (per Stage 4 "No auto-deletion").
+
+**Compact summary line** (still emitted, for backwards-compatibility with existing logs): *"✅ Done. Created 1 module, 3 permissions, 2 hierarchy rows, 5 entities (2 admin-tier, 3 operational), 47 fields. Reused built-ins: users. Additive fields on built-ins: 2. Applied 2 `select_rule`(s) and 7 `input_type_rule`(s)."*
 
 When the model is on the two-permission fallback (no admin-tier entities), the summary reads "2 permissions, 1 hierarchy row, N entities (all operational)". The admin-tier breakdown is omitted when there are no admin-tier entities. The read-side-rule counts are omitted when both totals are zero (the common case for models that don't use the v2.2 read-side surfaces).
 
 **Read-visibility callout (mandatory when any `select_rule` was created or modified).** Any Stage 4f write that created, changed, or removed an entity's `select_rule` deserves its own one-line callout in the verification summary, separate from the bulk counts: *"⚠️ Applied `select_rule` on `<table_name>` — callers will now see only rows where `<short-description-of-rule>`. Confirm rollout is the intent."* This mirrors how `edit_permission` tier flips get their own callout (a real RBAC change); read-visibility changes have the same "user noticing 'why can't I see X anymore'" failure mode and benefit from being named in the summary the user reads.
+
+### Gates
+
+Two gate concepts in addition to the existing collision and version gates.
+
+**Gate A: pre-write planned-state integrity check.** Fires in Stage 3, before any Stage 4 writes. Build the full intended end-state object graph in memory and verify internal consistency:
+
+- Every planned FK target exists or is being created in this run.
+- Every role member is a real user.
+- No circular permission hierarchy. (Load-bearing: today's design only adds rows shaped `<consumer>:read → <master>:read` and `<consumer>:manage → <master>:manage`, which can't cycle. But a future feature that adds inclusions in the other direction, e.g. `<master>:read → <consumer>:read`, could form a cycle. The check stays in place to catch that.)
+- Every default-role slot in every module's scaffold has a planned role.
+- Every cross-module inclusion has both parent and child planned or live.
+- Every merged JSON entry has a `source_module` value.
+
+If any check fails, surface as a 🛑 with the broken reference quoted. Catches design bugs before they touch the catalog.
+
+**Gate B: steward seed non-empty.** Fires in Stage 4 immediately after 4j seeded `<master>_manager`. If member count is 0 (e.g., the original module's manager role was empty), don't fail outright but emit a 🟡 in the plan and require explicit user confirmation:
+
+> *"`<master>_manager` has zero members. `<entity>` will be effectively read-only for everyone until you assign a steward. Proceed?"*
+
+User can choose to proceed anyway, or to abort and assign someone to `<original>_manager` first.
 
 ---
 
@@ -830,10 +1271,10 @@ Run the complete script in one bash call and report the final output summary.
 | Extra fields/entities not in model | None | Leave them alone |
 | Model declares a built-in (`users`, `roles`, …) | None | Dedup: skip create, reuse built-in as `reference_table` target; never replace |
 | Model declares extra fields on a built-in | ⚠️ Medium | Offer additive `create_field`; never modify existing built-in fields |
-| **Cross-module exact-name collision** (entity with same `table_name` exists in another module) | 🛑 High, ambiguity gate | Stage 3 decision dialog: merge / rename incoming / rename existing / rename both / abort. Never silently coexist. |
+| **Cross-module exact-name collision** (entity with same `table_name` exists in another module) | 🛑 High, ambiguity gate | Stage 3 decision dialog: promote to shared master / rename incoming / use existing directly / abort. Never silently coexist. Rename-existing and rename-both remain available via the auto-"Other" slot but are no longer surfaced — both break live references and are strictly worse than promote. |
 | **Similar-name collision** (root, synonym, qualifier, prefix/suffix) | 🛑 High, ambiguity gate | Same dialog as above. User may decline, in which case record the decision and proceed. |
 | Merge requires changing field format **across primitive types** (e.g. `text → date`) | 🛑 High | Merge is impossible, fall back to a rename option. Same-primitive format changes (`text → multiline → html`, all `TEXT`) are allowed and can be applied via `update_field` before the merge — not a blocker. |
-| Existing-entity rename rejected by platform | 🛑 High | Stop. Offer "rename incoming" or "rename both" as fallback. Never continue silently. |
+| Existing-entity rename rejected by platform | 🛑 High | Stop. Offer "rename incoming" or "promote to shared master" as fallback. Never continue silently. (Only reachable when the user took the rename-existing path via the auto-"Other" slot, since it is no longer in the surfaced widget.) |
 | §6 row whose `To` target is in the catalog (exact match) and whose auto-generated `<target_singular>_id` field name is free on `From` | ⚠️ Medium | Stage 3 user-confirmed proposal; Stage 4h executes as `create_field` on the source table with the §6 verb as `relationship_label`. |
 | §6 row whose `To` target is not in the catalog (and no near-name match) | ✅ Low | Dormant. Skip silently this run; redeploy any model whose §6 references the target once it later arrives. |
 | §6 row whose `To` matches multiple plausible targets in the catalog (`vendors` vs `suppliers` vs `saas_vendors`) | ⚠️ Medium | Stage 3 batched `AskUserQuestion` lists candidates with their owning module; user picks one or skips. |
@@ -850,7 +1291,7 @@ Run the complete script in one bash call and report the final output summary.
 | Model declares `computed_fields` / `validation_rules` on a Semantius built-in (`users`, `roles`, …) | 🛑 High | Refuse. Built-ins run platform logic; model-driven rules would conflict. The model is buggy, escalate to the analyst skill. |
 | Model's `validation_rules` JsonLogic invokes `{"require_permission": "<code>"}` for a `<code>` that is not a row in the §2 Permissions summary table | 🛑 High | Reject at parse time, before any write. The platform will throw at rule-evaluation time on every write that hits the gate because the permission doesn't exist; that's a runtime failure mode the analyst's audit should have caught. Surface the offending rule's entity + `code` and the missing permission to the user, ask them to re-run the analyst skill's audit on the file. Do not call `create_permission` ad hoc, an undeclared permission usually signals the model is missing the matching hierarchy row and entity-tier wiring too. |
 | Model declares a workflow row in the §2 Permissions summary (e.g. `<slug>:approve_<noun>`) that no `validation_rules` JsonLogic invokes via `require_permission` | ⚠️ Medium | Surface to the user as an "orphan workflow permission" finding in Stage 3 plan. The deployer can still create the permission (it does no harm), but the model is likely buggy, either a `require_permission` call was dropped or the permission was declared speculatively. Ask the user whether to create it anyway or send the file back to the analyst. |
-| Live module has workflow permissions (`<slug>:approve_<noun>` etc.) that the model's §2 Permissions summary no longer lists | ⚠️ Medium | Do not silently delete; revoking a permission affects every role and user that holds it. Surface in Stage 3 plan and ask the user to confirm the removal before calling `delete_permission`. If the model's intent was to keep the permission but rename it, that should be done as a delete + create through the analyst skill, not inferred from a diff. |
+| Live module has workflow permissions (`<slug>:approve_<noun>` etc.) that the model's §2 Permissions summary no longer lists | ✅ Low | **No-op per the no-auto-deletion rule (Stage 4 / plan §7.5a).** The deployer never deletes permissions of any origin, even ones it created itself in a previous run, even on user confirmation. A live permission absent from the current model is treated as a deliberate keep — the model file shrinking is not a signal to delete. If the user genuinely wants the permission removed, that's a manual SQL operation through the §10.3 platform escape hatch, out of band of any deploy. Surface in Stage 3 plan as a 🟡 note ("`<slug>:approve_foo` is live but no longer declared in the model — left in place") so the user is aware, but never propose a delete. |
 | Model's §2 Permissions summary table has a `Type: workflow` (elevated) row whose `Hierarchy parent` cell is `<slug>:manage` (rolling an elevated workflow permission up under the baseline manage tier) | 🛑 High | Reject before any write. This row auto-grants every `<slug>:manage` holder the gated authority, defeating the conditional `require_permission` check the workflow permission was created for. The analyst's audit should have caught this. Surface the offending row to the user and route back to the analyst skill; the fix is either to change the `Hierarchy parent` to `<slug>:admin` (promoting the model to three-permission baseline if needed) or to set it to `—` so the workflow permission is granted directly. |
 | Model's §2 Permissions summary table has a `Type: workflow-narrow` row whose `Hierarchy parent` cell is `—` or is `<slug>:admin` in a model where `admin` does not transitively include `manage`) | 🛑 High | Reject before any write. The narrow tier's intent is that holders of `<slug>:manage` transitively pass the narrow check; a rollup that excludes `manage` from the chain inverts that intent. Surface the offending row and route back to the analyst skill; the fix is to set `Hierarchy parent` to `<slug>:manage` (the default) or to ensure the baseline chain includes `manage → admin`. |
 | Model carries `**Edit permission:** <narrow_suffix>` but the §2 Permissions summary has no `Type: workflow-narrow` row for `<slug>:<narrow_suffix>`) | 🛑 High | Reject before any write — the entity binds to an undeclared narrow tier. Surface the offending entity and route back to the analyst skill to declare the row, or change the annotation back to `manage`/`admin`. |

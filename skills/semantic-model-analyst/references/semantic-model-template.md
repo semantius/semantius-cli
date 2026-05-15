@@ -13,6 +13,7 @@ version: "{{analyst_skill_version}}"
 system_name: {{System display name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
 system_description: {{Compact tagline ≤40 chars shown beside system_name in the UI module selector and landing page. For acronyms use the plain English expansion (CRM → "Customer Relationship Management"). For non-acronym names use a 2-4 word disambiguating phrase.}}
 system_slug: {{system_slug}}
+module_type: {{domain | master}}  # optional, analyst v3.0+; omit for the default "domain". Set to "master" when authoring a master model (a self-contained spec for a master-data module hosting shared concepts consumed by multiple domain modules, e.g. `vendor_management` declaring `vendors` + siblings; `finance` declaring `currencies` + `cost_centers` + `ledger_accounts`). See SKILL.md "Skill version" and the §3 `**Shared master cluster:**` annotation below for the surrounding shape.
 domain: {{System category, e.g. CRM, ITSM, HRIS, LMS, ERP, PIM, Project Management, Field Service, Subscription Billing, CMS}}
 naming_mode: {{template:<vendor> | agent-optimized}}
 created_at: {{YYYY-MM-DD}}
@@ -49,11 +50,22 @@ A Mermaid **flowchart** showing every entity in this model and every relationshi
 
 ```mermaid
 flowchart LR
+    classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;
+    classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;
     {{TABLE_A}} -->|{{verb}}| {{TABLE_B}}
     {{TABLE_A}} ---|{{verb}}| {{TABLE_C}}
     {{TABLE_B}} --> {{JUNCTION}}
     {{TABLE_D}} --> {{JUNCTION}}
+    class {{TABLE_DEDUP_AGAINST_SEMANTIUS_BUILTIN}} builtin;
+    class {{TABLE_WITH_SHARED_MASTER_CLUSTER}} master;
 ```
+
+**Shared / external entities are highlighted in green-family styling (analyst v3.1+ for `builtin`, v3.0+ for `master`).** Two classes capture entities that aren't solely owned by this module:
+
+- **`builtin`** (deeper green) tags entities that the deployer will dedup against a Semantius platform built-in at deploy time (`users`, `roles`, `permissions`, etc.). The deployer skips `create_entity` for these and reuses the built-in as the FK target. Add `class <table_name> builtin;` per such entity.
+- **`master`** (mint green) tags entities carrying a `**Shared master cluster:** <name>` annotation in §3 (vendors, currencies, cost_centers, departments, …). Created here by default; the deployer may offer to host them in a shared master module so other domain modules can FK to the same row. Add `class <table_name> master;` per such entity.
+
+Both classes are visual aids — they don't change deploy behavior; the deployer keys off the §3 annotations and the built-in catalog directly. Omit each `classDef` line (and its `class` tags) entirely when no entity in the model qualifies. Keep `classDef builtin` and `classDef master` exactly as written above so reviewers across model files see consistent shades.
 
 **Edge labels are managed metadata, not free guesses.** When an FK field carries a `relationship_label` (the verb describing the relationship, e.g. `"owns"`, `"employs"`), that string is the edge label and goes into the diagram verbatim. The downstream deployer reads it from §3 (annotated as `relationship_label: "<verb>"` on the FK row) and persists it on the field; the optimizer reads it back from live state when it regenerates the model. Do not invent a verb for the diagram that isn't also captured on the field.
 
@@ -108,6 +120,7 @@ For each entity, repeat the following sub-structure.
 **Label column:** `{{field_name_used_as_label}}`  _(the human-identifying field; auto-wired by Semantius)_
 **Audit log:** {{yes | no}}  _(optional; defaults to no. Set yes when INSERT/UPDATE/DELETE history matters — contracts, financial records, policy data, anything subject to compliance or dispute. Leave no for high-volume/ephemeral data where audit noise outweighs the value.)_
 **Edit permission:** {{manage | admin | <narrow_suffix>}}  _(optional; defaults to manage. Set `admin` for reference / config / master-data entities classified in Stage 9 (small, slowly-changing, referenced by operational entities as a lookup/category/stage/type/source, typically ships seeded values). Set a bare narrow-tier suffix (analyst v2.1+, e.g. `interview` resolving to `<system_slug>:interview`) when Stage 10 W4n classified this entity as written by external participants and a `Type: workflow-narrow` row exists for the named code in §2. Omit the line entirely for operational entities — the default is manage. Drives the deployer's per-entity `edit_permission` assignment; `view_permission` is always `<system_slug>:read`.)_
+**Shared master cluster:** {{cluster_name}}  _(optional, analyst v3.0+. Emit for entities the analyst recognizes as classic master concepts (finance reference data, parties, organization data, products, employees). Common patterns: `finance` (currencies, cost_centers, budget_periods, ledger_accounts, fiscal_years, tax_rates, gl_accounts); `parties` (vendors, customers, partners, suppliers); `organization` (departments, business_units, locations, sites); `products` (products, product_categories, skus); `employees` (employees, job_titles). The hint is consulted by the deployer ONLY when this entity becomes a Branch B promotion candidate (cross-module collision in another domain module); it shapes the recommended host-master selection at the deploy-time prompt. Has no effect when the entity isn't promoted. The user can always override at the deploy prompt. Omit when the entity is not a classic master concept.)_
 **Description:** {{1-2 sentence description of what a record represents and when it's created}}
 
 **Fields**
