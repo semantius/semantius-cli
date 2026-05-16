@@ -19,7 +19,7 @@
  * code, the full CLI invocation, and the error message on failure.
  */
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, closeSync, openSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { getLoadedEnvDir, getPrefixedEnv, getUserConfigDir } from './config.js';
 
@@ -133,6 +133,19 @@ export function enableFromEnv(): void {
   if (_enabled) return;
   const value = getPrefixedEnv('LOG_FILE');
   if (!value) return;
+
+  const resolved = resolveLogPath(value);
+  try {
+    const fd = openSync(resolved, 'a');
+    closeSync(fd);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[semantius] LOG_FILE is not writable: ${value}\n  resolved to: ${resolved}\n  ${msg}`,
+    );
+    process.exit(1);
+  }
+
   _enabled = true;
   _logFileValue = value;
   _logLevels = parseLogLevels(getPrefixedEnv('LOG_LEVELS'));
@@ -192,7 +205,10 @@ function writeLogEntry(exitCode: number): void {
 
   try {
     appendFileSync(resolveLogPath(_logFileValue), `${JSON.stringify(entry)}\n`);
-  } catch {
-    // Never fail the CLI because logging failed.
+  } catch (err) {
+    // We're inside an 'exit' handler — too late to change the exit code, but
+    // surface the failure to stderr so it isn't silently lost.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[semantius] Failed to write log entry: ${msg}`);
   }
 }
