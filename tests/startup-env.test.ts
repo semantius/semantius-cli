@@ -37,7 +37,7 @@ describe('Startup env variable validation', () => {
     }
 
     const proc = Bun.spawn(['bun', 'run', cliPath, ...args], {
-      env: { ...env, MCP_NO_DAEMON: '1' },
+      env: { ...env, SEMANTIUS_NO_DAEMON: '1' },
       stdin: null,
       stdout: 'pipe',
       stderr: 'pipe',

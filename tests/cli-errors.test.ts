@@ -21,7 +21,7 @@ describe('CLI Error Handling Tests', () => {
       const proc = Bun.spawn(['bun', 'run', cliPath, ...args], {
         env: {
           ...process.env,
-          MCP_NO_DAEMON: '1',
+          SEMANTIUS_NO_DAEMON: '1',
           SEMANTIUS_API_KEY: 'test-api-key',
           SEMANTIUS_ORG: 'test-org',
         },

@@ -103,139 +103,139 @@ describe('client', () => {
   });
 
   describe('getTimeoutMs', () => {
-    const originalEnv = process.env.MCP_TIMEOUT;
+    const originalEnv = process.env.SEMANTIUS_TIMEOUT;
 
     afterEach(() => {
       if (originalEnv !== undefined) {
-        process.env.MCP_TIMEOUT = originalEnv;
+        process.env.SEMANTIUS_TIMEOUT = originalEnv;
       } else {
-        delete process.env.MCP_TIMEOUT;
+        delete process.env.SEMANTIUS_TIMEOUT;
       }
     });
 
     test('returns default of 1800000ms (30 minutes)', () => {
-      delete process.env.MCP_TIMEOUT;
+      delete process.env.SEMANTIUS_TIMEOUT;
       expect(getTimeoutMs()).toBe(1800000);
     });
 
-    test('respects MCP_TIMEOUT env var', () => {
-      process.env.MCP_TIMEOUT = '60';
+    test('respects SEMANTIUS_TIMEOUT env var', () => {
+      process.env.SEMANTIUS_TIMEOUT = '60';
       expect(getTimeoutMs()).toBe(60000);
     });
 
     test('ignores invalid values', () => {
-      process.env.MCP_TIMEOUT = 'invalid';
+      process.env.SEMANTIUS_TIMEOUT = 'invalid';
       expect(getTimeoutMs()).toBe(1800000);
     });
 
     test('ignores negative values', () => {
-      process.env.MCP_TIMEOUT = '-5';
+      process.env.SEMANTIUS_TIMEOUT = '-5';
       expect(getTimeoutMs()).toBe(1800000);
     });
 
     test('ignores zero', () => {
-      process.env.MCP_TIMEOUT = '0';
+      process.env.SEMANTIUS_TIMEOUT = '0';
       expect(getTimeoutMs()).toBe(1800000);
     });
   });
 
   describe('getConcurrencyLimit', () => {
-    const originalEnv = process.env.MCP_CONCURRENCY;
+    const originalEnv = process.env.SEMANTIUS_CONCURRENCY;
 
     afterEach(() => {
       if (originalEnv !== undefined) {
-        process.env.MCP_CONCURRENCY = originalEnv;
+        process.env.SEMANTIUS_CONCURRENCY = originalEnv;
       } else {
-        delete process.env.MCP_CONCURRENCY;
+        delete process.env.SEMANTIUS_CONCURRENCY;
       }
     });
 
     test('returns default of 5', () => {
-      delete process.env.MCP_CONCURRENCY;
+      delete process.env.SEMANTIUS_CONCURRENCY;
       expect(getConcurrencyLimit()).toBe(5);
     });
 
-    test('respects MCP_CONCURRENCY env var', () => {
-      process.env.MCP_CONCURRENCY = '10';
+    test('respects SEMANTIUS_CONCURRENCY env var', () => {
+      process.env.SEMANTIUS_CONCURRENCY = '10';
       expect(getConcurrencyLimit()).toBe(10);
     });
 
     test('ignores negative values', () => {
-      process.env.MCP_CONCURRENCY = '-3';
+      process.env.SEMANTIUS_CONCURRENCY = '-3';
       expect(getConcurrencyLimit()).toBe(5);
     });
 
     test('ignores zero', () => {
-      process.env.MCP_CONCURRENCY = '0';
+      process.env.SEMANTIUS_CONCURRENCY = '0';
       expect(getConcurrencyLimit()).toBe(5);
     });
 
     test('ignores invalid values', () => {
-      process.env.MCP_CONCURRENCY = 'many';
+      process.env.SEMANTIUS_CONCURRENCY = 'many';
       expect(getConcurrencyLimit()).toBe(5);
     });
   });
 
   describe('getMaxRetries', () => {
-    const originalEnv = process.env.MCP_MAX_RETRIES;
+    const originalEnv = process.env.SEMANTIUS_MAX_RETRIES;
 
     afterEach(() => {
       if (originalEnv !== undefined) {
-        process.env.MCP_MAX_RETRIES = originalEnv;
+        process.env.SEMANTIUS_MAX_RETRIES = originalEnv;
       } else {
-        delete process.env.MCP_MAX_RETRIES;
+        delete process.env.SEMANTIUS_MAX_RETRIES;
       }
     });
 
     test('returns default of 3', () => {
-      delete process.env.MCP_MAX_RETRIES;
+      delete process.env.SEMANTIUS_MAX_RETRIES;
       expect(getMaxRetries()).toBe(3);
     });
 
-    test('respects MCP_MAX_RETRIES env var', () => {
-      process.env.MCP_MAX_RETRIES = '5';
+    test('respects SEMANTIUS_MAX_RETRIES env var', () => {
+      process.env.SEMANTIUS_MAX_RETRIES = '5';
       expect(getMaxRetries()).toBe(5);
     });
 
     test('allows zero (disable retries)', () => {
-      process.env.MCP_MAX_RETRIES = '0';
+      process.env.SEMANTIUS_MAX_RETRIES = '0';
       expect(getMaxRetries()).toBe(0);
     });
 
     test('ignores negative values', () => {
-      process.env.MCP_MAX_RETRIES = '-1';
+      process.env.SEMANTIUS_MAX_RETRIES = '-1';
       expect(getMaxRetries()).toBe(3);
     });
   });
 
   describe('getRetryDelayMs', () => {
-    const originalEnv = process.env.MCP_RETRY_DELAY;
+    const originalEnv = process.env.SEMANTIUS_RETRY_DELAY;
 
     afterEach(() => {
       if (originalEnv !== undefined) {
-        process.env.MCP_RETRY_DELAY = originalEnv;
+        process.env.SEMANTIUS_RETRY_DELAY = originalEnv;
       } else {
-        delete process.env.MCP_RETRY_DELAY;
+        delete process.env.SEMANTIUS_RETRY_DELAY;
       }
     });
 
     test('returns default of 1000ms', () => {
-      delete process.env.MCP_RETRY_DELAY;
+      delete process.env.SEMANTIUS_RETRY_DELAY;
       expect(getRetryDelayMs()).toBe(1000);
     });
 
-    test('respects MCP_RETRY_DELAY env var', () => {
-      process.env.MCP_RETRY_DELAY = '2000';
+    test('respects SEMANTIUS_RETRY_DELAY env var', () => {
+      process.env.SEMANTIUS_RETRY_DELAY = '2000';
       expect(getRetryDelayMs()).toBe(2000);
     });
 
     test('ignores zero', () => {
-      process.env.MCP_RETRY_DELAY = '0';
+      process.env.SEMANTIUS_RETRY_DELAY = '0';
       expect(getRetryDelayMs()).toBe(1000);
     });
 
     test('ignores negative values', () => {
-      process.env.MCP_RETRY_DELAY = '-500';
+      process.env.SEMANTIUS_RETRY_DELAY = '-500';
       expect(getRetryDelayMs()).toBe(1000);
     });
   });

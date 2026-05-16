@@ -8,6 +8,20 @@ Entries below are newest first.
 
 ---
 
+## `v3.2` (MINOR) — cross-entity JsonLogic primitives pass through transparently
+
+In lockstep with analyst minor `3.2`. No `EXPECTED_MAJOR` change; 3.x files continue to pass the version gate.
+
+The platform now exposes three additional JsonLogic operators inside `validation_rules`, `computed_fields`, and `select_rule` bodies: `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}`, `{"let": ["<name>", <value-expr>, <body-expr>]}`, and `{"throw_error": "<message>"}`. The deployer already passes these arrays byte-for-byte to `create_entity` / `update_entity`, so the operators travel through the existing path with no parser change. Two adjustments to the deployer's static-analysis posture:
+
+1. **Column-existence check is binding-aware.** The "column must exist on this entity" rule (applied to `select_rule`, `validation_rules`, `computed_fields` JsonLogic) skips column references qualified by a `set_record` or `let` binding name. The bound variable's columns are resolved against the *bound entity's* live shape (or, for built-ins, against the platform's known field list). An unbound column reference that fails to resolve is still a Blocker; a bound reference whose binding entity doesn't exist in the live catalog is a Blocker.
+
+2. **Three new anti-pattern table rows.** (a) `set_record` referencing an entity that doesn't exist in the live catalog → 🛑 Reject; (b) top-level `throw_error` not guarded by an `if` → 🛑 Reject (unconditional throws belong in `edit_permission`, not `validation_rules`); (c) `set_record` inside `select_rule` → ⚠️ Perf warning surfaced in Stage 3 plan, deploy proceeds on user confirmation.
+
+The 3.2 minor is forward-compatible: a 3.1 file parses unchanged against a 3.2 deployer, and a 3.2 file using the operators parses against a 3.1-aware deployer because the operators are syntactically valid JsonLogic the deployer doesn't introspect (the platform-side runtime is what gives them meaning). The two new anti-pattern rules and the column-check loosening fire only when 3.2 operators actually appear in the file.
+
+---
+
 ## `v3.0` (MAJOR) — master modules, module scaffold, shared-entity promotion
 
 `EXPECTED_MAJOR` bumped from `2` to `3` in lockstep with the analyst skill.

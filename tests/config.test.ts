@@ -58,9 +58,9 @@ describe('config', () => {
       const originalCwd = process.cwd();
       process.chdir(tempDir);
       try {
-        // Unset MCP_CONFIG_PATH to avoid using it
-        const savedConfigPath = process.env.MCP_CONFIG_PATH;
-        delete process.env.MCP_CONFIG_PATH;
+        // Unset SEMANTIUS_CONFIG_PATH to avoid using it
+        const savedConfigPath = process.env.SEMANTIUS_CONFIG_PATH;
+        delete process.env.SEMANTIUS_CONFIG_PATH;
 
         // Set env vars so substitution works
         process.env.SEMANTIUS_API_KEY = 'test-key';
@@ -75,7 +75,7 @@ describe('config', () => {
 
         // Restore
         if (savedConfigPath !== undefined) {
-          process.env.MCP_CONFIG_PATH = savedConfigPath;
+          process.env.SEMANTIUS_CONFIG_PATH = savedConfigPath;
         }
         delete process.env.SEMANTIUS_API_KEY;
         delete process.env.SEMANTIUS_ORG;
@@ -121,9 +121,9 @@ describe('config', () => {
       delete process.env.TEST_MCP_TOKEN;
     });
 
-    test('handles missing env vars gracefully with MCP_STRICT_ENV=false', async () => {
+    test('handles missing env vars gracefully with SEMANTIUS_STRICT_ENV=false', async () => {
       // Set non-strict mode to allow missing env vars with warning
-      process.env.MCP_STRICT_ENV = 'false';
+      process.env.SEMANTIUS_STRICT_ENV = 'false';
 
       const configPath = join(tempDir, 'missing_env.json');
       await writeFile(
@@ -142,12 +142,12 @@ describe('config', () => {
       const server = config.mcpServers.test as any;
       expect(server.env.TOKEN).toBe('');
 
-      delete process.env.MCP_STRICT_ENV;
+      delete process.env.SEMANTIUS_STRICT_ENV;
     });
 
     test('throws error on missing env vars in strict mode (default)', async () => {
       // Ensure strict mode is enabled (default)
-      delete process.env.MCP_STRICT_ENV;
+      delete process.env.SEMANTIUS_STRICT_ENV;
 
       const configPath = join(tempDir, 'missing_env_strict.json');
       await writeFile(

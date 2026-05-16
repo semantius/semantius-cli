@@ -324,6 +324,172 @@ In addition to standard JsonLogic operators, the platform provides three extensi
 
 INSERT passes trivially (no `$old`); UPDATE / DELETE passes when the caller is the original author or holds the override permission. Using `has_permission` here (not `require_permission`) is essential — the `or` needs a non-throwing branch so the owner-match path works for callers without the override.
 
+#### Cross-entity lookups inside JsonLogic (`let`, `set_record`, `throw_error`)
+
+`computed_fields` and `validation_rules` are no longer limited to the post-write record. The platform exposes three additional JsonLogic operators that bind values into the data context **before** the rest of the expression evaluates, opening the door to FK traversal, parent-state gates, inherited values, and merged labels that previously had to live in cube views or per-model service code.
+
+| Operator | Shape | Effect |
+|---|---|---|
+| `let` | `{"let": ["<name>", <value-expression>, <body-expression>]}` | Evaluates `<value-expression>`, binds it under `<name>` for the duration of `<body-expression>`, returns the body's result. Nest `let` calls to bind several names. Useful for naming a sub-expression you reference more than once. |
+| `set_record` | `{"set_record": ["<name>", "<entity_name>", <id-expression>, <body-expression>]}` | Resolves `<id-expression>` against the data context, calls `get_record_by_id(<entity_name>, <id>)`, binds the resulting row (JSONB object, or `null` when no row matches) under `<name>` for the duration of `<body-expression>`, returns the body's result. Inside the body, `{"var": "<name>.<column>"}` reads any column of the loaded row, exactly like `$old.<column>` for the post-write record. |
+| `throw_error` | `{"throw_error": "<message>"}` | Raises a PostgreSQL exception with SQLSTATE `23514` and the supplied message. The platform surfaces the message back to the caller verbatim, bypassing the rule's static `message` field. Place inside an `if` so the throw is conditional. |
+
+`let` and `set_record` are evaluated before the bulk argument-evaluation pass inside `evaluate_json_logic`, so the body sees an augmented data context. The bindings disappear when the body returns.
+
+**Supporting Postgres function (advanced).** The operators are implemented on top of `get_record_by_id(entity_name TEXT, id TEXT) RETURNS JSONB`, which looks up the entity's `id_column` from the `entities` meta-table, queries the physical table, and returns the row as JSONB (or `NULL` when nothing matches). You normally never call it directly — `set_record` is the authoring surface — but the function is callable from SQL when a query or other trigger needs the same lookup.
+
+**Where they run.** `let`, `set_record`, and `throw_error` are evaluated by the same JsonLogic engine that powers `computed_fields` and `validation_rules`, so they are usable wherever the engine runs:
+
+- ✅ `computed_fields` — derive a value from a parent / referenced record.
+- ✅ `validation_rules` — gate a write on the state of a parent or sibling record.
+- ⚠️ `select_rule` — *technically* available, but `set_record` runs an extra `SELECT` per row of every read. Use only when the FK target is small and indexed AND the entity sees light read traffic. For tiered visibility, column-encoded broadening (a `visibility` enum) or `has_permission` is almost always the right shape. Default answer: do not use `set_record` in `select_rule`.
+- ⚠️ `input_type_rule` — evaluated client-side at form render, so `set_record` cannot fetch a row. Don't use `set_record` here; `let` / `throw_error` are also pointless in a UI control. Stick to record-local variables.
+
+**`throw_error` vs the rule's `message`.** A `validation_rules` entry that returns falsy is rejected with its `code` and `message` packaged into the standard error response. A `throw_error` raises a SQL exception immediately, so:
+
+- The caller receives the `throw_error` argument verbatim as the error text (Postgres `23514` `check_violation`).
+- The rule's static `message` is moot when the throw fires — the throw wins.
+- Only one rule's throw surfaces (the platform's collect-all-failures pass stops at the first SQL exception). If you want every failing rule listed, prefer falsy-returns with rule-specific `message`s; reach for `throw_error` when one specific failure must surface a different, hand-tailored message than the rule's default (e.g. a multi-language string, a deep-link to the conflicting record, an actionable instruction).
+
+**When to reach for these vs leave them off.** The three operators add real expressiveness, but every `set_record` costs one extra `SELECT` per evaluation. Treat them as the right tool for:
+
+- **Parent-state gates** — refuse to modify an `order_line` when the parent `order.status = 'shipped'`. Without `set_record`, this rule had no way to read the parent's status; the gate had to live in application code.
+- **Inherited values on a child** — compute `country` on `addresses` from the customer record; copy `currency` from the parent `order` onto every line; pull `discount_pct` from the customer's contract.
+- **Merged labels** — derive a `label_column` value that combines fields from the current record AND a parent (`"Line 3 — INV-2025-0042"`, `"<order_number> / <line_no>"`).
+- **Conditional cross-entity throw** — a parent record in a specific state should reject the child write with a domain-specific error: `{"throw_error": "Cannot modify a shipped order"}` rather than a generic `"validation failed"`.
+
+They are **not** the right tool for cross-row aggregates ("≤ 5 high-priority features per release", "Σ child amounts ≤ parent total"); those still belong in cube views with downstream alerts, or in dedicated triggers if true synchronous enforcement matters. `set_record` reads one row by id; it does not aggregate, scan, or filter.
+
+#### Canonical patterns
+
+**Pattern 1 — Parent-state gate (the user's example, expanded).** Forbid mutating an `order_lines` row when the parent `orders` is already shipped:
+
+```json
+{
+  "set_record": ["order", "orders", {"var": "order_id"}, {
+    "if": [
+      {"==": [{"var": "order.status"}, "shipped"]},
+      {"throw_error": "Cannot modify a shipped order"},
+      true
+    ]
+  }]
+}
+```
+
+Read: *"bind the parent order under `order`; if the order's status is `shipped`, raise a domain-specific exception; otherwise the rule passes."*  Placed in `order_lines.validation_rules`; the gate fires on every INSERT, UPDATE, and DELETE on a child line.
+
+**Pattern 2 — Cross-entity computed field (inherited value).** `order_lines.currency_code` mirrors the parent order's currency, so analytics and reports never have to join to find the line's currency:
+
+```json
+{
+  "name": "currency_code",
+  "description": "Mirrors the parent order's currency on every write.",
+  "jsonlogic": {
+    "set_record": ["order", "orders", {"var": "order_id"}, {
+      "var": "order.currency_code"
+    }]
+  }
+}
+```
+
+Placed in `order_lines.computed_fields`. Even when the caller supplies `currency_code` directly, the platform silently overwrites it with the parent's value — that's the standard `computed_fields` contract.
+
+**Pattern 3 — Merged label.** `order_lines.label_column = line_label`, computed from the parent order number and the line's own sequence number:
+
+```json
+{
+  "name": "line_label",
+  "description": "'<order_number> · line <line_no>'.",
+  "jsonlogic": {
+    "set_record": ["order", "orders", {"var": "order_id"}, {
+      "cat": [
+        {"var": "order.order_number"},
+        " · line ",
+        {"var": "line_no"}
+      ]
+    }]
+  }
+}
+```
+
+Reads display as `"INV-2025-0042 · line 3"` everywhere a Semantius UI surface or saved query asks for the line's label, no extra join required.
+
+**Pattern 4 — Use `let` to avoid recomputing a sub-expression.** When the same value appears more than once inside an expression, bind it under `let` so the engine evaluates it only once and the body is easier to read:
+
+```json
+{
+  "let": ["margin",
+    {"-": [{"var": "amount"}, {"var": "cost"}]},
+    {"if": [
+      {"<": [{"var": "margin"}, 0]},
+      {"throw_error": "Margin would go negative — review pricing before saving."},
+      {"var": "margin"}
+    ]}
+  ]
+}
+```
+
+In `computed_fields`, this writes the margin into a derived field while throwing if the value would be negative. In `validation_rules`, drop the final `{"var": "margin"}` and return `true` from the success branch.
+
+**Pattern 5 — Parent discount applied to a child line.** A child `order_lines.line_total` derives the line subtotal and applies the parent order's `discount_pct`:
+
+```json
+{
+  "name": "line_total",
+  "description": "(unit_price × qty) × (1 - parent_order.discount_pct / 100).",
+  "jsonlogic": {
+    "set_record": ["order", "orders", {"var": "order_id"}, {
+      "let": ["gross",
+        {"*": [{"var": "unit_price"}, {"var": "quantity"}]},
+        {"*": [
+          {"var": "gross"},
+          {"-": [1, {"/": [{"var": "order.discount_pct"}, 100]}]}
+        ]}
+      ]
+    }]
+  }
+}
+```
+
+**Pattern 6 — Customer country pulled through two hops.** When the link is a chain (`address → customer.country_code`), nest `set_record` calls; the inner body has access to both bindings:
+
+```json
+{
+  "name": "country_code",
+  "description": "Country of the address's customer, snapshotted on the address row.",
+  "jsonlogic": {
+    "set_record": ["customer", "customers", {"var": "customer_id"}, {
+      "set_record": ["country", "countries", {"var": "customer.country_id"}, {
+        "var": "country.iso_code"
+      }]
+    }]
+  }
+}
+```
+
+#### Null-handling and error shape
+
+`get_record_by_id` returns `NULL` when no row matches (the FK is null, or the id points at a deleted row). Inside `set_record`'s body:
+
+- `{"var": "<name>"}` returns `null` (the row is null).
+- `{"var": "<name>.<column>"}` returns `null` (you're reading a column off a null object).
+
+That `null` flows through the expression's comparisons and arithmetic naturally — `{"==": [{"var": "order.status"}, "shipped"]}` is `false` when `order` is null, so the gate passes. If the rule's intent is "block writes whose FK is unresolved", guard explicitly:
+
+```json
+{
+  "set_record": ["order", "orders", {"var": "order_id"}, {
+    "if": [
+      {"==": [{"var": "order"}, null]},
+      {"throw_error": "Order not found — cannot write child line."},
+      <rest-of-rule>
+    ]
+  }]
+}
+```
+
+A `throw_error` raises a SQL exception, which the platform surfaces back as a check-violation (SQLSTATE `23514`). The error body the caller sees is the message string verbatim, so the message is the user-facing error text — keep it short, actionable, and in the same language conventions as the rule's `message` field.
+
 #### Deploy-time guarantees
 
 When `create_entity` / `update_entity` accepts these properties, the platform verifies:
@@ -333,7 +499,9 @@ When `create_entity` / `update_entity` accepts these properties, the platform ve
 - Every `validation_rules[].code` is unique within the entity.
 - Every `jsonlogic` expression parses; malformed expressions are rejected.
 
-Errors point at the offending entry's index so authoring agents can correct in place.
+JsonLogic-level column references (`{"var": "<name>"}`) are NOT checked against the entity's field list at parse time when they live under a `set_record` / `let` binding — the binding name is known only at evaluation time. A typo in `{"var": "order.staus"}` (a missing `t`) returns `null` at runtime rather than failing the deploy. Test cross-entity rules end-to-end before relying on them; the platform catches grosser malformations (the operator name itself, the binding name shape) at parse time.
+
+Errors at evaluation time point at the offending entry's index so authoring agents can correct in place.
 
 #### Example: pass both on `create_entity`
 
@@ -394,8 +562,8 @@ Both arrays default to `[]` and may be omitted entirely. To remove a rule or rec
 #### Out of scope
 
 - Per-field computed expressions (kept entity-level for now).
-- Cross-entity / aggregate validation (use views or cube).
-- Per-locale `message`s (single string; i18n binds via `code`).
+- Cross-row aggregates (`Σ child.amount ≤ parent.total`, `≤ 5 high-priority features per release`). `set_record` reads a single row by id; it does not scan, aggregate, or filter. Use a cube view + downstream alert, or a dedicated trigger when synchronous enforcement is required.
+- Per-locale `message`s (single string; i18n binds via `code`). `throw_error` lets the rule body emit one alternate message at runtime, but the static `message` is still single-string.
 - Conditional rule activation (no `when: insert|update|both` yet).
 
 ### Row-level read access via `select_rule` (entity-level JsonLogic)
@@ -428,7 +596,7 @@ A non-boolean result is treated as falsy, so the row is hidden — that fails cl
 
 **Relationship to `view_permission`.** `view_permission` is the coarse all-or-nothing gate ("does the caller have read access to this table at all?"); `select_rule` adds per-row filtering on top of it. Both apply. A caller without `view_permission` sees nothing regardless of `select_rule`; a caller with `view_permission` still sees only rows where `select_rule` evaluates truthy.
 
-**Performance note.** `select_rule` is evaluated on every read of every row of this entity. Keep the expression simple: direct column comparisons, `$user_id` matches, enum / boolean checks. Avoid deeply nested arithmetic. Cross-row lookups and FK traversals are not available and would be unworkable at scale anyway.
+**Performance note.** `select_rule` is evaluated on every read of every row of this entity. Keep the expression simple: direct column comparisons, `$user_id` matches, enum / boolean checks. Avoid deeply nested arithmetic. `set_record` *is* technically callable from `select_rule` (the JsonLogic engine is the same as `validation_rules`), but it runs an extra `SELECT` per row of every read and quickly dominates query cost; prefer column-encoded broadening (a `visibility` enum the row carries) or `has_permission` for tiered audiences. Reserve `set_record` for the rare case where the FK target is small, indexed, and read traffic on this entity is light.
 
 **Example — owner-or-public visibility:**
 

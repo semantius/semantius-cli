@@ -8,6 +8,36 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## `3.2` (MINOR) — cross-entity JsonLogic primitives: `set_record`, `let`, `throw_error`
+
+The platform now exposes three JsonLogic operators that bind values into the data context before the expression body evaluates, on top of an underlying `get_record_by_id(entity_name, id)` Postgres helper. This lets `computed_fields` and `validation_rules` reach off the current row for the first time — parent-state gates, inherited values, merged labels, and domain-specific error messages are no longer "out of scope, use cube views".
+
+The motivation: a meaningful fraction of every model's "out of scope" deferrals were cross-entity rules the analyst recognized but had no way to encode (an order line can't be modified once the parent order is shipped; a child line should inherit the order's currency; a label should combine the parent's number with the child's sequence). Without the operators, these landed in §7.2 with a "moves to cube view" footnote that the deployer couldn't act on and that future readers couldn't enforce. The operators let the analyst keep these rules on the entity where they belong.
+
+**The new convention** (for authors):
+
+1. **Two new Stage 8 signal families.** Family 14 (cross-entity parent-state gate) fires when prose conditions writes on the state of a parent / referenced record ("cannot modify once the parent is shipped / closed / signed / posted"). Family 15 (cross-entity inherited / merged value) fires when prose names another entity's column as the source of one of the current entity's columns (inherited currency, country, discount; merged labels like `'<order_number> · line <line_no>'`). Both families fire mechanically by default and produce JsonLogic that uses `set_record` (and, for merged labels, `cat` + nested `set_record` for multi-hop FK chains).
+
+2. **`throw_error` as the alternate failure shape for `validation_rules`.** A rule body may now wrap its rejection branch in `{"throw_error": "<message>"}` instead of returning falsy. The throw raises a SQL exception (SQLSTATE `23514`) with `<message>` as the caller-visible error text, bypassing the rule's static `message`. Reach for `throw_error` whenever prose names a specific, hand-tailored, user-facing error string (the canonical example: *"Cannot modify a shipped order"*); stay with falsy-return when the rule's `code` and the generic `message` are sufficient.
+
+3. **`let` for naming sub-expressions.** Use `{"let": ["<name>", <value-expr>, <body-expr>]}` to bind a sub-expression you'd otherwise recompute, e.g. `gross = unit_price * quantity` in a `line_total` derivation that then applies a discount.
+
+4. **Stage 8 structural cross-check is now binding-aware.** Column references inside a `set_record` / `let` body are resolved against the *binding's* entity, not against the entity the rule lives on. The audit checks that `<entity_name>` in every `set_record` call is either a §3 table or a Semantius built-in, and that every `{"var": "<binding>.<column>"}` lookup names a real column on the bound entity's §3 table. A typo in a bound reference silently returns `null` at evaluation time, so this is the only place the analyst can catch it.
+
+5. **Out-of-scope table is updated.** Cross-entity validation, FK-target predicates, and inherited values are no longer out of scope. Cross-row aggregates and table scans (`Σ child.amount ≤ parent.total`, `≤ N per release`) remain out of scope — `set_record` reads one row by id, it does not aggregate. The Stage 8 footnote in the SKILL surfaces both moves explicitly.
+
+6. **`select_rule` and `input_type_rule` guidance.** `set_record` is technically callable from `select_rule` (same JsonLogic engine) but runs an extra `SELECT` per row of every read; the SKILL warns against it and points authors at `has_permission` / column-encoded broadening. `input_type_rule` runs client-side at form render, so `set_record` can't fetch a row — don't use the cross-entity operators there.
+
+7. **No deployer behavior change.** The deployer hands the JsonLogic array byte-for-byte to `create_entity` / `update_entity`; the new operators travel through the same path. The deployer's existing "🛑 column referenced inside `select_rule` must exist on the entity" rule still applies (and is restated more carefully); the deployer also relaxes its "the rule's JsonLogic only references columns on this entity" parse-time check for `validation_rules` / `computed_fields` to skip column references under `set_record` / `let` bindings (the platform validates these at evaluation time, not at deploy).
+
+**Minor bump justification:** the addition is additive and forward-compatible. A 3.1 file written without the new operators parses unchanged against a 3.2 reader. A 3.2 file using the operators parses against a 3.1-aware deployer (the operators are syntactically valid JsonLogic and the deployer never inspects operator names), but the rule's *behavior* depends on the platform version supporting the operators — that's a platform-side concern, not a model-file-shape concern. The content contract (frontmatter shape, section order, table columns) is unchanged.
+
+**Companion changes.**
+- `references/data-modeling.md` gains a "Cross-entity lookups inside JsonLogic" sub-section under the existing computed-fields/validation-rules block, with operator reference table, canonical patterns (parent-state gate, inherited value, merged label, two-hop traversal, let-named sub-expressions), null-handling guidance, and the `throw_error`-vs-`message` decision. The same content lands in `use-semantius/references/data-modeling.md` so cross-skill readers see one source of truth.
+- `semantic-model-template.md` and the `Computed fields` / `Validation rules` heading prose note cross-entity primitives as available, without changing the JSON shape.
+
+---
+
 ## `3.0` (MAJOR) — `module_type: master` frontmatter and `**Shared master cluster:**` annotation
 
 Schema major bumps from `2` to `3` in lockstep with `semantic-model-deployer`'s `EXPECTED_MAJOR`. The bump introduces two optional, forward-compatible authoring conventions that let an analyst-authored model file express what kind of module it represents and which entities are classic master concepts.

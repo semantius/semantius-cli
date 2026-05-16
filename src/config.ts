@@ -177,6 +177,23 @@ export function getRequiredEnvVarNames(): string[] {
   return [`${_envPrefix}_API_KEY`, `${_envPrefix}_ORG`];
 }
 
+/**
+ * Read an env var using the active prefix (default SEMANTIUS, or whatever
+ * --env set). e.g. getPrefixedEnv('TIMEOUT') reads SEMANTIUS_TIMEOUT by
+ * default, or PROD_TIMEOUT under `--env PROD`.
+ */
+export function getPrefixedEnv(name: string): string | undefined {
+  return process.env[`${_envPrefix}_${name}`];
+}
+
+/**
+ * Compose the full env var name for the active prefix. Useful for error
+ * messages and help text that need to show the exact var the user must set.
+ */
+export function prefixedEnvName(name: string): string {
+  return `${_envPrefix}_${name}`;
+}
+
 // ============================================================================
 // User Config Directory
 // ============================================================================
@@ -268,6 +285,14 @@ async function loadEnvFile(envPath: string): Promise<boolean> {
   return true;
 }
 
+// Directory of the first .env file that was actually loaded. Used by the
+// logger to resolve bare SEMANTIUS_LOG_FILE filenames next to the project's .env.
+let _loadedEnvDir: string | undefined;
+
+export function getLoadedEnvDir(): string | undefined {
+  return _loadedEnvDir;
+}
+
 /**
  * Load .env files and populate process.env.
  * Shell environment takes precedence — existing vars are never overwritten.
@@ -290,13 +315,18 @@ export async function loadDotEnv(searchDir?: string): Promise<void> {
     const envPath = join(dir, '.env');
     if (seen.has(envPath)) continue;
     seen.add(envPath);
-    if (await loadEnvFile(envPath)) break;
+    if (await loadEnvFile(envPath)) {
+      if (!_loadedEnvDir) _loadedEnvDir = dir;
+      break;
+    }
   }
 
   // Always try user config dir as global fallback for any unset vars
-  const userConfigEnvPath = join(getUserConfigDir(), '.env');
+  const userConfigDir = getUserConfigDir();
+  const userConfigEnvPath = join(userConfigDir, '.env');
   if (!seen.has(userConfigEnvPath)) {
-    await loadEnvFile(userConfigEnvPath);
+    const loaded = await loadEnvFile(userConfigEnvPath);
+    if (loaded && !_loadedEnvDir) _loadedEnvDir = userConfigDir;
   }
 }
 
@@ -315,20 +345,20 @@ export const DEFAULT_RETRY_DELAY_MS = 1000; // 1 second base delay
 export const DEFAULT_DAEMON_TIMEOUT_SECONDS = 60; // 60 seconds idle timeout
 
 /**
- * Debug logging utility - only logs when MCP_DEBUG is set
+ * Debug logging utility - only logs when <PREFIX>_DEBUG is set
  */
 export function debug(message: string): void {
-  if (process.env.MCP_DEBUG) {
+  if (getPrefixedEnv('DEBUG')) {
     console.error(`[semantius] ${message}`);
   }
 }
 
 /**
  * Get configured timeout in milliseconds
- * @env MCP_TIMEOUT - timeout in seconds (default: 1800 = 30 minutes)
+ * @env <PREFIX>_TIMEOUT - timeout in seconds (default: 1800 = 30 minutes)
  */
 export function getTimeoutMs(): number {
-  const envTimeout = process.env.MCP_TIMEOUT;
+  const envTimeout = getPrefixedEnv('TIMEOUT');
   if (envTimeout) {
     const seconds = Number.parseInt(envTimeout, 10);
     if (!Number.isNaN(seconds) && seconds > 0) {
@@ -340,10 +370,10 @@ export function getTimeoutMs(): number {
 
 /**
  * Get concurrency limit for parallel server connections
- * @env MCP_CONCURRENCY - max parallel connections (default: 5)
+ * @env <PREFIX>_CONCURRENCY - max parallel connections (default: 5)
  */
 export function getConcurrencyLimit(): number {
-  const envConcurrency = process.env.MCP_CONCURRENCY;
+  const envConcurrency = getPrefixedEnv('CONCURRENCY');
   if (envConcurrency) {
     const limit = Number.parseInt(envConcurrency, 10);
     if (!Number.isNaN(limit) && limit > 0) {
@@ -355,10 +385,10 @@ export function getConcurrencyLimit(): number {
 
 /**
  * Get max retry attempts for transient failures
- * @env MCP_MAX_RETRIES - max retry attempts (default: 3, use 0 to disable retries)
+ * @env <PREFIX>_MAX_RETRIES - max retry attempts (default: 3, use 0 to disable retries)
  */
 export function getMaxRetries(): number {
-  const envRetries = process.env.MCP_MAX_RETRIES;
+  const envRetries = getPrefixedEnv('MAX_RETRIES');
   if (envRetries) {
     const retries = Number.parseInt(envRetries, 10);
     if (!Number.isNaN(retries) && retries >= 0) {
@@ -370,10 +400,10 @@ export function getMaxRetries(): number {
 
 /**
  * Get base delay for retry backoff in milliseconds
- * @env MCP_RETRY_DELAY - base delay in milliseconds (default: 1000)
+ * @env <PREFIX>_RETRY_DELAY - base delay in milliseconds (default: 1000)
  */
 export function getRetryDelayMs(): number {
-  const envDelay = process.env.MCP_RETRY_DELAY;
+  const envDelay = getPrefixedEnv('RETRY_DELAY');
   if (envDelay) {
     const delay = Number.parseInt(envDelay, 10);
     if (!Number.isNaN(delay) && delay > 0) {
@@ -389,18 +419,18 @@ export function getRetryDelayMs(): number {
 
 /**
  * Check if daemon mode is enabled
- * @env MCP_NO_DAEMON - set to "1" to disable daemon, force fresh connections
+ * @env <PREFIX>_NO_DAEMON - set to "1" to disable daemon, force fresh connections
  */
 export function isDaemonEnabled(): boolean {
-  return process.env.MCP_NO_DAEMON !== '1';
+  return getPrefixedEnv('NO_DAEMON') !== '1';
 }
 
 /**
  * Get daemon idle timeout in milliseconds
- * @env MCP_DAEMON_TIMEOUT - timeout in seconds (default: 60)
+ * @env <PREFIX>_DAEMON_TIMEOUT - timeout in seconds (default: 60)
  */
 export function getDaemonTimeoutMs(): number {
-  const envTimeout = process.env.MCP_DAEMON_TIMEOUT;
+  const envTimeout = getPrefixedEnv('DAEMON_TIMEOUT');
   if (envTimeout) {
     const seconds = Number.parseInt(envTimeout, 10);
     if (!Number.isNaN(seconds) && seconds > 0) {
@@ -449,10 +479,10 @@ export function getConfigHash(config: ServerConfig): string {
 
 /**
  * Check if strict environment variable mode is enabled
- * @env MCP_STRICT_ENV - set to "false" to warn instead of error (default: true)
+ * @env <PREFIX>_STRICT_ENV - set to "false" to warn instead of error (default: true)
  */
 function isStrictEnvMode(): boolean {
-  const value = process.env.MCP_STRICT_ENV?.toLowerCase();
+  const value = getPrefixedEnv('STRICT_ENV')?.toLowerCase();
   return value !== 'false' && value !== '0';
 }
 
@@ -461,7 +491,7 @@ function isStrictEnvMode(): boolean {
  * Supports ${VAR_NAME} syntax
  *
  * By default (strict mode), throws an error when referenced env var is not set.
- * Set MCP_STRICT_ENV=false to warn instead of error.
+ * Set <PREFIX>_STRICT_ENV=false to warn instead of error.
  */
 function substituteEnvVars(value: string): string {
   const missingVars: string[] = [];
@@ -486,7 +516,7 @@ function substituteEnvVars(value: string): string {
           type: 'MISSING_ENV_VAR',
           message: message,
           details: 'Referenced in config but not set in environment',
-          suggestion: `Set the variable(s) before running: export ${missingVars[0]}="value" or set MCP_STRICT_ENV=false to use empty values`,
+          suggestion: `Set the variable(s) before running: export ${missingVars[0]}="value" or set SEMANTIUS_STRICT_ENV=false to use empty values`,
         }),
       );
     }
@@ -567,10 +597,11 @@ export async function loadConfig(
   let configPath: string | undefined;
 
   // Check explicit path from argument or environment
+  const envConfigPath = getPrefixedEnv('CONFIG_PATH');
   if (explicitPath) {
     configPath = resolve(explicitPath);
-  } else if (process.env.MCP_CONFIG_PATH) {
-    configPath = resolve(process.env.MCP_CONFIG_PATH);
+  } else if (envConfigPath) {
+    configPath = resolve(envConfigPath);
   }
 
   // If explicit path provided, it must exist

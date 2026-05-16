@@ -273,19 +273,26 @@ fi
 
 ### Environment Variables
 
+All env vars use a configurable prefix (default `SEMANTIUS_`). Pass
+`--env <prefix>` to switch — e.g. `--env PROD` reads `PROD_API_KEY`,
+`PROD_TIMEOUT`, `PROD_LOG_FILE`, etc., so you can keep separate DEV/STAGE/PROD
+configurations side by side in the same `.env`.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SEMANTIUS_API_KEY` | API key for Semantius (**required**) | (none) |
 | `SEMANTIUS_ORG` | Organization name for Semantius (**required**) | (none) |
-| `MCP_CONFIG_PATH` | Path to config file | (none) |
-| `MCP_DEBUG` | Enable debug output | `false` |
-| `MCP_TIMEOUT` | Request timeout (seconds) | `1800` (30 min) |
-| `MCP_CONCURRENCY` | Servers processed in parallel (not a limit on total) | `5` |
-| `MCP_MAX_RETRIES` | Retry attempts for transient errors (0 = disable) | `3` |
-| `MCP_RETRY_DELAY` | Base retry delay (milliseconds) | `1000` |
-| `MCP_STRICT_ENV` | Error on missing `${VAR}` in config | `true` |
-| `MCP_NO_DAEMON` | Disable connection caching (force fresh connections) | `false` |
-| `MCP_DAEMON_TIMEOUT` | Idle timeout for cached connections (seconds) | `60` |
+| `SEMANTIUS_CONFIG_PATH` | Path to config file | (none) |
+| `SEMANTIUS_DEBUG` | Enable debug output | `false` |
+| `SEMANTIUS_TIMEOUT` | Request timeout (seconds) | `1800` (30 min) |
+| `SEMANTIUS_CONCURRENCY` | Servers processed in parallel (not a limit on total) | `5` |
+| `SEMANTIUS_MAX_RETRIES` | Retry attempts for transient errors (0 = disable) | `3` |
+| `SEMANTIUS_RETRY_DELAY` | Base retry delay (milliseconds) | `1000` |
+| `SEMANTIUS_STRICT_ENV` | Error on missing `${VAR}` in config | `true` |
+| `SEMANTIUS_NO_DAEMON` | Disable connection caching (force fresh connections) | `false` |
+| `SEMANTIUS_DAEMON_TIMEOUT` | Idle timeout for cached connections (seconds) | `60` |
+| `SEMANTIUS_LOG_FILE` | Append one JSONL line per invocation to this path. Bare filename is written next to the loaded `.env` (or in the user config dir); absolute/relative paths are used as-is. | (none) |
+| `SEMANTIUS_LOG_LEVELS` | Comma-separated subset of `{all, error, slow}` that filters which invocations are logged. `error` = exit code != 0; `slow` = wall time > 1000 ms; multiple values OR-combine (e.g. `error,slow`). Unknown/empty falls back to `all`. | `all` |
 
 ## Using with AI Agents
 
@@ -400,14 +407,14 @@ By default, the CLI uses **lazy-spawn connection pooling** to avoid repeated MCP
 
 **Control via environment:**
 ```bash
-MCP_NO_DAEMON=1 semantius info      # Force fresh connection
-MCP_DAEMON_TIMEOUT=120 semantius    # 2 minute idle timeout
-MCP_DEBUG=1 semantius info          # See daemon debug output
+SEMANTIUS_NO_DAEMON=1 semantius info      # Force fresh connection
+SEMANTIUS_DAEMON_TIMEOUT=120 semantius    # 2 minute idle timeout
+SEMANTIUS_DEBUG=1 semantius info          # See daemon debug output
 ```
 
 ### Connection Model (Direct)
 
-When daemon is disabled (`MCP_NO_DAEMON=1`), the CLI uses a **lazy, on-demand connection strategy**. Server connections are only established when needed and closed immediately after use.
+When daemon is disabled (`SEMANTIUS_NO_DAEMON=1`), the CLI uses a **lazy, on-demand connection strategy**. Server connections are only established when needed and closed immediately after use.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

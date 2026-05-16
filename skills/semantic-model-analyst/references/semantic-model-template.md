@@ -138,7 +138,7 @@ For each entity, repeat the following sub-structure.
 
 **Computed fields** _(optional; omit the heading entirely when none)_
 
-A JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc.
+A JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. Cross-entity primitives `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` (analyst v3.2+) let the body read columns of a parent / referenced record (inherited values, merged labels) — see `./references/data-modeling.md` § "Cross-entity lookups inside JsonLogic".
 
 ```json
 [
@@ -152,7 +152,7 @@ A JSON array, byte-stable for round-trip through the deployer/optimizer. Each en
 
 **Validation rules** _(optional; omit the heading entirely when none)_
 
-A JSON array of record-level invariants. Each rule must evaluate truthy for the write to succeed; failures are returned as `{ "errors": [{ "code", "message" }, ...] }`. Codes are snake_case and unique within the entity. The platform collects all failing rules without short-circuiting.
+A JSON array of record-level invariants. Each rule must evaluate truthy for the write to succeed; failures are returned as `{ "errors": [{ "code", "message" }, ...] }`. Codes are snake_case and unique within the entity. The platform collects all failing rules without short-circuiting. Rules may use `{"set_record": ["<name>", "<entity>", <id>, <body>]}` (analyst v3.2+) to gate on the state of a parent / referenced record, and `{"throw_error": "<message>"}` inside an `if` to raise a SQL exception (SQLSTATE `23514`) whose text the caller sees verbatim — use it when prose names a specific, hand-tailored error message that should override the rule's static `message`.
 
 ```json
 [

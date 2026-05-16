@@ -44,29 +44,40 @@ Every string the deployer extracts from the model and sends to Semantius (`descr
 - Escaping is fragile and easy to get wrong field-by-field.
 - **Heredocs (`<<'EOF'`) inside an *inline* Bash invocation are NOT enough.** The agent harness transports the entire Bash command as a string through its own quoting layer; an apostrophe inside a heredoc body can still trip the outer parser before bash ever sees the heredoc as a heredoc. Heredocs are safe inside a *file* that bash then reads, not inside a command argument bash is being told to evaluate.
 
-**Canonical pattern: write a script file with the Write tool, then run it.** This is the only form that fully decouples the model's text from any shell quoting layer. The script file is opaque bytes to the harness; bash reads it from disk and parses the heredocs locally.
+**Canonical pattern: write a script file with the Write tool, then run it.** This is the only form that fully decouples the model's text from any shell quoting layer. The script file is opaque bytes to the harness; the runtime reads it from disk and parses string literals locally.
 
-```python
-# Write tool target: <cwd>/.tmp_deploy/deploy_xxx.py  (see Cross-platform path note below)
-import json, subprocess, os, tempfile
+**Use Bun (TypeScript), not Python.** Bun is a native cross-platform runtime — the same `.ts` file runs identically under PowerShell, Git Bash, macOS, and Linux without path-mapping or interpreter-shim issues. Python is forbidden in this skill: Windows `python3` may not be on `PATH`, `/tmp/` resolves differently between Git Bash and Windows-side Python, and subprocess piping behaves differently across shells. Bun avoids all of that.
 
-def call(tool, payload):
-    fd, path = tempfile.mkstemp(suffix=".json", prefix="deploy-")
-    with os.fdopen(fd, "w") as f:
-        json.dump(payload, f)
-    try:
-        return subprocess.run(["semantius", "call", "crud", tool],
-                              stdin=open(path), capture_output=True, text=True)
-    finally:
-        os.unlink(path)
+```typescript
+// Write tool target: <cwd>/.tmp_deploy/deploy_xxx.ts  (see path note below)
+async function call(tool: string, payload: unknown) {
+  const proc = Bun.spawn(["semantius", "call", "crud", tool], {
+    stdin: new Response(JSON.stringify(payload)),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const code = await proc.exited;
+  if (code !== 0) throw new Error(`${tool} failed (${code}): ${stderr}`);
+  return JSON.parse(stdout);
+}
 
-call("create_entity", {"data": {"description": "Multi-sentence text with `backticks`, apostrophes (team's), and \"quotes\" — all safe."}})
+await call("create_entity", {
+  data: {
+    description: "Multi-sentence text with `backticks`, apostrophes (team's), and \"quotes\" — all safe.",
+  },
+});
 ```
 
 ```bash
-# Bash: just runs the file, no inline content
-python3 <cwd>/.tmp_deploy/deploy_xxx.py
+# Shell: just runs the file, no inline content. Bun reads the .ts source directly.
+bun run <cwd>/.tmp_deploy/deploy_xxx.ts
 ```
+
+The model's text lives inside a TypeScript string literal in a file on disk; it is serialized to JSON by `JSON.stringify` (which never strips backticks, apostrophes, em-dashes, or Unicode); the JSON is fed to `semantius` over stdin as raw bytes by `Bun.spawn`. No shell quoting layer ever sees the text.
 
 **Inline heredoc is a fallback for short ASCII-only payloads only.** When the payload is small and contains no apostrophes, backticks, or Unicode, an inline heredoc is fine:
 
@@ -83,11 +94,9 @@ cat /tmp/payload.json | semantius call crud create_entity
 semantius call crud create_entity < /tmp/payload.json
 ```
 
-Build the payload with a JSON encoder (`python3 -c "import json,sys; json.dump(obj, sys.stdout)"` or the in-script wrapper above) writing to a temp file. **Never** string-concatenate the model's text into a shell-quoted JSON literal — that's the path that forces character stripping to keep the command parseable. If you find yourself trying to "clean" the model text so it fits an inline command, stop, write a script file via the Write tool, and run it.
+Build the payload with `JSON.stringify` inside the Bun script (as the in-script wrapper above does). For one-off JSON extraction from a pipeline, use `bun -e` (see the `postgrestRequest` envelope section below). **Never** string-concatenate the model's text into a shell-quoted JSON literal — that's the path that forces character stripping to keep the command parseable. If you find yourself trying to "clean" the model text so it fits an inline command, stop, write a `.ts` script via the Write tool, and run it with `bun run`.
 
-**Cross-platform path note (Windows / Git Bash).** Git Bash's `/tmp/` and Windows-side Python's `/tmp/` resolve to *different* directories — a Write call to `/tmp/foo.py` may land in `C:\Users\<user>\AppData\Local\Temp\foo.py` (Windows view) while the same path under Git Bash sees an empty `/tmp/`. Two robust options:
-- **Preferred:** Write the script under a deploy-scratch folder inside the **current working directory** (e.g. `<cwd>/.tmp_deploy/script.py`) — both shells agree on `<cwd>`. Add `.tmp_deploy/` to `.gitignore` once and never think about path mapping again. Clean up the file after the run.
-- Use `$(mktemp -t deploy-XXXXXX.py)` *from inside Bash* and pass the resolved path through to subsequent Write/Read calls — `mktemp` returns a path bash and the local Python both understand because it lives under bash's view of `/tmp/`. Don't write to a literal `/tmp/foo.py` from the Write tool blind; the path may resolve elsewhere.
+**Cross-platform path note.** Bun on Windows is a native executable, not a POSIX layer, so it resolves paths the same way every shell on the box does — no Git Bash `/tmp/` vs Windows `/tmp/` mismatch. Even so, write deploy scratch files under a folder inside the **current working directory** (e.g. `<cwd>/.tmp_deploy/script.ts`), not under `$TMPDIR` / `/tmp/`. Two reasons: the user can inspect the file by path if a run fails, and `<cwd>` is the one path every shell, the Write tool, and the harness already agree on without translation. Add `.tmp_deploy/` to `.gitignore` once and never think about path mapping again. Clean up the file after the run.
 
 This applies to every write call where the payload contains *any* model-authored text: `create_entity`, `update_entity`, `create_field`, `update_field`, `create_permission`, `update_permission`, anything else that carries user prose or JsonLogic.
 
@@ -101,21 +110,20 @@ This applies to every write call where the payload contains *any* model-authored
 
 ## Generated artifacts (scripts, intermediate files)
 
-This skill emits shell and Python helper scripts during a deploy (e.g. the bulk seeders described in Stage 5, ad-hoc `update_entity` rule appliers, batch field creators when a model has many fields). These are **ephemeral one-shots**, tied to a single model and a single deploy run. They are not skill source.
+This skill emits shell and Bun (TypeScript) helper scripts during a deploy (e.g. the bulk seeders described in Stage 5, ad-hoc `update_entity` rule appliers, batch field creators when a model has many fields). These are **ephemeral one-shots**, tied to a single model and a single deploy run. They are not skill source.
+
+**Use Bun, not Python.** Any helper that needs more than trivial shell logic — JSON construction, response-envelope unwrapping, capturing IDs across many POSTs, conditional logic over the live catalog — is a `.ts` file run with `bun run`. Python is forbidden: Windows installs don't reliably expose `python3` on `PATH`, virtualenv state pollutes the project, and the Git Bash vs Windows-side `/tmp/` split makes script paths unreliable. Bun is a single native binary, installs once, runs the same on every platform.
 
 **Where they go:**
-- **Preferred (cross-shell safe):** under the current working directory in a scratch folder, e.g. `<cwd>/.tmp_deploy/deploy_<short>.py`. Both Git Bash and Windows-side Python agree on `<cwd>` paths, so a script created via the Write tool can be executed by either runtime without path mismatch. Add `.tmp_deploy/` to `.gitignore` once. Delete the file after a successful run.
-- Unix / Git Bash (Linux/macOS or pure Git Bash workflows): `mktemp -t deploy-XXXXXX.sh` (or `.py`). The OS reaps `/tmp` automatically.
-- PowerShell: `Join-Path $env:TEMP "deploy-$(Get-Random).sh"`. Delete after a successful run.
-
-**Cross-platform path warning (Windows / Git Bash):** Git Bash's `/tmp/` and Windows-side Python's `/tmp/` may resolve to different directories. A Write call to literal `/tmp/foo.py` can land somewhere bash later cannot find. Use the `<cwd>/.tmp_deploy/` form, or use `$(mktemp -t ...)` from inside Bash to resolve a path *first*, then pass the resolved path to Write — never blindly write to a literal `/tmp/...` from a tool that may use a different mount view.
+- **Always** under the current working directory in a scratch folder, e.g. `<cwd>/.tmp_deploy/deploy_<short>.ts` (or `.sh` for the rare pure-shell seeder). `<cwd>` is the one path every shell, the Write tool, and the harness already agree on — no translation, no surprises. Add `.tmp_deploy/` to `.gitignore` once. Delete the file after a successful run.
+- Do **not** write to `$TMPDIR` / `/tmp/` / `$env:TEMP`. Those paths resolve differently between Git Bash and Windows-native runtimes, and the user cannot inspect them by path if a run fails.
 
 **Where they must not go:**
-- ❌ The skill folder (`.claude/skills/semantic-model-deployer/`). Past sessions have leaked files like `_ats_deploy_entities.sh`, `_seed_v2.py`, `_apply_rules.sh` into this folder — that's a discipline failure, not a convention. The skill folder is read-only at runtime; only the maintainer edits it.
+- ❌ The skill folder (`.claude/skills/semantic-model-deployer/`). Past sessions have leaked files like `_ats_deploy_entities.sh`, `_seed_v2.ts`, `_apply_rules.sh` into this folder — that's a discipline failure, not a convention. The skill folder is read-only at runtime; only the maintainer edits it.
 - ❌ The user's working directory. Pollutes the project, surfaces in `git status`, and survives across sessions.
 - ❌ Any path under the model file's directory. Same reasons.
 
-**Cleanup:** Delete the tempfile after a successful run with `rm` (Unix) or `Remove-Item` (PowerShell). If the run fails, leave the file in place and report its path so the user can inspect — but still in `$TMPDIR`, not in the skill folder.
+**Cleanup:** Delete the scratch file after a successful run with `rm` (Unix / Git Bash) or `Remove-Item` (PowerShell). If the run fails, leave the file in place and report its path so the user can inspect — under `<cwd>/.tmp_deploy/`, never in the skill folder.
 
 This applies to every script this skill writes, not just the seed script at Stage 5.
 
@@ -126,6 +134,8 @@ This applies to every script this skill writes, not just the seed script at Stag
 This skill expects model files written by `semantic-model-analyst` major `3`. The model file's front-matter `version: "MAJOR.MINOR"` is checked at the start of Stage 1. **Major must equal `EXPECTED_MAJOR`**, minor is informational and not compared. Files with a different major are rejected with a request to update the model via the analyst before retrying.
 
 Analyst major `3.0` adds two forward-compatible authoring conventions on top of `2.x`: an optional `module_type: master` frontmatter directive (default `"domain"`), and an optional per-entity `**Shared master cluster:** <name>` annotation in §3. Pre-3.0 files parse with both fields defaulted, but a pre-3.0 deployer reading a 3.0 master-typed model would silently create a regular domain module instead of a master, producing the wrong shape rather than a missed optimization. The major bump is the honest signal that the two skills must move in lockstep.
+
+Analyst minor `3.2` (additive, same major) introduces cross-entity JsonLogic primitives — `{"set_record": ["<name>", "<entity>", <id>, <body>]}`, `{"let": ["<name>", <value>, <body>]}`, and `{"throw_error": "<message>"}` — usable inside `validation_rules`, `computed_fields`, and (with care) `select_rule`. The deployer passes these arrays byte-for-byte to `create_entity` / `update_entity`, so the operators travel transparently; no parse-time changes are required for the operators themselves. Two deployer-side adjustments accompany the bump: (a) the "column must exist on this entity" check for `select_rule` / `validation_rules` / `computed_fields` JsonLogic skips column references qualified by a `set_record` / `let` binding (the bound variable's columns are resolved against the bound entity); (b) the anti-pattern table picks up rows for `set_record` referencing an unknown entity, top-level `throw_error` without an `if` guard, and a perf-warning for `set_record` inside `select_rule`. See the anti-pattern table at the bottom of this skill.
 
 The history of the deployer's contract changes lives in [`CHANGELOG.md`](./CHANGELOG.md) — what each analyst-lockstep bump changed in the deployer's parser, stage numbering, and audit checks. That file is not loaded at runtime; the body of this SKILL.md is the **current contract**, the CHANGELOG is the **history**.
 
@@ -1195,56 +1205,88 @@ A new entity often has FKs to built-ins or existing entities (e.g. `subscription
 
 Create records in dependency order (entities with no parent FKs first, junction tables last, the model §4 order is usually correct), restricted to the eligible set defined above.
 
-**Generate a single shell script** for all sample data rather than making individual CLI calls. This avoids context bloat from dozens of sequential tool invocations. Write the script to a tempfile path (`$(mktemp -t deploy-XXXXXX.sh)` on Unix / Git Bash, `Join-Path $env:TEMP "deploy-$(Get-Random).sh"` on PowerShell), run it once, check the output, and delete it. **Never write generated scripts into the skill folder or the working directory.** They are ephemeral one-shots, persisting them across runs accumulates as catalog drift, mixes throw-away artifacts with skill source, and survives session boundaries. See the "Generated artifacts" section above for the full rule.
+**Generate a single Bun (TypeScript) script** for all sample data rather than making individual CLI calls. This avoids context bloat from dozens of sequential tool invocations. Write the script under `<cwd>/.tmp_deploy/seed_<short>.ts`, run it once with `bun run`, check the output, and delete it. **Never write generated scripts into the skill folder or the working directory root.** They are ephemeral one-shots; persisting them across runs accumulates as catalog drift, mixes throw-away artifacts with skill source, and survives session boundaries. See the "Generated artifacts" section above for the full rule.
 
-The script should consist of sequential `semantius call crud postgrestRequest` calls, one per record, capturing inserted IDs directly from the POST response for use in FK fields.
+A Bun script is preferred over a `.sh` script for seeding because it keeps JSON construction, response-envelope unwrapping, and FK-id capture in one cross-platform runtime — no `python3 -c` extractors, no shell-quoting puzzles for record bodies containing apostrophes or Unicode, no Windows-vs-Git-Bash subprocess-piping surprises. The script consists of sequential `semantius call crud postgrestRequest` calls, one per record, capturing inserted IDs directly from the POST response for use in FK fields.
 
-### postgrestRequest response envelope
+### postgrestRequest response shape
 
-`postgrestRequest` always wraps its result in `{"request":{...},"response":{"status":201,"data":[{...}]}}`. The inserted record is at `response.data[0]`, **not** at the top level. Always use this extractor:
+By default `semantius call` **already unwraps to `response.data`** — stdout is the array PostgREST returned, not the `{"request":..., "response":...}` envelope. (Use `--diag` if you ever need the full envelope; you almost never do.) On top of that, `--single` asserts exactly one row and emits the single object directly:
+
+- no flags → stdout is `[{...}, {...}, ...]` (array, possibly empty)
+- `--single` → stdout is `{...}` (single object); exit 1 on 0 rows, exit 2 on 2+ rows
+- `--diag` → stdout is `{"request":..., "response":{"data":..., ...}}` (full envelope)
+
+For a `POST` that inserts one row, **always use `--single`** so you get the object directly and the CLI fails loudly if the insert returned the wrong cardinality. For a `GET` you expect to match one row, `--single` doubles as a sanity check.
 
 ```bash
-# Correct — navigate the envelope
-ID=$(semantius call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":{...}}' \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['response']['data'][0]['id'])")
+# Correct — --single returns the inserted row as a bare object
+ID=$(semantius --single call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":{...}}' \
+  | bun -e 'console.log((await Bun.stdin.json()).id)')
 
-# WRONG — treats response as a bare array, always fails with KeyError
-ID=$(... | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
+# Also correct — no flag, stdout is the array, take [0]
+ID=$(semantius call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":{...}}' \
+  | bun -e 'console.log((await Bun.stdin.json())[0].id)')
+
+# WRONG — stdout is already unwrapped; there is no .response.data unless you passed --diag
+ID=$(... | bun -e 'console.log((await Bun.stdin.json()).response.data[0].id)')
 ```
 
-The same envelope applies to GET, use `d['response']['data']` to access the array:
+`GET` count via the unwrapped array:
 
 ```bash
 COUNT=$(semantius call crud postgrestRequest '{"method":"GET","path":"/campaigns?select=id"}' \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['response']['data']))")
+  | bun -e 'console.log((await Bun.stdin.json()).length)')
 ```
+
+`python3 -c "import json,sys; ..."` extractors are forbidden — they don't work reliably on Windows where `python3` may not be on `PATH`, and they pull a second runtime into a deploy that otherwise only needs Bun and `semantius`.
 
 ### Script pattern
 
+```typescript
+// <cwd>/.tmp_deploy/seed_<short>.ts — run with: bun run <path>
+async function pgSingle(body: unknown): Promise<any> {
+  const proc = Bun.spawn(["semantius", "--single", "call", "crud", "postgrestRequest"], {
+    stdin: new Response(JSON.stringify(body)),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const code = await proc.exited;
+  if (code !== 0) throw new Error(`postgrestRequest failed (exit ${code}): ${stderr}`);
+  return JSON.parse(stdout); // already a single object (--single enforces 1 row)
+}
+
+const post = (path: string, body: Record<string, unknown>) =>
+  pgSingle({ method: "POST", path, body });
+
+console.log("=== Seeding campaigns ===");
+const spring = await post("/campaigns", { campaign_name: "Spring Launch", status: "active" });
+const fall = await post("/campaigns", { campaign_name: "Fall Promo", status: "draft" });
+console.log(`  spring=${spring.id} fall=${fall.id}`);
+
+console.log("=== Seeding leads ===");
+// Use captured IDs for FK fields — never assume sequential IDs
+await post("/leads", { lead_name: "Jane Smith", campaign_id: spring.id });
+// ... etc ...
+```
+
+`--single` is the right default for seed inserts because every row is created individually and the cardinality contract is "exactly one". If `RETURNING` ever produces 0 rows (RLS suppressed the result) or 2+ rows (PostgREST returned multiple), the CLI exits non-zero and the script aborts — much better than silently picking `data[0]` from an empty or surprising array.
+
+The script is invoked from any shell with:
+
 ```bash
-#!/usr/bin/env bash
-set -e
-
-PG='semantius call crud postgrestRequest'
-
-echo "=== Seeding campaigns ==="
-C_SPRING=$($PG '{"method":"POST","path":"/campaigns","body":{"campaign_name":"Spring Launch","status":"active"}}' \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['response']['data'][0]['id'])")
-C_FALL=$($PG '{"method":"POST","path":"/campaigns","body":{"campaign_name":"Fall Promo","status":"draft"}}' \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['response']['data'][0]['id'])")
-echo "  spring=$C_SPRING fall=$C_FALL"
-
-echo "=== Seeding leads ==="
-# Use captured IDs for FK fields — never assume sequential IDs
-$PG "{\"method\":\"POST\",\"path\":\"/leads\",\"body\":{\"lead_name\":\"Jane Smith\",\"campaign_id\":$C_SPRING}}" > /dev/null
-# ... etc ...
+bun run <cwd>/.tmp_deploy/seed_<short>.ts
 ```
 
 **Important for FK fields:** Capture IDs directly from each POST response, do not make a separate GET query to look them up by name. Filters with spaces (e.g. `?campaign_name=eq.Spring Launch`) require URL encoding; capturing from the POST response avoids this entirely.
 
 **Enum safety, read the model, not your intuition:** Before writing any enum value into a seed record, look it up in the model's §5 enum tables for *that specific field*. Different fields on different entities may look similar but have different allowed values (e.g., `campaigns.type` includes `"Direct Mail"` but `leads.lead_source` does not, using the wrong one will fail with a check constraint error). Never guess or copy enum values across fields.
 
-**String safety, ASCII only in seed data:** Do not use Unicode punctuation (em dash `—`, smart quotes `""`/`''`, ellipsis `…`) in seed strings. These characters break bash argument parsing when the script is executed. Use plain ASCII alternatives: `-` instead of `—`, `"` instead of `""`, etc.
+**String safety:** Inside the Bun script, `JSON.stringify` handles every character correctly — Unicode punctuation, apostrophes, backticks, multi-line strings, all pass through to `semantius` unchanged. This is exactly why the seed script is a `.ts` file and not a `.sh` file: a pure-shell seeder using `echo '{...}'` or `$PG '...'` would still break on apostrophes and embedded shell metacharacters, and "fixing" that by stripping characters from seed data is the same correctness bug as truncating descriptions. Generate realistic seed strings (including Unicode where the domain has it); do not pre-strip.
 
 Generate realistic data:
 - Real-sounding names and emails (not "Test User 1")
@@ -1253,7 +1295,7 @@ Generate realistic data:
 - Numbers: plausible domain ranges
 - Booleans: realistic mix
 
-Run the complete script in one bash call and report the final output summary.
+Run the complete script in one `bun run` call and report the final output summary.
 
 ---
 
@@ -1303,7 +1345,10 @@ Run the complete script in one bash call and report the final output summary.
 | Re-run on a module whose live hierarchy has the inclusion direction inverted (e.g. `read includes manage`) | 🛑 High | Stop. An inverted row breaks RBAC; the deployer never authored this. Surface to the user and ask whether to delete the inverted row and recreate it the right way around. Never `update` a hierarchy row silently. |
 | Model-side `select_rule` differs from live entity (♻️ same-module match)) | ⚠️ Medium | `update_entity` with the model's object verbatim. The platform regenerates the `FOR SELECT` RLS policy function; existing reads are filtered from the next query onward. **Always warn the user before applying a `select_rule` create or modification** — rows that callers used to see disappear (medium-risk visibility change). The Stage 5 verification summary names the entity so the change is visible alongside permission flips. |
 | Model omits `Select rule` heading but live entity carries a non-empty `select_rule`) | ⚠️ Medium | Ambiguous: the analyst might mean "leave as-is" or "I dropped it". Do not silently clear. Surface the live rule to the user and ask whether to keep it (the optimizer would round-trip an existing rule, so absence after a round-trip means deliberate removal) or pass `{}` to drop the RLS policy. Removing widens visibility (every row becomes visible to anyone with `view_permission`); confirm before applying. |
-| Model carries `Select rule` JsonLogic referencing a column that does not exist on the entity) | 🛑 High | Reject at parse time. `select_rule` runs per-row inside the platform's RLS policy and can only reference columns on this entity; cross-row lookups and FK traversal are out of scope and the platform would throw at evaluation time. Surface the offending column name and the entity to the user, send back to the analyst skill. |
+| Model carries `Select rule` JsonLogic referencing a column that does not exist on the entity) | 🛑 High | Reject at parse time, **with one exception**: when the column reference is qualified by a `set_record` or `let` binding name (e.g. `{"var": "order.status"}` inside `{"set_record": ["order", "orders", ...]}`), resolve the binding's `<entity_name>` against the live catalog instead. The bound variable's column lookup is checked against the *bound entity's* fields, not the current entity's. Unbound column references that don't resolve on this entity are still a Blocker — `select_rule` runs per-row inside the platform's RLS policy, and a bare reference to a missing column throws at evaluation time. Surface the offending column name (and which binding it lives under, if any) when rejecting. |
+| Model carries `validation_rules` / `computed_fields` JsonLogic that uses `{"set_record": ["<name>", "<entity>", ...]}` whose `<entity>` does not exist in the live catalog (and is not a Semantius built-in)) | 🛑 High | Reject at parse time. `set_record` (analyst v3.2+) loads a row from `<entity>` by id; if the table doesn't exist when the rule fires, the platform throws on every write. Surface the offending `set_record` entity argument and the rule's entity + `code` / `name`, route back to the analyst skill (typo, dropped entity, or an FK target that lives in a sibling module that hasn't been deployed yet). |
+| Model carries `validation_rules` JsonLogic whose body is `{"throw_error": "<message>"}` placed at the *top level* of the rule (not inside an `if`)) | 🛑 High | Reject at parse time. A top-level `throw_error` raises on every write — that's what `view_permission` / `edit_permission` are for (table-level gates) and an unconditional throw via `validation_rules` is always wrong shape. The pattern is `{"if": [<trigger-predicate>, {"throw_error": "..."}, true]}`. Surface the rule's entity + `code` and route back to the analyst skill to wrap the throw in an `if`. |
+| Model carries `Select rule` JsonLogic that calls `{"set_record": ...}` | ⚠️ Medium | Surface in Stage 3 plan as a perf-warning row. `set_record` *is* technically callable inside `select_rule` (the platform's JsonLogic engine is the same as `validation_rules`), but it runs an extra `SELECT` per row of every read of this entity, and quickly dominates query cost on any non-trivial workload. Default posture: warn the user, ask whether the design genuinely needs cross-entity per-row visibility AND `has_permission` / column-encoded broadening can't express it. If yes, deploy as-is with a Stage 5 note recommending tracking the entity's read-query timings; if no, route back to the analyst skill to rework the rule. |
 | Model's `Select rule` sub-block `description` (or any §3 prose about that entity's visibility) names a permission code as a "bypass" / "elevated" / "override" / "see every row" path BUT the JsonLogic body does NOT reference that permission) critical defect) | 🛑 High | Reject at parse time. This is the canonical v2.2 defect: the prose promises a bypass the platform cannot honor (there is no documented permission-check operator in the SELECT context, and the JsonLogic is the only thing the platform evaluates per row). Deploying the rule would ship dangerous-looking but broken RBAC — the prose says one thing, the per-row filter does another, and access decisions land based on the rule, not the prose. The analyst skill's Stage 12.5 audit should have caught this. Surface the offending entity, the prose claim, and the JsonLogic body to the user, and route back to the analyst's Mode B audit to resolve (either delete the prose claim, or convert it to an explicit §7 architectural-decision entry naming a documented broadening mechanism — separate cube view, Postgres `BYPASSRLS` role attribute, etc.). |
 | Model declares `select_rule` on a Semantius built-in (`users`, `roles`, …)) | 🛑 High | Refuse. Built-ins have their own platform-level visibility rules; a model-driven `select_rule` would conflict. The model is buggy, escalate to the analyst skill. |
 | Model-side `input_type_rule` for a field differs from live (♻️ same-module match)) | ✅ Low | `update_field` with the model's object verbatim. Pure UI override, no data impact; the platform's per-render fallback covers malformed returns. Stage 5 lists the field in the per-entity summary. |

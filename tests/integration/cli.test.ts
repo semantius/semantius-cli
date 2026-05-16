@@ -64,7 +64,7 @@ describe('CLI Integration Tests', () => {
       // - stdin: null prevents hanging when CLI tries to read stdin
       // - env is passed explicitly for reliable cross-platform behavior
       const proc = Bun.spawn(['bun', 'run', cliPath, '-c', configPath, ...args], {
-        env: { ...process.env, MCP_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org' },
+        env: { ...process.env, SEMANTIUS_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org' },
         stdin: null,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -299,7 +299,7 @@ describe('CLI Integration Tests', () => {
         stderr: 'pipe',
         env: {
           ...process.env,
-          MCP_NO_DAEMON: '1',
+          SEMANTIUS_NO_DAEMON: '1',
           SEMANTIUS_API_KEY: 'test-api-key',
           SEMANTIUS_ORG: 'test-org',
         },
@@ -382,7 +382,7 @@ describe('HTTP Transport Integration Tests', () => {
 
     try {
       const proc = Bun.spawn(['bun', 'run', cliPath, '-c', configPath, ...args], {
-        env: { ...process.env, MCP_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org' },
+        env: { ...process.env, SEMANTIUS_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org' },
         stdin: null,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -473,7 +473,7 @@ describe('--single flag Integration Tests', () => {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     const cliPath = join(import.meta.dir, '..', '..', 'src', 'index.ts');
     const proc = Bun.spawn(['bun', 'run', cliPath, ...args], {
-      env: { ...process.env, MCP_NO_DAEMON: '1' },
+      env: { ...process.env, SEMANTIUS_NO_DAEMON: '1' },
       stdin: null,
       stdout: 'pipe',
       stderr: 'pipe',

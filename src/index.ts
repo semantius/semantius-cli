@@ -38,6 +38,7 @@ import {
   unknownOptionError,
   unknownSubcommandError,
 } from './errors.js';
+import { enableFromEnv, initLogger, recordError } from './logger.js';
 
 interface ParsedArgs {
   command: 'list' | 'info' | 'grep' | 'call' | 'help' | 'version' | 'markdown';
@@ -111,6 +112,24 @@ function parseServerTool(args: string[]): { server: string; tool?: string } {
     server: first,
     tool: args[1],
   };
+}
+
+/**
+ * Lightweight scan for --env <prefix> so the logger and env lookups can be
+ * configured before the full parseArgs runs (and before it can exit on a
+ * parse error). Returns the default 'SEMANTIUS' if --env isn't present or
+ * its value is missing/invalid; the full parser will surface the error.
+ */
+function findEnvPrefix(args: string[]): string {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--env') {
+      const value = args[i + 1];
+      if (value && !value.startsWith('-')) {
+        return value.toUpperCase();
+      }
+    }
+  }
+  return 'SEMANTIUS';
 }
 
 /**
@@ -401,11 +420,27 @@ Examples:
   cat input.json | semantius call crud create_record  # Read from stdin (no '-' needed)
   semantius --env PROD info crud                   # Use PROD_API_KEY / PROD_ORG
 
-Environment Variables:
-  ${requiredVars[0].padEnd(22)} API key for Semantius (required)
-  ${requiredVars[1].padEnd(22)} Organization name for Semantius (required)
-  MCP_NO_DAEMON=1        Disable connection caching (force fresh connections)
-  MCP_DAEMON_TIMEOUT=N   Set daemon idle timeout in seconds (default: 60)
+Environment Variables (all respect --env <prefix>; default prefix shown):
+  ${requiredVars[0].padEnd(28)} API key for Semantius (required)
+  ${requiredVars[1].padEnd(28)} Organization name for Semantius (required)
+  SEMANTIUS_DEBUG=1            Verbose debug logging to stderr
+  SEMANTIUS_TIMEOUT=N          Request timeout in seconds (default: 1800)
+  SEMANTIUS_CONCURRENCY=N      Max parallel server connections (default: 5)
+  SEMANTIUS_MAX_RETRIES=N      Max retry attempts for transient errors (default: 3)
+  SEMANTIUS_RETRY_DELAY=N      Base retry backoff in ms (default: 1000)
+  SEMANTIUS_NO_DAEMON=1        Disable connection caching (force fresh connections)
+  SEMANTIUS_DAEMON_TIMEOUT=N   Daemon idle timeout in seconds (default: 60)
+  SEMANTIUS_STRICT_ENV=false   Warn (don't error) on unresolved \${VAR} refs in config
+  SEMANTIUS_CONFIG_PATH=<path> Path to mcp_servers.json (overrides default search)
+  SEMANTIUS_LOG_FILE=<path>    Append one JSONL line per invocation to <path>.
+                               Bare filename (e.g. semantius.jsonl) is written
+                               next to the loaded .env (or in the user config
+                               dir). Absolute or relative paths are used as-is.
+  SEMANTIUS_LOG_LEVELS=<list>  Comma-separated subset of {all, error, slow}.
+                               Filters which invocations are logged. Default:
+                               all. "error" = exit_code != 0; "slow" = wall
+                               time > 1000 ms. Multiple values OR-combine
+                               (e.g. error,slow logs errors AND slow runs).
 
 Config file location:
   ${configDir}${configDir.endsWith('\\') || configDir.endsWith('/') ? '' : '/'}  (.env or mcp_servers.json)
@@ -452,9 +487,21 @@ function buildTarget(server?: string, tool?: string): string {
  * Main entry point
  */
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
 
-  // Apply env prefix before anything that reads env vars
+  // Resolve --env first so the logger and every env lookup below uses the
+  // right prefix — including for early-exit paths like parse errors.
+  setEnvPrefix(findEnvPrefix(argv));
+
+  // Install the exit-time logger immediately so even early-exit code paths
+  // (parse errors, missing env vars) get a log entry when <PREFIX>_LOG_FILE
+  // is set in the shell environment.
+  initLogger();
+
+  const args = parseArgs(argv);
+
+  // parseArgs's value wins (it's the canonical parser) — re-apply in case
+  // findEnvPrefix's lightweight scan disagrees on edge cases.
   setEnvPrefix(args.envPrefix);
 
   if (args.command === 'help') {
@@ -479,6 +526,9 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
 
   // Load .env before checking required env vars (supports .env next to exe)
   await loadDotEnv();
+
+  // .env may have defined SEMANTIUS_LOG_FILE — enable logging now that it's loaded.
+  enableFromEnv();
 
   // Validate required environment variables before running any data command
   checkRequiredEnvVars();
@@ -543,5 +593,6 @@ main()
   .catch((error) => {
     // Error message already formatted by command handlers
     console.error(error.message);
+    recordError(error.message);
     setImmediate(() => process.exit(ErrorCode.CLIENT_ERROR));
   });

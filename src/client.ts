@@ -26,6 +26,7 @@ import {
   cleanupOrphanedDaemons,
   getDaemonConnection,
 } from './daemon-client.js';
+import { timeMcp } from './logger.js';
 
 // Re-export config utilities for convenience
 export { debug, getTimeoutMs, getConcurrencyLimit };
@@ -72,7 +73,7 @@ interface RetryConfig {
 }
 
 /**
- * Get retry config respecting MCP_TIMEOUT budget
+ * Get retry config respecting SEMANTIUS_TIMEOUT budget
  */
 function getRetryConfig(): RetryConfig {
   const totalBudgetMs = getTimeoutMs();
@@ -156,7 +157,7 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Execute a function with retry logic for transient failures
- * Respects overall timeout budget from MCP_TIMEOUT
+ * Respects overall timeout budget from SEMANTIUS_TIMEOUT
  */
 async function withRetry<T>(
   fn: () => Promise<T>,
@@ -406,7 +407,7 @@ export async function getConnection(
         debug(`Using daemon connection for ${serverName}`);
         return {
           async listTools(): Promise<ToolInfo[]> {
-            const data = await daemonConn.listTools();
+            const data = await timeMcp(() => daemonConn.listTools());
             const tools = data as ToolInfo[];
             // Apply tool filtering from config
             return filterTools(tools, config);
@@ -421,7 +422,7 @@ export async function getConnection(
                 `Tool "${toolName}" is disabled by configuration`,
               );
             }
-            return daemonConn.callTool(toolName, args);
+            return timeMcp(() => daemonConn.callTool(toolName, args));
           },
           async getInstructions(): Promise<string | undefined> {
             return daemonConn.getInstructions();
@@ -445,7 +446,7 @@ export async function getConnection(
 
   return {
     async listTools(): Promise<ToolInfo[]> {
-      const tools = await listTools(client);
+      const tools = await timeMcp(() => listTools(client));
       // Apply tool filtering from config
       return filterTools(tools, config);
     },
@@ -457,7 +458,7 @@ export async function getConnection(
       if (!isToolAllowed(toolName, config)) {
         throw new Error(`Tool "${toolName}" is disabled by configuration`);
       }
-      return callTool(client, toolName, args);
+      return timeMcp(() => callTool(client, toolName, args));
     },
     async getInstructions(): Promise<string | undefined> {
       return client.getInstructions();
