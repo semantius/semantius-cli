@@ -34,14 +34,14 @@ The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semanti
 
 ### 2. Set up credentials
 
-Set your Semantius credentials. The CLI looks for a `.env` file next to the executable (Windows), in the current directory, or you can export them in your shell:
+Set your Semantius credentials. The CLI looks for a `.env` file in the current directory, then next to the executable (Windows), or you can export them in your shell. Shell environment variables always take precedence over `.env` values.
 
 ```bash
 # Option 1: Export in shell
 export SEMANTIUS_API_KEY=your-api-key
 export SEMANTIUS_ORG=your-org-name
 
-# Option 2: .env file (place next to the executable or in current directory)
+# Option 2: .env file (current directory first, then next to the executable)
 # SEMANTIUS_API_KEY=your-api-key
 # SEMANTIUS_ORG=your-org-name
 ```

@@ -298,14 +298,14 @@ export function getLoadedEnvDir(): string | undefined {
  * Shell environment takes precedence — existing vars are never overwritten.
  *
  * Search order (first local .env found wins; user config dir always checked as fallback):
- *   1. searchDir (config file's directory or user-specified)
- *   2. Executable directory (for installs where binary lives next to .env)
- *   3. Current working directory
+ *   1. Current working directory
+ *   2. searchDir (config file's directory or user-specified)
+ *   3. Executable directory (for installs where binary lives next to .env)
  *   4. User config dir (~/.config/semantius on Linux/macOS, %APPDATA%\semantius on Windows)
  */
 export async function loadDotEnv(searchDir?: string): Promise<void> {
   const execDir = dirname(process.execPath);
-  const localDirs = [searchDir, execDir, process.cwd()].filter(
+  const localDirs = [process.cwd(), searchDir, execDir].filter(
     Boolean,
   ) as string[];
   const seen = new Set<string>();
