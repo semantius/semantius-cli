@@ -14,6 +14,7 @@
 import { version as VERSION } from '../package.json' with { type: 'json' };
 import { callCommand } from './commands/call.js';
 import { grepCommand } from './commands/grep.js';
+import { pingCommand, whoamiCommand } from './commands/identity.js';
 import { infoCommand } from './commands/info.js';
 import { listCommand } from './commands/list.js';
 import { markdownCommand } from './commands/markdown.js';
@@ -41,7 +42,16 @@ import {
 import { enableFromEnv, initLogger, recordError } from './logger.js';
 
 interface ParsedArgs {
-  command: 'list' | 'info' | 'grep' | 'call' | 'help' | 'version' | 'markdown';
+  command:
+    | 'list'
+    | 'info'
+    | 'grep'
+    | 'call'
+    | 'help'
+    | 'version'
+    | 'markdown'
+    | 'ping'
+    | 'whoami';
   server?: string;
   tool?: string;
   pattern?: string;
@@ -57,7 +67,7 @@ interface ParsedArgs {
 /**
  * Known subcommands
  */
-const SUBCOMMANDS = ['info', 'grep', 'call'] as const;
+const SUBCOMMANDS = ['info', 'grep', 'call', 'ping', 'whoami'] as const;
 
 /**
  * Check if a string looks like a subcommand (not a server name)
@@ -256,6 +266,30 @@ function parseArgs(args: string[]): ParsedArgs {
     return result;
   }
 
+  if (firstArg === 'ping') {
+    if (positional.length > 1) {
+      console.error(
+        formatCliError(tooManyArgumentsError('ping', positional.length - 1, 0)),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    result.command = 'ping';
+    return result;
+  }
+
+  if (firstArg === 'whoami') {
+    if (positional.length > 1) {
+      console.error(
+        formatCliError(
+          tooManyArgumentsError('whoami', positional.length - 1, 0),
+        ),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    result.command = 'whoami';
+    return result;
+  }
+
   if (firstArg === 'call') {
     result.command = 'call';
     const remaining = positional.slice(1);
@@ -381,6 +415,8 @@ Usage:
   semantius [options] grep <pattern>               Search tools by glob pattern
   semantius [options] call <server> <tool>         Call tool (reads JSON from stdin if no args)
   semantius [options] call <server> <tool> <json>  Call tool with JSON arguments
+  semantius [options] ping                         Check connectivity & latency to crud/getCurrentUser
+  semantius [options] whoami                       Show current user (email, org, roles)
 
 Formats (both work):
   semantius info server tool                       Space-separated
@@ -572,6 +608,14 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
         diag: args.diag,
         single: args.single,
       });
+      break;
+
+    case 'ping':
+      await pingCommand({ configPath: args.configPath });
+      break;
+
+    case 'whoami':
+      await whoamiCommand({ configPath: args.configPath });
       break;
   }
 }
