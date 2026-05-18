@@ -21,7 +21,7 @@ semantius call crud read_entity '{"filters": "table_name=eq.<table_name>"}'
 semantius call crud read_field '{"filters": "table_name=eq.<table_name>"}'
 ```
 
-Note which fields have `input_type: "readonly"`, **never import into those**.
+Note which fields have `input_type: "readonly"` or `input_type: "disabled"`, **never import into those**. `disabled` is the mode the deployer assigns to computed fields (the platform overwrites caller values on every write); `readonly` is the legacy mode for the same intent. Either is a signal: the field is not caller-writable in any meaningful sense.
 
 ---
 
@@ -64,7 +64,7 @@ semantius call crud getCurrentUser '{}'
 | Reasonable (`Email Address` → `email`) | Auto-map, mention in summary |
 | Ambiguous | Ask user before proceeding |
 
-Never map to `input_type: "readonly"` fields.
+Never map to `input_type: "readonly"` or `input_type: "disabled"` fields — both indicate a non-caller-writable column (computed fields land in `disabled`; legacy / manual locks land in `readonly`).
 
 ---
 

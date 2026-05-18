@@ -521,7 +521,7 @@ Heuristic: field names like `*_name`, `*_title`, `*_label`, `*_code`, `email_add
 | `default` | Standard editable input, use for most fields |
 | `required` | Editable but marked mandatory in UI |
 | `readonly` | Displayed but not editable, **never import into this** |
-| `disabled` | Greyed out, not editable |
+| `disabled` | Greyed out, not editable, **never import into this** — this is the canonical mode for **computed fields** (the platform owns the value; caller payloads are silently overwritten on every write) |
 | `hidden` | Not shown in forms |
 
 ### Dynamic `input_type` via `input_type_rule` (field-level JsonLogic)
@@ -736,14 +736,16 @@ semantius call crud create_field '{
 
 The platform manages nullability internally based on format and delete-mode, do not pass an `is_nullable` flag. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
 
+**Read order:** the divergent-permission-scope rule (last two rows) **overrides** the "child is owned by parent" and "M:N junction FK" rows whenever the child's edit tier differs from the parent's. Always evaluate divergence first; fall through to the same-tier rows only when tiers match.
+
 | Scenario | `format` | `reference_delete_mode` |
 |----------|----------|------------------------|
 | Optional link to independent entity | `reference` | `clear` |
 | Required link to independent entity | `reference` | `restrict` |
-| Child is owned by parent (shared permission scope) | `parent` | `cascade` |
-| M:N junction FK (both sides) | `parent` | `cascade` |
-| Lifecycle-bound child with divergent permission scope (analyst v1.13+) | `reference` | `restrict` (default) or `clear` |
-| Lifecycle-bound child with divergent permission scope, accepting silent cascade-delete (high-risk) | `reference` | `cascade` |
+| Child is owned by parent (**shared permission scope** — child tier == parent tier) | `parent` | `cascade` |
+| M:N junction FK, **both parents share the junction's tier** (per-leg test, not table-wide) | `parent` | `cascade` |
+| **Lifecycle-bound child with divergent permission scope** (analyst v1.13+) — overrides the two rows above | `reference` | `restrict` (default) or `clear` |
+| Lifecycle-bound child with divergent permission scope, accepting silent cascade-delete (high-risk) — overrides the two rows above | `reference` | `cascade` |
 
 **Divergent-permission-scope rule (analyst v1.13+).** `format: parent` semantically asserts that the child shares the parent's permission model. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `require_permission` against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), `parent` is the wrong shape. Use `format: reference` instead. Pick the delete mode by lifecycle behavior: `restrict` when children must be explicitly cleaned up before the parent (recommended default for audit-logged decision evidence like scorecards or signed offers), `clear` when orphan-survival is acceptable (e.g. an authored note may survive its application being deleted), `cascade` only when the user explicitly accepts the silent cascade-delete trade-off (the shape says "permission scope is divergent" but the platform deletes anyway when the lifecycle owner goes).
 
@@ -915,7 +917,7 @@ Only use `postgrestRequest` or `sqlToRest` for:
 | `fields` | Entity attributes/columns | Belongs to entity; may reference other entities |
 | `modules` | Domain grouping | Referenced by entities, roles, permissions |
 | `permissions` | Atomic capabilities | Used by entities; granted to roles; can inherit |
-| `permission_hierarchy` | Permission inheritance | Links parent/child permissions |
+| `permission_hierarchy` | Permission inheritance | Links including/included permissions (broader includes narrower) |
 | `roles` | Permission bundles | Granted permissions; assigned to users |
 | `role_permissions` | Role ↔ Permission M:N | Junction with audit fields |
 | `users` | Actor identities | Assigned roles via `user_roles` |

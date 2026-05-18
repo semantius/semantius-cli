@@ -8,6 +8,29 @@ Entries below are newest first.
 
 ---
 
+## `v2.3` — script-robustness gate (Principle 7)
+
+Major stays at `3` (no analyst-side contract change). This entry tightens the **generated scripts' real-world behavior**, not the parser. Three classes of defect that prior generations shipped despite Step 9 passing:
+
+- **Raw `$var` interpolation into URL paths.** Recipes built `wfts(simple).$name`, `<col>=eq.$value`, and `in.(...)` filters by concatenating caller values directly. The moment a real catalog name contained a space (most do: `Customer Management`, `Investment Banking`, `Service Desk`), the URL mangled and the script either 4xx'd or returned wrong rows.
+- **String-concatenated JSON bodies.** Recipes built `"body":{...}` payloads as `body="{\"notes\":\"$caller_notes\"}"`. A `"` or `\` in caller text (common in research-agent prose) silently produced invalid JSON and the platform returned an opaque parse error.
+- **Optional columns written without a per-entity guard.** Polymorphic scripts that accepted an `entity` arg and unconditionally wrote `notes` (or any optional column) 4xx'd on every entity that lacked the column; the platform's `column "notes" does not exist` response was opaque to the agent.
+
+Step 7 ("Conventions every script follows") gained three new bullets:
+- URL-encode caller values via `printf '%s' "$raw" | jq -sRr @uri` before interpolating into any URL path or filter.
+- Build JSON bodies with `jq -nc --arg` / `--argjson`, never string concatenation.
+- For optional columns, bake the entity-supports-column list (computed from the model's §3 field tables at generation time) into the script and refuse the caller's arg with a precise stderr message when the target lacks the column.
+
+Step 9 gained **Principle 7** ("Scripts handle real-world inputs"), a literal-text scan over every script (and every inline bash recipe in SKILL.md) for the three classes above, plus a fourth: `--single` vs array misuse on caller-driven lookups (mixing Pattern A and Pattern B from `use-semantius` silently mis-reports ambiguity).
+
+Step 9 "Output of the self-review" was rewritten to require **per-principle evidence**, not a collapsed "no issues found" line. Principle 7 in particular must name a count of interpolation sites / JSON bodies / column guards inspected, because that was the principle prior generations skipped most often.
+
+Step 10's Audit-findings bullet was tightened: on a fresh generation the bullet still appears, with explicit wording that names Step 9 (specifically Principle 0 + Principle 7) as the behavioral-correctness gate. The earlier wording ("skip this bullet on a fresh generation") let generators report "Fresh generation; nothing to audit" which read as "behavioral correctness also skipped". That was the immediate trigger for this entry.
+
+Concrete recurring defect from the `domain_map` v2.2-era generation that motivated this entry: `promote-record.sh` accepted a `notes` arg and wrote it unconditionally against any of 20 entities, but 7 of those entities (industries, business_functions, domains, capabilities, data_objects, jurisdictions, regulations) have no `notes` column in §3. The Step 9 self-review passed Principle 0 (structural) but missed the behavioral defect because no principle scanned for it.
+
+---
+
 ## `v2.2` — read-side rule indices + uniform-filter discipline
 
 Files written by analyst `2.2+` may carry two new optional §3 sub-blocks per entity, both encoding *read-side* JsonLogic that the platform evaluates outside the write path:

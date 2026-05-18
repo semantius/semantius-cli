@@ -246,25 +246,25 @@ Accepts common read parameters. Key filter: `"permission_name=ilike.<module>:*"`
 ## Permission Hierarchy Tools
 
 ### `create_permission_hierarchy`
-Creates an inheritance link: child permission is implied by parent.
+Creates an inheritance link: a broader permission includes a narrower one. Reads as `including_permission_id` ── *includes* ──▶ `included_permission_id` (e.g. `crm:manage` includes `crm:read`).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Requires: `parent_permission_id`, `child_permission_id` |
+| `data` | object | yes | Requires: `including_permission_id` (broader), `included_permission_id` (narrower). `id` is auto-generated as `"<including_permission_id>.<included_permission_id>"`. |
 
 ### `read_permission_hierarchy`
-Accepts common read parameters. Filter by `parent_permission_id` or `child_permission_id`.
+Accepts common read parameters. Filter by `including_permission_id` or `included_permission_id`.
 
 ### `update_permission_hierarchy`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | yes | Hierarchy record ID |
-| `data` | object | yes | Fields to update |
+| `id` | string | yes | Hierarchy record ID (`"<including_permission_id>.<included_permission_id>"`) |
+| `data` | object | yes | Fields to update (`including_permission_id`, `included_permission_id`). `origin` is immutable. |
 
 ### `delete_permission_hierarchy`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string | yes | Hierarchy record ID |
+| `id` | string | yes | Hierarchy record ID (`"<including_permission_id>.<included_permission_id>"`) |
 
 ---
 

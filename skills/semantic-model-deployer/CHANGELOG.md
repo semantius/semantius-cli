@@ -8,6 +8,57 @@ Entries below are newest first.
 
 ---
 
+## `v3.3` (MINOR) — `permission_hierarchy` column rename (`parent`/`child` → `including`/`included`)
+
+In lockstep with analyst minor `3.5`. The platform renamed two columns on `permission_hierarchy`:
+
+- `parent_permission_id` → `including_permission_id` (the broader permission, the one doing the including; e.g. `crm:manage` when expressing "`crm:manage` includes `crm:read`")
+- `child_permission_id` → `included_permission_id` (the narrower permission, the one being included; e.g. `crm:read`)
+
+A row reads as `including_permission_id` ── *includes* ──▶ `included_permission_id`. Old column names are gone, not aliased — sending the old payload shape fails at PostgREST with an unknown-column error. The `id` natural-key format (`"<including>.<included>"`) and the `origin` enum (`"system"` / `"model"` / `"model_master"` / `"user"`, strictly immutable) are unchanged. `EXPECTED_MAJOR` stays at `3`.
+
+**Where the deployer changed.**
+
+1. **Stage 2a-scaffold step 3 (in-module hierarchy chain).** Resolution pattern restated: `includingId = (await read_permission_single("permission_name=eq.<broader>")).id; includedId = (await read_permission_single("permission_name=eq.<narrower>")).id;` then `read_permission_hierarchy --single by including_permission_id=eq.<includingId>&included_permission_id=eq.<includedId>`; `create_permission_hierarchy` payload becomes `{including_permission_id: includingId, included_permission_id: includedId, origin: ...}`. Verification narration renders as `<including_permission_name> → <included_permission_name>` (e.g. `product_roadmap:admin → product_roadmap:manage`, meaning admin *includes* manage).
+
+2. **Stage 4b (in-module rollup chain).** Three-permission models write rows with `including = <slug>:admin, included = <slug>:manage` and `including = <slug>:manage, included = <slug>:read`. Two-permission models write `including = <slug>:manage, included = <slug>:read`. Idempotency read filters use the new field names. The "never invert direction" rule is restated explicitly: the narrower permission must never appear on the including side.
+
+3. **Stage 4i (cross-module bridges).** Master-promotion read inclusion rows use `including_permission_id = <consumer>:read.id, included_permission_id = <master>:read.id, origin = "model_master"` (the consumer's `:read` *includes* the master's `:read`, so holding the consumer's read transitively grants visibility into the master's entities). Manage inclusion follows the same direction. Idempotency reads use the new field names.
+
+4. **Lookup-conventions section.** Numeric-FK callout updated: `permission_hierarchy.including_permission_id` / `.included_permission_id` replace the old pair as the canonical example of resolve-use-discard FK columns. Verification narration example updated to reference `included_permission_id` instead of `child_permission_id`.
+
+5. **No-auto-deletion safety rule.** The wording covering FK adjustments during master-rename / master-merge now names `including_permission_id` / `included_permission_id` as the legal mutations. Behavior unchanged: the deployer never deletes hierarchy rows, regardless of origin.
+
+**Minor bump (not major).** The model file shape, the §2 column shape, and the `Hierarchy parent` column semantics are all unchanged. The change is internal to how the deployer writes the row, and to the natural-key narration the verification report renders. Analyst-side `3.4` and `3.5` files produce identical hierarchy rows on the new deployer; the bump exists to keep the lockstep history honest.
+
+The CLI (`semantius v0.4.2` and later) accepts only the new field names. A `v3.2.1` deployer paired with that CLI fails on hierarchy creates with `PGRST204 — column "parent_permission_id" not found`. Upgrade in lockstep with the CLI.
+
+---
+
+## `v3.2.1` (PATCH) — `create_permission` must pass `module_id`; lookup conventions formalized
+
+In lockstep with no analyst change; pure deployer-side bug fix plus a conventions tightening that prevents the same defect class.
+
+**Bug fix.** Stage 2a-scaffold step 2 previously passed only `permission_name` and `description` to `create_permission`, leaving `permissions.module_id` NULL on insert. The defect was invisible to hierarchy edges and role-permission joins (which resolve by `permission_name` or by FK id, neither needing `module_id`) but produced real catalog drift: permissions were unscoped, so `?module_id=eq.<id>` queries silently missed them and per-module RBAC audits reported drift.
+
+Fix: Stage 2a-scaffold step 2 now passes `module_id = <module.id>` on every `create_permission`. On re-run, a NULL or mismatched `module_id` triggers a corrective `update_permission`. The Conflict Resolution Reference gains a row covering the live-NULL drift case.
+
+**Conventions: natural keys.** New subsection "Lookup conventions: prefer natural keys, never narrate numeric ids" right after Step 0. Three catalog tables carry stable unique natural keys (`modules.module_slug`, `permissions.permission_name`, `roles.slug`). The deployer now:
+- always filters reads by natural key (`module_slug=eq.<slug>`, `permission_name=eq.<code>`, `slug=eq.<slug>_<tier>`);
+- treats numeric ids as resolve-use-discard write-only artifacts (`role_permissions.permission_id`, `permission_hierarchy.including_permission_id`, `modules.manage_permission_id`, etc.);
+- writes natural keys directly into text-FK columns (`modules.view_permission`, `entities.view_permission` / `.edit_permission`, `fields.reference_table`);
+- renders every Stage 5 verification line by natural key (`product_roadmap:read`, `product_roadmap_viewer`, `product_roadmap → product_roadmap:manage`) — `id=N` only appears for an orphan FK whose target has no resolvable natural key.
+
+Two Stage 2a-scaffold steps got concrete pattern guidance:
+- Step 3 (hierarchy): the `permission_hierarchy` table only exposes numeric FKs, so resolve both ends from `permission_name` at the top of the pass and pass ids in the write payload; narration in chat / verification renders the natural-key form.
+- Step 4 (default roles + `role_permissions`): same resolve-use-discard pattern for `role_permissions.permission_id` and `.role_id`. The `roles` table has no `label` column — guidance corrected (older drafts of this skill passed `label` and tripped a PostgREST schema-cache error).
+
+**Stage 5 verification tightened.** Module scaffold integrity check #1 now explicitly says "dereference the FK and assert the natural key matches the expected value" — non-null FKs can still point at the wrong row. Each `manage_permission_id` / `admin_permission_id` / `default_*_role_id` is read back and its target's `permission_name` / `slug` asserted. This catches the `module_id IS NULL` defect class and any future class where a non-null FK exists but points at the wrong row.
+
+No `EXPECTED_MAJOR` change.
+
+---
+
 ## `v3.2` (MINOR) — cross-entity JsonLogic primitives pass through transparently
 
 In lockstep with analyst minor `3.2`. No `EXPECTED_MAJOR` change; 3.x files continue to pass the version gate.

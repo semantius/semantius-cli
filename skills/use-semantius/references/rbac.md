@@ -58,8 +58,8 @@ Make `crm:manage` implicitly include `crm:read`, so assigning `manage` is suffic
 ```bash
 semantius call crud create_permission_hierarchy '{
   "data": {
-    "parent_permission_id": <crm:manage id>,
-    "child_permission_id": <crm:read id>
+    "including_permission_id": <crm:manage id>,
+    "included_permission_id": <crm:read id>
   }
 }'
 ```

@@ -1965,6 +1965,81 @@ echo "<op-slug>: ok"
 - **No interactive prompts.** The agent invokes non-interactively.
   If the operation needs a user confirmation, the JTBD is a
   `reference`, not a `script`.
+- **URL-encode every caller-provided value interpolated into a GET
+  path, PATCH filter, or DELETE filter.** Raw bash interpolation of
+  `$var` into `/<table>?search_vector=wfts(simple).$var` or
+  `?<col>=eq.$var` breaks the moment the value contains a space, an
+  ampersand, a parenthesis, a `+`, a `%`, a `#`, a `?`, a quote, or any
+  other character outside the URL unreserved set. Real catalog data is
+  full of these (`Customer Management`, `Investment Banking`,
+  `Sales & Marketing`, `Account (Salesforce)`). The canonical
+  encode-then-interpolate pattern is one line via `jq`:
+
+  ```bash
+  enc_term=$(printf '%s' "$user_input" | jq -sRr @uri)
+  semantius call crud postgrestRequest \
+    "{\"method\":\"GET\",\"path\":\"/${table}?search_vector=wfts(simple).${enc_term}&select=id\"}"
+  ```
+
+  This applies to **every** caller value: search terms going into
+  `wfts(simple).<term>`, exact-match values going into `<col>=eq.<value>`
+  or `<col>=in.(<values>)`, label-equality dedupe filters, and any other
+  position where a caller string ends up in the URL. UUIDs already
+  resolved from a `--single` read are URL-safe and do not need
+  encoding. Recipe lines that interpolate raw `$var` into a path are
+  a defect; Principle 7 in Step 9 catches them on self-review.
+- **Build JSON bodies with `jq -nc --arg`, never string concatenation.**
+  A naïve `body="{\"notes\":\"$caller_notes\"}"` breaks the moment
+  `$caller_notes` contains a `"`, a `\`, a literal newline, or a
+  control character. Research-agent prose contains all four. The
+  failure mode is opaque, the platform sees mangled JSON and returns
+  a parse error rather than a clean validation message. The canonical
+  build-then-pass pattern is:
+
+  ```bash
+  body=$(jq -nc \
+    --arg status "$new_status" \
+    --arg notes "$caller_notes" \
+    '{record_status: $status, notes: $notes}')
+  semantius call crud postgrestRequest \
+    "{\"method\":\"PATCH\",\"path\":\"/${table}?id=eq.${row_id}\",\"body\":${body}}"
+  ```
+
+  Use `--arg` for strings, `--argjson` for booleans / numbers / nested
+  objects, and `--rawfile` for multiline content read from a file.
+  Conditional fields (only include `industry_id` when
+  `alias_type=industry_term`) compose by building the base object then
+  layering with `+ {field: $val}` inside the same `jq` call, never by
+  concatenating fragments. Recipe lines that build JSON via string
+  concatenation are a defect; Principle 7 catches them.
+- **Refuse writes to columns the entity does not declare.** The model
+  parse in Step 2 already produces a per-entity field list. For any
+  optional column a script writes conditionally (`notes`, `description`,
+  `condition_notes`, `is_preferred`), the script must either (a) bake
+  in the list of entities that carry the column and refuse the arg
+  with a clear stderr message when the caller targets one that does
+  not, or (b) be specialized to a single entity that has the column.
+  A polymorphic script that accepts an `entity` arg and unconditionally
+  writes `notes` will 4xx on every entity that lacks a `notes`
+  column, and the platform's response (`column "notes" does not exist`)
+  is opaque to the agent, surface a precise error early instead. The
+  canonical pattern:
+
+  ```bash
+  case "$entity" in
+    data_object_aliases|data_object_relationships|solutions|vendors|industry_business_functions|business_function_domains|business_function_capabilities|domain_data_objects|capability_domains|solution_domains|solution_data_objects|solution_capabilities|domain_regulations)
+      supports_notes=1 ;;
+    *) supports_notes=0 ;;
+  esac
+  if [ "$supports_notes" = "0" ] && [ -n "${caller_notes:-}" ]; then
+    echo "step 0: entity '$entity' has no notes column; supported entities are: ..." >&2
+    exit 1
+  fi
+  ```
+
+  The list is computed from the model at generation time, not at
+  script-run time. The same rule applies to every optional column the
+  recipe ever writes.
 
 ### Step 8, Write the README.mdx (human-facing catalog entry)
 
@@ -2863,7 +2938,75 @@ not be silently contradicted in another.
   Run this check **before** the README cross-check so the catalog
   list inherits a clean trigger set.
 
-**Final pass: read it cold.** After applying principles 1–6, set the
+**7. Scripts handle real-world inputs.** Pre-existing structural
+checks pass on scripts that would still 4xx in production the moment
+a real catalog name with a space hits them. Walk every file in
+`scripts/` AND every inline bash recipe in SKILL.md and run these
+literal-text scans. Each is mechanical and detects a class of bug
+the earlier principles miss because the offending lines look fine
+in isolation.
+
+- *Raw `$var` interpolation into a URL path.* Regex-scan every
+  `semantius call crud postgrestRequest "{...}"` invocation for
+  `$<varname>` or `${<varname>}` appearing inside a `path` value
+  in a position that is **not** preceded by an `=eq.` against a
+  known-UUID variable (`id`, `<entity>_id`). Every other
+  interpolated value (search terms going into `wfts(simple).<term>`,
+  exact-match filters whose value is a caller string like
+  `alias_name=eq.<value>` or `relationship_verb=eq.<value>`, value
+  lists in `in.(...)` filters) must come from a pre-encoded
+  variable produced by `printf '%s' "$raw" | jq -sRr @uri`. A line
+  that interpolates raw `$user_input` into the URL is a defect.
+  Most catalog names contain spaces (`Customer Management`,
+  `Investment Banking`, `Service Desk`); raw interpolation silently
+  mangles them. Fix in place: introduce `enc_<name>=$(printf '%s'
+  "$raw_<name>" | jq -sRr @uri)` and reference `${enc_<name>}` in
+  the path.
+- *String-concatenated JSON bodies.* Scan every script for the
+  shapes `body="{` or `body="$body,` or any line that builds a
+  JSON body by appending interpolated `"$var"` fragments. Every
+  body must be built with `jq -nc --arg <key> "$<var>" ...
+  '{...}'`. The naïve concatenation pattern fails the moment a
+  caller value contains a `"`, a `\`, a newline, or a control
+  character; research-agent prose is full of these. The platform
+  surfaces a generic JSON parse error rather than the validation
+  error the recipe was trying to test. Fix in place: rewrite the
+  body using `jq`, using `--argjson` for booleans / numbers /
+  nested objects and `--arg` for strings.
+- *Optional columns written without a per-entity guard.* For every
+  script that accepts an optional arg corresponding to a column
+  (`notes`, `description`, `condition_notes`, `is_preferred`, any
+  arg whose name matches a column on *some* but not *all* targeted
+  entities), walk back to the model's per-entity field list (from
+  Step 2's parse) and confirm the script enforces the entity-
+  carries-this-column check before composing the body. A
+  polymorphic script that unconditionally writes `notes` against an
+  `entity` arg will 4xx on every entity that lacks a `notes` column;
+  the platform's `column "notes" does not exist` response is opaque
+  to the agent. Fix in place: bake the supports-column entity list
+  into the script (computed at generation time from the model's §3)
+  and refuse the caller's arg with a precise stderr message when
+  the target entity does not carry the column. The Step 7 template
+  shows the canonical case-statement form.
+- *`--single` vs array misuse on caller-driven lookups.* For every
+  fuzzy `wfts(simple).<term>` read, the recipe's intent is one of
+  two things, "the term must resolve to exactly one row or the
+  recipe cannot proceed" (use `--single` with a one-line guard) or
+  "zero matches is a normal branch, ambiguous needs the candidate
+  list" (use array-default with a two-step body inspection). Mixing
+  these silently mis-reports: a `--single` read on an ambiguous
+  match exits 2 (which the script may handle as "platform error"
+  rather than "user must disambiguate"); an array read whose code
+  path assumes `--single`'s bare-object shape mis-parses every row.
+  Fix in place per the use-semantius `Pattern A` / `Pattern B`
+  convention.
+
+The fix for each defect is in-place rewriting of the offending
+script lines, not "flag in summary and ship". Step 9 is a gate, not
+a status report. Re-run this principle until every script passes
+all four scans.
+
+**Final pass: read it cold.** After applying principles 1–7, set the
 files aside for a moment, then read SKILL.md top-to-bottom as if
 encountering it for the first time, and skim each reference file
 once. Where you backtrack, re-read, or pause to figure out what a
@@ -3104,13 +3247,30 @@ vibes. If any check fails, fix and re-scan before declaring done.
 12. **No `use-semantius` mentions** and no agent-harness jargon
     anywhere in the README.
 
-**Output of the self-review.** If you found nothing, write one line in
-the Step 10 summary: "Self-review pass, no issues found." If you fixed
-things, list the principles you touched and a one-phrase description
-per fix (e.g. "Principle 1: replaced 3 hardcoded timestamps with
-placeholders; Principle 2: collapsed a duplicate guardrail into one
-JTBD's failure modes"). This trails into the user's audit trail and
-helps them spot drift if they regenerate later.
+**Output of the self-review.** Report **per-principle**, not "no
+issues found" as a single line. For each of Principles 0–7 plus the
+README cross-check, write either:
+
+- the fix you made, in one phrase (e.g. "Principle 1: replaced 3
+  hardcoded timestamps with placeholders"); or
+- the evidence that the principle was *actually scanned* against the
+  generated files (e.g. "Principle 7 URL-encoding scan: 14
+  interpolation sites checked, all routed through `jq -sRr @uri`";
+  "Principle 7 JSON-body scan: 9 bodies checked, all built via
+  `jq -nc`"; "Principle 7 column-existence scan: 2 polymorphic
+  scripts have entity-supports-column guards on `notes` arg").
+
+"Self-review pass, no issues found" is **not an acceptable form**
+without the per-principle evidence, because the most common defect
+in prior generations was the generator declaring no issues while
+having skipped a principle entirely. Behavioral correctness (does
+the script actually run on real catalog names?) is checked by
+Principle 7, not by Principle 0; a Principle 0 pass plus a missing
+Principle 7 line is the recurring failure mode this report shape is
+designed to catch. If a principle has nothing to check on a given
+generation (e.g. no scripts written, so Principle 7's script scans
+are vacuous), say so explicitly: "Principle 7: no scripts written,
+vacuous."
 
 ---
 
@@ -3140,22 +3300,49 @@ Print to the user:
   so a later regeneration can confirm the gap was either closed
   (model now carries the rule, no gap reported) or knowingly accepted
   again.
-- The **self-review result** from Step 9, either "no issues found"
-  or the principles you touched and what you changed (e.g.
-  "Principle 1: replaced 2 hardcoded timestamps with placeholders;
-  Principle 3: surfaced `tag_name` uniqueness in the glossary;
-  Principle 5: tightened `comment_label` cut-rule to a deterministic
-  algorithm; Principle 6: dropped `planned` from the Triage Inputs
-  table to remove a contradiction with the Schedule routing rule").
-  This gives the user a quick audit trail.
+- The **self-review result** from Step 9, **one line per principle
+  (0 through 7 plus the README cross-check)**, in the per-principle
+  evidence shape required by Step 9's "Output of the self-review".
+  Either the fix made or the explicit scan-evidence; a collapsed
+  "no issues found" line is rejected by Step 9 and must not appear
+  here. The Principle 7 lines in particular must name a count of
+  interpolation sites / JSON bodies / polymorphic-column guards
+  inspected, not just "passed", because that was the principle
+  prior generations skipped most often. Example shape:
+  - "Principle 0: 7 JTBDs, 0 inline / 0 reference / 7 script;
+    Pass 3 alignment confirmed."
+  - "Principle 1: replaced 2 hardcoded timestamps with placeholders;
+    §1 paragraph and mermaid byte-match the model."
+  - "Principle 4: dropped a client-side discriminator pre-check in
+    `add-alias.sh`; failure-modes now name the platform `code`."
+  - "Principle 7 URL-encoding: 12 interpolation sites scanned, all
+    routed through `jq -sRr @uri`."
+  - "Principle 7 JSON bodies: 9 bodies scanned, all built via `jq
+    -nc --arg`."
+  - "Principle 7 column-existence: `promote-record.sh` now refuses
+    `notes` arg on entities without a `notes` column (7 entities
+    listed)."
+  - "Principle 7 `--single` vs array: 14 reads scanned, classified
+    per use-semantius Pattern A / Pattern B."
+  - "README cross-check: 12 checks, all pass."
 - The **file-tree size profile**, one line:
   `SKILL.md <N> lines, references/ <M> files (<lo>-<hi> lines each),
   scripts/ <K> files`. Surfacing this gives the user a feel for
   whether the split landed in a reasonable place; a 700-line SKILL.md
   with empty `references/` is a signal the classifier was too
   conservative.
-- The **audit findings** from Step 4 (skip this bullet on a fresh
-  generation). Group by file and severity:
+- The **audit findings** from Step 4. On a fresh generation Step 4
+  is skipped (there are no pre-existing artifacts to audit), but
+  the bullet still appears, with the wording **"Fresh generation;
+  Step 4 audit skipped. Behavioral correctness of the freshly-
+  written files is covered by the Step 9 self-review above
+  (Principle 0 structural + Principle 7 script-robustness)."** Do
+  not collapse to "nothing to audit", that wording invites the
+  generator (and the user) to read it as "behavioral correctness
+  was also skipped", which is exactly the failure mode the
+  per-principle self-review report is designed to prevent. On a
+  regeneration, replace the fresh-generation sentence with the
+  real findings, grouped by file and severity:
   - **Defects** (file is broken; rewrite recommended): e.g.
     "`references/score-rice.md`: linked from SKILL.md but missing
     on disk."

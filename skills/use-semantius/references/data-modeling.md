@@ -141,7 +141,7 @@ The platform ships with built-in tables for authentication, RBAC, and integratio
 
 | Field | Format | Notes |
 |---|---|---|
-| `parent_permission_id` / `child_permission_id` | parent → permissions | Holding parent transitively grants child |
+| `including_permission_id` / `included_permission_id` | both → permissions | Reads as `including_permission_id` *includes* `included_permission_id`. Holding the broader (including) permission transitively grants the narrower (included) one. |
 | `origin` | enum NOT NULL | `system` / `model` / `model_master` / `user`. Strictly immutable after INSERT. |
 
 #### `user_roles`, `role_permissions` — junctions
@@ -169,7 +169,7 @@ Platform meta-schema. **Never declare in a domain model.** The deployer manages 
 | `edit_permission` | Required, name string (e.g. `"catalog:manage"`) |
 | `icon_url` | Optional, URL to an icon representing this entity in the UI |
 | `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
-| `cube_mode` | Optional. OLAP cube generation: `disabled` (default) or `auto` (include in cube). Set to `auto` when the entity should be included in cube queries. |
+| `cube_mode` | Optional. OLAP cube generation: `auto` (default, include in cube) or `disabled`. Set to `disabled` to exclude the entity from cube queries. |
 | `audit_log` | Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value. |
 
 ### Auto-Generated Fields: NEVER Create These Manually
@@ -738,7 +738,7 @@ Heuristic for the analyst: field names like `*_name`, `*_title`, `*_label`, `*_c
 | `default` | Standard editable input, use for most fields |
 | `required` | Editable but marked mandatory in UI |
 | `readonly` | Displayed but not editable, **never import into this** |
-| `disabled` | Greyed out, not editable |
+| `disabled` | Greyed out, not editable, **never import into this** — this is the canonical mode for **computed fields** (platform owns the value, caller payloads are silently overwritten on every write) |
 | `hidden` | Not shown in forms |
 
 ### Dynamic `input_type` via `input_type_rule` (field-level JsonLogic)
@@ -1180,7 +1180,7 @@ Only use `postgrestRequest` or `sqlToRest` for:
 | `fields` | Entity attributes/columns | Belongs to entity; may reference other entities |
 | `modules` | Domain grouping | Referenced by entities, roles, permissions |
 | `permissions` | Atomic capabilities | Used by entities; granted to roles; can inherit |
-| `permission_hierarchy` | Permission inheritance | Links parent/child permissions |
+| `permission_hierarchy` | Permission inheritance | Links including/included permissions (broader includes narrower) |
 | `roles` | Permission bundles | Granted permissions; assigned to users |
 | `role_permissions` | Role ↔ Permission M:N | Junction with audit fields |
 | `users` | Actor identities | Assigned roles via `user_roles` |

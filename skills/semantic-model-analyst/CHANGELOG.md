@@ -8,6 +8,70 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## `3.6` (MINOR) — Stage 9b cross-tier FK reconciliation
+
+Adds a new mandatory mechanical sub-stage between Stage 9 (tier classification) and Stage 10 (workflow-permission scan) that walks every planned `format: parent` FK after tiers are resolved and downgrades cross-tier ones to `format: reference` + `restrict`. Closes a long-standing gap where the divergent-permission-scope rule (`data-modeling.md:748`) was authoritative on paper but never fired because FK shapes were committed before tiers were classified.
+
+**The failure mode this fixes.** Pre-3.6 flows applied the FK-shape table (`data-modeling.md:739-746`) during the entity-draft pass, then ran Stage 9 to classify tiers. By the time tiers were known, `format: parent` had already been emitted for every junction leg and every owned-child FK. The divergent-permission-scope override sat in the reference doc with no stage that actually invoked it. The canonical defect: a junction like `feature_tags` linking an operational `feature_tags` to an admin-tier `tags` shipped with `format: parent (junction)` + `cascade` on the tag leg, which lets a roadmap admin's tag deletion silently cascade through to manager-owned tagging decisions. The audit checklist's §IV.5 catches the residual case, but only after the file is written.
+
+**The new convention.**
+
+1. Stage 9 produces a tier per entity (`manage` default, `admin` when annotated, narrow tier when Stage 10 will rebind it).
+2. **Stage 9b runs immediately after.** For every planned `format: parent` FK (junction legs included), compare the child's tier to the parent's tier. If they differ, downgrade to `format: reference` + `restrict` (default) or `clear` (when §3 prose justifies orphan-survival). Never emit `cascade` on a downgraded FK — that's the exact failure mode the rule exists to prevent.
+3. Junction legs are evaluated per-leg, not table-wide. A junction may legitimately have one `parent + cascade` leg (same-tier parent) and one `reference + restrict` leg (cross-tier parent). The FK shape describes permission scope per-edge, not table symmetry.
+4. The Stage 9 confirmation table grows a third row group, `Cross-tier FK downgrades`, listing every downgrade with `(FK, child tier, parent tier, new shape)`. Empty result → write `No cross-tier FK downgrades.` rather than omit the section — the audit reads the missing block as a skipped step.
+5. The companion table in `references/data-modeling.md` is restructured so the divergent-permission rows visually mark themselves as **overriding** the "child owned by parent" and "M:N junction FK" rows. A read-order note prepended to the table tells future authors to evaluate divergence first and fall through to same-tier rows only when tiers match.
+
+**Why this is a minor bump.** The model file shape is unchanged: same §3 fields columns, same §4 relationship-summary columns, same front-matter keys. What changes is the *content* a 3.6 file produces from the same Stage 1 input: cross-tier junction legs that used to emit `parent (junction) + cascade` now emit `reference + restrict`. A 3.5 file and a 3.6 file built from the same input will differ in those cells. Downstream tools (deployer, audit, optimizer) read both shapes correctly — the deployer already accepts `reference + restrict` everywhere, and the audit's §IV.5 check is unchanged. No translation rules needed.
+
+**Companion changes.**
+- `references/data-modeling.md` lines 739–748 restructured: read-order note prepended, same-tier scope clarified per-row, divergent rows marked as overrides.
+- The audit checklist (`semantic-model-audit-checklist.md` §IV.5) is unchanged — it already catches the residual cases where Stage 9b was skipped or applied incompletely. Stage 9b is the *primary* defense; the audit is the *secondary* defense.
+
+---
+
+## `3.5` (MINOR) — platform `permission_hierarchy` field rename (`parent`/`child` → `including`/`included`)
+
+The platform renamed the `permission_hierarchy` columns: `parent_permission_id` → `including_permission_id` (the broader permission, the one doing the including) and `child_permission_id` → `included_permission_id` (the narrower permission, the one being included). The `id` natural-key shape is unchanged (`"<including_permission_id>.<included_permission_id>"` — same format as before, just with new column names supplying the values). Old field names are gone, not aliased; sending the old payload shape fails at PostgREST with an unknown-column error.
+
+**Why this is a minor bump for the analyst even though the model file shape is unchanged.** A 3.4 model file and a 3.5 model file are byte-identical for the same input — the §2 Permissions summary table still uses the `Hierarchy parent` column header, and the analyst's authoring rules for that column (rollup direction, type-vs-direction constraints) are unchanged. What did change is the SKILL.md *guide text* for what the deployer does with the column: the cell is now documented as mapping to `including_permission_id` (the broader, including end of the hierarchy row), with the row's own `Permission` mapping to `included_permission_id` (the narrower, included end). §8 step 1 documentation and the template's §8 step 1 wording were updated to spell out the new payload shape. Authors using a 3.4 file against a 3.5 deployer get the same result as authors using a 3.5 file — the analyst doesn't write hierarchy rows itself; the deployer does. The bump exists so a maintainer reading a 3.4-stamped file knows it was authored under the old documentation and a 3.5-stamped one under the new. Pre-3.5 audit / extend / rebuild flows route unchanged.
+
+**Companion changes.**
+- `semantic-model-deployer/SKILL.md` (v3.3) flips every `parent_permission_id` / `child_permission_id` reference in the actual write payload, idempotency-read filter, and verification narration to the new field names. Cross-module inclusion semantics restated as "consumer's `:read` *includes* master's `:read`" with explicit direction in the read/manage bridge rows.
+- `semantic-model-deployer/CHANGELOG.md` gains a `v3.3` entry covering the rename.
+- `semantic-model-optimizer/SKILL.md` walks cross-module bridges via `including_permission_id` (this module) + `included_permission_id` (master) instead of the old direction terms.
+- `semantius-deploy-test-maker/SKILL.md` and `references/checks-catalog.md` update the multi-column filter syntax (`and=(including_permission_id.eq.<id>,included_permission_id.eq.<id>)`) and the failure-message natural-key shape (`<including>.→.<included>`).
+- `use-semantius/references/{rbac,crud-tools,data-modeling}.md` reflect the new tool input schema and table field names. The CLI itself was updated independently (`semantius v0.4.2`) — the skills lag-fix here is documentation-only.
+
+The platform `permission_hierarchy.origin` enum and the `id` natural-key format (`"<left>.<right>"`) are unchanged. Only the two FK column names changed.
+
+---
+
+## `3.4` (MINOR) — no DDL in models, no identifier leakage in user-facing prose
+
+Two real bugs landed in v3.3 output that the existing rule set didn't catch:
+
+1. Analyst-emitted DDL fragments (`CREATE UNIQUE INDEX feature_votes_unique_voter ON feature_votes (feature_id, user_id);` and similar) appeared in the model file as if they were enforceable constraints. The deployer never executes DDL, so the line was decorative — but humans read it as a real constraint, and the underlying need (multi-column uniqueness) had no actual representation anywhere in the catalog.
+2. Entity-level **Description** sub-blocks leaked `table_name` references wrapped in backticks: *"A reusable label for categorizing `features` (e.g. mobile, enterprise, platform)."* The existing v3.3 rule against `field_name` references in §3 field-row Description cells didn't extend to the entity-level Description, and the broader "no backticks around identifiers in user-facing prose" intent was never written down as a rule the audit could enforce.
+
+**The new convention** (for authors):
+
+1. **Writing convention #6 — no identifier leakage in user-facing prose.** Banned across every prose surface (`system_description`, entity `singular_label` / `plural_label` / `Description`, field `Label` / `Description`, permission `Description`, every sub-block `description`, §6 prose, §7 question bodies): (a) backticks around any identifier or value, (b) references to other entities by `table_name` (use Singular / Plural Label or plain English), (c) `field_name` references on any prose surface (already a rule for field Description cells in v3.3; now scoped to *every* prose surface), (d) raw permission codes. Narrow exception: enum values quoted in inline `code` style **inside the §3 field-row Description cell** stay as written (the canonical *"Match Status reaches `auto_matched`"* pattern). Everywhere else, no backticks.
+
+2. **Writing convention #7 — no DDL anywhere in the model file.** SQL DDL fragments (`CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `ALTER TABLE`, `DROP TABLE`, `DROP INDEX`, `ADD COLUMN`, `ADD CONSTRAINT`, `ADD FOREIGN KEY`, `ON DELETE CASCADE` as a SQL clause, `REFERENCES <table>(<col>)`, `CREATE VIEW` / `TRIGGER` / `FUNCTION` / `PROCEDURE`) are 🔴 Blockers anywhere in the file body. The fix path: (a) re-express as a §3 structured annotation when the platform models it (single-column `unique`, `reference_delete_mode`, `precision`, `default`, JsonLogic validation rules); (b) move to §7.2 Future considerations as a forward-looking question when the platform doesn't currently model it (multi-column uniqueness, partial / expression indexes, check / exclusion constraints, triggers, views); (c) delete outright when the DDL was analyst-side commentary with no remaining intent (rare).
+
+3. **Mode B audit gains two new checks.** One 🟡 Warning per offending prose surface for identifier leakage (with a per-surface sweep offer); one 🔴 Blocker per DDL token with the offending line quoted verbatim, the proposed rewrite (annotation move or §7.2 entry), and the reason ("the deployer cannot execute this; the constraint is currently unenforced"). The two canonical DDL bugs that triggered this version (`feature_votes_unique_voter` and `feature_tags_unique_pair`) are written into the audit rule as worked examples, so the audit emits a copy-pasteable §7.2 rewrite for each.
+
+4. **Pre-save verification block gains two new lines:** `DDL tokens found: <list or "none">` and `Prose-surface identifier leaks: <count> (target: 0)`. Same shape as the v3.3 family-14 / family-15 / family-10 counters: any non-zero count blocks the Write call until the draft is fixed.
+
+5. **The Stage 4 description-prose rule** (formerly "No snake_case identifiers when referring to a sibling field") is re-framed as a special case of writing convention #6 and explicitly extended to (a) entity-level Description sub-blocks, (b) references to other entities (use Singular / Plural Label), (c) backticks. Stage 4's exception list — enum values quoted inline, external identifiers, stored format hints — is unchanged.
+
+**Minor bump justification:** the contract changes are additive author conventions and audit checks. A 3.3 file that already happens to satisfy the new rules parses unchanged against a 3.4 reader. A 3.3 file with identifier leakage or DDL fragments is now defective — but the file *structure* (front-matter shape, section order, table columns, sub-block JSON shape) is identical, so the deployer parses both versions the same way. No major bump because no parser changes.
+
+**Companion changes.** None outside this skill. The deployer ignores prose-surface content (it reads structured cells), so no deployer-side rule moves with this bump.
+
+---
+
 ## `3.2` (MINOR) — cross-entity JsonLogic primitives: `set_record`, `let`, `throw_error`
 
 The platform now exposes three JsonLogic operators that bind values into the data context before the expression body evaluates, on top of an underlying `get_record_by_id(entity_name, id)` Postgres helper. This lets `computed_fields` and `validation_rules` reach off the current row for the first time — parent-state gates, inherited values, merged labels, and domain-specific error messages are no longer "out of scope, use cube views".

@@ -273,28 +273,22 @@ By default the CLI uses a lazy-spawn background daemon to avoid MCP server start
 
 **Control via environment:**
 ```bash
-SEMANTIUS_NO_DAEMON=1 semantius info      # Force fresh connection every time
-SEMANTIUS_DAEMON_TIMEOUT=120 semantius    # 2-minute idle timeout
-SEMANTIUS_DEBUG=1 semantius info          # Show daemon debug output
+MCP_NO_DAEMON=1 semantius info      # Force fresh connection every time
+MCP_DAEMON_TIMEOUT=120 semantius    # 2-minute idle timeout
+MCP_DEBUG=1 semantius info          # Show daemon debug output
 ```
 
 ### Other Environment Variables
-
-All env vars use a configurable prefix (default `SEMANTIUS_`). `--env <prefix>`
-switches it — e.g. `--env PROD` reads `PROD_API_KEY`, `PROD_TIMEOUT`,
-`PROD_LOG_FILE`, etc., so DEV/STAGE/PROD configs can coexist in one `.env`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SEMANTIUS_API_KEY` | (required) | API key |
 | `SEMANTIUS_ORG` | (required) | Organization name |
-| `SEMANTIUS_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
-| `SEMANTIUS_CONCURRENCY` | `5` | Servers processed in parallel |
-| `SEMANTIUS_MAX_RETRIES` | `3` | Retry attempts for transient errors |
-| `SEMANTIUS_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
-| `SEMANTIUS_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
-| `SEMANTIUS_LOG_FILE` | (none) | Append one JSONL line per invocation to this path |
-| `SEMANTIUS_LOG_LEVELS` | `all` | Comma-separated subset of `{all, error, slow}` — filters which invocations log (`error` = exit != 0, `slow` = wall > 1s) |
+| `MCP_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
+| `MCP_CONCURRENCY` | `5` | Servers processed in parallel |
+| `MCP_MAX_RETRIES` | `3` | Retry attempts for transient errors |
+| `MCP_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
+| `MCP_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
 
 ---
 

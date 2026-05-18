@@ -19,7 +19,7 @@ Single-column filters use the bare form: `module_id=eq.<id>`.
 **Multi-column AND filters MUST use the PostgREST `and=()` grouping form**, not comma-joined `key=eq.X,key2=eq.Y`. The latter is parsed as a single filter whose value contains commas and produces `(22P02) invalid input syntax for type integer`. Correct form:
 
 ```
-and=(parent_permission_id.eq.<id>,child_permission_id.eq.<id>)
+and=(including_permission_id.eq.<id>,included_permission_id.eq.<id>)
 ```
 
 Note the operator separator inside `and=()` is `.` (PostgREST RPC form), not `=`.
@@ -47,18 +47,18 @@ Several live columns carry platform-chosen defaults whenever the model declares 
 
 The rule is symmetric: when the model declares a value, assert byte-equality; when the model is silent, skip the comparison even if live carries one of these defaults.
 
-### Built-in entities (lookup adjustment only, NOT a check-suppression rule)
+### Built-in entities (platform-owned; relaxed field-existence + rule-name check)
 
 Semantius ships with a small set of built-in entities (currently `users`; potentially `roles`, `permissions`, and similar in future builds). The deployer's analyst-skill convention (implementation note 6 in every model that touches `users`) is to skip the create and reuse the built-in, optionally adding fields like `is_agent` and `primary_team_id` additively.
 
-This affects **lookup**, and **only lookup**:
+Because these entities are **platform-owned** (the deployer reuses the live row as-is and does not write its entity metadata), the verifier intentionally narrows its check surface for entities in `BUILT_IN_TABLES = ["users"]`:
 
-1. Look up the built-in entity by `table_name` **unscoped by `module_id`** (the built-in's `module_id` is the platform's identity module, not the current model's module). Without this adjustment the entity would be reported as missing.
-2. After the lookup, **check the entity the same way as every other entity**. Compare `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `view_permission`, `edit_permission`, JSON rules. Check every model field by name with every model-declared property.
+1. **Lookup**: look up the built-in by `table_name` **unscoped by `module_id`** (the built-in's `module_id` is the platform's identity module, not the current model's module). Without this the entity would be reported as missing.
+2. **Field existence only**: for each field declared in the model, assert one live `fields` row exists with the same `field_name`. **Skip** every per-field property comparison (`format`, `title`, `description`, `unique_value`, `enum_values`, `default_value`, `relationship_label`, `reference_table`, `reference_delete_mode`, `input_type_rule`, and any other field-level property).
+3. **Rule-name presence**: when the model declares `computed_fields` or `validation_rules` with non-empty arrays, assert each entry's identifier (`name` for `computed_fields`, `code` for `validation_rules`) is present in the live entity's corresponding JSON array. Live may carry extra entries (additive). JsonLogic content and the entry's other metadata are **not** compared. `select_rule` has no identifier and is skipped.
+4. **Skip every other entity-level property**: no checks on `module_id`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `view_permission`, `edit_permission`, `edit_mode`, `cube_mode`, `select_rule`.
 
-**Do not suppress field checks on built-in entities.** The model is the contract; the test reports every difference. When the model declares `users.user_name` and the built-in has `display_name`, that is a real difference between model and live state. The fact that it has a known root cause (the deployer's dedup convention conflicts with the analyst declaring overlap fields in §3) does not make it noise — it makes it a coordination bug somewhere in the analyst/deployer/platform triple. Surface every such failure; let the user decide whether to update the model, fix the deployer, or accept the drift as documented.
-
-The `module_id` mismatch (built-in's `module_id` ≠ this model's `module_id`) is **also** reported as a normal entity property difference. The lookup adjustment only ensures the entity is found at all; it does not change what's compared.
+This is a deliberate departure from the verifier's general "over-check, never under-check" rule. The justification is asymmetric ownership: the deployer never writes any of the built-in's entity-level metadata, so the model's declaration of those properties is documentation of the model's own assumption about the platform, not a deploy assertion. Reporting them as drift would produce permanent false positives on every run. The deployer is responsible for the *fields* the model writes (which is why field existence is still asserted) and for registering the *workflow rules* the model relies on (which is why rule-name presence is still asserted); the rest is platform-owned and out of scope.
 
 This rule applies to every entity in `BUILT_IN_TABLES = ["users"]`. When a future major bump adds more, extend the constant.
 
@@ -111,6 +111,8 @@ For every row in the §2 Permissions summary table, plus the implicit baseline (
 
 The script must resolve the module id once (from 1.1) and reuse it; do not re-read the module for every permission check.
 
+**Look up each permission individually by its unique `permission_name`, scoped globally (no `module_id` filter).** A permission row that exists with the right name but a null or mismatched `module_id` must be found by this lookup and reported as a `module_id` property difference, not as `permission missing`. Do **not** batch-read all permissions with `module_id=eq.<id>` and filter client-side; that pattern hides rows whose `module_id` is null and produces misleading "missing" failures for permissions that actually exist. Build the `permission_name → id` map from these per-permission `--single` reads.
+
 ---
 
 ## 3. Permission hierarchy
@@ -122,13 +124,13 @@ For every row in the §2 Permissions summary table whose `Hierarchy parent` is *
 - `<slug>:manage → <slug>:read` (always, when both permissions exist)
 - `<slug>:admin → <slug>:manage` (only when the model declares a `baseline-admin` row)
 
-The edge convention is *parent → child*, i.e. `parent_permission` is the broader permission (`manage`) and `child_permission` is the narrower one (`read`) that the parent implicitly grants.
+The edge convention is *including → included*, i.e. `including_permission` is the broader permission (`manage`) and `included_permission` is the narrower one (`read`) that the broader permission implicitly grants. Read as `including_permission` ── *includes* ──▶ `included_permission`.
 
 | Field | Detail |
 |---|---|
 | Group | `permission_hierarchy` |
-| Natural key | `<parent_permission_name> → <child_permission_name>` |
-| Call | `semantius call crud read_permission_hierarchy '{"filters":"and=(parent_permission_id.eq.<id>,child_permission_id.eq.<id>)"}'` (array read; expect exactly one row) |
+| Natural key | `<including_permission_name> → <included_permission_name>` |
+| Call | `semantius call crud read_permission_hierarchy '{"filters":"and=(including_permission_id.eq.<id>,included_permission_id.eq.<id>)"}'` (array read; expect exactly one row) |
 | Compared | row count == 1 |
 | Failure | `expected: present  actual: missing  why: hierarchy edge declared in model is not in live state` |
 
@@ -157,6 +159,8 @@ The live `roles` table's natural key is the **`slug`** column (snake_case machin
 | Failure | `expected: present  actual: missing  why: default role missing` |
 
 Roles' `role_name` and `description` are deployer-chosen defaults that the deployer may evolve; do **not** assert them. Only `slug`, `module_id`, and existence are load-bearing.
+
+**Look up each role individually by its unique `slug`, scoped globally (no `module_id` filter).** A role row that exists with the right slug but a null or mismatched `module_id` must be found by this lookup and reported as a `module_id` property difference, not as `default role missing`. Do **not** batch-read all roles with `module_id=eq.<id>` and filter client-side. Build the `slug → id` map from these per-role `--single` reads.
 
 ---
 
@@ -216,13 +220,16 @@ For every entity in the model's §2 table, assert the live `entities` row exists
 
 A missing entity is one failure (`entity missing`); do not cascade into field checks for that entity (skip its fields with a single "entity missing, skipping field checks" note).
 
-### Built-in entity handling (lookup adjustment only)
+### Built-in entity handling (relaxed branch)
 
-When the entity's `table_name` is in `BUILT_IN_TABLES` (currently `["users"]`), the only adjustment is the **lookup**: query `read_entity --single '{"filters":"table_name=eq.<table>"}'` without a `module_id` filter, because the live row sits in the platform's identity module rather than the model's module.
+When the entity's `table_name` is in `BUILT_IN_TABLES` (currently `["users"]`), the verifier takes the relaxed branch described in "Built-in entities" at the top of this catalog. Concretely:
 
-After the lookup, run every other check as if the entity were normally model-owned. The `module_id` will likely mismatch; report it as a regular failure. Field checks proceed as usual. If the model declares fields the deployer did not create (because the deployer's analyst-convention dedup told it not to), the test reports those as missing fields — a real difference between the model and live state, even when the cause is "the deployer behaved as designed".
+1. Look up the entity with `read_entity --single '{"filters":"table_name=eq.<table>"}'`, unscoped by `module_id`. A missing row is a single `entity missing` failure with no downstream checks.
+2. **Skip** every entity-property comparison (`module_id`, `singular_label`, `plural_label`, `description`, `label_column`, `audit_log`, `view_permission`, `edit_permission`, `edit_mode`, `cube_mode`, `select_rule`).
+3. For the entity's JSON rule arrays: when the model declares `computed_fields` with non-empty entries, assert each entry's `name` is present in `live.computed_fields`. When the model declares `validation_rules` with non-empty entries, assert each entry's `code` is present in `live.validation_rules`. Otherwise skip. Do not deep-equal the rule bodies.
+4. For each field in the model: assert the live `fields` row with the matching `field_name` exists. **Skip every per-field property check** (format, title, description, unique_value, enum_values, default_value, relationship labels, references, input_type_rule).
 
-Do **not** suppress checks on built-ins; the test's load-bearing job is to report every model-vs-live difference, not to absorb known-cause drift.
+Built-in entities are documented in the model for the model's own consumption (so the analyst/skills downstream of the model know which columns the model relies on). The verifier confirms that load-bearing subset and intentionally leaves the rest to the platform.
 
 ---
 
@@ -256,7 +263,7 @@ For every field row in every entity's §3 table, **after** auto-field stripping,
 | `default_value` | from the `default: "<value>"` annotation | skip if absent; live `""` is the platform default for "no default" |
 | `unique_value` | `true` when the Notes cell contains the bare token `unique`; otherwise `false` | always check |
 | `enum_values` | the §5 sub-section the Notes cell references (only for `format: enum`) | always check on enum fields |
-| `input_type_rule` | the `Input type rules` JSON entry for this field, by `field` name | skip if the entity has no entry for this field; live carries `{}` (empty object) as the platform default |
+| `input_type_rule` | the **`jsonlogic` sub-object** of the entity's `Input type rules` entry matched by `field` name (NOT the full `{field, description, jsonlogic}` entry — the deployer drops the wrapping `field` and `description` keys and only stores the `jsonlogic` body on `fields.input_type_rule`) | skip if the entity has no entry for this field; live carries `{}` (empty object) as the platform default |
 
 The "platform sentinel values" table at the top of this catalog is the canonical list of "live values that mean model-silent". Cross-reference it when in doubt; the per-column rules here are derived from it.
 
@@ -272,13 +279,15 @@ For `format: enum` fields, the model declares a value list in §5. The live `enu
 
 ### JSON property comparison
 
-`computed_fields`, `validation_rules`, `select_rule`, `input_type_rule` are compared by deep value-equality after canonicalization:
+`computed_fields`, `validation_rules`, `select_rule` (all entity-level) and `input_type_rule` (field-level) are compared by deep value-equality after canonicalization:
 
 1. Recursively sort object keys.
 2. Leave arrays in declared order (order is significant for `computed_fields`, `validation_rules`, and the visible enum-value list; not for object keys).
 3. Compare via `JSON.stringify` of the canonicalized form.
 
 A whitespace-only difference is **not** a failure (canonicalization removes it). A semantic difference (extra key, missing key, different value) is.
+
+For `input_type_rule` specifically, the expected value is the entry's **`jsonlogic` sub-object**, not the full `{field, description, jsonlogic}` entry from the entity's `Input type rules` array. The deployer drops the wrapping `field` (redundant with the row's `field_name`) and `description` (analyst-only documentation) keys when writing the field row. Comparing the full entry against the live value produces guaranteed false-positive drift for every field with an input type rule; the script must lift `entry.jsonlogic` out of the model entry before comparing.
 
 ### Batch reads (performance)
 
