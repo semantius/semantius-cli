@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(git status *)",
-      "Bash(./scripts/release.sh 0.5.0)"
+      "Bash(./scripts/release.sh 0.5.0)",
+      "Bash(./scripts/release.sh 0.5.1)"
     ]
   }
 }
