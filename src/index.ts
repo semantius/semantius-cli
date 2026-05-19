@@ -39,6 +39,7 @@ import {
   unknownOptionError,
   unknownSubcommandError,
 } from './errors.js';
+import { setJwtCacheDisabled } from './jwt-cache.js';
 import { enableFromEnv, initLogger, recordError } from './logger.js';
 
 interface ParsedArgs {
@@ -63,6 +64,7 @@ interface ParsedArgs {
   single: boolean;
   envPrefix: string;
   pingCount?: number;
+  disableJwtCache: boolean;
 }
 
 /**
@@ -154,6 +156,7 @@ function parseArgs(args: string[]): ParsedArgs {
     diag: false,
     single: false,
     envPrefix: 'SEMANTIUS',
+    disableJwtCache: false,
   };
 
   const positional: string[] = [];
@@ -188,6 +191,10 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--single':
         result.single = true;
+        break;
+
+      case '--disable-jwt-cache':
+        result.disableJwtCache = true;
         break;
 
       case '-c':
@@ -453,6 +460,7 @@ Options:
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
+  --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
 
 Output:
   semantius/info/grep      Human-readable text to stdout
@@ -486,6 +494,7 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
   SEMANTIUS_MAX_RETRIES=N      Max retry attempts for transient errors (default: 3)
   SEMANTIUS_RETRY_DELAY=N      Base retry backoff in ms (default: 1000)
   SEMANTIUS_NO_DAEMON=1        Disable connection caching (force fresh connections)
+  SEMANTIUS_DISABLE_JWT_CACHE=1 Disable the encrypted token cache (re-authenticate every request)
   SEMANTIUS_DAEMON_TIMEOUT=N   Daemon idle timeout in seconds (default: 60)
   SEMANTIUS_STRICT_ENV=false   Warn (don't error) on unresolved \${VAR} refs in config
   SEMANTIUS_CONFIG_PATH=<path> Path to mcp_servers.json (overrides default search)
@@ -560,6 +569,10 @@ async function main(): Promise<void> {
   // parseArgs's value wins (it's the canonical parser) — re-apply in case
   // findEnvPrefix's lightweight scan disagrees on edge cases.
   setEnvPrefix(args.envPrefix);
+
+  if (args.disableJwtCache) {
+    setJwtCacheDisabled(true);
+  }
 
   if (args.command === 'help') {
     // Load .env early so help can reflect actual missing vars

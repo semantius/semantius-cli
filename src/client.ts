@@ -14,6 +14,7 @@ import {
   debug,
   filterTools,
   getConcurrencyLimit,
+  getLastLoadedConfig,
   getMaxRetries,
   getRetryDelayMs,
   getTimeoutMs,
@@ -26,6 +27,12 @@ import {
   cleanupOrphanedDaemons,
   getDaemonConnection,
 } from './daemon-client.js';
+import {
+  type CachedToken,
+  isJwtCacheDisabled,
+  readCachedToken,
+  writeCachedToken,
+} from './jwt-cache.js';
 import { timeMcp } from './logger.js';
 
 // Re-export config utilities for convenience
@@ -379,6 +386,158 @@ export async function callTool(
 }
 
 // ============================================================================
+// JWT Auth Transform
+// ============================================================================
+
+const API_KEY_HEADER = 'x-api-key';
+const TOKEN_TOOL = 'get_cli_token';
+
+/**
+ * In-memory dedupe of JWT fetches inside a single CLI invocation. Without
+ * this, parallel `getConnection` calls (e.g. `list` connecting to every
+ * server) would each trigger their own get_cli_token round trip.
+ */
+const _jwtFetches = new Map<string, Promise<CachedToken | null>>();
+
+/**
+ * Extract the get_cli_token payload from a tool-call result. The crud server
+ * may return the JSON directly or wrapped in the postgrestRequest envelope
+ * `{ request, response: { data } }`.
+ */
+function parseTokenResult(result: unknown): CachedToken | null {
+  const r = result as {
+    content?: Array<{ type: string; text?: string }>;
+    isError?: boolean;
+  };
+  if (r.isError) return null;
+
+  const text =
+    r.content
+      ?.filter((c) => c.type === 'text' && c.text)
+      .map((c) => c.text as string)
+      .join('') ?? '';
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  let token: unknown = parsed;
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    'response' in parsed &&
+    typeof (parsed as Record<string, unknown>).response === 'object' &&
+    (parsed as Record<string, unknown>).response !== null
+  ) {
+    const resp = (parsed as Record<string, unknown>).response as Record<
+      string,
+      unknown
+    >;
+    if ('data' in resp) token = resp.data;
+  }
+
+  if (!token || typeof token !== 'object') return null;
+  const t = token as Record<string, unknown>;
+  if (typeof t.jwt !== 'string' || typeof t.expires !== 'string') return null;
+  return { jwt: t.jwt, expires: t.expires };
+}
+
+/**
+ * Find an HTTP server in the loaded config that carries the same API key
+ * (so we know where to call get_cli_token). Prefers a server named "crud"
+ * — the canonical token issuer — but falls back to any matching server.
+ */
+function findJwtIssuer(
+  apiKey: string,
+): { name: string; config: HttpServerConfig } | null {
+  const loaded = getLastLoadedConfig();
+  if (!loaded) return null;
+
+  const candidates: Array<{ name: string; config: HttpServerConfig }> = [];
+  for (const [name, cfg] of Object.entries(loaded.mcpServers)) {
+    if (isHttpServer(cfg) && cfg.headers?.[API_KEY_HEADER] === apiKey) {
+      candidates.push({ name, config: cfg });
+    }
+  }
+  if (candidates.length === 0) return null;
+  const crud = candidates.find((c) => c.name === 'crud');
+  return crud ?? candidates[0];
+}
+
+/**
+ * Return a valid JWT for this API key. Disk-cache first, then fetch via
+ * `get_cli_token` over a direct (no-daemon, no-transform) connection.
+ * Returns null if no token could be obtained — callers fall back to
+ * sending the API key directly.
+ */
+async function resolveJwt(
+  apiKey: string,
+  fallbackIssuer: { name: string; config: HttpServerConfig },
+): Promise<CachedToken | null> {
+  const existing = _jwtFetches.get(apiKey);
+  if (existing) return existing;
+
+  const promise = (async (): Promise<CachedToken | null> => {
+    const cached = await readCachedToken(apiKey);
+    if (cached) return cached;
+
+    const issuer = findJwtIssuer(apiKey) ?? fallbackIssuer;
+    debug(
+      `JWT cache miss; fetching via ${issuer.name}/${TOKEN_TOOL} (${issuer.config.url})`,
+    );
+
+    let client: ConnectedClient | null = null;
+    try {
+      client = await connectToServer(issuer.name, issuer.config);
+      const result = await callTool(client.client, TOKEN_TOOL, {});
+      const token = parseTokenResult(result);
+      if (!token) {
+        debug('get_cli_token returned no usable token');
+        return null;
+      }
+      await writeCachedToken(apiKey, token);
+      return token;
+    } catch (err) {
+      debug(`get_cli_token failed: ${(err as Error).message}`);
+      return null;
+    } finally {
+      if (client) await safeClose(client.close);
+    }
+  })();
+
+  _jwtFetches.set(apiKey, promise);
+  return promise;
+}
+
+/**
+ * If JWT caching is enabled and the server uses x-api-key, swap that header
+ * for `Authorization: Bearer <jwt>`. Falls through to the original config
+ * on any failure so a broken cache layer never blocks the actual command.
+ */
+async function transformConfigWithJwt(
+  serverName: string,
+  config: ServerConfig,
+): Promise<ServerConfig> {
+  if (isJwtCacheDisabled()) return config;
+  if (!isHttpServer(config)) return config;
+  const apiKey = config.headers?.[API_KEY_HEADER];
+  if (!apiKey) return config;
+
+  const token = await resolveJwt(apiKey, { name: serverName, config });
+  if (!token) return config;
+
+  const newHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(config.headers ?? {})) {
+    if (k.toLowerCase() !== API_KEY_HEADER) newHeaders[k] = v;
+  }
+  newHeaders.Authorization = `Bearer ${token.jwt}`;
+  return { ...config, headers: newHeaders };
+}
+
+// ============================================================================
 // Unified Connection Interface (Daemon + Direct)
 // ============================================================================
 
@@ -399,10 +558,14 @@ export async function getConnection(
   // Clean up any orphaned daemons on first call
   await cleanupOrphanedDaemons();
 
+  // Swap x-api-key for a Bearer JWT if the cache layer can provide one.
+  // No-op if caching is disabled, the server isn't HTTP, or no API key is set.
+  const resolvedConfig = await transformConfigWithJwt(serverName, config);
+
   // Try daemon connection if enabled
   if (isDaemonEnabled()) {
     try {
-      const daemonConn = await getDaemonConnection(serverName, config);
+      const daemonConn = await getDaemonConnection(serverName, resolvedConfig);
       if (daemonConn) {
         debug(`Using daemon connection for ${serverName}`);
         return {
@@ -442,7 +605,7 @@ export async function getConnection(
 
   // Fall back to direct connection
   debug(`Using direct connection for ${serverName}`);
-  const { client, close } = await connectToServer(serverName, config);
+  const { client, close } = await connectToServer(serverName, resolvedConfig);
 
   return {
     async listTools(): Promise<ToolInfo[]> {

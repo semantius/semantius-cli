@@ -8,7 +8,7 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 - 🔧 **Shell-Friendly** - JSON output for call, pipes with `jq`, chaining support
 - 🤖 **Agent-Optimized** - Designed for AI coding agents (Gemini CLI, Claude Code, etc.)
 - 🔌 **Semantius Platform** - Connects to your Semantius organization's `crud` and `cube` MCP servers
-- ⚡ **Connection Pooling** - Lazy-spawn daemon keeps connections warm (60s idle timeout, POSIX only — see [Connection Pooling (Daemon)](#connection-pooling-daemon))
+- ⚡ **Fast** - Connections and tokens are cached between calls, so repeated invocations stay responsive
 - 🔑 **Zero Config** - Works out of the box with `SEMANTIUS_API_KEY` and `SEMANTIUS_ORG` set
 - 💡 **Actionable Errors** - Structured error messages with available servers and recovery suggestions
 
@@ -95,6 +95,7 @@ semantius [options] whoami                      Show current user (email, org, r
 | `-d, --with-descriptions` | Include tool descriptions |
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
 | `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
+| `--disable-jwt-cache` | Skip the token cache and re-authenticate on every request (see [Token cache](#token-cache)) |
 
 
 ### Output
@@ -292,10 +293,28 @@ configurations side by side in the same `.env`.
 | `SEMANTIUS_MAX_RETRIES` | Retry attempts for transient errors (0 = disable) | `3` |
 | `SEMANTIUS_RETRY_DELAY` | Base retry delay (milliseconds) | `1000` |
 | `SEMANTIUS_STRICT_ENV` | Error on missing `${VAR}` in config | `true` |
-| `SEMANTIUS_NO_DAEMON` | Disable connection caching (force fresh connections) | `false` |
-| `SEMANTIUS_DAEMON_TIMEOUT` | Idle timeout for cached connections (seconds) | `60` |
+| `SEMANTIUS_NO_DAEMON` | Disable connection caching; open a fresh connection per call (Linux/macOS only — no-op on Windows) | `false` |
+| `SEMANTIUS_DAEMON_TIMEOUT` | How long a cached connection stays open after last use (seconds, Linux/macOS only) | `60` |
+| `SEMANTIUS_DISABLE_JWT_CACHE` | Disable the encrypted token cache; re-authenticate on every request | `false` |
 | `SEMANTIUS_LOG_FILE` | Append one JSONL line per invocation to this path. Bare filename is written next to the loaded `.env` (or in the user config dir); absolute/relative paths are used as-is. | (none) |
 | `SEMANTIUS_LOG_LEVELS` | Comma-separated subset of `{all, error, slow}` that filters which invocations are logged. `error` = exit code != 0; `slow` = wall time > 1000 ms; multiple values OR-combine (e.g. `error,slow`). Unknown/empty falls back to `all`. | `all` |
+
+### Token cache
+
+By default, the CLI exchanges your API key for a short-lived token on
+first use and caches it for subsequent requests, so every call after the
+first is significantly faster. The token is refreshed automatically
+before it expires.
+
+The cache lives in your OS temp directory (`/tmp` on Linux/macOS, `%TEMP%`
+on Windows) and is encrypted with a key derived from your API key secret —
+a cache file alone, without the API key, cannot be used to authenticate.
+
+To disable the cache and re-authenticate on every call, pass
+`--disable-jwt-cache` or set `SEMANTIUS_DISABLE_JWT_CACHE=1`. Disabling
+degrades performance and should only be used when your threat model
+forbids any credential-derived material on disk, or when running in a
+read-only container where the cache file cannot be written anyway.
 
 ## Using with AI Agents
 
@@ -368,117 +387,6 @@ EOF
 For Code Agents that support Agents Skills, like Gemini CLI, OpenCode or Claude Code, you can use the semantius skill. The Skill is available at [SKILL.md](./SKILL.md)
 
 Create `semantius/SKILL.md` in your skills directory.
-
-## Architecture
-
-### Connection Pooling (Daemon)
-
-By default, the CLI uses **lazy-spawn connection pooling** to avoid repeated MCP server startup latency:
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                        First CLI Call                              │
-│   $ semantius info server                                            │
-└────────────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌────────────────────────────────────────────────────────────────────┐
-│ Check: /tmp/semantius-{uid}/server.sock exists?                      │
-└────────────────────────────────────────────────────────────────────┘
-         │                                    │
-         │ NO                                 │ YES
-         ▼                                    ▼
-┌─────────────────────────┐      ┌───────────────────────────────────┐
-│ Fork background daemon  │      │ Connect to existing socket        │
-│ ├─ Connect to MCP server│      │ ├─ Send request via IPC           │
-│ ├─ Create Unix socket   │      │ ├─ Receive response               │
-│ └─ Start 60s idle timer │      │ └─ Daemon resets idle timer       │
-└─────────────────────────┘      └───────────────────────────────────┘
-         │                                    │
-         └────────────────┬───────────────────┘
-                          ▼
-┌────────────────────────────────────────────────────────────────────┐
-│ On idle timeout (60s): Daemon self-terminates, cleans up files    │
-└────────────────────────────────────────────────────────────────────┘
-```
-
-**Key features:**
-- **Automatic**: No manual start/stop needed
-- **Per-server**: Each MCP server gets its own daemon
-- **Stale detection**: Config changes trigger re-spawn
-- **Fast fallback**: 5s spawn timeout, then direct connection
-
-**Control via environment:**
-```bash
-SEMANTIUS_NO_DAEMON=1 semantius info      # Force fresh connection
-SEMANTIUS_DAEMON_TIMEOUT=120 semantius    # 2 minute idle timeout
-SEMANTIUS_DEBUG=1 semantius info          # See daemon debug output
-```
-
-> [!IMPORTANT]
-> **Windows: connection pooling is disabled.** The daemon relies on POSIX
-> Unix domain sockets under `/tmp/semantius-<uid>/` and `process.getuid()`,
-> neither of which is available on Windows. On `win32`, `semantius` skips
-> the daemon entirely and uses direct connections for every invocation, so
-> expect ~MCP-server-startup latency per call. `SEMANTIUS_NO_DAEMON` and
-> `SEMANTIUS_DAEMON_TIMEOUT` are no-ops on Windows.
-
-### Connection Model (Direct)
-
-When daemon is disabled (`SEMANTIUS_NO_DAEMON=1`), the CLI uses a **lazy, on-demand connection strategy**. Server connections are only established when needed and closed immediately after use.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         USER REQUEST                            │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              │                 │                 │
-              ▼                 ▼                 ▼
-    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-    │   semantius info  │ │ semantius grep    │ │ semantius call    │
-    │   (list all)    │ │   "*pattern*"   │ │  server tool {} │
-    └─────────────────┘ └─────────────────┘ └─────────────────┘
-              │                 │                 │
-              ▼                 ▼                 ▼
-    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-    │  Connect to ALL │ │  Connect to ALL │ │  Connect to ONE │
-    │  servers (N)    │ │  servers (N)    │ │  server only    │
-    └─────────────────┘ └─────────────────┘ └─────────────────┘
-              │                 │                 │
-              ▼                 ▼                 ▼
-         List tools       Search tools       Execute tool
-              │                 │                 │
-              ▼                 ▼                 ▼
-    ┌─────────────────────────────────────────────────────────────┐
-    │                    CLOSE CONNECTIONS                        │
-    └─────────────────────────────────────────────────────────────┘
-```
-
-**When are servers connected?**
-
-| Command | Servers Connected |
-|---------|-------------------|
-| `semantius info` | All N servers in parallel |
-| `semantius grep "*pattern*"` | All N servers in parallel |
-| `semantius info <server>` | Only the specified server |
-| `semantius info <server> <tool>` | Only the specified server |
-| `semantius call <server> <tool> '{}'` | Only the specified server |
-
-
-### Error Handling & Retry
-
-The CLI includes **automatic retry with exponential backoff** for transient failures.
-
-**Transient errors (auto-retried):**
-- Network: `ECONNREFUSED`, `ETIMEDOUT`, `ECONNRESET`
-- HTTP: `502`, `503`, `504`, `429`
-
-**Non-transient errors (fail immediately):**
-- Config: Invalid JSON, missing fields
-- Auth: `401`, `403`
-- Tool: Validation errors, not found
-
 
 ## Development
 
@@ -567,8 +475,8 @@ Debug mode prints daemon spawn decisions, MCP transport activity, and
 underlying error messages that are normally hidden behind the friendly
 `Error [CODE]: …` output.
 
-To bypass the daemon and see raw per-call latency (also the default on
-Windows — see [Connection Pooling (Daemon)](#connection-pooling-daemon)):
+To bypass the connection cache and see raw per-call latency (also the
+default on Windows):
 
 ```bash
 SEMANTIUS_NO_DAEMON=1 bun run dev ping -n 5

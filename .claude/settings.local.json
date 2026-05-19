@@ -6,7 +6,11 @@
       "Bash(where claude *)",
       "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/data-modeling.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/data-modeling.md)",
       "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/rbac.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/rbac.md)",
-      "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/crud-tools.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/crud-tools.md)"
+      "Bash(cp /c/dev/semantius-cli/skills/semantius-cli/references/crud-tools.md /c/Users/MartinAmm/.claude/skills/semantius-cli/references/crud-tools.md)",
+      "Bash(cd c:/dev/semantius-cli && ls -la \"C:/Users/MARTIN~1/AppData/Local/Temp/semantius-jwt-\"* 2>&1 | head -5)",
+      "Read(//c/Users/MARTIN~1/AppData/Local/Temp/**)",
+      "Bash(SEMANTIUS_NO_DAEMON=1 SEMANTIUS_DEBUG=1 bun run ../../src/index.ts whoami)",
+      "Bash(SEMANTIUS_NO_DAEMON=1 SEMANTIUS_DEBUG=1 bun run ../../src/index.ts --disable-jwt-cache whoami)"
     ]
   },
   "enabledPlugins": {}

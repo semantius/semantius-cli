@@ -595,6 +595,16 @@ function getDefaultConfigPaths(): string[] {
   return paths;
 }
 
+// Most recently loaded config. Used by the JWT-cache layer in client.ts to
+// locate a server (typically "crud") that can issue tokens via get_cli_token
+// when the cache misses, without threading the whole config object through
+// every command handler.
+let _lastLoadedConfig: McpServersConfig | undefined;
+
+export function getLastLoadedConfig(): McpServersConfig | undefined {
+  return _lastLoadedConfig;
+}
+
 /**
  * Load and parse MCP servers configuration
  */
@@ -630,7 +640,9 @@ export async function loadConfig(
       // No config file found — use built-in default config
       debug('No config file found; using built-in default config');
       await loadDotEnv();
-      return substituteEnvVarsInObject(getDefaultConfig());
+      const defaults = substituteEnvVarsInObject(getDefaultConfig());
+      _lastLoadedConfig = defaults;
+      return defaults;
     }
   }
 
@@ -708,6 +720,7 @@ export async function loadConfig(
   // Substitute environment variables
   config = substituteEnvVarsInObject(config);
 
+  _lastLoadedConfig = config;
   return config;
 }
 
