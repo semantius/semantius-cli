@@ -8,7 +8,7 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 - 🔧 **Shell-Friendly** - JSON output for call, pipes with `jq`, chaining support
 - 🤖 **Agent-Optimized** - Designed for AI coding agents (Gemini CLI, Claude Code, etc.)
 - 🔌 **Semantius Platform** - Connects to your Semantius organization's `crud` and `cube` MCP servers
-- ⚡ **Connection Pooling** - Lazy-spawn daemon keeps connections warm (60s idle timeout)
+- ⚡ **Connection Pooling** - Lazy-spawn daemon keeps connections warm (60s idle timeout, POSIX only — see [Connection Pooling (Daemon)](#connection-pooling-daemon))
 - 🔑 **Zero Config** - Works out of the box with `SEMANTIUS_API_KEY` and `SEMANTIUS_ORG` set
 - 💡 **Actionable Errors** - Structured error messages with available servers and recovery suggestions
 
@@ -77,6 +77,8 @@ semantius [options] info <server> <tool>        Show tool schema
 semantius [options] grep <pattern>              Search tools by glob pattern
 semantius [options] call <server> <tool>        Call tool (reads JSON from stdin if no args)
 semantius [options] call <server> <tool> <json> Call tool with JSON arguments
+semantius [options] ping [-n [count]]           Check connectivity & latency to crud/getCurrentUser
+semantius [options] whoami                      Show current user (email, org, roles)
 ```
 
 **Both formats work:** `info <server> <tool>` or `info <server>/<tool>`
@@ -92,6 +94,7 @@ semantius [options] call <server> <tool> <json> Call tool with JSON arguments
 | `-v, --version` | Show version number |
 | `-d, --with-descriptions` | Include tool descriptions |
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
+| `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
 
 
 ### Output
@@ -412,6 +415,14 @@ SEMANTIUS_DAEMON_TIMEOUT=120 semantius    # 2 minute idle timeout
 SEMANTIUS_DEBUG=1 semantius info          # See daemon debug output
 ```
 
+> [!IMPORTANT]
+> **Windows: connection pooling is disabled.** The daemon relies on POSIX
+> Unix domain sockets under `/tmp/semantius-<uid>/` and `process.getuid()`,
+> neither of which is available on Windows. On `win32`, `semantius` skips
+> the daemon entirely and uses direct connections for every invocation, so
+> expect ~MCP-server-startup latency per call. `SEMANTIUS_NO_DAEMON` and
+> `SEMANTIUS_DAEMON_TIMEOUT` are no-ops on Windows.
+
 ### Connection Model (Direct)
 
 When daemon is disabled (`SEMANTIUS_NO_DAEMON=1`), the CLI uses a **lazy, on-demand connection strategy**. Server connections are only established when needed and closed immediately after use.
@@ -512,28 +523,101 @@ bun run build
 bun run build:all
 ```
 
-### Local Testing
+### Local Testing & Debugging
 
-Test the CLI locally without compiling by using `bun link`:
+There are three ways to run the CLI while iterating on a change — pick
+whichever matches what you're trying to verify.
+
+#### 1. `bun run dev` — fastest feedback loop
+
+`bun run dev` runs `src/index.ts` directly via Bun; no build step, no link.
+Just pass the same args you'd give the installed binary:
 
 ```bash
-# Link the package globally (run once)
-bun link
-
-# Now you can use 'semantius' anywhere
-semantius --help
-semantius info crud
-
-# Or run directly during development
+# Basic commands
 bun run dev --help
 bun run dev info crud
+bun run dev whoami
+bun run dev ping
+bun run dev ping -n            # 5 pings + min/max/avg
+bun run dev ping -n 20         # 20 pings + min/max/avg
+bun run dev grep "*record*"
+bun run dev call crud getCurrentUser '{}'
+
+# Pipe JSON in via stdin
+echo '{}' | bun run dev call crud getCurrentUser
 ```
 
-To unlink when done:
+Required env vars (`SEMANTIUS_API_KEY`, `SEMANTIUS_ORG`) are picked up from
+your shell or from a `.env` next to the binary / in the user config dir.
+Use `--env <prefix>` to test a different credential set (e.g.
+`--env STAGING` reads `STAGING_API_KEY` / `STAGING_ORG`).
+
+#### 2. Verbose / debug output
 
 ```bash
+# Bash / macOS / Linux
+SEMANTIUS_DEBUG=1 bun run dev ping
+
+# PowerShell
+$env:SEMANTIUS_DEBUG=1; bun run dev ping
+```
+
+Debug mode prints daemon spawn decisions, MCP transport activity, and
+underlying error messages that are normally hidden behind the friendly
+`Error [CODE]: …` output.
+
+To bypass the daemon and see raw per-call latency (also the default on
+Windows — see [Connection Pooling (Daemon)](#connection-pooling-daemon)):
+
+```bash
+SEMANTIUS_NO_DAEMON=1 bun run dev ping -n 5
+```
+
+#### 3. Step-through debugging with the Bun inspector
+
+```bash
+bun --inspect-brk src/index.ts ping
+```
+
+Bun prints a `chrome-devtools://…` URL on startup. Open it in Chrome, or
+attach VS Code's built-in **Bun: Attach** launch config. Set breakpoints
+in [src/commands/identity.ts](src/commands/identity.ts) (for `ping` /
+`whoami`), [src/commands/call.ts](src/commands/call.ts), or
+[src/client.ts](src/client.ts) to step through transport handling.
+
+#### 4. As the installed binary (`bun link`)
+
+To test the exact UX the user gets — including how Bun resolves the
+shebang and how PATH lookup works — link the package globally:
+
+```bash
+# Link once; now `semantius` resolves to your working tree
+bun link
+
+semantius --help
+semantius ping -n 10
+
+# Unlink when done
 bun unlink
 ```
+
+#### 5. Automated tests
+
+```bash
+# All tests (unit + integration; integration hits real MCP servers ~35s)
+bun test
+
+# Fast unit-only loop
+bun test tests/config.test.ts tests/output.test.ts tests/client.test.ts
+
+# Integration only
+bun test tests/integration/
+```
+
+Integration tests need valid `SEMANTIUS_API_KEY` / `SEMANTIUS_ORG` and a
+reachable platform; they skip automatically when the server is
+unreachable.
 
 ### Releasing
 

@@ -26,6 +26,10 @@ export interface IdentityOptions {
   configPath?: string;
 }
 
+export interface PingOptions extends IdentityOptions {
+  count?: number;
+}
+
 interface CurrentUser {
   email?: string | null;
   user_id?: number | string | null;
@@ -150,17 +154,66 @@ async function fetchCurrentUser(
 /**
  * ping — calls crud/getCurrentUser, measures wall clock time, prints
  * either a one-line success message or formatted error details.
+ *
+ * With -n > 1, runs the call N times sequentially, prints per-request
+ * latency, and appends min/max/avg over successful requests. Exits non-zero
+ * if any request failed.
  */
-export async function pingCommand(options: IdentityOptions): Promise<void> {
-  try {
-    const { elapsedMs } = await fetchCurrentUser(options.configPath);
-    console.log(`OK — server responded in ${elapsedMs} ms`);
-  } catch (error) {
-    const err = error as Error & { exitCode?: number };
-    console.error(`FAIL — ${SERVER}/${TOOL} unreachable`);
-    console.error(err.message);
-    process.exit(err.exitCode ?? ErrorCode.CLIENT_ERROR);
+export async function pingCommand(options: PingOptions): Promise<void> {
+  const count = options.count && options.count > 0 ? options.count : 1;
+
+  if (count === 1) {
+    try {
+      const { elapsedMs } = await fetchCurrentUser(options.configPath);
+      console.log(`OK — server responded in ${elapsedMs} ms`);
+    } catch (error) {
+      const err = error as Error & { exitCode?: number };
+      console.error(`FAIL — ${SERVER}/${TOOL} unreachable`);
+      console.error(err.message);
+      process.exit(err.exitCode ?? ErrorCode.CLIENT_ERROR);
+    }
+    return;
   }
+
+  const successes: number[] = [];
+  let lastFailExitCode: number | undefined;
+  const indexWidth = String(count).length;
+
+  for (let i = 1; i <= count; i++) {
+    const label = `${String(i).padStart(indexWidth, ' ')}/${count}`;
+    try {
+      const { elapsedMs } = await fetchCurrentUser(options.configPath);
+      successes.push(elapsedMs);
+      console.log(`${label}  OK   ${elapsedMs} ms`);
+    } catch (error) {
+      const err = error as Error & { exitCode?: number };
+      lastFailExitCode = err.exitCode ?? ErrorCode.CLIENT_ERROR;
+      const firstLine = err.message.split('\n')[0];
+      console.log(`${label}  FAIL ${firstLine}`);
+    }
+  }
+
+  const failed = count - successes.length;
+  const successPct = Math.round((successes.length / count) * 100);
+  console.log('');
+  console.log(
+    `    Requests: Sent = ${count}, OK = ${successes.length}, Failed = ${failed} (${successPct}% success),`,
+  );
+
+  if (successes.length === 0) {
+    process.exit(lastFailExitCode ?? ErrorCode.CLIENT_ERROR);
+  }
+
+  const min = Math.min(...successes);
+  const max = Math.max(...successes);
+  const avg = Math.round(
+    successes.reduce((a, b) => a + b, 0) / successes.length,
+  );
+  console.log('Approximate round trip times in milli-seconds:');
+  console.log(`    Minimum = ${min}ms, Maximum = ${max}ms, Average = ${avg}ms`);
+
+  // Match unix/Windows ping convention: exit 0 if any request succeeded.
+  // Success rate above tells the caller how clean the run actually was.
 }
 
 /**

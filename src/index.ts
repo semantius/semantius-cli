@@ -62,6 +62,7 @@ interface ParsedArgs {
   diag: boolean;
   single: boolean;
   envPrefix: string;
+  pingCount?: number;
 }
 
 /**
@@ -209,6 +210,25 @@ function parseArgs(args: string[]): ParsedArgs {
           process.exit(ErrorCode.CLIENT_ERROR);
         }
         result.envPrefix = prefix.toUpperCase();
+        break;
+      }
+
+      case '-n': {
+        // -n is optional; its argument is optional. Default count is 5.
+        const next = args[i + 1];
+        if (next !== undefined && /^\d+$/.test(next)) {
+          const parsed = Number.parseInt(next, 10);
+          if (parsed <= 0) {
+            console.error(
+              formatCliError(missingArgumentError('-n', 'positive integer')),
+            );
+            process.exit(ErrorCode.CLIENT_ERROR);
+          }
+          result.pingCount = parsed;
+          i++;
+        } else {
+          result.pingCount = 5;
+        }
         break;
       }
 
@@ -415,7 +435,7 @@ Usage:
   semantius [options] grep <pattern>               Search tools by glob pattern
   semantius [options] call <server> <tool>         Call tool (reads JSON from stdin if no args)
   semantius [options] call <server> <tool> <json>  Call tool with JSON arguments
-  semantius [options] ping                         Check connectivity & latency to crud/getCurrentUser
+  semantius [options] ping [-n [count]]            Check connectivity & latency to crud/getCurrentUser
   semantius [options] whoami                       Show current user (email, org, roles)
 
 Formats (both work):
@@ -431,6 +451,7 @@ Options:
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
   --diag                   (call only) Output full JSON response instead of just response.data
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows
+  -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
 
 Output:
@@ -611,7 +632,10 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
       break;
 
     case 'ping':
-      await pingCommand({ configPath: args.configPath });
+      await pingCommand({
+        configPath: args.configPath,
+        count: args.pingCount,
+      });
       break;
 
     case 'whoami':

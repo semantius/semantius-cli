@@ -420,8 +420,15 @@ export function getRetryDelayMs(): number {
 /**
  * Check if daemon mode is enabled
  * @env <PREFIX>_NO_DAEMON - set to "1" to disable daemon, force fresh connections
+ *
+ * Windows is never daemon-eligible: the implementation relies on POSIX Unix
+ * domain sockets at /tmp/semantius-<uid>/<server>.sock and process.getuid(),
+ * neither of which exists on Windows. Attempting to spawn would just fail
+ * after a ~5s timeout and fall back to direct connections anyway, so we
+ * skip the spawn churn and go direct immediately.
  */
 export function isDaemonEnabled(): boolean {
+  if (process.platform === 'win32') return false;
   return getPrefixedEnv('NO_DAEMON') !== '1';
 }
 
