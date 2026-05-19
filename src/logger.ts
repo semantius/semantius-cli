@@ -25,11 +25,35 @@ import { getLoadedEnvDir, getPrefixedEnv, getUserConfigDir } from './config.js';
 
 interface LogEntry {
   ts: string;
+  exit_code: number;
+  error?: string;
+  pgrst_code?: string;
+  sqlstate?: string;
   duration_ms: number;
   mcp_ms?: number;
-  exit_code: number;
   cli: string[];
-  error?: string;
+}
+
+/**
+ * Extract well-known structured error codes embedded in freeform error
+ * messages so they can be grepped without parsing the freeform text.
+ *
+ * - `pgrst_code`: PostgREST error codes (e.g. `PGRST205`, `PGRST116`).
+ * - `sqlstate`: Postgres SQLSTATE codes (5-char alphanumeric in parens,
+ *   e.g. `(23505)` unique violation, `(42501)` permission denied).
+ */
+function extractErrorMeta(message: string): {
+  pgrst_code?: string;
+  sqlstate?: string;
+} {
+  const meta: { pgrst_code?: string; sqlstate?: string } = {};
+  const pgrst = message.match(/\bPGRST\d{3,}\b/);
+  if (pgrst) meta.pgrst_code = pgrst[0];
+  const sqlstate = message.match(/\(([0-9A-Z]{5})\)/);
+  if (sqlstate && !sqlstate[1].startsWith('PGRST')) {
+    meta.sqlstate = sqlstate[1];
+  }
+  return meta;
 }
 
 type LogLevel = 'all' | 'error' | 'slow';
@@ -194,14 +218,21 @@ function writeLogEntry(exitCode: number): void {
   const durationMs = Date.now() - _startTime;
   if (!shouldEmit(exitCode, durationMs)) return;
 
+  const meta =
+    exitCode !== 0 && _errorMessage
+      ? extractErrorMeta(_errorMessage)
+      : undefined;
+
   const entry: LogEntry = {
     ts: new Date(_startTime).toISOString(),
-    duration_ms: durationMs,
     exit_code: exitCode,
+    ...(exitCode !== 0 && _errorMessage ? { error: _errorMessage } : {}),
+    ...(meta?.pgrst_code ? { pgrst_code: meta.pgrst_code } : {}),
+    ...(meta?.sqlstate ? { sqlstate: meta.sqlstate } : {}),
+    duration_ms: durationMs,
+    ...(_mcpAccumMs > 0 ? { mcp_ms: _mcpAccumMs } : {}),
     cli: process.argv,
   };
-  if (_mcpAccumMs > 0) entry.mcp_ms = _mcpAccumMs;
-  if (exitCode !== 0 && _errorMessage) entry.error = _errorMessage;
 
   try {
     appendFileSync(resolveLogPath(_logFileValue), `${JSON.stringify(entry)}\n`);
