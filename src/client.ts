@@ -562,6 +562,23 @@ export async function getConnection(
   // No-op if caching is disabled, the server isn't HTTP, or no API key is set.
   const resolvedConfig = await transformConfigWithJwt(serverName, config);
 
+  // Extract JWT for error annotation (temporary — to aid regression analysis).
+  const authHeader =
+    isHttpServer(resolvedConfig) && resolvedConfig.headers?.Authorization;
+  const usedJwt =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length)
+      : null;
+
+  // If an error message already mentions "JWT", append the actual token so
+  // callers can inspect it. TODO: remove once the regression is resolved.
+  function annotateJwtError(err: unknown): never {
+    if (usedJwt && err instanceof Error && /\bjwt\b/i.test(err.message)) {
+      err.message = `${err.message}\n  JWT: ${usedJwt}`;
+    }
+    throw err;
+  }
+
   // Try daemon connection if enabled
   if (isDaemonEnabled()) {
     try {
@@ -570,7 +587,9 @@ export async function getConnection(
         debug(`Using daemon connection for ${serverName}`);
         return {
           async listTools(): Promise<ToolInfo[]> {
-            const data = await timeMcp(() => daemonConn.listTools());
+            const data = await timeMcp(() =>
+              daemonConn.listTools().catch(annotateJwtError),
+            );
             const tools = data as ToolInfo[];
             // Apply tool filtering from config
             return filterTools(tools, config);
@@ -585,7 +604,9 @@ export async function getConnection(
                 `Tool "${toolName}" is disabled by configuration`,
               );
             }
-            return timeMcp(() => daemonConn.callTool(toolName, args));
+            return timeMcp(() =>
+              daemonConn.callTool(toolName, args).catch(annotateJwtError),
+            );
           },
           async getInstructions(): Promise<string | undefined> {
             return daemonConn.getInstructions();
@@ -609,7 +630,9 @@ export async function getConnection(
 
   return {
     async listTools(): Promise<ToolInfo[]> {
-      const tools = await timeMcp(() => listTools(client));
+      const tools = await timeMcp(() =>
+        listTools(client).catch(annotateJwtError),
+      );
       // Apply tool filtering from config
       return filterTools(tools, config);
     },
@@ -621,7 +644,7 @@ export async function getConnection(
       if (!isToolAllowed(toolName, config)) {
         throw new Error(`Tool "${toolName}" is disabled by configuration`);
       }
-      return timeMcp(() => callTool(client, toolName, args));
+      return timeMcp(() => callTool(client, toolName, args).catch(annotateJwtError));
     },
     async getInstructions(): Promise<string | undefined> {
       return client.getInstructions();

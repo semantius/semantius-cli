@@ -39,7 +39,12 @@ import {
   unknownOptionError,
   unknownSubcommandError,
 } from './errors.js';
-import { setJwtCacheDisabled } from './jwt-cache.js';
+import {
+  deleteCachedToken,
+  getCachePath,
+  parseApiKey,
+  setJwtCacheDisabled,
+} from './jwt-cache.js';
 import { enableFromEnv, initLogger, recordError } from './logger.js';
 
 interface ParsedArgs {
@@ -65,6 +70,7 @@ interface ParsedArgs {
   envPrefix: string;
   pingCount?: number;
   disableJwtCache: boolean;
+  resetJwtCache: boolean;
 }
 
 /**
@@ -157,6 +163,7 @@ function parseArgs(args: string[]): ParsedArgs {
     single: false,
     envPrefix: 'SEMANTIUS',
     disableJwtCache: false,
+    resetJwtCache: false,
   };
 
   const positional: string[] = [];
@@ -195,6 +202,10 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--disable-jwt-cache':
         result.disableJwtCache = true;
+        break;
+
+      case '--reset-jwt-cache':
+        result.resetJwtCache = true;
         break;
 
       case '-c':
@@ -461,6 +472,7 @@ Options:
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
+  --reset-jwt-cache        Delete the cached JWT for the current API key before running. Next call fetches a fresh token.
 
 Output:
   semantius/info/grep      Human-readable text to stdout
@@ -602,6 +614,16 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
 
   // Validate required environment variables before running any data command
   checkRequiredEnvVars();
+
+  if (args.resetJwtCache) {
+    const apiKey = process.env[`${args.envPrefix}_API_KEY`];
+    const parsed = parseApiKey(apiKey);
+    if (parsed) {
+      const path = getCachePath(parsed.id);
+      deleteCachedToken(apiKey ?? '');
+      console.error(`JWT cache reset: ${path}`);
+    }
+  }
 
   switch (args.command) {
     case 'list':

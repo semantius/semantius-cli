@@ -46,8 +46,11 @@ semantius call crud postgrestRequest '{"method":"GET","path":"/products?status=e
 # Read with column selection and pagination
 semantius call crud postgrestRequest '{"method":"GET","path":"/orders?select=id,total,status&limit=20&offset=0"}'
 
-# Insert a new record
+# Insert a single record
 semantius call crud postgrestRequest '{"method":"POST","path":"/contacts","body":{"first_name":"Alice","email":"alice@example.com","company_id":5}}'
+
+# Bulk insert via array body — every row MUST have the same set of keys; see "Bulk insert: uniform keys required" below
+semantius call crud postgrestRequest '{"method":"POST","path":"/contacts","body":[{"first_name":"Alice","email":"a@x.com","company_id":5},{"first_name":"Bob","email":"b@x.com","company_id":7}]}'
 
 # Update matching records (bulk)
 semantius call crud postgrestRequest '{"method":"PATCH","path":"/products?category=eq.electronics","body":{"on_sale":true}}'
@@ -71,6 +74,34 @@ semantius call crud postgrestRequest '{"method":"GET","path":"/entities?module_i
 # Bulk update field widths
 semantius call crud postgrestRequest '{"method":"PATCH","path":"/fields?table_name=eq.products&format=eq.string","body":{"searchable":true}}'
 ```
+
+#### Bulk insert: uniform keys required
+
+When POSTing an **array body** to insert multiple rows, every object in the array must have the **same set of keys**. PostgREST rejects heterogeneous arrays with the misleading error:
+
+```
+PGRST102 Empty or invalid json
+```
+
+The JSON itself is valid — this is a column-discovery constraint on bulk inserts, not an encoding or transport problem. The wording sends people chasing red herrings (stdin buffering, command-line length, character escaping, auth rotation).
+
+This only affects `POST` with an array body. Single-object inserts (`body: {...}`) and PATCH/DELETE are unaffected.
+
+```bash
+# WRONG — second row omits company_id, request is rejected with PGRST102
+semantius call crud postgrestRequest '{"method":"POST","path":"/contacts","body":[{"first_name":"Alice","company_id":5},{"first_name":"Bob"}]}'
+
+# RIGHT — every row carries the same keys; use null for "absent"
+semantius call crud postgrestRequest '{"method":"POST","path":"/contacts","body":[{"first_name":"Alice","company_id":5},{"first_name":"Bob","company_id":null}]}'
+```
+
+When templating the request body from a shell pipeline, normalize to the union of keys before the call. A `jq` one-liner that pads every row of an array with `null` for any missing key:
+
+```bash
+echo "$rows" | jq '. as $rows | (map(keys) | add | unique) as $keys | $rows | map(. as $r | reduce $keys[] as $k ({}; .[$k] = ($r[$k] // null)))'
+```
+
+If you find yourself building the body in many short steps, chunk into separate single-shape POSTs instead — one CLI call per uniform batch is simpler and survives review.
 
 ### `sqlToRest`
 Translates a SQL query into a PostgREST path. Useful when you think in SQL and need the equivalent PostgREST syntax.
