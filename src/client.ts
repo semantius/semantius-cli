@@ -644,7 +644,9 @@ export async function getConnection(
       if (!isToolAllowed(toolName, config)) {
         throw new Error(`Tool "${toolName}" is disabled by configuration`);
       }
-      return timeMcp(() => callTool(client, toolName, args).catch(annotateJwtError));
+      return timeMcp(() =>
+        callTool(client, toolName, args).catch(annotateJwtError),
+      );
     },
     async getInstructions(): Promise<string | undefined> {
       return client.getInstructions();
