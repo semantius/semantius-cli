@@ -238,6 +238,12 @@ export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
   } catch (error) {
     const err = error as Error & { exitCode?: number };
     console.error(err.message);
+    // Even on failure, surface the bearer token under --diag — it's exactly
+    // the case (audience mismatch, expired, wrong key) where the user needs
+    // to see what was actually sent.
+    if (options.diag) {
+      console.error(`bearer_token  ${getRecordedJwt() ?? '(none)'}`);
+    }
     process.exit(err.exitCode ?? ErrorCode.CLIENT_ERROR);
   }
 
