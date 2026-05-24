@@ -7,6 +7,7 @@ import { type McpConnection, getConnection, safeClose } from '../client.js';
 import {
   type McpServersConfig,
   type ServerConfig,
+  getLoadedEnvDir,
   getServerConfig,
   loadConfig,
 } from '../config.js';
@@ -217,9 +218,15 @@ export async function pingCommand(options: PingOptions): Promise<void> {
 }
 
 /**
- * whoami — calls crud/getCurrentUser and prints the key identity fields.
+ * whoami — prints the local config source first (so it's visible even when
+ * the remote call fails), then calls crud/getCurrentUser and prints the
+ * key identity fields.
  */
 export async function whoamiCommand(options: IdentityOptions): Promise<void> {
+  const envDir = getLoadedEnvDir();
+  const configSource = envDir ?? 'shell environment';
+  console.log(`config_source  ${configSource}`);
+
   let user: CurrentUser;
   try {
     ({ user } = await fetchCurrentUser(options.configPath));

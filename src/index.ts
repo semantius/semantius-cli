@@ -514,10 +514,13 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
                                Bare filename (e.g. semantius.jsonl) is written
                                next to the loaded .env (or in the user config
                                dir). Absolute or relative paths are used as-is.
-  SEMANTIUS_LOG_LEVELS=<list>  Comma-separated subset of {all, error, slow}.
-                               Filters which invocations are logged. Default:
-                               all. "error" = exit_code != 0; "slow" = wall
-                               time > 1000 ms. Multiple values OR-combine
+  SEMANTIUS_LOG_LEVELS=<list>  Comma-separated subset of {all, error, slow,
+                               jwt}. Filters which invocations are logged.
+                               Default: all. "error" = exit_code != 0; "slow" =
+                               wall time > 1000 ms; "jwt" = error mentions JWT
+                               (also adds a structured "jwt" field with the
+                               token value and emits one JSONL line per
+                               JWT-retry attempt). Multiple values OR-combine
                                (e.g. error,slow logs errors AND slow runs).
 
 Config file location:
@@ -610,7 +613,9 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
   await loadDotEnv();
 
   // .env may have defined SEMANTIUS_LOG_FILE — enable logging now that it's loaded.
-  enableFromEnv();
+  // applyDefaults=true: if LOG_LEVELS is set without LOG_FILE, default to
+  // `<envDir>/semantius.log` (or stderr when no .env was loaded).
+  enableFromEnv(true);
 
   // Validate required environment variables before running any data command
   checkRequiredEnvVars();

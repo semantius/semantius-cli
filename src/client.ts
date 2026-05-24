@@ -27,13 +27,15 @@ import {
   cleanupOrphanedDaemons,
   getDaemonConnection,
 } from './daemon-client.js';
+import { isAuthErrorMessage } from './errors.js';
 import {
   type CachedToken,
+  deleteCachedToken,
   isJwtCacheDisabled,
   readCachedToken,
   writeCachedToken,
 } from './jwt-cache.js';
-import { timeMcp } from './logger.js';
+import { logJwtRetryEvent, recordJwt, timeMcp } from './logger.js';
 
 // Re-export config utilities for convenience
 export { debug, getTimeoutMs, getConcurrencyLimit };
@@ -537,6 +539,131 @@ async function transformConfigWithJwt(
   return { ...config, headers: newHeaders };
 }
 
+/**
+ * Invalidate every layer that could hand back the same JWT for this API key:
+ *   - the on-disk encrypted cache
+ *   - the in-memory dedupe map that pins the first fetch's promise
+ * Without clearing both, a fresh-token retry would resolve to the same token.
+ */
+function invalidateJwt(apiKey: string): void {
+  deleteCachedToken(apiKey);
+  _jwtFetches.delete(apiKey);
+}
+
+/**
+ * Match errors that indicate the server rejected our JWT — explicitly named
+ * ("JWT", "token", "signature", "audience"), expired, or any of the auth
+ * codes/keywords already recognized by isAuthErrorMessage (401/403/etc.).
+ * Anything matching here triggers the retry path.
+ */
+function messageLooksLikeJwtError(m: string): boolean {
+  if (/\bjwt\b/i.test(m)) return true;
+  if (/\b(token|signature|audience|key\s*id)\b/i.test(m)) return true;
+  if (/\bexpired\b/i.test(m)) return true;
+  if (isAuthErrorMessage(m)) return true;
+  return false;
+}
+
+function isJwtError(err: unknown): err is Error {
+  return err instanceof Error && messageLooksLikeJwtError(err.message);
+}
+
+/**
+ * The MCP SDK returns tool failures as a normal result with `isError: true`
+ * (the error text lives in `content`). Surface those as thrown JWT errors so
+ * withJwtRetries can react to them — otherwise an expired/rotated token
+ * looks like a successful call carrying an error string, and the retry path
+ * never fires.
+ */
+function jwtErrorFromResult(result: unknown): Error | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as {
+    content?: Array<{ type: string; text?: string }>;
+    isError?: boolean;
+  };
+  if (!r.isError) return null;
+  const text =
+    r.content
+      ?.filter((c) => c.type === 'text' && c.text)
+      .map((c) => c.text as string)
+      .join('\n') ?? '';
+  if (!messageLooksLikeJwtError(text)) return null;
+  return new Error(text);
+}
+
+/**
+ * Run a connection-bound operation with up to two JWT retries:
+ *   1. retry against the same connection (same token) — handles transient
+ *      validation glitches
+ *   2. retry against a freshly-connected client built with a freshly-fetched
+ *      JWT (cache invalidated) — handles expired/rotated tokens
+ *
+ * Non-JWT errors propagate immediately. Each phase emits a JSONL line when
+ * the "jwt" log level is enabled (see logJwtRetryEvent).
+ */
+async function withJwtRetries<T>(args: {
+  serverName: string;
+  originalConfig: ServerConfig;
+  currentOp: () => Promise<T>;
+  freshOp: (client: Client) => Promise<T>;
+}): Promise<T> {
+  const { serverName, originalConfig, currentOp, freshOp } = args;
+  const apiKey = isHttpServer(originalConfig)
+    ? originalConfig.headers?.[API_KEY_HEADER]
+    : undefined;
+
+  const runOp = async (op: () => Promise<T>): Promise<T> => {
+    const result = await op();
+    const asJwtError = jwtErrorFromResult(result);
+    if (asJwtError) throw asJwtError;
+    return result;
+  };
+
+  try {
+    return await runOp(currentOp);
+  } catch (err) {
+    if (!isJwtError(err)) throw err;
+    // Initial JWT failure — fall through to retry_token attempt.
+  }
+
+  try {
+    const result = await runOp(currentOp);
+    logJwtRetryEvent({ event: 'retry_token', outcome: 'success' });
+    return result;
+  } catch (err) {
+    if (!isJwtError(err)) throw err;
+    logJwtRetryEvent({
+      event: 'retry_token',
+      outcome: 'failure',
+      error: err.message,
+    });
+  }
+
+  if (apiKey) invalidateJwt(apiKey);
+  const freshConfig = await transformConfigWithJwt(serverName, originalConfig);
+  if (isHttpServer(freshConfig)) {
+    const authHeader = freshConfig.headers?.Authorization;
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      recordJwt(authHeader.slice('Bearer '.length));
+    }
+  }
+  const fresh = await connectToServer(serverName, freshConfig);
+  try {
+    const result = await runOp(() => freshOp(fresh.client));
+    logJwtRetryEvent({ event: 'retry_fresh_token', outcome: 'success' });
+    return result;
+  } catch (err) {
+    logJwtRetryEvent({
+      event: 'retry_fresh_token',
+      outcome: 'failure',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  } finally {
+    await safeClose(fresh.close);
+  }
+}
+
 // ============================================================================
 // Unified Connection Interface (Daemon + Direct)
 // ============================================================================
@@ -570,6 +697,10 @@ export async function getConnection(
       ? authHeader.slice('Bearer '.length)
       : null;
 
+  // Make the JWT available to the logger so the exit-time entry can include
+  // it (when the "jwt" log level is enabled and a JWT error occurred).
+  if (usedJwt) recordJwt(usedJwt);
+
   // If an error message already mentions "JWT", append the actual token so
   // callers can inspect it. TODO: remove once the regression is resolved.
   function annotateJwtError(err: unknown): never {
@@ -588,7 +719,12 @@ export async function getConnection(
         return {
           async listTools(): Promise<ToolInfo[]> {
             const data = await timeMcp(() =>
-              daemonConn.listTools().catch(annotateJwtError),
+              withJwtRetries({
+                serverName,
+                originalConfig: config,
+                currentOp: () => daemonConn.listTools().catch(annotateJwtError),
+                freshOp: (freshClient) => listTools(freshClient),
+              }),
             );
             const tools = data as ToolInfo[];
             // Apply tool filtering from config
@@ -605,7 +741,13 @@ export async function getConnection(
               );
             }
             return timeMcp(() =>
-              daemonConn.callTool(toolName, args).catch(annotateJwtError),
+              withJwtRetries({
+                serverName,
+                originalConfig: config,
+                currentOp: () =>
+                  daemonConn.callTool(toolName, args).catch(annotateJwtError),
+                freshOp: (freshClient) => callTool(freshClient, toolName, args),
+              }),
             );
           },
           async getInstructions(): Promise<string | undefined> {
@@ -631,7 +773,12 @@ export async function getConnection(
   return {
     async listTools(): Promise<ToolInfo[]> {
       const tools = await timeMcp(() =>
-        listTools(client).catch(annotateJwtError),
+        withJwtRetries({
+          serverName,
+          originalConfig: config,
+          currentOp: () => listTools(client).catch(annotateJwtError),
+          freshOp: (freshClient) => listTools(freshClient),
+        }),
       );
       // Apply tool filtering from config
       return filterTools(tools, config);
@@ -645,7 +792,13 @@ export async function getConnection(
         throw new Error(`Tool "${toolName}" is disabled by configuration`);
       }
       return timeMcp(() =>
-        callTool(client, toolName, args).catch(annotateJwtError),
+        withJwtRetries({
+          serverName,
+          originalConfig: config,
+          currentOp: () =>
+            callTool(client, toolName, args).catch(annotateJwtError),
+          freshOp: (freshClient) => callTool(freshClient, toolName, args),
+        }),
       );
     },
     async getInstructions(): Promise<string | undefined> {

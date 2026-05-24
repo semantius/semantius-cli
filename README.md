@@ -297,7 +297,7 @@ configurations side by side in the same `.env`.
 | `SEMANTIUS_DAEMON_TIMEOUT` | How long a cached connection stays open after last use (seconds, Linux/macOS only) | `60` |
 | `SEMANTIUS_DISABLE_JWT_CACHE` | Disable the encrypted token cache; re-authenticate on every request | `false` |
 | `SEMANTIUS_LOG_FILE` | Append one JSONL line per invocation to this path. Bare filename is written next to the loaded `.env` (or in the user config dir); absolute/relative paths are used as-is. | (none) |
-| `SEMANTIUS_LOG_LEVELS` | Comma-separated subset of `{all, error, slow}` that filters which invocations are logged. `error` = exit code != 0; `slow` = wall time > 1000 ms; multiple values OR-combine (e.g. `error,slow`). Unknown/empty falls back to `all`. | `all` |
+| `SEMANTIUS_LOG_LEVELS` | Comma-separated subset of `{all, error, slow, jwt}` that filters which invocations are logged. `error` = exit code != 0; `slow` = wall time > 1000 ms; `jwt` = error mentions "JWT" (also adds a structured `jwt` field with the token value and appends one JSONL line per JWT-retry attempt). Multiple values OR-combine (e.g. `error,slow`). Unknown/empty falls back to `all`. | `all` |
 
 ### Token cache
 
