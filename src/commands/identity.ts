@@ -18,6 +18,7 @@ import {
   serverConnectionError,
   toolExecutionError,
 } from '../errors.js';
+import { getRecordedJwt } from '../logger.js';
 import { McpToolError } from '../output.js';
 
 const SERVER = 'crud';
@@ -25,6 +26,10 @@ const TOOL = 'getCurrentUser';
 
 export interface IdentityOptions {
   configPath?: string;
+}
+
+export interface WhoamiOptions extends IdentityOptions {
+  diag?: boolean;
 }
 
 export interface PingOptions extends IdentityOptions {
@@ -222,7 +227,7 @@ export async function pingCommand(options: PingOptions): Promise<void> {
  * the remote call fails), then calls crud/getCurrentUser and prints the
  * key identity fields.
  */
-export async function whoamiCommand(options: IdentityOptions): Promise<void> {
+export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
   const envDir = getLoadedEnvDir();
   const configSource = envDir ?? 'shell environment';
   console.log(`config_source  ${configSource}`);
@@ -251,6 +256,10 @@ export async function whoamiCommand(options: IdentityOptions): Promise<void> {
     ],
     ['api_baseurl', user.api_baseurl ?? '(unknown)'],
   ];
+
+  if (options.diag) {
+    rows.push(['bearer_token', getRecordedJwt() ?? '(none)']);
+  }
 
   const width = Math.max(...rows.map(([k]) => k.length));
   for (const [k, v] of rows) {

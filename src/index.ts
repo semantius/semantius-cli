@@ -467,7 +467,8 @@ Options:
   -v, --version            Show version number
   -d, --with-descriptions  Include tool descriptions
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
-  --diag                   (call only) Output full JSON response instead of just response.data
+  --diag                   (call) Output full JSON response instead of just response.data
+                           (whoami) Also show the bearer token used for the request
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
@@ -679,7 +680,7 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
       break;
 
     case 'whoami':
-      await whoamiCommand({ configPath: args.configPath });
+      await whoamiCommand({ configPath: args.configPath, diag: args.diag });
       break;
   }
 }

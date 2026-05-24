@@ -92,6 +92,14 @@ export function recordJwt(token: string | undefined): void {
 }
 
 /**
+ * Return the JWT recorded for this invocation (via recordJwt), or undefined
+ * if no Bearer token was used (e.g. JWT cache disabled, or stdio server).
+ */
+export function getRecordedJwt(): string | undefined {
+  return _currentJwt;
+}
+
+/**
  * Parse <PREFIX>_LOG_LEVELS. Comma-separated subset of {all, error, slow, jwt}.
  * Empty / missing / no-valid-tokens → defaults to {all}. Tokens are case- and
  * whitespace-insensitive; unknown tokens are silently ignored.
