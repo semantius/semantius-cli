@@ -24,6 +24,22 @@ import { McpToolError } from '../output.js';
 const SERVER = 'crud';
 const TOOL = 'getCurrentUser';
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function localTimestamp(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+function localTimeOfDay(d: Date = new Date()): string {
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+function formatSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(3)} s`;
+}
+
 export interface IdentityOptions {
   configPath?: string;
 }
@@ -38,6 +54,7 @@ export interface PingOptions extends IdentityOptions {
 
 interface CurrentUser {
   email?: string | null;
+  display_name?: string | null;
   user_id?: number | string | null;
   external_id?: string | null;
   semantius_org?: string | null;
@@ -171,10 +188,14 @@ export async function pingCommand(options: PingOptions): Promise<void> {
   if (count === 1) {
     try {
       const { elapsedMs } = await fetchCurrentUser(options.configPath);
-      console.log(`OK — server responded in ${elapsedMs} ms`);
+      console.log(
+        `[${localTimeOfDay()}] OK — server responded in ${formatSeconds(elapsedMs)}`,
+      );
     } catch (error) {
       const err = error as Error & { exitCode?: number };
-      console.error(`FAIL — ${SERVER}/${TOOL} unreachable`);
+      console.error(
+        `[${localTimeOfDay()}] FAIL — ${SERVER}/${TOOL} unreachable`,
+      );
       console.error(err.message);
       process.exit(err.exitCode ?? ErrorCode.CLIENT_ERROR);
     }
@@ -190,12 +211,14 @@ export async function pingCommand(options: PingOptions): Promise<void> {
     try {
       const { elapsedMs } = await fetchCurrentUser(options.configPath);
       successes.push(elapsedMs);
-      console.log(`${label}  OK   ${elapsedMs} ms`);
+      console.log(
+        `[${localTimeOfDay()}] ${label}  OK   ${formatSeconds(elapsedMs)}`,
+      );
     } catch (error) {
       const err = error as Error & { exitCode?: number };
       lastFailExitCode = err.exitCode ?? ErrorCode.CLIENT_ERROR;
       const firstLine = err.message.split('\n')[0];
-      console.log(`${label}  FAIL ${firstLine}`);
+      console.log(`[${localTimeOfDay()}] ${label}  FAIL ${firstLine}`);
     }
   }
 
@@ -212,11 +235,11 @@ export async function pingCommand(options: PingOptions): Promise<void> {
 
   const min = Math.min(...successes);
   const max = Math.max(...successes);
-  const avg = Math.round(
-    successes.reduce((a, b) => a + b, 0) / successes.length,
+  const avg = successes.reduce((a, b) => a + b, 0) / successes.length;
+  console.log('Approximate round trip times in seconds:');
+  console.log(
+    `    Minimum = ${formatSeconds(min)}, Maximum = ${formatSeconds(max)}, Average = ${formatSeconds(avg)}`,
   );
-  console.log('Approximate round trip times in milli-seconds:');
-  console.log(`    Minimum = ${min}ms, Maximum = ${max}ms, Average = ${avg}ms`);
 
   // Match unix/Windows ping convention: exit 0 if any request succeeded.
   // Success rate above tells the caller how clean the run actually was.
@@ -230,7 +253,7 @@ export async function pingCommand(options: PingOptions): Promise<void> {
 export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
   const envDir = getLoadedEnvDir();
   const configSource = envDir ?? 'shell environment';
-  console.log(`config_source  ${configSource}`);
+  console.log(`${localTimestamp()}  config_source  ${configSource}`);
 
   let user: CurrentUser;
   try {
@@ -249,6 +272,7 @@ export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
 
   const rows: Array<[string, string]> = [
     ['email', user.email ?? '(none)'],
+    ['display_name', user.display_name ?? '(none)'],
     ['org', user.semantius_org ?? '(unknown)'],
     ['user_id', user.user_id != null ? String(user.user_id) : '(unknown)'],
     [

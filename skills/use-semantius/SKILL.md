@@ -5,7 +5,8 @@ description: >-
   Trigger when the user wants to: create, read, update, or delete entities,
   fields, modules, permissions, roles, users, or business records; build or query
   a semantic data model; set up RBAC; insert or import data into Semantius
-  tables; or run analytical queries across Semantius data. Also trigger when
+  tables; run analytical queries across Semantius data; or send transactional
+  emails via the Semantius email service (`crud sendEmail`). Also trigger when
   writing shell scripts or Bun scripts that chain semantius commands.
 ---
 
@@ -79,6 +80,9 @@ Understanding which layer you're working with determines which tools to use:
 
 **Importing a CSV or Excel file?**
 → Read `references/webhook-import.md`
+
+**Sending a transactional email?**
+→ Layer 2 utility, use `crud sendEmail`, see `references/crud-tools.md` § "sendEmail"
 
 **A baked recipe (e.g. from a `semantius-skill-maker`-generated skill) hit an unexpected 409/422 and you suspect schema drift?**
 → Live introspect with `read_entity` / `read_field`, see `references/data-modeling.md` § "Runtime schema introspection (live FK / shape lookup)". Do not silently adapt the recipe; abort, surface the drift, recommend regenerating the domain skill.

@@ -324,6 +324,35 @@ In addition to standard JsonLogic operators, the platform provides three extensi
 
 INSERT passes trivially (no `$old`); UPDATE / DELETE passes when the caller is the original author or holds the override permission. Using `has_permission` here (not `require_permission`) is essential — the `or` needs a non-throwing branch so the owner-match path works for callers without the override.
 
+#### String concatenation (`concat`)
+
+`concat` joins any number of arguments into a single string, mimicking SQL `CONCAT` semantics. Available in `computed_fields`, `validation_rules`, `select_rule`, and `input_type_rule`.
+
+**Shape:** `{"concat": [arg1, arg2, ...]}`
+
+**Behavior:**
+
+- Accepts any number of arguments of any JSON type.
+- `null` / missing values → treated as the empty string (no error, no `"null"` literal).
+- Strings → appended as-is (unquoted).
+- Numbers, booleans, arrays, objects → converted via their JSON text representation (e.g. `42`, `true`, `[1,2]`, `{"k":"v"}`).
+- Returns a JSON string.
+
+**Examples:**
+
+```json
+{"concat": ["Hello ", {"var": "name"}, "!"]}
+// data {"name": "World"} → "Hello World!"
+
+{"concat": ["Order #", {"var": "id"}, " - ", {"var": "status"}]}
+// data {"id": 42, "status": "shipped"} → "Order #42 - shipped"
+
+{"concat": ["a", null, "b"]}
+// → "ab"  (null becomes empty, not "null")
+```
+
+**Difference from `cat`.** `cat` is the standard JsonLogic string operator and also concatenates, but uses `jl_to_text` coercion (which returns `''` for null and the raw text for strings). `concat` is functionally similar for most inputs; the explicit distinction is the SQL-`CONCAT`-style framing and explicit handling of all JSON types via `::text` for non-strings. Reach for `concat` when the intent is "build a label or message" with mixed-type inputs and predictable null handling; `cat` remains fine for plain string-only joins.
+
 #### Cross-entity lookups inside JsonLogic (`let`, `set_record`, `throw_error`)
 
 `computed_fields` and `validation_rules` are no longer limited to the post-write record. The platform exposes three additional JsonLogic operators that bind values into the data context **before** the rest of the expression evaluates, opening the door to FK traversal, parent-state gates, inherited values, and merged labels that previously had to live in cube views or per-model service code.

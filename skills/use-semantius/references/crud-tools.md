@@ -121,6 +121,36 @@ semantius call deno refresh_schema_cache '{}'
 ```
 > Call this if PostgREST returns errors about unknown columns or tables after you've just added/modified fields.
 
+### `sendEmail`
+
+Sends a transactional email via the Semantius email service. Provide `text`, `html`, or both. Returns the provider `messageId` on success.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `to` | string \| string[] | yes | Recipient address, or array of addresses |
+| `subject` | string | yes | Subject line (non-empty) |
+| `text` | string | no\* | Plain-text body |
+| `html` | string | no\* | HTML body |
+| `from` | string | no | Sender address. Defaults to the authenticated user's email. Must be on a verified Semantius sending domain when overridden. |
+| `replyTo` | string | no | Reply-To address. Defaults to `from`. |
+| `cc` | string \| string[] | no | CC recipient(s) |
+| `bcc` | string \| string[] | no | BCC recipient(s) |
+
+\* At least one of `text` or `html` must be provided.
+
+```bash
+# Minimal — defaults from to the authenticated user
+semantius call crud sendEmail '{"to":"alice@example.com","subject":"Hello","text":"hi there"}'
+
+# Both text and html (improves deliverability)
+semantius call crud sendEmail '{"to":"alice@example.com","subject":"Hello","text":"hi","html":"<p>hi</p>"}'
+
+# Multiple recipients + cc
+semantius call crud sendEmail '{"to":["a@x.com","b@x.com"],"cc":"manager@x.com","subject":"FYI","text":"see attached report"}'
+```
+
+> **Quoting note:** subjects or bodies containing `!` will trigger bash history expansion in interactive shells. Use single-quoted JSON (as above) or `set +H` to disable.
+
 ---
 
 ## PostgREST Filter Operators
