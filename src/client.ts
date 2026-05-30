@@ -592,11 +592,21 @@ function jwtErrorFromResult(result: unknown): Error | null {
 }
 
 /**
- * Run a connection-bound operation with up to two JWT retries:
- *   1. retry against the same connection (same token) — handles transient
- *      validation glitches
+ * Backoff before each successive fresh-token retry (see withJwtRetries). The
+ * first fresh retry waits 11s, then 21s, 31s, ... 61s, after which we stop.
+ * The very first retry (same connection, same token) happens immediately and
+ * is not part of this schedule.
+ */
+const JWT_FRESH_RETRY_DELAYS_MS = [11, 21, 31, 41, 51, 61].map((s) => s * 1000);
+
+/**
+ * Run a connection-bound operation with JWT retries:
+ *   1. retry against the same connection (same token), immediately — handles
+ *      transient validation glitches
  *   2. retry against a freshly-connected client built with a freshly-fetched
- *      JWT (cache invalidated) — handles expired/rotated tokens
+ *      JWT (cache invalidated) — handles expired/rotated tokens. Repeated with
+ *      an increasing backoff (11s, 21s, ... 61s) to ride out token
+ *      rotation/propagation delays, then we give up.
  *
  * Non-JWT errors propagate immediately. Each phase emits a JSONL line when
  * the "jwt" log level is enabled (see logJwtRetryEvent).
@@ -626,6 +636,7 @@ async function withJwtRetries<T>(args: {
     // Initial JWT failure — fall through to retry_token attempt.
   }
 
+  // First retry: immediate, same connection (same token).
   try {
     const result = await runOp(currentOp);
     logJwtRetryEvent({ event: 'retry_token', outcome: 'success' });
@@ -639,29 +650,51 @@ async function withJwtRetries<T>(args: {
     });
   }
 
-  if (apiKey) invalidateJwt(apiKey);
-  const freshConfig = await transformConfigWithJwt(serverName, originalConfig);
-  if (isHttpServer(freshConfig)) {
-    const authHeader = freshConfig.headers?.Authorization;
-    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      recordJwt(authHeader.slice('Bearer '.length));
+  // Subsequent retries: fresh connection + freshly-fetched JWT, each preceded
+  // by an increasing backoff. Stop after the last delay has been tried.
+  let lastError: Error = new Error('JWT retries exhausted');
+  for (let i = 0; i < JWT_FRESH_RETRY_DELAYS_MS.length; i++) {
+    const waitedMs = JWT_FRESH_RETRY_DELAYS_MS[i];
+    await sleep(waitedMs);
+
+    if (apiKey) invalidateJwt(apiKey);
+    const freshConfig = await transformConfigWithJwt(
+      serverName,
+      originalConfig,
+    );
+    if (isHttpServer(freshConfig)) {
+      const authHeader = freshConfig.headers?.Authorization;
+      if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+        recordJwt(authHeader.slice('Bearer '.length));
+      }
+    }
+    const fresh = await connectToServer(serverName, freshConfig);
+    try {
+      const result = await runOp(() => freshOp(fresh.client));
+      logJwtRetryEvent({
+        event: 'retry_fresh_token',
+        outcome: 'success',
+        attempt: i + 1,
+        waitedMs,
+      });
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      logJwtRetryEvent({
+        event: 'retry_fresh_token',
+        outcome: 'failure',
+        attempt: i + 1,
+        waitedMs,
+        error: lastError.message,
+      });
+      // Only a JWT error is worth another delayed retry; anything else stops.
+      if (!isJwtError(err)) throw lastError;
+    } finally {
+      await safeClose(fresh.close);
     }
   }
-  const fresh = await connectToServer(serverName, freshConfig);
-  try {
-    const result = await runOp(() => freshOp(fresh.client));
-    logJwtRetryEvent({ event: 'retry_fresh_token', outcome: 'success' });
-    return result;
-  } catch (err) {
-    logJwtRetryEvent({
-      event: 'retry_fresh_token',
-      outcome: 'failure',
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
-  } finally {
-    await safeClose(fresh.close);
-  }
+
+  throw lastError;
 }
 
 // ============================================================================

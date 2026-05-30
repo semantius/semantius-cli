@@ -353,6 +353,8 @@ export function logJwtRetryEvent(event: {
   event: 'retry_token' | 'retry_fresh_token';
   outcome: 'success' | 'failure';
   error?: string;
+  attempt?: number;
+  waitedMs?: number;
 }): void {
   if (!_enabled) return;
   if (!_logFileValue && !_logToConsole) return;
@@ -362,6 +364,10 @@ export function logJwtRetryEvent(event: {
     log_type: 'event',
     event: event.event,
     outcome: event.outcome,
+    ...(typeof event.attempt === 'number' ? { attempt: event.attempt } : {}),
+    ...(typeof event.waitedMs === 'number'
+      ? { waited_ms: event.waitedMs }
+      : {}),
     ...(event.error ? { error: event.error } : {}),
     ...(_currentJwt ? { jwt: _currentJwt } : {}),
   };
