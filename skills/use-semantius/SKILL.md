@@ -52,7 +52,7 @@ Understanding which layer you're working with determines which tools to use:
 | File | When to read |
 |------|-------------|
 | `references/cli-usage.md` | CLI commands, shell patterns, chaining, installation |
-| `references/data-modeling.md` | Layer 1, entities, fields, modules, relationships, safe evolution |
+| `references/data-modeling.md` | Layer 1, entities, fields, modules, relationships, safe evolution, plus entity-level invariants and derived values (`validation_rules` / `computed_fields`, JsonLogic) |
 | `references/rbac.md` | Layer 1, permissions, roles, user assignments, hierarchy |
 | `references/crud-tools.md` | Layer 1 typed tools + Layer 2 postgrestRequest/sqlToRest reference |
 | `references/cube-queries.md` | Layer 3, CubeJS query DSL, date filtering, analysis modes |
@@ -65,6 +65,9 @@ Understanding which layer you're working with determines which tools to use:
 
 **Managing schema, create/modify entities, fields, modules?**
 → Layer 1, read `references/data-modeling.md`, follow mandatory creation order
+
+**Enforcing a record-level invariant (exactly one of A/B set, a state-transition guard, a write-time permission gate) or deriving a field value on every write?**
+→ Layer 1 entity properties `validation_rules` / `computed_fields` (JsonLogic), set via `create_entity` / `update_entity`. Read `references/data-modeling.md` § "Computed fields and validation rules". These are NOT separate tools, so their absence from the tool list says nothing about support.
 
 **Setting up permissions, roles, users?**
 → Layer 1, read `references/rbac.md`
@@ -187,6 +190,7 @@ Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 4. **`reference_table` mandates relational format**, Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
 5. **Warn before risky changes**, Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
 6. **Link after schema changes**, Provide the UI link: `https://tests.semantius.app/{module_slug}/{table_name}` (URLs use the lowercase `module_slug`, not the display `module_name`).
+7. **Capability is not the same as a tool**, Entity-level behaviors (`validation_rules` for hard write-time invariants, `computed_fields` for derived values, `select_rule`, `input_type_rule`) are PROPERTIES set on `create_entity` / `update_entity`, not standalone tools. They never appear in the tool list, so "there is no `create_constraint` tool" does NOT mean the platform cannot enforce constraints. When asked whether the platform can enforce, derive, or guard something on write, read `references/data-modeling.md` before concluding it cannot.
 
 ## Response handling: exit code is not enough
 
