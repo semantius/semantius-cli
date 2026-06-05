@@ -12,9 +12,11 @@
  * <PREFIX>_LOG_LEVELS filters which invocations actually produce a line.
  * Comma-separated subset of {all, error, slow, jwt}. Unknown/missing → defaults
  * to "all". "error" matches exit_code != 0; "slow" matches wall time > 1000ms;
- * "jwt" matches when the captured error message mentions "JWT" (and adds a
- * structured `jwt` field with the token value); any "all" token logs every
- * invocation. Multiple levels are OR-combined.
+ * "jwt" matches when the captured error message mentions "JWT". The raw token
+ * value is attached (as a structured `jwt` field) ONLY on those jwt-level
+ * matches — never on routine entries logged by "all"/"error"/"slow", since a
+ * full token is a replayable bearer credential carrying PII. Any "all" token
+ * logs every invocation. Multiple levels are OR-combined.
  *
  * When "jwt" is active, per-attempt retry events are also appended as their
  * own JSONL lines via logJwtRetryEvent, in addition to the exit-time entry.
@@ -115,16 +117,23 @@ function parseLogLevels(value: string | undefined): Set<LogLevel> {
   return tokens.length > 0 ? new Set(tokens) : new Set(['all']);
 }
 
+/**
+ * Whether the raw token value may be written for this invocation. Gated on the
+ * "jwt" level being explicitly enabled AND the captured error actually being
+ * token-related — never on routine entries (e.g. a --single 0-row result),
+ * whose JWT has no diagnostic value and is a replayable credential + PII.
+ */
+function jwtTokenIsLoggable(exitCode: number): boolean {
+  return (
+    _logLevels.has('jwt') && exitCode !== 0 && isJwtErrorMessage(_errorMessage)
+  );
+}
+
 function shouldEmit(exitCode: number, durationMs: number): boolean {
   if (_logLevels.has('all')) return true;
   if (_logLevels.has('error') && exitCode !== 0) return true;
   if (_logLevels.has('slow') && durationMs > SLOW_THRESHOLD_MS) return true;
-  if (
-    _logLevels.has('jwt') &&
-    exitCode !== 0 &&
-    isJwtErrorMessage(_errorMessage)
-  )
-    return true;
+  if (jwtTokenIsLoggable(exitCode)) return true;
   return false;
 }
 
@@ -322,10 +331,11 @@ function writeLogEntry(exitCode: number): void {
       ? extractErrorMeta(_errorMessage)
       : undefined;
 
-  // If a JWT was used this invocation, always include it on the log entry.
-  // Logging is opt-in via LOG_LEVELS/LOG_FILE; gating the token on top of
-  // that just makes "all" not actually mean all.
-  const includeJwt = !!_currentJwt;
+  // Only attach the raw token for genuinely token-related failures under the
+  // explicit "jwt" level. Routine entries (success, --single 0-row, non-auth
+  // errors) get no token: it has no diagnostic value there and is a replayable
+  // bearer credential carrying PII (email/name) in its payload.
+  const includeJwt = !!_currentJwt && jwtTokenIsLoggable(exitCode);
 
   const entry: LogEntry = {
     ts: new Date(_startTime).toISOString(),
@@ -357,6 +367,9 @@ export function logJwtRetryEvent(event: {
   waitedMs?: number;
 }): void {
   if (!_enabled) return;
+  // Retry events (and the token they carry) are a "jwt"-level feature; stay a
+  // no-op for every other level so the raw token never leaks at "all".
+  if (!_logLevels.has('jwt')) return;
   if (!_logFileValue && !_logToConsole) return;
 
   const entry = {
