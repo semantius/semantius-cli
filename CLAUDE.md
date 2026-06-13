@@ -8,7 +8,9 @@ Always use the release script — it handles everything (version bumps, tests, a
 ./scripts/release.sh 0.x.x
 ```
 
-The script updates `package.json` AND `src/version.ts` (the actual version embedded in the binary), runs lint and tests, commits, creates an annotated tag, and pushes branch + tag. Do NOT do any of these steps manually — manual releases have repeatedly caused the binary to report the wrong version or the release workflow to not trigger.
+The script bumps the `version` in `package.json` — the single source of version truth, imported directly into the binary (`src/index.ts`, `src/client.ts`), so there is no separate `src/version.ts` to maintain. It then runs lint and tests, commits the bump, creates an annotated tag, and pushes branch + tag. Do NOT do any of these steps manually — manual releases have repeatedly caused the binary to report the wrong version or the release workflow to not trigger.
+
+The script requires a clean working tree, so commit your actual code changes first; it only commits the version bump itself.
 
 ## Memory
 
