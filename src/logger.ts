@@ -18,12 +18,15 @@
  * full token is a replayable bearer credential carrying PII. Any "all" token
  * logs every invocation. Multiple levels are OR-combined.
  *
- * When "jwt" is active, per-attempt retry events are also appended as their
- * own JSONL lines via logJwtRetryEvent, in addition to the exit-time entry.
+ * Per-attempt retry events are appended as their own JSONL lines via
+ * logRetryEvent, in addition to the exit-time entry: JWT/auth retries
+ * ('retry_fresh_token', raw token attached, gated on "jwt") and transient
+ * capacity retries ('retry_transient', no credential, emitted at any level).
  *
  * One JSON line is appended per matching invocation, containing the start
  * timestamp, total wall-clock duration, time spent in MCP requests, the exit
- * code, the full CLI invocation, and the error message on failure.
+ * code, the full CLI invocation, the target HTTP server URL (when one was
+ * used), and the error message on failure.
  */
 
 import { appendFileSync, closeSync, openSync } from 'node:fs';
@@ -39,6 +42,7 @@ interface LogEntry {
   sqlstate?: string;
   duration_ms: number;
   mcp_ms?: number;
+  url?: string;
   jwt?: string;
   cli: string[];
 }
@@ -78,6 +82,7 @@ let _mcpAccumMs = 0;
 let _mcpInFlightStart: number | undefined;
 let _errorMessage: string | undefined;
 let _currentJwt: string | undefined;
+let _currentUrl: string | undefined;
 let _installed = false;
 
 function isJwtErrorMessage(message: string | undefined): boolean {
@@ -99,6 +104,17 @@ export function recordJwt(token: string | undefined): void {
  */
 export function getRecordedJwt(): string | undefined {
   return _currentJwt;
+}
+
+/**
+ * Record the target URL (HTTP server endpoint) of the request currently being
+ * made so the logger can include it in the exit entry and per-attempt retry
+ * events. This tells you which host an error came from — invaluable when the
+ * same CLI is pointed at multiple environments (tests vs prod). No-op-safe:
+ * stdio servers never call this, so `url` is simply absent from those entries.
+ */
+export function recordUrl(url: string | undefined): void {
+  _currentUrl = url || undefined;
 }
 
 /**
@@ -346,6 +362,7 @@ function writeLogEntry(exitCode: number): void {
     ...(meta?.sqlstate ? { sqlstate: meta.sqlstate } : {}),
     duration_ms: durationMs,
     ...(_mcpAccumMs > 0 ? { mcp_ms: _mcpAccumMs } : {}),
+    ...(_currentUrl ? { url: _currentUrl } : {}),
     ...(includeJwt ? { jwt: _currentJwt } : {}),
     cli: process.argv,
   };
@@ -354,23 +371,31 @@ function writeLogEntry(exitCode: number): void {
 }
 
 /**
- * Append a structured JSONL line describing a JWT retry attempt. No-op unless
- * logging is enabled AND "jwt" is in <PREFIX>_LOG_LEVELS. Emitted immediately
- * (not deferred to exit) so each attempt is visible even if the process keeps
- * running after a successful retry.
+ * Append a structured JSONL line describing a retry attempt. Emitted
+ * immediately (not deferred to exit) so each attempt is visible even if the
+ * process keeps running after a successful retry.
+ *
+ * Two kinds:
+ *   - 'retry_fresh_token' — a JWT/auth retry. Carries the raw token, so it is
+ *     gated behind the "jwt" level and never leaks at "all"/"error"/"slow".
+ *   - 'retry_transient'   — a capacity retry (429, connection-pool exhaustion).
+ *     Carries no credential, so it is emitted whenever logging is enabled.
  */
-export function logJwtRetryEvent(event: {
-  event: 'retry_token' | 'retry_fresh_token';
+export function logRetryEvent(event: {
+  event: 'retry_fresh_token' | 'retry_transient';
   outcome: 'success' | 'failure';
   error?: string;
   attempt?: number;
   waitedMs?: number;
 }): void {
   if (!_enabled) return;
-  // Retry events (and the token they carry) are a "jwt"-level feature; stay a
-  // no-op for every other level so the raw token never leaks at "all".
-  if (!_logLevels.has('jwt')) return;
   if (!_logFileValue && !_logToConsole) return;
+
+  const isJwt = event.event === 'retry_fresh_token';
+  // JWT retry events carry the raw token, so they remain a "jwt"-level feature;
+  // stay a no-op at every other level so the token never leaks. Transient
+  // events have no token and log at any active level.
+  if (isJwt && !_logLevels.has('jwt')) return;
 
   const entry = {
     ts: new Date().toISOString(),
@@ -382,7 +407,8 @@ export function logJwtRetryEvent(event: {
       ? { waited_ms: event.waitedMs }
       : {}),
     ...(event.error ? { error: event.error } : {}),
-    ...(_currentJwt ? { jwt: _currentJwt } : {}),
+    ...(_currentUrl ? { url: _currentUrl } : {}),
+    ...(isJwt && _currentJwt ? { jwt: _currentJwt } : {}),
   };
 
   appendLogLine(`${JSON.stringify(entry)}\n`);

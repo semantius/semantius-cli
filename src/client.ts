@@ -35,7 +35,7 @@ import {
   readCachedToken,
   writeCachedToken,
 } from './jwt-cache.js';
-import { logJwtRetryEvent, recordJwt, timeMcp } from './logger.js';
+import { logRetryEvent, recordJwt, recordUrl, timeMcp } from './logger.js';
 
 // Re-export config utilities for convenience
 export { debug, getTimeoutMs, getConcurrencyLimit };
@@ -564,18 +564,45 @@ function messageLooksLikeJwtError(m: string): boolean {
   return false;
 }
 
-function isJwtError(err: unknown): err is Error {
-  return err instanceof Error && messageLooksLikeJwtError(err.message);
+/**
+ * Match transient, capacity-style failures that are safe to retry: the request
+ * was rejected BEFORE it reached the data (rate limit, connection-pool
+ * exhaustion), so re-running it — even a write — cannot double-apply. Kept
+ * deliberately narrow; anything not provably pre-execution stays non-retryable.
+ */
+function isTransientErrorMessage(m: string): boolean {
+  if (/\b429\b/.test(m)) return true;
+  if (/\b503\b/.test(m)) return true;
+  if (/rate[\s_-]*limit/i.test(m)) return true;
+  if (/too\s+many\s+.*\b(connection|request|attempt)/i.test(m)) return true;
+  if (/acquire\s+.*\bpermit\b/i.test(m)) return true;
+  if (/temporarily\s+unavailable/i.test(m)) return true;
+  return false;
+}
+
+type RetryKind = 'jwt' | 'transient';
+
+/**
+ * Decide the retry strategy an error warrants, or null to fail immediately.
+ * JWT/auth errors take precedence — they need a freshly-fetched token and a new
+ * connection. Transient capacity errors retry against the same connection.
+ */
+function classifyRetry(err: unknown): RetryKind | null {
+  if (!(err instanceof Error)) return null;
+  if (messageLooksLikeJwtError(err.message)) return 'jwt';
+  if (isTransientErrorMessage(err.message)) return 'transient';
+  return null;
 }
 
 /**
  * The MCP SDK returns tool failures as a normal result with `isError: true`
- * (the error text lives in `content`). Surface those as thrown JWT errors so
- * withJwtRetries can react to them — otherwise an expired/rotated token
- * looks like a successful call carrying an error string, and the retry path
- * never fires.
+ * (the error text lives in `content`). Surface retryable ones (JWT/auth or
+ * transient) as thrown errors so withRetries can react — otherwise an
+ * expired token or a pool-exhaustion error looks like a successful call
+ * carrying an error string, and the retry path never fires. Non-retryable
+ * error results (RLS, dup key, 0-row) are left untouched and pass through.
  */
-function jwtErrorFromResult(result: unknown): Error | null {
+function retryableErrorFromResult(result: unknown): Error | null {
   if (!result || typeof result !== 'object') return null;
   const r = result as {
     content?: Array<{ type: string; text?: string }>;
@@ -587,31 +614,45 @@ function jwtErrorFromResult(result: unknown): Error | null {
       ?.filter((c) => c.type === 'text' && c.text)
       .map((c) => c.text as string)
       .join('\n') ?? '';
-  if (!messageLooksLikeJwtError(text)) return null;
-  return new Error(text);
+  const err = new Error(text);
+  return classifyRetry(err) ? err : null;
 }
 
 /**
- * Backoff before each successive fresh-token retry (see withJwtRetries). The
- * first fresh retry waits 11s, then 21s, 31s, ... 61s, after which we stop.
- * The very first retry (same connection, same token) happens immediately and
- * is not part of this schedule.
+ * Exponential backoff (ms) applied before each retry, doubling per step and
+ * softened by equal jitter (see jitter()). Transient capacity errors get five
+ * retries; JWT errors get one extra step (3200ms) to ride out the brief window
+ * where a freshly-fetched token is still propagating across the cluster.
  */
-const JWT_FRESH_RETRY_DELAYS_MS = [11, 21, 31, 41, 51, 61].map((s) => s * 1000);
+const TRANSIENT_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600];
+const JWT_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600, 3200];
 
 /**
- * Run a connection-bound operation with JWT retries:
- *   1. retry against the same connection (same token), immediately — handles
- *      transient validation glitches
- *   2. retry against a freshly-connected client built with a freshly-fetched
- *      JWT (cache invalidated) — handles expired/rotated tokens. Repeated with
- *      an increasing backoff (11s, 21s, ... 61s) to ride out token
- *      rotation/propagation delays, then we give up.
- *
- * Non-JWT errors propagate immediately. Each phase emits a JSONL line when
- * the "jwt" log level is enabled (see logJwtRetryEvent).
+ * Equal jitter: keep half the base delay as a floor and randomize the other
+ * half. Preserves a guaranteed minimum backoff while desynchronizing many
+ * clients that would otherwise retry in lockstep (thundering herd).
  */
-async function withJwtRetries<T>(args: {
+function jitter(baseMs: number): number {
+  return Math.round(baseMs / 2 + Math.random() * (baseMs / 2));
+}
+
+/**
+ * Run a connection-bound operation with automatic retries, choosing a recovery
+ * strategy from the failure (see classifyRetry):
+ *
+ *   - 'jwt'       — expired/rotated token. Each retry invalidates the cache,
+ *                   fetches a fresh JWT, and reconnects (freshOp). Six steps so
+ *                   a just-issued token has time to propagate cluster-wide.
+ *   - 'transient' — capacity backpressure (429, connection-pool exhaustion).
+ *                   The request never reached the data, so each retry simply
+ *                   re-runs the same operation on the same connection. Five
+ *                   steps.
+ *
+ * Both use exponential backoff with equal jitter. A non-retryable error (or an
+ * error that becomes non-retryable mid-loop) propagates immediately. Every
+ * attempt emits a JSONL line via logRetryEvent.
+ */
+async function withRetries<T>(args: {
   serverName: string;
   originalConfig: ServerConfig;
   currentOp: () => Promise<T>;
@@ -624,73 +665,79 @@ async function withJwtRetries<T>(args: {
 
   const runOp = async (op: () => Promise<T>): Promise<T> => {
     const result = await op();
-    const asJwtError = jwtErrorFromResult(result);
-    if (asJwtError) throw asJwtError;
+    const asError = retryableErrorFromResult(result);
+    if (asError) throw asError;
     return result;
   };
 
+  // Initial attempt. A non-retryable failure propagates as-is.
+  let kind: RetryKind;
+  let lastError: Error;
   try {
     return await runOp(currentOp);
   } catch (err) {
-    if (!isJwtError(err)) throw err;
-    // Initial JWT failure — fall through to retry_token attempt.
+    const k = classifyRetry(err);
+    if (!k) throw err;
+    kind = k;
+    lastError = err instanceof Error ? err : new Error(String(err));
   }
 
-  // First retry: immediate, same connection (same token).
-  try {
-    const result = await runOp(currentOp);
-    logJwtRetryEvent({ event: 'retry_token', outcome: 'success' });
-    return result;
-  } catch (err) {
-    if (!isJwtError(err)) throw err;
-    logJwtRetryEvent({
-      event: 'retry_token',
-      outcome: 'failure',
-      error: err.message,
-    });
-  }
+  // The schedule length is fixed by the first failure's kind; the per-attempt
+  // recovery action follows the current error's kind (which can shift, e.g. a
+  // transient retry that then surfaces an expired token).
+  const delays =
+    kind === 'jwt' ? JWT_RETRY_DELAYS_MS : TRANSIENT_RETRY_DELAYS_MS;
 
-  // Subsequent retries: fresh connection + freshly-fetched JWT, each preceded
-  // by an increasing backoff. Stop after the last delay has been tried.
-  let lastError: Error = new Error('JWT retries exhausted');
-  for (let i = 0; i < JWT_FRESH_RETRY_DELAYS_MS.length; i++) {
-    const waitedMs = JWT_FRESH_RETRY_DELAYS_MS[i];
+  for (let i = 0; i < delays.length; i++) {
+    const waitedMs = jitter(delays[i]);
     await sleep(waitedMs);
 
-    if (apiKey) invalidateJwt(apiKey);
-    const freshConfig = await transformConfigWithJwt(
-      serverName,
-      originalConfig,
-    );
-    if (isHttpServer(freshConfig)) {
-      const authHeader = freshConfig.headers?.Authorization;
-      if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-        recordJwt(authHeader.slice('Bearer '.length));
-      }
-    }
-    const fresh = await connectToServer(serverName, freshConfig);
+    const event = kind === 'jwt' ? 'retry_fresh_token' : 'retry_transient';
     try {
-      const result = await runOp(() => freshOp(fresh.client));
-      logJwtRetryEvent({
-        event: 'retry_fresh_token',
-        outcome: 'success',
-        attempt: i + 1,
-        waitedMs,
-      });
+      let result: T;
+      if (kind === 'jwt') {
+        // Fresh connection + freshly-fetched JWT (cache invalidated).
+        if (apiKey) invalidateJwt(apiKey);
+        const freshConfig = await transformConfigWithJwt(
+          serverName,
+          originalConfig,
+        );
+        if (isHttpServer(freshConfig)) {
+          recordUrl(freshConfig.url);
+          const authHeader = freshConfig.headers?.Authorization;
+          if (
+            typeof authHeader === 'string' &&
+            authHeader.startsWith('Bearer ')
+          ) {
+            recordJwt(authHeader.slice('Bearer '.length));
+          }
+        }
+        const fresh = await connectToServer(serverName, freshConfig);
+        try {
+          result = await runOp(() => freshOp(fresh.client));
+        } finally {
+          await safeClose(fresh.close);
+        }
+      } else {
+        // Transient: re-run the same operation on the same connection.
+        result = await runOp(currentOp);
+      }
+      logRetryEvent({ event, outcome: 'success', attempt: i + 1, waitedMs });
       return result;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      logJwtRetryEvent({
-        event: 'retry_fresh_token',
+      logRetryEvent({
+        event,
         outcome: 'failure',
         attempt: i + 1,
         waitedMs,
         error: lastError.message,
       });
-      // Only a JWT error is worth another delayed retry; anything else stops.
-      if (!isJwtError(err)) throw lastError;
-    } finally {
-      await safeClose(fresh.close);
+      // Stop the moment the error is no longer retryable; otherwise carry the
+      // (possibly changed) kind into the next attempt.
+      const nextKind = classifyRetry(err);
+      if (!nextKind) throw lastError;
+      kind = nextKind;
     }
   }
 
@@ -722,6 +769,11 @@ export async function getConnection(
   // No-op if caching is disabled, the server isn't HTTP, or no API key is set.
   const resolvedConfig = await transformConfigWithJwt(serverName, config);
 
+  // Make the target URL available to the logger so every entry (success,
+  // failure, or retry event) records which host the request went to. Absent
+  // for stdio servers, which have no URL.
+  if (isHttpServer(resolvedConfig)) recordUrl(resolvedConfig.url);
+
   // Extract JWT for error annotation (temporary — to aid regression analysis).
   const authHeader =
     isHttpServer(resolvedConfig) && resolvedConfig.headers?.Authorization;
@@ -752,7 +804,7 @@ export async function getConnection(
         return {
           async listTools(): Promise<ToolInfo[]> {
             const data = await timeMcp(() =>
-              withJwtRetries({
+              withRetries({
                 serverName,
                 originalConfig: config,
                 currentOp: () => daemonConn.listTools().catch(annotateJwtError),
@@ -774,7 +826,7 @@ export async function getConnection(
               );
             }
             return timeMcp(() =>
-              withJwtRetries({
+              withRetries({
                 serverName,
                 originalConfig: config,
                 currentOp: () =>
@@ -806,7 +858,7 @@ export async function getConnection(
   return {
     async listTools(): Promise<ToolInfo[]> {
       const tools = await timeMcp(() =>
-        withJwtRetries({
+        withRetries({
           serverName,
           originalConfig: config,
           currentOp: () => listTools(client).catch(annotateJwtError),
@@ -825,7 +877,7 @@ export async function getConnection(
         throw new Error(`Tool "${toolName}" is disabled by configuration`);
       }
       return timeMcp(() =>
-        withJwtRetries({
+        withRetries({
           serverName,
           originalConfig: config,
           currentOp: () =>
