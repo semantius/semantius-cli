@@ -16,7 +16,6 @@ that's where the skill earns its value.
 | 6 | `m2m-junction-table-full-setup-and-seed` | M:N junction table + seeding 6 records with captured IDs |
 | 7 | `diagnose-and-fix-permission-denied` | RBAC diagnosis chain: user → roles → permissions → hierarchy → fix |
 | 8 | `cube-total-vs-trend-correct-pattern` | Totals (inDateRange in filters) vs trends (timeDimensions + granularity) |
-| 9 | `composed-labels-and-nary-junction-correctness` | Composed `_label`/`<fk>_label` are read-only & platform-derived (never create_field/write them; select by name; drive display with `label_parent`); plus an N-ary (3-leg) junction shape |
 
 ---
 

@@ -34,7 +34,7 @@ Every entity **must** belong to a module.
 A module has two name fields with distinct jobs:
 
 - **`module_name`** is the unique, human-facing display name shown in the UI module selector and on the module landing page. Keep acronyms as acronyms (`CRM`, `ITSM`, `CMDB`), this is what users read. Matches the source model's `system_name`.
-- **`module_slug`** is the lowercase, URL-safe handle — **required and non-empty** (regex `^[a-z0-9_-]+$`; lowercase letters, digits, `_`, and `-`, hyphen now allowed). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A missing, empty, or malformed slug is rejected with `module_slug must be lowercase alphanumeric, underscore, or hyphen`.
+- **`module_slug`** is the lowercase, URL-safe handle (regex `^([a-z0-9_]+)?$`). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug`.
 
 > ⚠️ **`alias` is gone.** Earlier schemas had an `alias` column on modules. It has been removed. Use `module_name` for the display name and `module_slug` for the URL/permission handle.
 
@@ -164,14 +164,13 @@ Platform meta-schema. **Never declare in a domain model.** The deployer manages 
 | `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
 | `plural_label` | e.g. "Products" |
 | `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title |
-| `module_id` | Required on `create_entity` — must be a valid (non-null) integer module id; `null` is rejected. Find with `read_module`. On `update_entity` it stays optional, but a provided value must still be a non-null integer. |
+| `module_id` | Required, find with `read_module` |
 | `view_permission` | Required, name string (e.g. `"catalog:read"`) |
 | `edit_permission` | Required, name string (e.g. `"catalog:manage"`) |
 | `icon_url` | Optional, URL to an icon representing this entity in the UI |
 | `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
 | `cube_mode` | Optional. OLAP cube generation: `auto` (default, include in cube) or `disabled`. Set to `disabled` to exclude the entity from cube queries. |
 | `audit_log` | Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value. |
-| `label_parent` | Optional. Names the **one** FK field that is this entity's identity spine — the parent whose composed `_label` prefixes this record's `_label`. Must name a `reference`/`parent` FK; must **not** target a junction and must **not** be set on a junction. Omit for self-identifying records (then `_label` is just the local label). The analyst derives it; the modeler stamps it. |
 
 ### Auto-Generated Fields: NEVER Create These Manually
 
@@ -184,12 +183,8 @@ When `create_entity` is called, the system automatically creates:
 | `<label_column>` | `label` | The actual named field (e.g. `product_name`) with title from `singular_label` |
 | `created_at` |, | Timestamp, auto-maintained |
 | `updated_at` |, | Timestamp, auto-maintained |
-| `_label` | `_label` | **Composed label** — the record's full human-readable label, folded from its parent chain (spine → … → local `label`). Read-only, read-time; **not** in the `fields` catalog. |
-| `<fk>_label` | `fk_label` | Companion of every `reference`/`parent` FK named `X` → `X_label` = the referenced row's composed `_label` (e.g. `customer_id` → `customer_id_label`). Read-only, read-time; **not** in the `fields` catalog. |
 
 > ⚠️ Calling `create_field` for any of these will fail or create duplicates.
-
-> ℹ️ **`_label` / `<fk>_label` are platform-owned, read-only, read-time projections.** They are absent from the `fields` catalog (`read_field` never returns them) and are **not user-creatable**. Their names are deterministic, so agents select them by the naming convention — e.g. `select=id,_label,customer_id_label` — with **no discovery call**. Never `create_field`, write, or import into them.
 
 > ℹ️ `searchable` and `is_child` on the entity are **read-only** and computed automatically. `searchable` becomes `true` when any field has `searchable: true`; `is_child` becomes `true` when any field uses `format: "parent"`. Never set these manually.
 
@@ -756,8 +751,6 @@ Choose `format` carefully. Format **can** be changed after creation, but **only 
 
 Heuristic for the analyst: field names like `*_name`, `*_title`, `*_label`, `*_code`, `*_id` (string identifier), `email_address`, `phone_number`, `url` → single-line (`string` or `text`). Field names like `description`, `notes`, `body`, `comment`, `concerns`, `strengths`, `feedback`, `summary`, `details`, `rationale`, `instructions` → multi-line (`multiline`).
 
-> 🛑 **Reserved field names.** A `field_name` must **not** start with `_` (reserves the entity's own `_label`) or end with `_id_label` (reserves the `<fk>_label` companions). The platform rejects both on create and on rename. Plain `*_label` names (e.g. `status_label`) remain allowed.
-
 ### `width` Values
 
 | Value | Use |
@@ -776,8 +769,6 @@ Heuristic for the analyst: field names like `*_name`, `*_title`, `*_label`, `*_c
 | `readonly` | Displayed but not editable, **never import into this** |
 | `disabled` | Greyed out, not editable, **never import into this** — this is the canonical mode for **computed fields** (platform owns the value, caller payloads are silently overwritten on every write) |
 | `hidden` | Not shown in forms |
-
-> ℹ️ The composed-label columns `_label` / `<fk>_label` are **always** platform-owned and read-only regardless of `input_type` — they are read-time projections, never authored fields, so this table does not apply to them. Never write or import into them.
 
 ### Dynamic `input_type` via `input_type_rule` (field-level JsonLogic)
 
@@ -1022,7 +1013,7 @@ The platform manages nullability internally based on format and delete-mode, do 
 | Optional link to independent entity | `reference` | `clear` |
 | Required link to independent entity | `reference` | `restrict` |
 | Child is owned by parent | `parent` | `cascade` |
-| M:N junction FK (all legs) | `parent` | `cascade` |
+| M:N junction FK (both sides) | `parent` | `cascade` |
 
 ### `reference`: Cross-Entity Link (Independent Lifecycle)
 
@@ -1080,8 +1071,6 @@ semantius call crud create_field '{"data": {"table_name": "product_tags", "field
 # FK to tags
 semantius call crud create_field '{"data": {"table_name": "product_tags", "field_name": "tag_id", "format": "parent", "reference_table": "tags", "reference_delete_mode": "cascade", "width": "default", "input_type": "default"}}'
 ```
-
-> **Junctions aren't binary-only.** `entity_type = junction` combines **all** `parent` legs, so an N-ary link works the same way — e.g. `(user, role, tenant)`. But an N-ary link that carries its **own attributes or lifecycle** is an association class → classify it `operational_record` / `operational_workflow`, **not** `junction`.
 
 ---
 
@@ -1156,7 +1145,7 @@ semantius call crud delete_entity '{"table_name": "<table_name>"}'
 5. **Ask for clarification when needed**, If a user says "add contacts", confirm what fields they need before creating anything.
 6. **Warn before risky changes**, Alert the user to medium/high-risk changes and wait for confirmation before executing.
 7. **Suggest next steps**, After creating an entity, suggest related entities, missing fields, or useful roles.
-8. **Provide link to UI**, After creating or updating entities/fields, provide: `{ui_baseurl}/{module_slug}/{table_name}` (get `ui_baseurl` from `getCurrentUser` — never hardcode the org host; URL paths use the lowercase `module_slug`, never the display `module_name`). For a specific record, append the id: `{ui_baseurl}/{module_slug}/{table_name}/{id}`.
+8. **Provide link to UI**, After creating or updating entities/fields, provide: `https://tests.semantius.app/{module_slug}/{table_name}` (URLs use the lowercase `module_slug`, never the display `module_name`).
 
 Use `wfts(simple)` on the `search_vector` column when the entity is searchable:
 

@@ -23,8 +23,6 @@ semantius call crud read_field '{"filters": "table_name=eq.<table_name>"}'
 
 Note which fields have `input_type: "readonly"` or `input_type: "disabled"`, **never import into those**. `disabled` is the mode the deployer assigns to computed fields (the platform overwrites caller values on every write); `readonly` is the legacy mode for the same intent. Either is a signal: the field is not caller-writable in any meaningful sense.
 
-The composed-label columns — the entity's own `_label` and any FK companion `<fk>_label` (e.g. `customer_id_label`) — are likewise **never import targets**. They are platform-owned, read-time projections, not real columns, and don't appear in `read_field` at all.
-
 ---
 
 ## Step 2: Find or Create Webhook Receiver
@@ -66,7 +64,7 @@ semantius call crud getCurrentUser '{}'
 | Reasonable (`Email Address` → `email`) | Auto-map, mention in summary |
 | Ambiguous | Ask user before proceeding |
 
-Never map to `input_type: "readonly"` or `input_type: "disabled"` fields — both indicate a non-caller-writable column (computed fields land in `disabled`; legacy / manual locks land in `readonly`). Never map to `_label` or a `<fk>_label` companion (e.g. `_label`, `customer_id_label`) either — they are read-only composed labels the platform derives, not writable columns.
+Never map to `input_type: "readonly"` or `input_type: "disabled"` fields — both indicate a non-caller-writable column (computed fields land in `disabled`; legacy / manual locks land in `readonly`).
 
 ---
 

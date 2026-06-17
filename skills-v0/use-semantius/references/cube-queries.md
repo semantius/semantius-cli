@@ -61,8 +61,6 @@ Fields are **exactly** `CubeName.fieldName`, two parts, one dot. Copy verbatim f
 | `Sales_count` | `Sales.count` |
 | `sales` | `Sales.count` |
 
-> **Composed labels are not cube fields.** The read-time `_label` (a record's composed label) and any `<fk>_label` companion are PostgREST read-time projections, **not** cube dimensions or measures — they never appear in `discover` output and must not be referenced in a cube query. To display a composed label, select it via PostgREST (`select=id,_label`); composed labels are out of scope for the cube in v1.
-
 ---
 
 ## The #1 Mistake: Totals vs Time Series

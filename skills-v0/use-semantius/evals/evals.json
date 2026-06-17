@@ -17,7 +17,7 @@
         "stage field on deals is format:enum with all 5 values in enum_values array",
         "Creates 2 roles: viewer with :read and salesperson with :manage",
         "Creates role_permission records granting permissions to each role",
-        "Provides UI links derived from getCurrentUser's ui_baseurl (ui_baseurl/module_slug/table_name) for each entity, not a hardcoded host",
+        "Provides tests.semantius.app UI links for each entity",
         "Total CLI command count is 15 or more"
       ],
       "files": []
@@ -59,7 +59,7 @@
       "id": 5,
       "name": "shell-script-create-entity-and-fields-with-captured-ids",
       "prompt": "Write a shell script that creates a new 'suppliers' entity in the existing 'inventory' module, captures the module ID first, then immediately creates 3 fields on it: email, phone, and country. Use jq throughout to extract IDs, use heredocs for JSON, and end by printing the UI link.",
-      "expected_output": "A complete bash script: MODULE_ID=$(semantius call crud read_module '{\"filters\":\"name=eq.inventory\"}' | jq -r '.[0].id'), then create_entity call storing result in a variable, then 3 create_field calls for email (format:email), phone (format:string), country (format:string). Does NOT create supplier_name field because it is the label_column. Captures the UI base from getCurrentUser (UI_BASEURL=$(semantius call crud getCurrentUser | jq -r .ui_baseurl)) and ends by echoing $UI_BASEURL/inventory/suppliers — never a hardcoded host. Uses heredocs throughout.",
+      "expected_output": "A complete bash script: MODULE_ID=$(semantius call crud read_module '{\"filters\":\"name=eq.inventory\"}' | jq -r '.[0].id'), then create_entity call storing result in a variable, then 3 create_field calls for email (format:email), phone (format:string), country (format:string). Does NOT create supplier_name field because it is the label_column. Ends with echo https://tests.semantius.app/inventory/suppliers. Uses heredocs throughout.",
       "assertions": [
         "Reads existing inventory module to capture its ID with jq",
         "create_entity call uses the captured module ID",
@@ -68,7 +68,7 @@
         "email field uses format:email",
         "Uses heredoc <<EOF or pipe for all JSON payloads",
         "Script includes error handling",
-        "Ends by deriving ui_baseurl from getCurrentUser and printing the {ui_baseurl}/inventory/suppliers URL for the new entity"
+        "Ends by printing the tests.semantius.app URL for the new entity"
       ],
       "files": []
     },
@@ -146,24 +146,6 @@
       ],
       "files": [],
       "notes": "NOTE: This test may fail due to platform limitation: Neon serverless doesn't support transactions required for webhook inserts. The generated script is correct - the failure is a platform bug, not a skill bug."
-    },
-    {
-      "id": 9,
-      "name": "composed-labels-and-nary-junction-correctness",
-      "prompt": "Two things on our ATS instance. (1) The 'interview_scorecards' entity labels its rows like 'Scorecard 6' — useless. I want each scorecard's display label to read as its full chain up to the candidate (scorecard -> interview -> job_application -> candidate), and I want to list scorecards showing that full label plus each row's interview label. (2) Separately, set up a three-way link between users, roles, and tenants (a user holds a role within a tenant). Give me the exact CLI commands, and explain what you are and aren't creating.",
-      "expected_output": "For (1): recognizes that every entity already exposes a read-only, read-time _label (composed from its parent chain) and every reference/parent FK an <fk>_label companion — these are platform-derived, NOT authored fields. So it does NOT create_field a _label (or any *_id_label) and does NOT write a computed_field / stored merged label to build it. Instead it sets the identity spine via update_entity on interview_scorecards with label_parent = the spine FK (interview_id), and recognizes the full fold to the candidate requires each ancestor to carry its own label_parent (interviews -> job_application_id, job_applications -> candidate_id) — setting them or noting they must be set. To list scorecards it selects the columns by their deterministic names (select=id,_label,interview_id_label) with no get_schema/discovery call, and never writes into _label / <fk>_label. For (2): creates a junction entity (e.g. user_role_tenants) with THREE format:parent FKs — user_id, role_id, tenant_id — each with reference_delete_mode:cascade, no own attributes and no status/lifecycle field (so it stays a junction, not an association class). It never create_fields id/label/created_at/updated_at or _label/<fk>_label on the junction.",
-      "assertions": [
-        "Never calls create_field for a field named _label, or for any field ending in _id_label (e.g. interview_id_label) — these are platform-derived, not authored fields",
-        "Does NOT reach for a computed_field or a stored merged label to display the chain; uses the platform-native composed _label driven by label_parent (always current, permission-aware)",
-        "Sets the scorecard's identity spine via update_entity with label_parent = interview_id (a real reference/parent FK), not a non-FK column and not a junction target",
-        "Recognizes the full fold to the candidate needs label_parent on the ancestors too (interviews -> job_application_id, job_applications -> candidate_id) — sets them or states they must be set",
-        "Lists scorecards by selecting columns by deterministic name (select includes _label and interview_id_label), with no get_schema / discovery call",
-        "Never writes or imports into _label or any <fk>_label (read-only)",
-        "Creates a 3-leg junction with exactly three format:parent FKs (user_id, role_id, tenant_id), each with reference_delete_mode:cascade",
-        "Does NOT add a status/lifecycle or other payload field to the junction (which would make it an association class / operational_record, not a junction)",
-        "Never manually creates id/label/created_at/updated_at or _label/<fk>_label on the junction"
-      ],
-      "files": []
     }
   ]
 }

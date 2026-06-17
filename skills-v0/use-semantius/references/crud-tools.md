@@ -25,16 +25,8 @@ sqlToRest            →  translating a SQL query into PostgREST path syntax
 ## Utility Tools
 
 ### `getCurrentUser`
-Returns the current user's profile, email, roles, effective permissions, and accessible modules. No parameters required, call with `'{}'`.
-
-It also returns three base values for building endpoints and links — always derive these from `getCurrentUser`, never hardcode the org host:
-- **`api_baseurl`** — base for webhook/hook endpoints (e.g. `{api_baseurl}/hook/{webhook_receiver_id}`).
-- **`semantius_org`** — the org slug (e.g. `mytest`).
-- **`ui_baseurl`** — the web UI base, `https://<org>.semantius.app`. Build links to the web user interface from it:
-  - List of records for an entity: `{ui_baseurl}/{module_slug}/{table_name}` (e.g. `https://mytest.semantius.app/hiring-starter/job_applications`)
-  - A specific record: `{ui_baseurl}/{module_slug}/{table_name}/{id}` (e.g. `https://mytest.semantius.app/hiring-starter/job_applications/719`)
-
-  URL paths use the lowercase `module_slug`, never the display `module_name`.
+Returns current user's profile, email, roles, effective permissions, accessible modules, and `api_baseurl`.
+No parameters required, call with `'{}'`.
 
 ### `postgrestRequest`
 
@@ -208,16 +200,16 @@ The typed tools accept a structured object instead of raw path strings:
 ### `create_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Entity fields. See data-modeling.md for required fields and auto-generated fields. `module_id` is **required** and must be a valid integer module id (`null` is rejected — it is no longer nullable). `singular` is now **optional**. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in data-modeling.md. Also accepts the optional `label_parent` (the FK field name that is this entity's identity spine; must name a `reference`/`parent` FK, must not be set on a junction or target one). |
+| `data` | object | yes | Entity fields. See data-modeling.md for required fields and auto-generated fields. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in data-modeling.md. |
 
 ### `read_entity`
-Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties, plus `label_parent` (the identity-spine FK field name, or null).
+Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties.
 
 ### `update_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `table_name` | string | yes | Identifier of the entity to update |
-| `data` | object | yes | Fields to update (partial, omitted fields unchanged). `module_id` stays optional, but **when provided** must be a non-null integer (`null` is now rejected). `singular` is optional (unchanged). `computed_fields` and `validation_rules` are **replaced wholesale** when present in `data`, not merged; send the full intended array. Sending an empty array removes the per-record trigger. `label_parent` may be set or cleared here (re-points the identity spine; no data migration — `_label` is derived at read time). |
+| `data` | object | yes | Fields to update (partial, omitted fields unchanged). `computed_fields` and `validation_rules` are **replaced wholesale** when present in `data`, not merged; send the full intended array. Sending an empty array removes the per-record trigger. |
 
 ### `delete_entity`
 | Parameter | Type | Required | Description |
@@ -250,31 +242,19 @@ Also use to find cross-references before deletion: `"reference_table=eq.<table_n
 
 ---
 
-## Composed labels: `_label` and `<fk>_label` (read-only, select by name)
-
-Every entity exposes a read-only **`_label`** — its composed, human-readable label, folded from its parent chain (the identity spine's `_label` ⧺ ` › ` ⧺ the local label). Every `reference`/`parent` FK named `X` exposes a read-only companion **`X_label`** = the referenced row's composed `_label` (e.g. `customer_id` → `customer_id_label`).
-
-- **Select them explicitly by name** — `select=id,_label,customer_id_label`. They are not authored fields (absent from the `fields` catalog; `read_field` never returns them) and are **not** included in `select=*`.
-- **Names are deterministic, so no discovery call is needed:** `_label` on the entity, and `<fk>_label` on each `reference`/`parent` FK (the FK field name + `_label`). (`get_schema` is a UI aggregation endpoint, not a skill tool — don't use it to find these.)
-- **Read-only.** Never `create_field`, write, or import into `_label` / `<fk>_label`; the platform owns them and computes them at read time.
-
-**Displaying a parent's label — prefer `select=X_label` over embedding.** To show a parent's name beside a child row, select the FK companion (`select=id,interview_id_label`) rather than PostgREST resource embedding (`select=id,interviews(label)`). The companion returns the parent's *composed* `_label`, respects the caller's row-level read permissions, and avoids the join.
-
----
-
 ## Module Tools
 
 ### `create_module`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Requires `module_name` and `module_slug`. Optional: `description`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
+| `data` | object | yes | Requires `module_name`. Optional: `module_slug`, `description`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
 
 #### `modules` field reference
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `module_name` | string | **Unique display name shown in the UI module selector and on the landing page header** (e.g. `CRM`, `ITSM`, `CMDB`). Keep acronyms as acronyms, this is the human-facing name. Required. |
-| `module_slug` | string | URL-safe slug, **required and non-empty**. Lowercase letters, digits, `_`, and `-` only (regex `^[a-z0-9_-]+$`; hyphen is now allowed). Used in URLs, permission prefixes, and as the foreign-key target when referenced from semantic-model files. Convention: matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). Accepted: `ben-admin`, `ben_admin`, `bm1`. Rejected: `""`, `Ben-Admin`, `ben admin`. Violations error with `module_slug must be lowercase alphanumeric, underscore, or hyphen`. |
+| `module_slug` | string | URL-safe slug, lowercase alphanumeric or underscore (regex `^([a-z0-9_]+)?$`). Used in URLs, permission prefixes, and as the foreign-key target when referenced from semantic-model files. Convention: matches the source model's `system_slug` (e.g. `crm`, `itsm`, `cmdb`). Optional but strongly recommended, without it the URL/permission scheme has no stable handle. |
 | `description` | string | Compact tagline shown beside `module_name` in the selector dropdown and on the landing page (e.g. `Customer Relationship Management`, `IT Service Management`). For acronym `module_name`s use the plain English expansion; for non-acronyms use a 2-4 word disambiguating phrase. Aim for ≤40 characters. Optional. |
 | `view_permission` | string | Permission name required to see the module in the selector (e.g. `crm:read`). Optional; when omitted the module is visible to anyone with at least one entity permission inside it. |
 | `logo_url` | string | URL or `data:` URI for the module logo shown in the selector chip. Optional. |
@@ -292,7 +272,7 @@ Accepts common read parameters.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | integer | yes | Module ID |
-| `data` | object | yes | Fields to update (partial — omit a field to leave it unchanged). `module_slug` stays optional here, but **when provided** it must be non-empty and match `^[a-z0-9_-]+$` (hyphen now allowed); same error as `create_module` on violation. |
+| `data` | object | yes | Fields to update |
 
 ### `delete_module`
 | Parameter | Type | Required | Description |
