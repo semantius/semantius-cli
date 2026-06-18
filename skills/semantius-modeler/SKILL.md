@@ -1,6 +1,25 @@
 ---
 name: semantius-modeler
-description: Deploys a *-semantic-spec.md file (produced by the `semantius-analyst` skill) to a live Semantius instance using the `semantius` CLI. The spec is already reconciled against the live catalog by the analyst — every entity carries an explicit `Reconciliation:` annotation (`create-new`, `reuse-from`, `rename-incoming-from`, `promote-to-master`, or `dropped`), every cross-model link is resolved, every collision decision is baked in. The modeler is a thin executor: parse spec → verify reconciliation annotations still hold against live → render plan → execute writes → verify → optional sample data. The modeler does NOT detect collisions, classify entities, drive merge / rename / promotion widgets, or ask the user about catalog ambiguity — that's the analyst's job and the spec is the artifact that carries those decisions. If a spec lacks reconciliation annotations or the live catalog has drifted since the analyst ran, the modeler refuses to execute and routes the user back to the analyst. Trigger when the user has a `*-semantic-spec.md` and wants to deploy / apply / push / implement it, including phrasings like "deploy the spec", "apply the schema", "push this to Semantius", "implement the spec", "now make it real". If the user references a `*-semantic-blueprint.md`, route them through the analyst first.
+description: >-
+  Deploys a *-semantic-spec.md file (produced by the `semantius-analyst`
+  skill) to a live Semantius instance using the `semantius` CLI. The spec is
+  already reconciled against the live catalog by the analyst — every entity
+  carries an explicit `Reconciliation:` annotation (`create-new`,
+  `reuse-from`, `rename-incoming-from`, `promote-to-master`, or `dropped`),
+  every cross-model link is resolved, every collision decision is baked in.
+  The modeler is a thin executor: parse spec → verify reconciliation
+  annotations still hold against live → render plan → execute writes → verify
+  → optional sample data. The modeler does NOT detect collisions, classify
+  entities, drive merge / rename / promotion widgets, or ask the user about
+  catalog ambiguity — that's the analyst's job and the spec is the artifact
+  that carries those decisions. If a spec lacks reconciliation annotations or
+  the live catalog has drifted since the analyst ran, the modeler refuses to
+  execute and routes the user back to the analyst. Trigger when the user has a
+  `*-semantic-spec.md` and wants to deploy / apply / push / implement it,
+  including phrasings like "deploy the spec", "apply the schema", "push this
+  to Semantius", "implement the spec", "now make it real". If the user
+  references a `*-semantic-blueprint.md`, route them through the analyst
+  first.
 ---
 
 # semantius-modeler Skill
