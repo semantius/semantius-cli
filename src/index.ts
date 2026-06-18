@@ -531,7 +531,8 @@ ${
     ? `
 ⚠  Missing required environment variables:
 ${missingVars.map((v) => `   ${v}`).join('\n')}
-   Set these in ${configDir}/.env or export them in your shell.`
+   Set these in ${configDir}/.env or export them in your shell.
+   Generate an API key at https://app.semantius.com/dashboard`
     : ''
 }`);
 }
@@ -549,6 +550,7 @@ function checkRequiredEnvVars(): void {
         `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v}`,
       );
     }
+    console.error('Generate an API key at https://app.semantius.com/dashboard');
     // A missing API key is an auth failure (permanent); a missing ORG is a
     // configuration issue. Exit AUTH_ERROR only when API_KEY itself is missing.
     const missingApiKey = missing.some((v) => v.endsWith('_API_KEY'));
@@ -605,7 +607,8 @@ async function main(): Promise<void> {
       console.log(`
 ⚠  Missing required environment variables:
 ${missingVars.map((v) => `   ${v}`).join('\n')}
-   Set these in ${getUserConfigDir()}/.env or export them in your shell.`);
+   Set these in ${getUserConfigDir()}/.env or export them in your shell.
+   Generate an API key at https://app.semantius.com/dashboard`);
     }
     return;
   }
