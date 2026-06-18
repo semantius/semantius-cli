@@ -5,8 +5,9 @@ description: >-
   Trigger when the user wants to: create, read, update, or delete entities,
   fields, modules, permissions, roles, users, or business records; build or query
   a semantic data model; set up RBAC; insert or import data into Semantius
-  tables; run analytical queries across Semantius data; or send transactional
-  emails via the Semantius email service (`crud sendEmail`). Also trigger when
+  tables; run analytical queries across Semantius data; get a web UI link
+  (deep link) to a record, list, or module; or send transactional emails via
+  the Semantius email service (`crud sendEmail`). Also trigger when
   writing shell scripts or Bun scripts that chain semantius commands.
 ---
 
@@ -174,6 +175,22 @@ Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 
 ---
 
+## Linking to the web UI
+
+Any time you want to point the user at a record or list in the Semantius web app — after a create, after a lookup, when reporting query results, whenever a clickable link beats raw JSON — build it from `getCurrentUser`'s `ui_baseurl`. This is **independent of schema work**: it applies to Layer 2 record operations just as much as to Layer 1 schema changes.
+
+- List of records for an entity: `{ui_baseurl}/{module_slug}/{table_name}`
+- A specific record: `{ui_baseurl}/{module_slug}/{table_name}/{id}`
+
+Example: `https://mytest.semantius.app/it-ops-starter/service_requests/5`
+
+- **Derive `ui_baseurl` from `getCurrentUser`** (`semantius call crud getCurrentUser '{}'`) — never hardcode the org host.
+- **Use the lowercase `module_slug`** in the path, never the display `module_name`.
+
+Full detail: `references/crud-tools.md` § `getCurrentUser`.
+
+---
+
 ## Golden Rules
 
 1. **Read before writing**, Before any `create_*`, call `read_*` to check for duplicates. ALWAYS first.
@@ -186,7 +203,7 @@ Full reference: `references/cube-queries.md`, `references/cube-tools.md`
 3. **Never create auto-generated fields**, `id`, `label`, `created_at`, `updated_at`, and the `label_column` field are created automatically by `create_entity`.
 4. **`reference_table` mandates relational format**, Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
 5. **Warn before risky changes**, Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
-6. **Link after schema changes**, Provide the UI link: `{ui_baseurl}/{module_slug}/{table_name}` (get `ui_baseurl` from `getCurrentUser` — never hardcode the org host; URL paths use the lowercase `module_slug`, not the display `module_name`). For a specific record, append the id: `{ui_baseurl}/{module_slug}/{table_name}/{id}`.
+6. **Surface a UI link whenever it helps the user**, after schema changes *and* after record operations (create / find / update). Pattern: `{ui_baseurl}/{module_slug}/{table_name}`, append `/{id}` for one record. See "Linking to the web UI" above for the rules (derive `ui_baseurl` from `getCurrentUser`; use the lowercase `module_slug`).
 
 ## Response handling: exit code is not enough
 
