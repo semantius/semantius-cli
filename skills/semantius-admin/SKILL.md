@@ -10,12 +10,10 @@ description: >-
   a CRM end-to-end", "clone the candidate-crm blueprint and deploy",
   "what's deployed in our instance?", "status of semantius", "audit this
   file" (without naming a specific skill), "back up the catalog", "snapshot
-  the module", or any variation that requires inspecting workspace artifacts
-  and routing to the right sub-skill.** Also trigger when `/semantius:deploy`
-  is invoked with multiple URLs, paths, or a glob. Also
-  trigger on the slash commands `/semantius:deploy`, `/semantius:build`,
-  `/semantius:clone`, `/semantius:audit`, `/semantius:status`, and any other
-  `/semantius:*` composite command. Do NOT trigger when the user explicitly
+  the module", "get started", "I'm new here, set this up", or any variation
+  that requires inspecting workspace artifacts and routing to the right
+  sub-skill.** Also trigger when a deploy request carries multiple URLs,
+  paths, or a glob. Do NOT trigger when the user explicitly
   invokes a single sub-skill ("audit this spec with semantius-analyst",
   "run the modeler"), let those direct calls go through. The admin skill is
   the front door for end-to-end and ambiguous requests, not a wrapper around
@@ -121,10 +119,11 @@ The admin runs all four as part of an orchestrated run; it then passes the resol
 
 The first thing this skill does is classify what the user is asking for. The downstream plan depends on this.
 
-Five request types, in roughly priority order:
+Six request types, in roughly priority order:
 
 | Type | Trigger phrases | Pipeline |
 |---|---|---|
+| **Get started / onboarding** | "get started", "I'm new here, set this up", "what can I build?" | admin-only (Step 5.5): run preflight (install check) → verify the connection by querying the database → count deployed modules → point to the blueprint catalog |
 | **End-to-end build** | "build me a CRM and deploy", "set up an ATS end-to-end", "I need a helpdesk live in our instance" | architect → analyst → modeler |
 | **Clone-and-deploy** | "clone the candidate-crm blueprint and deploy", "use ats-candidate-crm as a starting point and deploy", "deploy a copy of the X blueprint" | architect (Catalog-Clone) → analyst → modeler |
 | **Deploy existing artifact** | "deploy this blueprint", "deploy https://...md", "deploy the file in my workspace" | (fetch if URL) → analyst (if blueprint) → modeler |
@@ -286,10 +285,10 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 
 | Request type | Workspace state | Plan |
 |---|---|---|
-| End-to-end build | Empty workspace | `architect (Create-Greenfield)` → hand off to Step 6 (the blueprint(s) become Step 6's items). |
+| End-to-end build | Empty workspace | `architect (Create-Greenfield)` → analyst → modeler. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask): the architect's interactive Create pass IS the design, and `deploy` is implied by the build request. The created blueprint becomes Step 6's item; the modeler's own pre-write yes/no is the single gate. See "Greenfield and clone builds skip scope flags" below and Pattern 4. |
 | End-to-end build | Blueprint present, no spec | **First run Step 1.3 match check.** If the blueprint matches the request, the user's choice at 1.3 routes the run (deploy / audit / start-over). If 1.3 found no match (the workspace blueprint is unrelated), hand off to Step 6 with the workspace blueprint as the only item ONLY when the user's request is explicitly about that blueprint; otherwise treat as Empty workspace. **Never silently use a workspace blueprint the user didn't reference.** |
 | End-to-end build | Spec present | **First run Step 1.3 match check.** If the spec matches the request, the user's choice at 1.3 routes the run (deploy / audit / start-over). If 1.3 found no match (unrelated spec), treat as Empty workspace and run greenfield architect. **Never silently use a workspace spec the user didn't reference.** |
-| Clone-and-deploy | Empty workspace | `architect (Create-Catalog-Clone)` → hand off to Step 6 (the cloned blueprint becomes Step 6's item). |
+| Clone-and-deploy | Empty workspace | `architect (Create-Catalog-Clone)` → analyst → modeler. Like greenfield, the architect creates the artifact, so **no scope-flag questions fire**; `deploy` is implied. The cloned blueprint becomes Step 6's item. |
 | **Deploy existing** | **Any (1 or N blueprints/specs)** | **Hand off to Step 6.** This is the universal deploy path regardless of how many items. Scope flags (`customize` / `review`, plus `deploy`) are resolved FIRST per "Resolve scope flags BEFORE presenting the plan" below (inference in 6.4.1, asked when ambiguous), so a bare "deploy this" still fires the customize question before anything runs. |
 | Audit | Blueprint named | `architect (Audit)` on the blueprint (does NOT route through Step 6). |
 | Audit | Spec named | `analyst (Audit)` on the spec (does NOT route through Step 6). |
@@ -297,16 +296,21 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 | Status | n/a | Admin-only (Step 5). |
 | Admin (backup, list, ...) | n/a | Admin-only (Step 5). |
 
-**Why everything-deploy routes through Step 6:** one item or many, the pipeline is the same. Step 6 has the customize/deploy flag plumbing, the customizations-file handoff, the unified report. The only request types that bypass Step 6 are pure-architect operations (Audit on a blueprint), pure-analyst operations (Audit on a spec), and admin-only operations (status, backup, health). Anything that ends in writes to the live semantic model goes through Step 6.
+**Why everything-deploy routes through Step 6:** one item or many, the pipeline is the same. Step 6 has the customize/deploy flag plumbing, the customizations-file handoff, the unified report. Greenfield builds and catalog clones also route through Step 6 for the analyst → modeler half and the unified report, but they carry NO `customize` / `review` / `deploy` questions: the architect's Create pass already covered design and `deploy` is implied (see "Greenfield and clone builds skip scope flags"). The only request types that bypass Step 6 are pure-architect operations (Audit on a blueprint), pure-analyst operations (Audit on a spec), and admin-only operations (status, backup, health). Anything that ends in writes to the live semantic model goes through Step 6.
 
 ### Resolve scope flags BEFORE presenting the plan
 
-`customize` (blueprint inputs) and `review` (spec inputs) are **routing decisions, not confirmations**: they change *which steps the plan contains* (a blueprint with `customize=yes` is architect → analyst → modeler; with `customize=no` it is analyst → modeler). A plan cannot be correct until they are resolved, so resolve them BEFORE rendering any plan, and always ask when the user's phrasing leaves a flag ambiguous. A bare "deploy this" (or "deploy the model at `<URL>`") leaves `customize` at `?` and MUST fire the customize question; never silently default it to `no`.
+**First, gate on whether an artifact already exists — scope flags apply to existing artifacts, NOT to greenfield builds.** `customize` and `review` describe what to do with a **pre-existing** design or spec, so they only make sense when one exists:
+
+- **Greenfield build or catalog clone (the architect will CREATE the artifact; nothing exists yet):** skip scope-flag resolution entirely. Do NOT fire the `customize` / `review` / `deploy` questions. There is no design to "deploy as designed or edit first" — the architect's Create pass IS the interactive design, and `deploy` is implied by the build request. Render the greenfield plan (Pattern 4) and run; the modeler's own pre-write yes/no is the single write gate. **Bug guard:** a request like "create a task list" must NEVER produce *"Deploy the task-list design as designed, or edit it first?"* — there is no design yet.
+- **Existing artifact (a workspace file, a Step 1.3 match, or a URL fetched in Step 2):** resolve scope flags as described below.
+
+For an existing artifact, `customize` (blueprint inputs) and `review` (spec inputs) are **routing decisions, not confirmations**: they change *which steps the plan contains* (a blueprint with `customize=yes` is architect → analyst → modeler; with `customize=no` it is analyst → modeler). A plan cannot be correct until they are resolved, so resolve them BEFORE rendering any plan, and always ask when the user's phrasing leaves a flag ambiguous. A bare "deploy this" (or "deploy the model at `<URL>`") leaves `customize` at `?` and MUST fire the customize question; never silently default it to `no`.
 
 Resolve with the inference-then-ask procedure already defined in Step 6.4 (intent table 6.4.1, exact wording 6.4, procedure 6.4.2) — do not re-derive it here:
 
 - **Single identified artifact** (one named file, one URL already fetched in Step 2, or one workspace match from Step 1.3): resolve its scope flags HERE, before the plan is rendered. The front-matter (`system_name`) is in hand, so the `AskUserQuestion` wording is fully formed.
-- **Multi-source deploy** (`/semantius:deploy` with several sources, or a glob whose items are only enumerated in Step 6.1): resolve each item's flags in Step 6.4, which still runs before that item's plan line is rendered in Step 6.6.
+- **Multi-source deploy** (a deploy request with several sources, or a glob whose items are only enumerated in Step 6.1): resolve each item's flags in Step 6.4, which still runs before that item's plan line is rendered in Step 6.6.
 
 Either way the invariant holds: **scope flags are resolved before the plan that contains them is rendered.** Record the resolved values; the decision table above and the plan render below (Step 3 for audit / admin flows, Step 6.6 for pipeline flows) consume them. This is separate from the deploy confirmation discussed next: the "no up-front gate" rule governs only the deploy yes/no and never suppresses these scope questions.
 
@@ -372,6 +376,18 @@ Because the prompt carried no edit-first or as-is qualifier, the `customize` que
 
 Had the user picked "Edit the design first," the plan would carry a leading "Review and edit `real-estate-agent`" line instead. The modeler asks its own yes/no before writing either way.
 
+**Pattern 4 — Greenfield build plan (and catalog clone).** No artifact exists; the architect creates it. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask) — see "Resolve scope flags BEFORE presenting the plan". Render the plan and run. Example output (markdown prose, not code-fenced):
+
+> **Plan:**
+>
+> 1. Design the data model for your task list, mapping out its entities and how they relate (interactive).
+> 2. Match the design against your live semantic model and write the spec.
+> 3. Apply it to your live semantic model.
+>
+> Step 1 is interactive: I'll walk the entities and relationships with you. Step 2 builds the deployable spec and asks a few merge / reuse / promote questions; it doesn't touch your live model. Step 3 applies it; the modeler shows what it will change and asks a final yes/no before writing.
+
+The architect's interactive creation handles every design decision, so there is no separate customize step and no deploy question; the modeler is the single write gate. A catalog clone uses the same three-line shape with step 1 reading *"Clone the `<source>` design as a starting point (interactive)."*
+
 **No admin confirmation widget.** Do NOT fire an up-front `AskUserQuestion` "Proceed with the plan?" gate here. It would duplicate the modeler's own pre-execute yes/no and fire before customize and the analyst have run, asking the user "are you sure?" about a plan whose write step is still many steps away. The plan is informational; the modeler is the single write gate.
 
 **Changing scope or cancelling.** If the user wants to adjust the customize / review / deploy choices or stop after seeing the plan, they say so in chat. Re-resolve the flags (Step 6.4) and re-render the plan, or stop cleanly with one line ("Cancelled. No changes made."). No widget is needed: nothing has run, and the modeler still refuses to write without its own yes/no, so an unintended write cannot slip through.
@@ -417,7 +433,7 @@ Operations that don't involve the architect / analyst / modeler chain. The admin
 
 ### 5.1 Status
 
-`/semantius:status` — show what's in the workspace and what's live. Render as markdown prose, NOT code-fenced:
+**Status** — when the user asks what is deployed, show what's in the workspace and what's live. Render as markdown prose, NOT code-fenced:
 
 > **Workspace:**
 >
@@ -436,7 +452,7 @@ Implementation: read workspace front-matters; call `read_module` / `read_entity`
 
 ### 5.2 Backup (semantic-model snapshot)
 
-`/semantius:backup [<module-slug>]` — snapshot your live semantic model into a versioned JSON dump.
+**Backup** — when the user asks to back up or snapshot, dump the live semantic model into a versioned JSON file (optionally scoped to one module).
 
 Scope:
 - With a `module-slug` argument: snapshot just that module (entities, fields, permissions, role-permissions, permission-hierarchy edges, webhook receivers).
@@ -471,7 +487,7 @@ These are convenience wrappers that produce readable terminal output. No interac
 
 ### 5.4 Health check
 
-`/semantius:health` — verify the instance is reachable and a known entity reads back.
+**Health** — when the user asks to check the connection, verify the instance is reachable and a known entity reads back.
 
 ```bash
 # Probe
@@ -482,17 +498,40 @@ semantius call crud read_entity '{"slug": "users"}'
 
 Report `OK / FAIL` with the failure mode. Exit code matches the underlying call.
 
+### 5.5 Get started (onboarding)
+
+**Get started** — the front door for someone new to the platform. It makes sure the tooling is in place, verifies the connection by querying the live database, reports how much is already deployed, and points to the blueprint catalog so the user can stand up a data platform tailored to them. Safe to run anytime; triggered by "get started", "I'm new here, set this up", and the like (no external command required).
+
+Flow:
+
+1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and configures `.env` auth (asking for the API key when needed). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the API key was not supplied), surface that and stop — there is nothing to get started against until the platform is reachable.
+2. **Verify the connection by querying the database.** Confirm the catalog actually reads back, not just that the CLI authenticated:
+
+   ```bash
+   semantius call crud read_entity '{"slug": "users"}'   # a known built-in must read back
+   semantius call crud read_module '{}'                  # the deployed modules
+   ```
+
+   If either errors, surface the verbatim error and stop: the platform is reachable but the catalog is not queryable, which the user must resolve before anything else.
+3. **Count the deployed modules.** From the `read_module` result, count the custom data modules: those carry a `settings.domain_code` stamp (the deploy pipeline's marker), distinct from platform built-ins. That count is the "your data platform so far" number.
+4. **Report, and point to the catalog.** Use human language, never raw slugs:
+   - **Nothing deployed yet (no custom modules):** *"You're connected to `<org>`, but no custom data modules are live yet. Semantius is built around customizable blueprints — pre-designed data models you tailor into a hyper-customized data platform. Browse them at https://www.semantius.com/blueprints, and I can deploy one for you."*
+   - **Some modules already deployed:** *"You're connected to `<org>` with N data module(s) live: <plain-English names>. Every system in the catalog is a customizable blueprint you can tailor into a hyper-customized data platform — browse more at https://www.semantius.com/blueprints, and just ask me for a full status anytime."*
+5. **Offer the next step, don't force it.** One short line: ask me to deploy a catalog blueprint, build a new system from an idea, or show a full status. Then wait.
+
+Read-only against the catalog. The only writes are the tool installs and `.env` save done by the preflight, which the user implicitly authorized by asking to get started.
+
 ---
 
 ## Step 6: Pipeline execution
 
-`/semantius:deploy` accepts one source or many. Two URLs, three local paths, a glob like `./blueprints/*.md`, or any mix. The admin walks the same checklist regardless of how many items it received.
+A deploy request accepts one source or many. Two URLs, three local paths, a glob like `./blueprints/*.md`, or any mix. The admin walks the same checklist regardless of how many items it received.
 
 Decisions the user makes inside one item (cross-module collisions, host-master picks, missing-owner choices) are recorded in `semantius/<org>/customizations.yaml` as standing policy, so later items in the run — and every future run — auto-resolve without re-asking. Avoiding duplicate prompts is the whole point.
 
 ### 6.1 Resolve sources
 
-Walk `$ARGUMENTS` left-to-right. Each token is one of:
+Walk the deploy sources named in the request left-to-right (when invoked as a plugin command they arrive as the command arguments; standalone, read them from the user's message). Each source is one of:
 
 - `http(s)://...` URL: download via `curl -s -L` (never `WebFetch`). Land in `.tmp_admin/run-<id>/incoming/<derived-filename>.md` for validation; on success, move to the workspace artifact folder (`semantius/blueprints/<system_slug>-semantic-blueprint.md` or `semantius/specs/<system_slug>-semantic-spec.md`).
 - Local file path: accept both the convention folders (`semantius/blueprints/<file>`, `semantius/specs/<file>`) and bare workspace-root paths (legacy). A root-only artifact is **copied into the convention folder up front per Step 1.1's copy rule, before any sub-skill runs**, and the convention-folder copy becomes the resolved working path for the rest of the run; the root original is read once and then never edited. (copy, never move; never edit the root.)
@@ -533,7 +572,9 @@ The full file goes to the sub-skill by path reference. Do not read the body into
 
 ### 6.4 Resolve scope flags (infer from intent first, then ask remaining)
 
-**Ordering (hard rule): scope flags are resolved BEFORE the plan is rendered in 6.6, and resolution is never skipped.** For a single identified artifact this already happened in Step 3 ("Resolve scope flags BEFORE presenting the plan"); re-read those resolved values here and validate they fit the item's artifact type (a blueprint takes `customize` + `deploy`; a spec takes `review` + `deploy`). For items first enumerated in Step 6.1 (multi-source / glob), resolve them here. These are routing / scope questions, NOT the deploy confirmation, so the "no up-front gate" rule does not suppress them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize `AskUserQuestion` before the plan and before any sub-skill is spawned.
+**Greenfield and clone items skip 6.4 entirely.** When the item is a blueprint this run's architect just created (a greenfield build or a catalog clone), scope flags do NOT apply: the Create pass was the interactive design, `deploy` is implied, and `customize` / `review` are N/A. Route such items straight to analyst → modeler (Step 6.5) without asking anything. Resolve scope flags ONLY for artifacts that pre-existed the run (a workspace file or a URL fetched in Step 2).
+
+**Ordering (hard rule) for pre-existing artifacts: scope flags are resolved BEFORE the plan is rendered in 6.6.** For a single identified pre-existing artifact this already happened in Step 3 ("Resolve scope flags BEFORE presenting the plan"); re-read those resolved values here and validate they fit the item's artifact type (a blueprint takes `customize` + `deploy`; a spec takes `review` + `deploy`). For items first enumerated in Step 6.1 (multi-source / glob), resolve them here. These are routing / scope questions, NOT the deploy confirmation, so the "no up-front gate" rule does not suppress them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize `AskUserQuestion` before the plan and before any sub-skill is spawned.
 
 Up to three flags apply per item. Which two are in play depends on the artifact type:
 
@@ -575,6 +616,7 @@ The table has two halves, one per artifact type. Pick the half matching the curr
 
 | Phrase pattern in the user's request | `customize` | `deploy` | Notes |
 |---|---|---|---|
+| "build me a X", "create a X", "I need a X", "set up a X end-to-end" (greenfield: no pre-existing artifact; the architect creates it this run) | N/A | `yes` | Greenfield build. The architect's interactive Create pass IS the design, so there is no `customize` question. `deploy` implied; modeler is the write gate. Skip 6.4 for this item (greenfield short-circuit above). |
 | "deploy as is", "just deploy", "deploy unchanged", "deploy verbatim", "deploy straight", "deploy without changes" | `no` | `yes` | Explicit opt-out of customization. Skip both asks. |
 | "deploy this", "deploy that", "deploy these", "deploy all of these", "push this", "apply this", "make it real", "implement this", "set up in semantius" | `?` (ask, default no) | `yes` | Deploy verb without an as-is qualifier. Skip the deploy ask; ASK the customize question. |
 | "create spec(s) for", "reconcile this", "match this against the live model", "what would change if", "analyze this blueprint", "dry run", "plan only", "just generate the spec", "check against semantius" | `no` | `no` | Analyst-only intent. Both flags inferred; skip both asks. |
@@ -597,7 +639,8 @@ The classification is lenient on `deploy` (favor inferring) and strict on `custo
 
 #### 6.4.2 Procedure
 
-1. Read the user's prompt text (the full message that triggered the run, not just `$ARGUMENTS`).
+0. **Greenfield / clone short-circuit.** If the item is a blueprint this run's architect created (greenfield build or catalog clone), STOP: scope flags are N/A, `deploy` is implied, route it straight to analyst → modeler. Do not run the steps below for it.
+1. Read the user's full request text (the message that triggered the run).
 2. For each item, pick the half of the table (blueprint or spec) matching the artifact, then walk it top-to-bottom; first match wins.
 3. For every flag that remains `?` after inference, fire `AskUserQuestion` using that flag's exact wording from 6.4 above (the question, both options with their impact-explicit descriptions, and the default option marked Recommended). One question per flag, never combined.
 4. Narrate the inferred flags in one line before continuing, listing ONLY the flags that came from inference (not the ones the user was just asked): *"Inferred: customize=no, deploy=yes."* If everything was asked, or everything came from explicit phrasing, skip the line.
@@ -749,7 +792,7 @@ After the last item (or on halt). Render as markdown prose, NOT code-fenced:
 >
 > Files written to `semantius/specs/`. Customizations saved to `semantius/<org>/customizations.yaml` (7 new entries). Re-running is safe: items already applied won't be duplicated, and the run picks up where it stopped once you've resolved the failure. Diagnostic detail is in `.tmp_admin/<run_id>/` (one `diag-<agent>.log` per agent) if you need it for support.
 
-**Every ✓ item carries a clickable browser link**, the same call-to-action the modeler's Closing Contract mandates (see [`semantius-modeler` → "Closing Contract: clean and sticky"](../semantius-modeler/SKILL.md)): `[Open <System Name> in Semantius →](<ui_baseurl>/<module_slug>)`. `ui_baseurl` was read once in Preflight from `getCurrentUser` (e.g. `https://tests.semantius.app`); the link text is the human **System Name** (read in Step 6.3), the URL path is the lowercase `module_slug`. Lead each line with the bold System Name, never the bare slug. **Never substitute a slash command** (`/semantius:status` or any `/semantius:*`) for this link in an end-user close-out: it assumes a live Claude Code session with the plugin installed under that exact name, and it shows a drift report rather than the user's data. The `/semantius:*` commands are developer/admin affordances, not the deploy call-to-action.
+**Every ✓ item carries a clickable browser link**, the same call-to-action the modeler's Closing Contract mandates (see [`semantius-modeler` → "Closing Contract: clean and sticky"](../semantius-modeler/SKILL.md)): `[Open <System Name> in Semantius →](<ui_baseurl>/<module_slug>)`. `ui_baseurl` was read once in Preflight from `getCurrentUser` (e.g. `https://tests.semantius.app`); the link text is the human **System Name** (read in Step 6.3), the URL path is the lowercase `module_slug`. Lead each line with the bold System Name, never the bare slug. **Never substitute a developer slash command for this link** in an end-user close-out: a slash command assumes a live Claude Code session with the plugin installed under an exact name (which a standalone install does not have), and it shows a drift report rather than the user's data. Slash commands are developer/admin affordances, not the deploy call-to-action.
 
 For an all-✓ run, drop the "Re-run" and diagnostic-log lines and replace with the usual close-out language from Step 8. The run-folder path is surfaced ONLY when a run fails; never mention it on a clean run.
 
@@ -821,7 +864,7 @@ Deploy flag: yes                                                (modeler only wh
 | `yes` | `yes` | (skip) | `audit` | yes |
 | `yes` | `no` | (skip) | `audit` | no |
 
-For end-to-end build flows starting from scratch (`/semantius:build "<idea>"`), set `Architect mode: create`. For clone-and-deploy flows, set `Architect mode: catalog-clone`.
+For end-to-end build flows starting from scratch, set `Architect mode: create`. For clone-and-deploy flows, set `Architect mode: catalog-clone`.
 
 The sub-skill exports `CUSTOMIZATIONS_FILE` from the second line and proceeds. Direct invocations (no admin orchestration) compute the same path themselves at their own Step 0.
 
@@ -929,7 +972,7 @@ Not a paragraph. Not a section header. One line. The user sees that policy resol
 
 After successful execution:
 
-- **Pipeline runs**: state what's now live in the user's semantic model, where the produced files landed, and give the user a way **into the product** to see it: a clickable browser link, never a slash command. This is the admin's echo of the modeler's Closing Contract (see [`semantius-modeler` → "Closing Contract: clean and sticky"](../semantius-modeler/SKILL.md)); keep the two in lockstep. Apply the same plain-language rules from Step 3 ("your semantic model", action-oriented, lead with the **System Name** not the raw slug, file paths surfaced HERE not in the plan). Example (single item): *"Done. **ATS Candidate CRM** is live in your semantic model (6 entities, 7 permissions). [Open ATS Candidate CRM in Semantius →](<ui_baseurl>/ats-candidate-crm). The spec is saved under `semantius/specs/`."* For multi-item runs, use the Step 6.8 per-item link list. **Do NOT end with "Run `/semantius:status`"** or any `/semantius:*` slash command: that's a developer affordance, it assumes the plugin is installed under that exact name in a live Claude Code session, and it shows a drift report instead of the user's records. The browser link is the end-user call-to-action.
+- **Pipeline runs**: state what's now live in the user's semantic model, where the produced files landed, and give the user a way **into the product** to see it: a clickable browser link, never a slash command. This is the admin's echo of the modeler's Closing Contract (see [`semantius-modeler` → "Closing Contract: clean and sticky"](../semantius-modeler/SKILL.md)); keep the two in lockstep. Apply the same plain-language rules from Step 3 ("your semantic model", action-oriented, lead with the **System Name** not the raw slug, file paths surfaced HERE not in the plan). Example (single item): *"Done. **ATS Candidate CRM** is live in your semantic model (6 entities, 7 permissions). [Open ATS Candidate CRM in Semantius →](<ui_baseurl>/ats-candidate-crm). The spec is saved under `semantius/specs/`."* For multi-item runs, use the Step 6.8 per-item link list. **Do NOT end with an instruction to run a status/developer slash command:** that's a developer affordance, it assumes the plugin is installed under an exact name in a live Claude Code session (a standalone install has no such command), and it shows a drift report instead of the user's records. The browser link is the end-user call-to-action.
 - **Admin-only runs**: state what was produced (backup file path, list output, status report) and stop.
 
 After unsuccessful execution:
