@@ -8,6 +8,25 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## Unreleased: optional-entity question respects the 4-option cap; access-control label and wording plainer
+
+2026-06-22. Two user-facing fixes in Stage 3a (Optional concepts) and Stage 2c (Access control):
+
+1. **Optional-entity question now handles >4 optionals.** Stage 3a told the analyst to fire "a single multiSelect `AskUserQuestion`" with one option per optional entity, but `AskUserQuestion` caps options at 4 per question. On a module with 5+ optionals (e.g. `it-ops-starter` has five) the analyst improvised by merging entities into one combined option, which silently forced an all-or-nothing choice and corrupted the per-slug `.optionals_decided` record. The stage now mandates: never merge entities into a combined option; split across multiple ≤4-option multiSelect questions under one shared header in a single `AskUserQuestion` call (up to 16 optionals), successive calls beyond that; and keep the optional-parts question in its own call so its chip is not mislabeled with the access-control header.
+2. **Plainer wording.** The Stage 3a question/header dropped the jargon word "concepts" (`"Optional parts"` / *"Some parts of this module are optional…"*). The Stage 2c access-control option formerly labeled `Full access control` is now `Advanced access control` (basic access is not missing anything — it simply isn't role-gated), and the trailing "add full access control later" reads "add advanced access control later."
+
+**Minor**: user-facing widget wording and option-count handling only. No spec shape, frontmatter contract, or reconciliation-annotation change.
+
+## Unreleased: access-scope default now reads recorded per-module scope, not a permission sniff
+
+2026-06-20. The access-control-scope question's **Recommended** option was defaulting wrong. The old detection treated the instance as "already uses access control" when any non-built-in permission or non-system role existed. But a *basic* deploy also creates `<slug>:read` / `<slug>:manage` permissions and viewer / manager roles, so the sniff could not distinguish basic from full and recommended **Full** on an instance whose other modules were all basic.
+
+New detection: count the live modules whose `modules.settings.access_scope = full` (excluding the module being reconciled). Any row → default Full; none → default Basic. This reads the literal choice each prior deploy recorded, the authoritative per-module signal.
+
+Paired with a modeler change: the modeler now persists `settings.access_scope` on **every** resolution path (not only the step-3 "ask" path), so the signal is populated for every module the pipeline deploys, including the hybrid path where frontmatter already carried the decision.
+
+**Minor** (deferred to maintainer): detection-default change only. No spec shape, frontmatter contract, or reconciliation-annotation change; the `access_scope` frontmatter key and the question/options are unchanged.
+
 ## Unreleased: blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
 
 2026-06-15. The blueprint/spec front-matter version key `fact_sheet_version` was renamed to `blueprint_version` (value unchanged at `"3.0"`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"`). The analyst now reads `blueprint_version` from the blueprint and carries it through to the spec front-matter. Coordinated with the architect, modeler, templates, and docs.

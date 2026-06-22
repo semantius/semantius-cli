@@ -8,11 +8,78 @@ Entries below are newest first.
 
 ---
 
+## Unreleased: plain-language vocabulary pinned (entity vs. field vs. record); access-control label plainer
+
+2026-06-22. Two user-facing wording fixes, both documentation/contract (no executor-code change), `EXPECTED_MAJOR` stays `5`:
+
+1. **Entity / field / record nouns pinned in the Writing Conventions.** The plain-language deploy contract is model-generated and the conventions had no rule keeping the three nouns distinct, so a deploy rendered *"Create 5 records and their fields"* — calling entities "records," which collides with the Stage 6 meaning of "records" (saved rows / sample data). Added a banned-usage bullet: an entity (table) is named by its Plural Label or called a "table" / "record type" (never "records," never "fields"); a "field" is only a column; "records" / "rows" are reserved for data rows. Worked example shows *"Create 5 tables and their fields"* ✅ vs. *"Create 5 records and their fields"* ❌.
+2. **Access-control option label.** The Stage-2.5 access-control prompt's `Full access control` option is now `Advanced access control` (basic access is not missing capability, it is simply not role-gated), and the "add full access control later" line reads "advanced."
+
+**Minor**: user-facing prose only. No parser, executor, or schema-compatibility change.
+
+## Unreleased: Stage 6 sample-data count made prescriptive (fixes under-seeding drift)
+
+2026-06-22. A deploy seeded only 2 records per entity despite the Stage 6 question promising 10, because the count lived solely in advisory prose and the script-pattern example demonstrated exactly 2 rows per entity — so agents copied the example, not the instruction. No skill regression; this was runtime drift the prose did not prevent. Three coupled changes to Stage 6, all documentation/contract (no executor-code change), `EXPECTED_MAJOR` stays `5`:
+
+1. **New "How many records" rule.** The default is now stated as *exactly 10 per eligible entity*, framed as a commitment the user's "yes" buys. The only legitimate ways to seed fewer are an explicit user-chosen count or FK-id scarcity on a required field, and both must be surfaced. Adds a pre-run self-check: count `post(...)` calls per entity and add rows until the count is met.
+2. **Fixed the misleading script example.** The pattern previously showed 2 hard-coded rows per entity; it now loops over a row array with explicit `... 10 total ...` markers and a banner stating the example is abbreviated for readability only.
+3. **Summary must report per-entity counts.** The run step now requires reporting how many records landed per entity, with a reason on any line below the target. Turns silent under-seeding into a visible defect.
+
+## Unreleased: `module_id` is now reliably set + self-healing on permissions, roles, AND entities
+
+2026-06-21. Fixes a deployed defect from the `it-ops-starter` deploy where `module_id` came back NULL on records that the platform/model expects to own a module FK:
+
+- `it-ops-starter:read` / `:manage` permissions: `permissions.module_id = NULL`.
+- All five owned entities (`asset_contracts`, `saas_subscriptions`, `service_incidents`, `saas_applications`, `software_licenses`): `entities.module_id = NULL` — no entity pointed at module 1033 at all.
+
+Two distinct root causes, same symptom:
+
+1. **Permissions/roles — create-only scaffold.** Step 2 / step 4 ran `create_permission` / `create_role` *only* on `read_* ` exit 1 and did nothing on exit 0, so a row once minted with a NULL `module_id` could never self-heal; every re-deploy read exit 0 and skipped it. (The prose already said to pass `module_id`, and `rbac.md` shows it — the gap was the missing converge path.)
+2. **Entities — `module_id` absent from the create instructions entirely.** The **Model-to-Entity Mapping** table (the authoritative param list the deployer builds `create_entity` from) and the ✨-New prose bullet both enumerated every other column but **omitted `module_id`**, even though `data-modeling.md` documents it as *required on `create_entity`* (null rejected). The deployer faithfully built a payload without it.
+
+Changes:
+
+1. **Stage 4a-scaffold step 2** now *converges* `permissions.module_id` (exit-0 path asserts and `update_permission`s NULL/mismatched values).
+2. **Step 4 (default roles)** gets the identical converge guard for `roles.module_id`.
+3. **Model-to-Entity Mapping table** now lists `module_id` as a required `create_entity` param (this-module for create-new/rename-incoming; master module for promote-to-master); the **✨-New prose** passes it explicitly.
+4. **Stage 4c ♻️ same-module path** converges `entities.module_id` on re-run (repairs a stranded entity instead of skipping it).
+5. **Stage 5** — per-area check 1 reworded so a permission `module_id` hit means the Stage 4 backfill didn't land (re-issue + halt); per-area check 5 gains an owning-`module_id` assertion for every owned entity (previously only *promoted* entities were checked).
+
+All four record types (`permissions`, `roles`, `entities`, plus the existing `modules` FK refs) now both set `module_id` correctly on first deploy and converge it on re-deploy. `EXPECTED_MAJOR` stays `5`. Deploy-time correctness/idempotency fix only; no spec-contract change.
+
+Live note: the five stranded `it-ops-starter` entities still carry NULL `module_id` in the instance — a re-deploy now repairs them via the Stage 4c converge path (or an explicit `update_entity ... module_id=1033`).
+
+## Unreleased: persist `settings.access_scope` on every deploy path; access-scope default reads it
+
+2026-06-20. Two coupled changes so the access-scope default reflects what the instance actually uses.
+
+1. **Persist on every resolution path.** The modeler previously recorded `modules.settings.access_scope` only at resolution step 3 (the "undecided → ask" path). In the normal hybrid pipeline the spec frontmatter carries the decision (step 1), so the setting was never written and live module records showed `settings.access_scope = null`. The modeler now writes the resolved value via an idempotent `update_module` at Stage 4a-scaffold on all three paths (frontmatter, prior setting, ask), same pattern as `settings.raci_mode`.
+
+2. **Detection backstop matches the analyst.** The Stage 2.5 default detection no longer sniffs for any non-built-in permission / non-system role (a basic deploy creates those too, so it could not tell basic from full). It now counts live modules whose `settings.access_scope = full` (excluding the module being deployed): any row → default Full, none → default Basic.
+
+`EXPECTED_MAJOR` stays `5`. Behavior change to a deploy-time default and an added idempotent write only; no spec-contract change.
+
 ## Unreleased: blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
 
 2026-06-15. The spec front-matter key carrying the blueprint artifact version was renamed `fact_sheet_version` → `blueprint_version` (value unchanged at `"3.0"`). `EXPECTED_MAJOR` stays `5`; the deployer gates on the spec's `version` major (not this key), so there is no behavior change. Coordinated with the architect and analyst.
 
 **No `EXPECTED_MAJOR` bump applied** (deferred to the maintainer).
+
+---
+
+## Unreleased — access-control scope (basic vs full RBAC); Stage 2.5 backstop
+
+`EXPECTED_MAJOR` stays `5`. Lockstep delta with the access-control change folded into the (unreleased) analyst `5.3` — no version bump, since the analyst was never released. **The architect is not involved** (it is platform-agnostic and never decides access control; the analyst owns the decision because it is platform-aware). Closes the reliability gap where the modeler deployed a spec's full RBAC (permissions, roles, workflow gates, lifecycle gating) unconditionally and never asked whether the user wanted plain read + edit access.
+
+**What changed in the deployer.**
+
+1. **Stage 1 parse** reads an optional `access_scope` frontmatter key (`basic` / `full`); a value outside those two is a 🛑 High blocker.
+2. **New Stage 2.5 (Access control scope)** between Stage 2 and Stage 3. Resolution order: spec frontmatter `access_scope` → live `modules.settings.access_scope` (a prior deploy's choice) → detect-and-ask. Detection: an instance "already uses access control" when it carries any non-built-in permission (outside `user:read` / `user:manage` / `admin` / `public:read`) or any non-system role; that flips the default (fresh → Basic, RBAC-in-use → Full). The prompt fires ONLY at the detect-and-ask branch — when the spec or module already carries the choice, the modeler obeys without asking (consistent with "the only confirmation the modeler asks").
+3. **Two-permission projection (Stage 4)** when the resolved scope is `basic` and the spec is full-shaped: deploy only `<slug>:read` + `<slug>:manage`, the `manage → read` edge, and viewer + manager roles; force every `edit_permission` to `<slug>:manage`; drop write/read rules that gate on a dropped permission (keep pure-logic ones); skip 4k (personas/RACI), 4l (functional ownership), 4m (handoffs). When the spec is already two-permission-shaped (the hybrid path, analyst authored it basic), the projection is a no-op. The rare entry whose JsonLogic mixes a permission gate with a data-integrity check routes back to the analyst rather than guessing.
+4. **Persistence**: Stage 4a writes `modules.settings.access_scope` so re-deploys read the choice back (Stage 2.5 step 2) and never re-ask.
+5. **Plan + verification**: a `🔐 Access control:` line in the Stage 3 plan and a mandatory access-control callout in the Stage 5 summary (naming what a projection suppressed, and any pre-existing higher-governance objects left as quiet orphans — never deleted, per the no-auto-deletion rule).
+
+**No bump.** `EXPECTED_MAJOR` unchanged. `access_scope` is a new optional frontmatter key with a defined default (absent = undecided = the backstop resolves it at deploy time, reproducing prior behavior when `full` is chosen). No structural change; every spec authored before this change deploys unchanged. The analyst minor bump was not applied — the analyst was unreleased, so the change folds into the current version (analyst `5.3`). The architect is unchanged.
 
 ---
 

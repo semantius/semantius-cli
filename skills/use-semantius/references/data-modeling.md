@@ -193,6 +193,27 @@ When `create_entity` is called, the system automatically creates:
 
 > ℹ️ `searchable` and `is_child` on the entity are **read-only** and computed automatically. `searchable` becomes `true` when any field has `searchable: true`; `is_child` becomes `true` when any field uses `format: "parent"`. Never set these manually.
 
+### Platform provenance / meta columns (core-provided; stamp VALUES only, never create)
+
+Base schema **v0.1.2** ships a set of **core provenance columns** on `entities`, `modules`, and `roles`. They are **registered by core with `ctype = 'core'`** — there is **no `is_core` boolean**; `is_core` is *derived* as `ctype <> ''` and still surfaces in `get_schema()`, so anything reading `is_core` keeps working. Every column is **NOT NULL with an empty default** (`''` for text, `'{}'` for a json object, `'[]'` for a json array, `'unclassified'` for the `entity_type` enum); "absent" is the empty value, never SQL `NULL`.
+
+| Table | Column | Type / default | Meaning |
+|---|---|---|---|
+| `entities` | `catalog_entity_code` | TEXT `''`, non-unique | Canonical uber-model code (the rename / dialect / silo join key). `table_name` holds the deployed name and may drift; this does not. Empty = created outside the deploy pipeline. |
+| `entities` | `canonical_owner_module` | TEXT `''` | Owning-module slug for an `embedded_master` placeholder. Soft pointer, not an FK. |
+| `entities` | `entity_type` | TEXT `'unclassified'`, CHECK ∈ 6 (`operational_workflow` / `operational_record` / `catalog` / `junction` / `computed` / `unclassified`) | Data-class axis; `write tier` derives FROM it. |
+| `entities` | `pattern_flags` | JSONB `'{}'`, object | Sparse `{flag: true}` behavior flags (`personal_content` / `submit_lock` / `single_approver` confirmed). |
+| `entities` | `catalog_entity_aliases` | JSONB `'[]'`, array | Append-only `{alias_code, source_domain, source_module, decided}` reuse/merge records. |
+| `modules` | `catalog_module_code` | TEXT `''`, non-unique | Catalog blueprint the module came from; the domain axis discovery groups by. |
+| `roles` | `catalog_role_code` | TEXT `''`, non-unique | Catalog persona the role was provisioned from. |
+
+**Rules for every skill that writes the catalog:**
+
+- **Never `create_field` these columns** — core provides them. Stamp **values only** (the deployer does this at provision time).
+- **Never write `ctype`** — it is privilege-locked. There is nothing to set to mark a column "core"; that is core's job.
+- The scalar codes (`catalog_entity_code` / `catalog_module_code`) are **write-once at create**; a later rename touches `table_name` / `module_slug` only. `catalog_entity_aliases` is **append-only** (never rewrite or drop prior elements).
+- Test emptiness as `= ''` / `= '{}'::jsonb` / `= '[]'::jsonb` / `= 'unclassified'`, **never `IS NULL`**.
+
 ### Customizing the `label` field's title
 
 The auto-created `label` field's `title` defaults to `singular_label`. If the record's identifying value is more specific than the entity name, follow up with `update_field` on the `label` field to set its `title`. Example: an entity `cars` where each record is identified by its license plate, keep `singular_label: "Car"` / `plural_label: "Cars"` (symmetric), then update the `label` field's title to `"License Plate"`. See "Updating and Deleting Entities" below for the `update_field` call shape. Do **not** smuggle the field-level title into `singular_label` (e.g. `"Car License Plate"`), that breaks plural/singular symmetry and propagates "Name"/"License Plate" into every UI surface that renders the entity name.
@@ -253,7 +274,7 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
 | `$user_id` | `uuid` | Authenticated user performing the write (`null` for system writes). |
-| `$old` | `object` or `null` | Previous row as JSON on UPDATE; `null` on INSERT. Use to express transition rules ("status cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
+| `$old` | `object` or `null` | Previous row as JSON on UPDATE; `null` on INSERT. Use to express transition rules ("the workflow state cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
 
 `$old` is the only window into prior state; everything else outside the post-write record (cross-row lookups, aggregates, FK traversal) is out of scope and belongs in cube/views.
 
@@ -298,8 +319,8 @@ In addition to standard JsonLogic operators, the platform provides three extensi
   "jsonlogic": {
     "if": [
       { "and": [
-        { "value_changed": "status" },
-        { "==": [{ "var": "status" }, "approved"] }
+        { "value_changed": "workflow_state" },
+        { "==": [{ "var": "workflow_state" }, "approved"] }
       ]},
       { "require_permission": "ats:approve_offer" },
       true
@@ -387,7 +408,7 @@ INSERT passes trivially (no `$old`); UPDATE / DELETE passes when the caller is t
 
 **When to reach for these vs leave them off.** The three operators add real expressiveness, but every `set_record` costs one extra `SELECT` per evaluation. Treat them as the right tool for:
 
-- **Parent-state gates** — refuse to modify an `order_line` when the parent `order.status = 'shipped'`. Without `set_record`, this rule had no way to read the parent's status; the gate had to live in application code.
+- **Parent-state gates** — refuse to modify an `order_line` when the parent `order.workflow_state = 'shipped'`. Without `set_record`, this rule had no way to read the parent's workflow_state; the gate had to live in application code.
 - **Inherited values on a child** — compute `country` on `addresses` from the customer record; copy `currency` from the parent `order` onto every line; pull `discount_pct` from the customer's contract.
 - **Merged labels** — derive a `label_column` value that combines fields from the current record AND a parent (`"Line 3 — INV-2025-0042"`, `"<order_number> / <line_no>"`).
 - **Conditional cross-entity throw** — a parent record in a specific state should reject the child write with a domain-specific error: `{"throw_error": "Cannot modify a shipped order"}` rather than a generic `"validation failed"`.
@@ -402,7 +423,7 @@ They are **not** the right tool for cross-row aggregates ("≤ 5 high-priority f
 {
   "set_record": ["order", "orders", {"var": "order_id"}, {
     "if": [
-      {"==": [{"var": "order.status"}, "shipped"]},
+      {"==": [{"var": "order.workflow_state"}, "shipped"]},
       {"throw_error": "Cannot modify a shipped order"},
       true
     ]
@@ -410,7 +431,7 @@ They are **not** the right tool for cross-row aggregates ("≤ 5 high-priority f
 }
 ```
 
-Read: *"bind the parent order under `order`; if the order's status is `shipped`, raise a domain-specific exception; otherwise the rule passes."*  Placed in `order_lines.validation_rules`; the gate fires on every INSERT, UPDATE, and DELETE on a child line.
+Read: *"bind the parent order under `order`; if the order's workflow_state is `shipped`, raise a domain-specific exception; otherwise the rule passes."*  Placed in `order_lines.validation_rules`; the gate fires on every INSERT, UPDATE, and DELETE on a child line.
 
 **Pattern 2 — Cross-entity computed field (inherited value).** `order_lines.currency_code` mirrors the parent order's currency, so analytics and reports never have to join to find the line's currency:
 
@@ -508,7 +529,7 @@ In `computed_fields`, this writes the margin into a derived field while throwing
 - `{"var": "<name>"}` returns `null` (the row is null).
 - `{"var": "<name>.<column>"}` returns `null` (you're reading a column off a null object).
 
-That `null` flows through the expression's comparisons and arithmetic naturally — `{"==": [{"var": "order.status"}, "shipped"]}` is `false` when `order` is null, so the gate passes. If the rule's intent is "block writes whose FK is unresolved", guard explicitly:
+That `null` flows through the expression's comparisons and arithmetic naturally — `{"==": [{"var": "order.workflow_state"}, "shipped"]}` is `false` when `order` is null, so the gate passes. If the rule's intent is "block writes whose FK is unresolved", guard explicitly:
 
 ```json
 {
@@ -608,7 +629,7 @@ Every entity carries a `select_rule` property: a single JsonLogic object that, w
 |---|---|---|---|
 | `select_rule` | `object` (JsonLogic) | `{}` | Per-row predicate that must evaluate truthy for the row to be visible to the caller. Evaluated by the platform's RLS policy on every `SELECT`. |
 
-**Storage and lifecycle.** JSONB object, NOT NULL, default `'{}'::jsonb`; the platform's `select_rule_is_object` constraint rejects anything that isn't a JSON object. When the rule is non-empty, the platform generates a `FOR SELECT` RLS policy function for the table; when the rule is reset to `{}` or the entity is deleted, the policy is dropped. There is no per-row write semantics here — `select_rule` is read-only behavior.
+**Storage and lifecycle.** JSONB object, NOT NULL, default `'{}'::jsonb`; the platform's `select_rule_is_object` constraint rejects anything that isn't a JSON object. When the rule is non-empty, the platform generates a `FOR SELECT` RLS policy function for the table; when the rule is reset to `{}` or the entity is deleted, the policy is dropped. The same `select_rule` predicate is **also** referenced in the `UPDATE` / `DELETE` `USING` clause (AND-ed with `edit_permission` — see *Relationship to `view_permission` / `edit_permission`* below), so it constrains which rows a caller may **modify** as well, not only which it may read. It is absent from `WITH CHECK`, which gates writes on `edit_permission` alone.
 
 **Return contract.** The JsonLogic expression must return a **boolean**:
 
@@ -628,7 +649,24 @@ A non-boolean result is treated as falsy, so the row is hidden — that fails cl
 
 **Platform-extension operators usable in `select_rule`.** The `has_permission` operator (documented in the platform-extension operators section above) is the canonical way to broaden row visibility for elevated roles. It returns boolean (never throws), which is essential — a throwing operator like `require_permission` would fail per-row during a SELECT scan and is not the right shape for read context. `value_changed` and `$old` are also available syntactically but are not meaningful for read rules.
 
-**Relationship to `view_permission`.** `view_permission` is the coarse all-or-nothing gate ("does the caller have read access to this table at all?"); `select_rule` adds per-row filtering on top of it. Both apply. A caller without `view_permission` sees nothing regardless of `select_rule`; a caller with `view_permission` still sees only rows where `select_rule` evaluates truthy.
+**Relationship to `view_permission` (reads) and `edit_permission` (writes) — reads REPLACE, writes AND (frozen design decision D8).** The two sides are deliberately asymmetric; do not generalize one onto the other.
+
+- **Reads (`SELECT`) — REPLACE.** A non-empty `select_rule` **is the complete read predicate**; it *replaces* `view_permission` rather than being AND-ed with it. `view_permission` is only the **default rule applied when no `select_rule` is set**:
+
+  ```
+  can_read(row) = select_rule(row)                 when select_rule is non-empty
+                = has_permission(view_permission)   when select_rule is empty (the default rule)
+  ```
+
+  Once a rule exists, `view_permission` is **never consulted** for reads: a caller who **lacks `view_permission` but matches the rule sees the row**, and a caller who **holds `view_permission` but fails the rule does not**. (Enforced by `build_select_rule_policy`: `USING (select_rule_<table>(row))` when a rule exists, falling back to `USING (has_permission(view_permission))` only when it doesn't; the DEFINER read helper `get_record_by_id` mirrors this with an explicit mutually-exclusive `IF/ELSE`.)
+
+- **Writes (`UPDATE` / `DELETE`) — AND.** Genuinely layered: `USING (has_permission(edit_permission) AND select_rule(row))`, with `WITH CHECK (has_permission(edit_permission))`. Here `edit_permission` is a real coarse gate **and** the row must pass `select_rule`. `validation_rules` / `require_permission` add per-record gates on top via a separate trigger.
+
+**Authoring consequence (the part that bites).** Because a read rule owns the *entire* read predicate, you cannot rely on `view_permission` to "still let people in." Encode **every** audience that should read the rows *inside* the rule:
+
+- elevated / admin audiences → a `{"has_permission": "<slug>:view_all_<plural>"}` disjunct (not an external grant);
+- "anyone holding baseline read" → a `{"has_permission": "<slug>:read"}` disjunct, when you want to preserve that behavior;
+- a restrictive rule with no such disjunct **locks out admins and managers** — even holders of every permission — because they simply don't match and `view_permission` is no longer there to admit them.
 
 **Performance note.** `select_rule` is evaluated on every read of every row of this entity. Keep the expression simple: direct column comparisons, `$user_id` matches, enum / boolean checks. Avoid deeply nested arithmetic. `set_record` *is* technically callable from `select_rule` (the JsonLogic engine is the same as `validation_rules`), but it runs an extra `SELECT` per row of every read and quickly dominates query cost; prefer column-encoded broadening (a `visibility` enum the row carries) or `has_permission` for tiered audiences. Reserve `set_record` for the rare case where the FK target is small, indexed, and read traffic on this entity is light.
 
@@ -672,7 +710,7 @@ A caller sees a row when they own it OR when the row is marked public.
 }
 ```
 
-A regular caller sees only the rows the first three clauses cover; an `ats:view_all_tickets` holder sees every row because the fourth clause shortcuts to truthy. This is the standard way to encode "regular sees own; manager sees all" — the rule body is the single source of truth.
+A regular caller sees only the rows the first three clauses cover; a `helpdesk:view_all_tickets` holder sees every row because the fourth clause shortcuts to truthy. This is the standard way to encode "regular sees own; manager sees all" — the rule body is the single source of truth.
 
 **Example — visibility column with conditional elevation:**
 
@@ -723,7 +761,7 @@ semantius call crud update_entity '{
 }'
 ```
 
-**Risk.** Adding a `select_rule` to an entity that previously had none is **medium-risk**: it changes the read access pattern, and rows that callers used to see suddenly disappear. Always warn the user, name the roles/users that should still see everything, and confirm the rollout. Modifying or removing a `select_rule` is also medium-risk for the same reason (visibility change can surprise downstream consumers, dashboards, integrations).
+**Risk.** Adding a `select_rule` to an entity that previously had none is **medium-risk**, and because reads use REPLACE semantics the change is sharper than it looks: before the rule, every `view_permission` holder saw every row; the instant the rule exists, `view_permission` is no longer consulted and **only** rule-matching rows are visible — so any caller the rule does not explicitly admit (including admins and managers holding every permission) is locked out unless the rule carries a `has_permission` disjunct for them. Always warn the user, enumerate the roles/users that must still see everything, confirm each is admitted by a clause of the rule, and confirm the rollout. Modifying or removing a `select_rule` is also medium-risk (visibility change can surprise downstream consumers, dashboards, integrations).
 
 ---
 
@@ -810,21 +848,21 @@ Every field carries an optional `input_type_rule` property: a JsonLogic object t
 ```json
 {
   "if": [
-    { "==": [{ "var": "status" }, "approved"] },
+    { "==": [{ "var": "workflow_state" }, "approved"] },
     "readonly",
     "default"
   ]
 }
 ```
 
-When the current record's `status` is `approved`, the form renders `approved_at` as `readonly`; otherwise as the standard editable input.
+When the current record's `workflow_state` is `approved`, the form renders `approved_at` as `readonly`; otherwise as the standard editable input.
 
-**Example — show `approved_at` only when status crosses into approved.** The classic "housekeeping field appears at the right moment" pattern: `approved_at` starts hidden, surfaces as a required input once the user is moving the record into `approved`, and locks to readonly after the record is saved approved:
+**Example — show `approved_at` only when workflow_state crosses into approved.** The classic "housekeeping field appears at the right moment" pattern: `approved_at` starts hidden, surfaces as a required input once the user is moving the record into `approved`, and locks to readonly after the record is saved approved:
 
 ```json
 {
   "if": [
-    { "==": [{ "var": "status" }, "approved"] },
+    { "==": [{ "var": "workflow_state" }, "approved"] },
     "readonly",
     "hidden"
   ]
@@ -836,10 +874,10 @@ If you need a third state ("required while transitioning"), nest:
 ```json
 {
   "if": [
-    { "==": [{ "var": "status" }, "approved"] },
+    { "==": [{ "var": "workflow_state" }, "approved"] },
     "readonly",
     { "if": [
-      { "==": [{ "var": "$old.status" }, "approved"] },
+      { "==": [{ "var": "$old.workflow_state" }, "approved"] },
       "readonly",
       "hidden"
     ]}
@@ -857,7 +895,7 @@ semantius call crud update_field '{
   "data": {
     "input_type_rule": {
       "if": [
-        { "==": [{ "var": "status" }, "approved"] },
+        { "==": [{ "var": "workflow_state" }, "approved"] },
         "readonly",
         "default"
       ]
@@ -907,8 +945,8 @@ Nullability is also computed by format (via the platform's `is_nullable()` rule)
 semantius call crud create_field '{
   "data": {
     "table_name": "departments",
-    "field_name": "status",
-    "title": "Status",
+    "field_name": "workflow_state",
+    "title": "Workflow State",
     "format": "enum",
     "enum_values": ["active", "inactive"],
     "default_value": "active",
@@ -972,8 +1010,8 @@ semantius call crud create_field '{
 semantius call crud create_field '{
   "data": {
     "table_name": "products",
-    "field_name": "status",
-    "title": "Status",
+    "field_name": "workflow_state",
+    "title": "Workflow State",
     "format": "enum",
     "enum_values": ["draft", "active", "discontinued"],
     "default_value": "draft",
@@ -1017,12 +1055,18 @@ semantius call crud create_field '{
 
 The platform manages nullability internally based on format and delete-mode, do not pass an `is_nullable` flag. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
 
+**Read order:** the divergent-permission-scope rule (last two rows) **overrides** the "child is owned by parent" and "M:N junction FK" rows whenever the child's edit tier differs from the parent's. Always evaluate divergence first; fall through to the same-tier rows only when tiers match.
+
 | Scenario | `format` | `reference_delete_mode` |
 |----------|----------|------------------------|
 | Optional link to independent entity | `reference` | `clear` |
 | Required link to independent entity | `reference` | `restrict` |
-| Child is owned by parent | `parent` | `cascade` |
-| M:N junction FK (all legs) | `parent` | `cascade` |
+| Child is owned by parent (**shared permission scope** — child tier == parent tier) | `parent` | `cascade` |
+| M:N junction FK, **both parents share the junction's tier** (per-leg test, not table-wide) | `parent` | `cascade` |
+| **Lifecycle-bound child with divergent permission scope** (analyst v1.13+) — overrides the two rows above | `reference` | `restrict` (default) or `clear` |
+| Lifecycle-bound child with divergent permission scope, accepting silent cascade-delete (high-risk) — overrides the two rows above | `reference` | `cascade` |
+
+**Divergent-permission-scope rule (analyst v1.13+).** `format: parent` semantically asserts that the child shares the parent's permission model. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `require_permission` against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), `parent` is the wrong shape. Use `format: reference` instead. Pick the delete mode by lifecycle behavior: `restrict` when children must be explicitly cleaned up before the parent (recommended default for audit-logged decision evidence like scorecards or signed offers), `clear` when orphan-survival is acceptable (e.g. an authored note may survive its application being deleted), `cascade` only when the user explicitly accepts the silent cascade-delete trade-off (the shape says "permission scope is divergent" but the platform deletes anyway when the lifecycle owner goes).
 
 ### `reference`: Cross-Entity Link (Independent Lifecycle)
 
@@ -1068,7 +1112,7 @@ semantius call crud create_field '{
 
 ### M:N Junction Tables
 
-Create a junction entity and add two `parent` fields:
+Create a junction entity and add a `parent` field for **each** leg (two for a binary junction, three or more for an N-ary one):
 
 ```bash
 # Create junction entity
@@ -1082,6 +1126,34 @@ semantius call crud create_field '{"data": {"table_name": "product_tags", "field
 ```
 
 > **Junctions aren't binary-only.** `entity_type = junction` combines **all** `parent` legs, so an N-ary link works the same way — e.g. `(user, role, tenant)`. But an N-ary link that carries its **own attributes or lifecycle** is an association class → classify it `operational_record` / `operational_workflow`, **not** `junction`.
+
+### Cross-module references and presence-conditional `is_required`
+
+Modules deploy standalone. The blueprint's `related_modules` frontmatter is an **advisory integration hint**, NOT a deployment prerequisite. The deployer never auto-pulls or auto-requires another module to install before this one. A blueprint that needs another module to function (its entities can't deploy without the other module's entities) is a defect to flag, not assemble around.
+
+The mechanism for self-containment is `embedded_master`: a module declares an entity locally with `role = embedded_master` and `mastered_in = <canonical-owner-module>`. The entity exists in this module's catalog until the canonical owner installs; at that point Branch-B promotion (deployer Stage 4c-promote) moves the entity to the canonical owner with no data migration.
+
+For cross-module FK edges, `is_required` is **presence-conditional**:
+
+- A `required` edge becomes a mandatory FK at deploy time **only when the target entity is installed in the same deploy** (either already in the catalog or being created in this run).
+- A `required` edge to a non-installed target emits **no FK column and no constraint** at deploy time (the deployer's Stage 4d skip).
+- The edge NEVER forces the target entity (or its module) to install.
+
+The blueprint's §5.3b `delete_mode` vocabulary encodes this: `none` (fully optional), `none (required-if-present)` (presence-conditional required), `⚠ audit: <reason>` (soft data-quality flag for required-composed-child-out-of-scope cases).
+
+### Embedded-entity governance follows the entity, not the role
+
+When a module embeds an entity (`role = embedded_master`) whose canonical owner module is absent at the deploy time, the module emits the entity's FULL derived governance under its own slug:
+
+- Workflow gates (the `<verb>` codes that gate lifecycle transitions on the entity).
+- Pattern-flag overrides (`view_all_<plural>` / `manage_all_<plural>` / `submit_<singular>`) and matching business rules.
+- Boundary-crossing handoffs (events the embedded entity publishes to / reacts from modules the embedding unit doesn't "play").
+
+Each emitted gate / override carries the `re-prefixed-from <canonical-module>.<verb>` reconciliation annotation so the deployer knows it's reconciliation-eligible.
+
+When the canonical owner module later installs and Branch-B promotion moves the entity to its canonical home, the deployer's Stage 4n reconciles every re-prefixed code onto the canonical prefix: sibling permissions are minted under the canonical module, sibling `role_permissions` rows are created for every grant, and matching `permission_hierarchy` edges are re-emitted. **No deletes** — the no-auto-deletion symmetric rule applies to reconciliation too. The old non-canonical-prefixed permissions remain as quiet orphans.
+
+This rule — **gates and overrides follow the ENTITY's current owning module, not the installing unit** — applies uniformly to every blueprint shape (`hiring-starter`, `ats-recruitment-pipeline` which is itself master-of-15-and-embedded-of-5, `real-estate-agent`, any future bundle) and to every install ordering. The deployer's behavior on every install is `module_kind`-agnostic; the `module_kind` frontmatter is an informational label, not a behavior switch.
 
 ---
 

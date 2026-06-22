@@ -8,6 +8,19 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: renaming a catalog-derived entity is now a silo rename (canonical lineage preserved)
+
+2026-06-21. Fixes a lineage-loss defect. Renaming a catalog-derived `embedded_master` entity (e.g. `incidents` → `issues` in the `it-ops-starter` starter, cloned from `itsm-incident-mgmt`) silently re-derived `canonical = local` and dropped `mastered in`: the entity deployed as `catalog_entity_code: service_issues` with a blank `canonical_owner_module`, instead of `catalog_entity_code: service_incidents` / `canonical_owner_module: itsm-incident-mgmt`. That severs the keys the canonical owner uses to recognize and promote/merge the entity when it later installs — it would create a duplicate instead of adopting the renamed entity.
+
+The architect's own `canonical code` rule already says a *silo rename* must keep `canonical code` pinned to the canonical concept; it just wasn't being applied to user-initiated renames. Now made explicit:
+
+1. **`canonical code` rule (§3)** — a rename of an entity carrying an inherited canonical code (catalog-clone or prior version) is a silo rename: the canonical code stays pinned to the pre-rename concept, and `role` / `mastered in` / `mastered label` persist. Only `data_object` and the `singular` / `plural` labels change.
+2. **`embedded_master` contract** — reinforced that a local rename does not break the "belongs to `<mastered_in>`" contract; the owner and pinned canonical code carry across.
+3. **Both rename entry points** — the Stage 3 entity-list loop and the Mode D rebuild re-propose now point at the silo-rename rule.
+4. **Severing is opt-in** — preserve is the default; re-deriving `canonical = local` and dropping the owner happens only when the user states the rename is a genuinely new, distinct concept.
+
+Content-contract clarification only; `CURRENT_VERSION` / `blueprint_version` unchanged. The analyst and modeler carry §3 through verbatim, so no change there.
+
 ## Unreleased: blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
 
 2026-06-15. The blueprint front-matter version key `fact_sheet_version` was renamed to `blueprint_version` (value unchanged at `"3.0"`). The old name was a holdover from the earlier fact-sheet artifact and misread on a `semantic-blueprint`. Coordinated across the architect (emit + pre-save verification), analyst, modeler, the blueprint/spec templates, `consistency-check.ts`, the architecture docs, and existing 3.0 artifacts.

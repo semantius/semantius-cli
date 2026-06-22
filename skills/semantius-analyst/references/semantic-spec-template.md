@@ -9,7 +9,7 @@ Use this template verbatim for the final semantic-spec output in Stage 11. Each 
 ```markdown
 ---
 artifact: semantic-spec
-version: "{{analyst_skill_version}}"  # currently "5.2"
+version: "{{analyst_skill_version}}"  # currently "5.3"
 blueprint_version: "{{from blueprint}}"  # currently "3.0"; carried through from the blueprint
 license: {{from blueprint, e.g. MIT}}  # v4.1+
 system_name: {{System display name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
@@ -20,7 +20,8 @@ description: |  # v4.1+; longer marketing-voice prose for the catalog page
 system_slug: {{system_slug}}
 module_type: {{domain | master}}  # optional, analyst v3.0+; omit for the default "domain". Set to "master" when authoring a master model.
 module_kind: {{domain | master | starter | …}}  # v4.1+; informational label, NOT a behavior switch
-raci_mode: {{living | documentation}}  # v4.2+; REQUIRED when §9 carries a RACI matrix. Chosen at analyst Stage 9.5 Step 0; must match the §9 "RACI mode:" line.
+access_scope: {{basic | full}}  # v5.3+; the access-control scope the analyst resolved after Stage 2. `basic` = two-permission fallback (read + edit, no admin tier / gates / lifecycle gating / personas / RACI); `full` = complete governance. OMIT only on a non-interactive run that couldn't resolve it (the modeler's Stage 2.5 backstop then resolves it at deploy time). The modeler honors a present value without re-asking.
+raci_mode: {{living | documentation}}  # v4.2+; REQUIRED when §9 carries a RACI matrix. Chosen at analyst Stage 9.5 Step 0; must match the §9 "RACI mode:" line. OMIT under access_scope: basic.
 raci_mode_source: {{user-answer | computed-default | non-interactive}}  # v4.2+; REQUIRED alongside raci_mode. How the mode was decided — `user-answer` ONLY when the Enable-RACI widget actually fired and the user chose; `computed-default` when an interactive run took the catalog default without asking; `non-interactive` for headless runs. consistency-check.ts rejects a RACI spec missing either key.
 domain_code: {{from blueprint; uppercase TLA / short code, e.g. ATS, HCM, ITSM, CRM}}
 naming_mode: {{template:<vendor> | agent-optimized}}
@@ -135,7 +136,7 @@ For each entity, repeat the following sub-structure.
 
 **Computed fields** _(optional; omit the heading entirely when none)_
 
-A JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. Cross-entity primitives `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` (analyst v3.2+) let the body read columns of a parent / referenced record (inherited values, merged labels) — see `./references/data-modeling.md` § "Cross-entity lookups inside JsonLogic".
+A JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. Cross-entity primitives `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` (analyst v3.2+) let the body read columns of a parent / referenced record (inherited values, merged labels) — see the `use-semantius` skill's `references/data-modeling.md` § "Cross-entity lookups inside JsonLogic".
 
 ```json
 [

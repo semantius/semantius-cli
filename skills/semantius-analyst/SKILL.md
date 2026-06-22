@@ -117,26 +117,6 @@ The downstream `semantius-modeler` maintains its own `EXPECTED_MAJOR` constant o
 
 **When to bump.** Same rules as the architect: bump *minor* for non-breaking content rule changes (new optional sub-block, new modeling convention authors must follow); bump *major* for breaking shape changes (section renumbered, frontmatter key removed, table column shape changed). Reconciliation-annotation set is part of the major contract — adding a new annotation value is a minor; removing or renaming one is a major.
 
-**v4.1 contract shift — consume the blueprint, don't re-derive.** The blueprint at blueprint_version 2.0 now carries authoritative `write tier` (§3 column), `delete_mode` / `fk_format` (§5 columns), `transition` (§6 columns), ⚠ annotations (§7), `permission_verb_override` (§8.2 rule intent), and the entire §9 governance surface (baseline roles + permission hierarchy + RACI + functional ownership). The analyst's posture flips from "re-derive these facts at reconciliation time" to "consume verbatim, validate against the live catalog, emit drift annotations only when the live state disagrees." Stages 9 (cross-tier FK), 10 (computed fields + validation rules), and 2h (deep-inspect adopted entities) are restructured around this posture. The "deployable closure / required modules" framing is gone — every module deploys standalone; `related_modules` is advisory.
-
-**New reconciliation annotation (v4.1):** `**Reconciliation:** re-prefixed-from <canonical-module>.<verb>`. The analyst emits this on workflow gates and pattern-flag overrides for `embedded_master` entities whose canonical owner module is absent in the live catalog. The deployer reads it as the reconciliation-eligible flag for Stage 4n when the canonical owner later installs. The annotation is additive (older parsers ignore it); the bump from 4.0 to 4.1 is MINOR.
-
-**v4.2 — RACI goes live-capable (dual-path Stage 9.5).** The blueprint now carries `process_key` + `consult_mode` (§9.1) and an optional `raci_mode` hint (`blueprint_version 2.1`; 2.0 still parses — same major, so `EXPECTED_BLUEPRINT_VERSION` stays `2.0` — and on a 2.0 blueprint `process_key` is derived from the process name and `consult_mode` defaults to `read`). Stage 9.5 gains **Step 0** — the analyst asks whether to enable RACI for the module, with a catalog-aware default (off when no module uses RACI yet, on when ≥1 already does; decision 2) and records the confirmed `raci_mode` in the spec — and a **`living` path** that plans `processes` / `raci_assignments` / `process_gates` rows plus `is_raci_actor` / `has_consultation` enforcement rules, **in addition to** the baseline tier grants, instead of only compiling RACI into RBAC grants. Skill actors resolve to agent-held roles (`users.is_agent`), removing the old "🟡 until the platform supports it" deferral. The spec gains a **RACI mode** line and a **RACI plan** block (living mode only). MINOR: `documentation` mode is the default and reproduces prior behavior; every addition is opt-in. Lands in lockstep with architect `4.2` and modeler `4.1`.
-
-**v5.0 (MAJOR) — §2 Permissions summary retired; §8.1/§9.1 canonical; keep-with-placeholder empty sections.** Two coordinated contract changes land in lockstep. **Change B (breaking, this skill's major):** the §2 Permissions summary table is removed from the spec; the §8.1 Permissions catalog and §9.1 Permission hierarchy (including the `manage → narrow` rollup row that moved out of §2) are now the canonical permission surface. This is a breaking spec-structure change (a structural table removed), so `CURRENT_VERSION` bumps MAJOR `4.2 → 5.0` and the modeler's `EXPECTED_MAJOR` bumps `4 → 5` in lockstep — specs emitted by ≤4.2 carry §2 and are rejected by the bumped modeler until regenerated. **Change A (non-breaking, the empty-section convention):** every canonical top-level / numbered section is now always present; an intentionally-empty section carries the canonical placeholder `_(none: <short reason>)_` (lowercase `none`, colon not em-dash; bare `_(none)_` allowed). The analyst gained **new tolerance** — a section whose only body is `_(none: …)_` is parsed as "present, empty" (zero rows), exactly like an absent section — and **emits** the placeholder in the spec for empty §4 / §5 / §6 / §7.1 / §7.2, retiring the legacy strings `None.` / `No enumerations defined.` / `No cross-model link suggestions.` (the §3 per-entity sub-blocks stay omit-when-empty). The architect bumps `blueprint_version 2.1 → 2.2` for Change A; its major stays `2`, so `EXPECTED_BLUEPRINT_VERSION` major is unchanged — its literal is reconciled to the architect's stamped `"2.2"` (major-2 comparison, so functionally identical to `"2.0"`). Lands in lockstep with architect `4.3` and modeler `EXPECTED_MAJOR = 5`.
-
-**v5.1 (MINOR) — provenance-in-platform: consume catalog provenance, carry it through.** The architect bumped `blueprint_version 2.2 → 3.0` (MAJOR) by inserting two §3 columns: `canonical code` (D6 canonical uber-model code) and `entity_type` (D9 closed 6-way class). Three coordinated analyst changes:
-
-1. **Parse blueprint §3 by header NAME, not column position** (columns were inserted mid-table) and capture `entity_type` + `canonical code`, carrying both to the spec. `EXPECTED_BLUEPRINT_VERSION` bumps to `"3.0"` (major 3); older 2.x blueprints route to Mode D Rebuild.
-2. **Retire the Stage 2 sibling-file scan** (the pipeline's only cross-artifact read). Read authoring intent from the live catalog's v0.1.2 provenance columns instead: `canonical_owner_module` (the embedded-master / canonical-owner-arrival signal), `catalog_entity_code` (entity rename detection), `pattern_flags` (behavior), `catalog_entity_aliases` (cross-domain merges). The workspace blueprint/spec scan stays only as a **pre-provenance fallback** for rows whose `catalog_entity_code` is empty (created before stamping).
-3. **Emit the provenance carriers in the spec** so the modeler can stamp them: a per-entity `**Catalog entity code:**` and `**Entity type:**` line, a `**Canonical owner:**` line for placeholder masters (the `mastered_in` slug when an `embedded_master` lands locally while its canonical owner module is absent), plus on a reuse/merge reconciliation a `**Catalog alias:**` line recording `{alias_code, source_domain, source_module}` for the deployer to APPEND to `catalog_entity_aliases`.
-
-This is a MINOR analyst bump: the spec additions are new optional per-entity lines (an older modeler ignores them — the columns simply stay at their empty defaults and nothing regresses), so the spec's `version` major stays `5` and the modeler's `EXPECTED_MAJOR` stays `5`. The catalog-read posture is internal mechanics. Lands in lockstep with architect `5.0` (`blueprint_version 3.0`) and the modeler's stamping pass.
-
-**v5.2 (MINOR) — composed record labels: derive `label_parent`.** The platform now exposes a read-only, read-time `_label` on every entity (its composed label, folded from the parent chain) and a `<fk>_label` companion on every reference/parent FK, and accepts an optional `label_parent` entity property naming the one FK that is a record's identity spine. The analyst gains one new responsibility: **derive `label_parent`** for each owned entity at Stage 4 via the canonical decision rule (junction → none; self-identifying → none; relational → the principal-subject FK), validate it in Stage 9 (real reference/parent FK, never junction-targeting, never on a junction), and emit an optional `**Label parent:**` line in §3 for the modeler to stamp. Field-name guidance gains the reserved-name ban (`_`-prefixed and `*_id_label` names are platform-reserved), and junction guidance generalizes to **N legs** with the association-class caveat (an attribute/lifecycle-bearing N-ary link is `operational_record`, not `junction`). MINOR: the `**Label parent:**` line is a new optional per-entity sub-block (5.1 specs still parse; an older modeler that ignores it just leaves `label_parent` null and nothing regresses). Lands in lockstep with the modeler's parse/stamp/verify pass; `blueprint_version` stays `3.0` (no blueprint shape change) and the architect ships a parallel MINOR `5.1` prose clarification.
-
-**v5.3 (MINOR) — fixed lifecycle state field name (`workflow_state`); retire `catalog_field_code`.** Two coordinated changes. (1) **The lifecycle state field is named exactly `workflow_state`.** Stage 4 now emits, for every entity with a §7 lifecycle, a single required `enum` field named `workflow_state` (values = the §7 `state_name`s in order, default = the initial state) — never `status` / `state` / `lifecycle_state` / `lifecycle_stage`. The Stage 3f field-name drift table flips accordingly (the spec always uses `workflow_state`; a legacy live `status` field is drift that must be migrated to `workflow_state`, not kept), and `process_gates.state_column` is always `workflow_state`. This ends the "guess the state column among `status` / `state` / `lifecycle_state`" tolerance; the modeler FAILS LOUD on any other name. (2) **Retire the `catalog_field_code` read.** The platform is dropping `fields.catalog_field_code`, so the Stage 2 provenance index no longer reads it and field-rename detection falls back to the Stage 3f name/format heuristics (entity-rename detection via `catalog_entity_code` is unchanged). MINOR: no spec section renumbered, no required key removed, no `blueprint_version` change (`workflow_state` is a field name, not a new column); `version` major stays `5` and the modeler's `EXPECTED_MAJOR` stays `5`. Lands in lockstep with architect `5.2` and the modeler's parse/verify enforcement.
-
 ---
 
 ## Tools the analyst MUST NEVER call
@@ -191,8 +171,8 @@ When the header is present, skip steps 2-3 above (admin already did them) and us
 Before doing anything else, read the use-semantius skill and its data-modeling reference:
 
 ```
-Read: <skills-root>/use-semantius/SKILL.md
-Read: <skills-root>/use-semantius/references/data-modeling.md
+Read: ../use-semantius/SKILL.md
+Read: ../use-semantius/references/data-modeling.md
 ```
 
 The data-modeling reference gives you the mandatory creation order, all field formats, the Golden Rules, and exact CLI syntax. Everything below follows those patterns. Also read `references/cli-usage.md` if you need help with CLI invocation, piping, or error handling.
@@ -250,35 +230,86 @@ Default to Reconcile unless the user references an existing spec. The rest of th
 
 Parse the blueprint's eight (now nine) numbered sections, plus the optional un-numbered `## Additional Requirements Specification` when present. Build an internal model:
 
-- **Frontmatter**: `system_name`, `system_description`, `system_slug`, `domain_modules`, `domain_code`, `related_modules` (advisory only — never a deployment prerequisite), `blueprint_version`, `created_at`. **v4.1 additions:** `tagline` (marketing one-liner), `description` (marketing prose), `persona` (flat list of personas referenced in §9.1; the easy lookup for Stage 9.5), `license` (catalog metadata), `module_kind` (informational label: `domain` / `master` / `starter`; NOT a behavior switch). All v4.1 additions are carried forward to the spec verbatim. The deployer's behavior on every install is bundle-agnostic — `module_kind` does NOT branch any logic.
+- **Frontmatter**: `system_name`, `system_description`, `system_slug`, `domain_modules`, `domain_code`, `related_modules` (advisory only — never a deployment prerequisite), `blueprint_version`, `created_at`. **Additional frontmatter keys:** `tagline` (marketing one-liner), `description` (marketing prose), `persona` (flat list of personas referenced in §9.1; the easy lookup for Stage 9.5), `license` (catalog metadata), `module_kind` (informational label: `domain` / `master` / `starter`; NOT a behavior switch). All are carried forward to the spec verbatim. The deployer's behavior on every install is bundle-agnostic — `module_kind` does NOT branch any logic. (The blueprint carries **no** `access_scope` key — the architect is platform-agnostic and never decides access control. The analyst resolves `access_scope` itself after Stage 2; see the "Access-control scope" section below.)
 - **§1 Overview**: catalog-readable analyst-voice narrative (single block, NOT sub-divided). Carry to spec §1 verbatim unless the user changes it during reconciliation. The analyst reads §1 as prose context when making reconciliation decisions (intent anchor: what's IN, what's OUT, upgrade path). Quality of §1 is an authoring concern, not a parser concern.
 - **§2 Entity summary** (v2 columns `Name | data_object | Description`): the **plural** name, the bare `data_object` identifier, and the description per entity. Build the entity list; `data_object` and the plural `Name` must agree with §3 (the architect's consistency checker enforces this). (v1 blueprints have only `Name | Description`.)
 - **§2 Mermaid**: capture classDef assignments (`master` / `embedded_master` / `contributor` / `consumer` / `platform_builtin` / `derived`).
 - **`## Additional Requirements Specification`** (OPTIONAL, un-numbered, sits between §2 and §3; usually absent): the architect's free-prose channel for a requirement you MUST honor when building fields but CANNOT derive from the entity-level structure (a field a cost / rollup view depends on, a fixed unit or currency, a cross-module denormalization-and-dedup rule, an externally-mandated value). Capture the prose verbatim as an in-memory `additional_requirements` note; it drives Stage 4 field elicitation and the Stage 3g plan echo-back. This is the ONE sanctioned field-level channel in an entity-only blueprint, so it does NOT trip the field-level-content halt below. Absent in most blueprints; when absent, skip it.
-- **§3 Entities catalog** (blueprint format v3 columns: `data_object | canonical code | singular | plural | role | mastered in | mastered label | necessity | pattern flags | entity_type | write tier | notes`): **parse by header NAME, not column position.** The `3.0` bump inserted `canonical code` (after `data_object`) and `entity_type` (before `write tier`), so a fixed-offset read mislabels every column after `data_object`. Read the §3 header row, build a column-name → index map, then index by name. For each entity, capture `table_name` (the bare backticked `data_object`, the local/dialect deployed name), **`canonical_code`** (the new `canonical code` column — the canonical uber-model code; carry it to the spec for the modeler to stamp into `catalog_entity_code`; defaults to `data_object` for agent-optimized naming), `singular_label` (the `singular` column), **`plural_label`** (the `plural` column — carry to the spec's §3 Plural label and §2 Singular/Plural rather than re-deriving the plural from the singular), `role` (master / embedded_master / contributor / consumer / derived), `mastered_in` (`-` or other module slug), `mastered_label` (the `mastered label` column — display name of the mastering module), `necessity` (required / optional), `pattern_flags` (`personal_content`, `submit_lock`, `single_approver`, …), **`entity_type`** (the new column — the closed 6-way class `operational_workflow` / `operational_record` / `catalog` / `junction` / `computed`; carry it verbatim to the spec for the modeler to stamp into `entities.entity_type`; do NOT re-derive), **`write_tier`** (`:read` / `:manage` / `:admin` / `:manage` *(pending)*; consumed verbatim — do NOT re-derive in Stage 9; it is the value the architect already derived FROM `entity_type`), `notes`. **Defensive defaults (header-name parse):** if the `canonical code` column is absent on a row, default `canonical_code = data_object`; if `entity_type` is absent, default `unclassified` (do not propagate it as a decision — the modeler treats it as derive-locally). These defaults only fire for hand-edited or transitional files; a clean 3.0 blueprint carries both columns.
+- **§3 Entities catalog** (blueprint format v3 columns: `data_object | canonical code | singular | plural | role | mastered in | mastered label | necessity | pattern flags | entity_type | write tier | notes`): **parse by header NAME, not column position.** Because the `canonical code` column sits after `data_object` and `entity_type` before `write tier`, a fixed-offset read mislabels every column after `data_object`. Read the §3 header row, build a column-name → index map, then index by name. For each entity, capture `table_name` (the bare backticked `data_object`, the local/dialect deployed name), **`canonical_code`** (the new `canonical code` column — the canonical uber-model code; carry it to the spec for the modeler to stamp into `catalog_entity_code`; defaults to `data_object` for agent-optimized naming), `singular_label` (the `singular` column), **`plural_label`** (the `plural` column — carry to the spec's §3 Plural label and §2 Singular/Plural rather than re-deriving the plural from the singular), `role` (master / embedded_master / contributor / consumer / derived), `mastered_in` (`-` or other module slug), `mastered_label` (the `mastered label` column — display name of the mastering module), `necessity` (required / optional), `pattern_flags` (`personal_content`, `submit_lock`, `single_approver`, …), **`entity_type`** (the new column — the closed 6-way class `operational_workflow` / `operational_record` / `catalog` / `junction` / `computed`; carry it verbatim to the spec for the modeler to stamp into `entities.entity_type`; do NOT re-derive), **`write_tier`** (`:read` / `:manage` / `:admin` / `:manage` *(pending)*; consumed verbatim — do NOT re-derive in Stage 9; it is the value the architect already derived FROM `entity_type`), `notes`. **Defensive defaults (header-name parse):** if the `canonical code` column is absent on a row, default `canonical_code = data_object`; if `entity_type` is absent, default `unclassified` (do not propagate it as a decision — the modeler treats it as derive-locally). These defaults only fire for hand-edited or transitional files; a clean 3.0 blueprint carries both columns.
 - **§4 Aliases**: industry / vendor / domain synonyms — used in Stage 2 similarity heuristic.
-- **§5.1 Intra-scope edges**: from / verb / to / cardinality / kind / necessity / owner_side / **`delete_mode`** (v4.1+: `restrict` / `clear` / `cascade`) / **`fk_format`** (v4.1+: `reference` / `parent`) / notes. Both new columns are consumed verbatim — the analyst stops reconstructing FK shape in Stages 2h / 10.
-- **§5.2 Built-in edges**: edges between platform built-ins (`users`, `roles`) and this module's entities. Same v4.1 column additions (`delete_mode`, `fk_format`).
-- **§5.3 Cross-scope edges**: edges to entities in other modules. v4.1 splits this into two sub-tables:
+- **§5.1 Intra-scope edges**: from / verb / to / cardinality / kind / necessity / owner_side / **`delete_mode`** (`restrict` / `clear` / `cascade`) / **`fk_format`** (`reference` / `parent`) / notes. Both columns are consumed verbatim; the analyst does not reconstruct FK shape in Stages 2h / 10.
+- **§5.2 Built-in edges**: edges between platform built-ins (`users`, `roles`) and this module's entities. Same `delete_mode` and `fk_format` columns.
+- **§5.3 Cross-scope edges**: edges to entities in other modules, split into two sub-tables:
   - **§5.3a** outbound from this scope's masters / contributors — same column shape as §5.1 (`delete_mode` ∈ {restrict, clear, cascade}, `fk_format` ∈ {reference, parent}).
   - **§5.3b** context edges on embedded shells / consumed entities — expanded `delete_mode` vocabulary: `none` (fully optional), `none (required-if-present)` (mandatory FK ONLY when target is installed — presence-conditional `is_required`), `⚠ audit: <reason>` (soft data-quality flag). `fk_format` is always `n/a` for §5.3b. The analyst parses the vocabulary verbatim; Stage 2g consumes it for resolution.
-- **§6 Cross-domain context**: master consumers, outbound handoffs, inbound handoffs, master providers. v4.1 adds a `transition` column on §6.2 / §6.3 carrying `<to_state> _(<event_category>)_` where `event_category` ∈ {`lifecycle`, `state_change`, `entity_event`}. The analyst captures `from_state` (when present), `to_state`, `event_category`. For `lifecycle` rows, validate that `to_state` exists in the source entity's §7 table; mismatch → 🛑 (the architect should have caught it). The analyst converts handoffs to spec §6 cross-model link suggestions and to §7 questions where the handoff has friction `high`.
-- **§7 Lifecycle states per master**: per-entity table with order / state_name / initial? / terminal? / requires_permission? / derived gate / description. **v4.1 additions:** soft data-quality annotations: `⚠ state-machine shape: <reason>` (description cell) and `⚠ unresolved gate: <reason>` (derived gate cell). The analyst captures both verbatim and propagates to the spec — does NOT auto-resolve. The user is expected to fix the source data; downstream skills (deployer) skip ⚠-flagged rows.
+- **§6 Cross-domain context**: master consumers, outbound handoffs, inbound handoffs, master providers. §6.2 / §6.3 carry a `transition` column with `<to_state> _(<event_category>)_` where `event_category` ∈ {`lifecycle`, `state_change`, `entity_event`}. The analyst captures `from_state` (when present), `to_state`, `event_category`. For `lifecycle` rows, validate that `to_state` exists in the source entity's §7 table; mismatch → 🛑 (the architect should have caught it). The analyst converts handoffs to spec §6 cross-model link suggestions and to §7 questions where the handoff has friction `high`.
+- **§7 Lifecycle states per master**: per-entity table with order / state_name / initial? / terminal? / requires_permission? / derived gate / description. Soft data-quality annotations: `⚠ state-machine shape: <reason>` (description cell) and `⚠ unresolved gate: <reason>` (derived gate cell). The analyst captures both verbatim and propagates to the spec — does NOT auto-resolve. The user is expected to fix the source data; downstream skills (deployer) skip ⚠-flagged rows.
 - **§8.1 Permissions tiered**: full permission catalog with tier and rollup parent.
-- **§8.2 Business rules**: rule_name / data_object / source_flag / intent. **v4.1 addition:** for `source_flag = has_single_approver`, the `intent` text MUST name the actual approve gate (e.g. `hiring-starter:approve_offer`). The analyst parses the named permission code from the intent text and validates it exists in §8.1; mismatch is a 🛑 blocker. The phantom `approve_<entity>_approval` shape is now an authoring error.
-- **§9 Governance (v4.1+; RACI columns v4.2)** — three sub-sections:
-  - §9.1: baseline roles + permission hierarchy edges + a **Processes wired** catalog (`process_key | process_name | pcf_code | pcf_id | level | description`) + RACI realization rows (`actor | kind (persona / skill) | raci | process_key | consult_mode | realization`). **The Processes catalog, `process_key`, and `consult_mode` are v4.2 (`blueprint_version 2.1`) additions** — on a 2.0 blueprint they are absent: synthesize the catalog from the distinct process labels, derive `process_key` from the name (snake_case, `^[a-z_][a-z0-9_]*$`), and default `consult_mode = read`. The `pcf_code` / `pcf_id` / `level` are blueprint provenance — **drop them at this boundary** (they don't reach the live `processes` table); carry `process_key | name | description` into the spec's Processes catalog.
+- **§8.2 Business rules**: rule_name / data_object / source_flag / intent. For `source_flag = has_single_approver`, the `intent` text MUST name the actual approve gate (e.g. `hiring-starter:approve_offer`). The analyst parses the named permission code from the intent text and validates it exists in §8.1; mismatch is a 🛑 blocker. The phantom `approve_<entity>_approval` shape is now an authoring error.
+- **§9 Governance** — three sub-sections:
+  - §9.1: baseline roles + permission hierarchy edges + a **Processes wired** catalog (`process_key | process_name | pcf_code | pcf_id | level | description`) + RACI realization rows (`actor | kind (persona / skill) | raci | process_key | consult_mode | realization`). **The Processes catalog, `process_key`, and `consult_mode` may be absent on an older `blueprint_version 2.0` blueprint** — when absent, synthesize the catalog from the distinct process labels, derive `process_key` from the name (snake_case, `^[a-z_][a-z0-9_]*$`), and default `consult_mode = read`. The `pcf_code` / `pcf_id` / `level` are blueprint provenance — **drop them at this boundary** (they don't reach the live `processes` table); carry `process_key | name | description` into the spec's Processes catalog.
   - §9.2: functional ownership (`responsibility | business function | default role | default tier`).
   - The analyst parses §9 verbatim and reconciles in Stage 9.5 against the live `roles` / `permission_hierarchy` / `processes` / `raci_assignments` catalog.
-  - **Optional layer (matches architect v4.2).** The RACI realization rows, the Processes catalog, and §9.2 functional ownership are OPTIONAL — a greenfield blueprint omits them when no processes / personas / owning functions were surfaced. When §9 carries ONLY baseline roles + the permission hierarchy (no RACI rows), carry those forward and **do not fabricate** a RACI matrix or Processes catalog; the spec's §9 then holds the baseline layer only, and no `persona` frontmatter is emitted. (The "synthesize the catalog" step above applies ONLY when RACI rows ARE present but the v4.2 columns are absent — a `2.0` blueprint that still carries RACI.)
+  - **Optional layer.** The RACI realization rows, the Processes catalog, and §9.2 functional ownership are OPTIONAL — a greenfield blueprint omits them when no processes / personas / owning functions were surfaced. When §9 carries ONLY baseline roles + the permission hierarchy (no RACI rows), carry those forward and **do not fabricate** a RACI matrix or Processes catalog; the spec's §9 then holds the baseline layer only, and no `persona` frontmatter is emitted. (The "synthesize the catalog" step above applies ONLY when RACI rows ARE present but the Processes-catalog columns are absent — an older `blueprint_version 2.0` blueprint that still carries RACI.)
 
-**Tolerate canonical empty-section placeholders (keep-with-placeholder convention).** The architect now KEEPS every canonical top-level / numbered section (and the blueprint's §5.3 / §6 sub-blocks) even when empty, carrying the canonical placeholder **`_(none: <short reason>)_`** (lowercase `none`, colon not em-dash; bare `_(none)_` allowed) instead of omitting the heading. A canonical section whose only body is this placeholder is **"present, empty" — parse it as the section existing with zero rows.** This is the same internal state the analyst already used for an *absent* section, so wherever the parse assumed "section absent = empty", it must now equally treat "section present with `_(none: …)_` = empty". Detect the placeholder with `^_\(none\b` on the section body; do NOT mistake it for a data row, and do NOT carry the literal placeholder text into the spec as content (e.g. never push it into a table cell). The §3 per-entity sub-blocks (Computed fields / Validation rules / Input-type rules / Select rule) stay omit-when-empty — they carry no placeholder, and their absence still reads as empty.
+**Tolerate canonical empty-section placeholders (keep-with-placeholder convention).** The architect KEEPS every canonical top-level / numbered section (and the blueprint's §5.3 / §6 sub-blocks) even when empty, carrying the canonical placeholder **`_(none: <short reason>)_`** (lowercase `none`, colon not em-dash; bare `_(none)_` allowed) instead of omitting the heading. A canonical section whose only body is this placeholder is **"present, empty" — parse it as the section existing with zero rows.** This is the same internal state the analyst uses for an *absent* section, so wherever the parse treats "section absent = empty", it equally treats "section present with `_(none: …)_` = empty". Detect the placeholder with `^_\(none\b` on the section body; do NOT mistake it for a data row, and do NOT carry the literal placeholder text into the spec as content (e.g. never push it into a table cell). The §3 per-entity sub-blocks (Computed fields / Validation rules / Input-type rules / Select rule) stay omit-when-empty — they carry no placeholder, and their absence still reads as empty.
 
-**Tolerate catalog-source cruft (v4.1+).** Catalog-clone blueprints (uber-model slices) can arrive with cosmetic cruft the architect's clone *should* have stripped but a hand-edited or older file may not: a `<details>` / `<summary>` collapsible wrapping a long §5.3b context-edges table, or inherited **old-form** stub strings (`_(no ... )_`) under an otherwise-empty §4 / §5.3 sub-section. **Strip these defensively before parsing** — read the markdown table inside a `<details>` block as if the tags weren't there, and treat an old-form-stub-only section as "present, empty" (zero rows). Do NOT halt on them (the architect's Mode-B audit is what flags them; the analyst just needs to not choke). Raw HTML and old-form `_(no ... )_` stub strings must never reach the emitted spec — re-emit the canonical `_(none: …)_` placeholder instead when the corresponding spec section is empty (see "Spec sections" below). The canonical `_(none: …)_` placeholder itself is NOT cruft: do not strip it, do not flag it, do not let it choke the parse.
+**Tolerate catalog-source cruft.** Catalog-clone blueprints (uber-model slices) can arrive with cosmetic cruft the architect's clone *should* have stripped but a hand-edited or older file may not: a `<details>` / `<summary>` collapsible wrapping a long §5.3b context-edges table, or inherited **old-form** stub strings (`_(no ... )_`) under an otherwise-empty §4 / §5.3 sub-section. **Strip these defensively before parsing** — read the markdown table inside a `<details>` block as if the tags weren't there, and treat an old-form-stub-only section as "present, empty" (zero rows). Do NOT halt on them (the architect's Mode-B audit is what flags them; the analyst just needs to not choke). Raw HTML and old-form `_(no ... )_` stub strings must never reach the emitted spec — re-emit the canonical `_(none: …)_` placeholder instead when the corresponding spec section is empty (see "Spec sections" below). The canonical `_(none: …)_` placeholder itself is NOT cruft: do not strip it, do not flag it, do not let it choke the parse.
 
 **Gate the parse.** If any blueprint entity declares a field-level annotation (any column beyond what §3 catalog allows, any computed/validation/input/select sub-block), halt with: *"This blueprint contains field-level content. The blueprint format is entity-only; field-level work belongs in the spec. Re-run `semantius-architect` Mode B Audit to remove field-level content from the blueprint."*
 
 **Exception:** the optional `## Additional Requirements Specification` section is NOT field-level content for this gate. It is the sanctioned free-prose channel for non-derivable field / cross-module intent (captured above), and its prose naming fields is expected. The gate fires only on field-level annotations attached to §3 entity rows or on per-entity Computed fields / Validation rules / Input-type rules / Select rule sub-blocks, never on this section.
+
+---
+
+## Access-control scope (`access_scope`)
+
+The analyst **owns** the access-control decision: **basic** (plain read + edit — the two-permission fallback) vs **full** (an admin tier, workflow gates, lifecycle gating, personas / RACI, functional ownership). The architect is platform-agnostic and never decides this — it authors the model's governance abstractly, unaware of whether the instance uses RBAC. The analyst is the right owner because it is platform-aware (Stage 2 inspects the live catalog), so it can both detect whether the instance already uses access control and ask the user. The modeler honors the choice the analyst stamps into the spec frontmatter and only re-asks as a backstop when a spec reaches it with no `access_scope` at all.
+
+### Resolving the scope (right after Stage 2)
+
+Resolve `access_scope` immediately after Stage 2's catalog inspection (the detection below needs the live `roles` / `permissions` read) and before the governance-authoring stages (5, 7, 9.5, 10). First hit wins:
+
+1. **Standing policy.** `.access_scopes.<system_slug>` in `$CUSTOMIZATIONS_FILE` (a prior run's choice) → use it; narrate one plain line (*"Using your earlier choice: basic access."*); skip the question.
+2. **Explicit user intent.** The triggering request explicitly said basic ("basic access", "read and edit only", "no roles / permissions", "keep it simple") or full ("full RBAC", "with roles and approvals", "lifecycle gating") → use it.
+3. **Detect + ask.** Otherwise compute the default from live state, fire the `AskUserQuestion` below, then write the answer back to `.access_scopes.<system_slug>` (same write-back protocol the analyst uses for every other customizations decision).
+
+**Detection (sets which option leads as Recommended).** Count the live modules that recorded a full-access deploy, excluding the module being reconciled (so a re-deploy doesn't self-trigger):
+
+```bash
+semantius call crud read_module '{"filters": "settings->>access_scope=eq.full,module_slug=neq.<system_slug>"}'
+```
+
+Any row → **default Full** (stay consistent with the modules already using full access control). No rows → **default Basic** (don't impose governance on a setup that isn't using it).
+
+This reads the choice each prior deploy recorded on its own module record (`modules.settings.access_scope`), the authoritative per-module signal. Do NOT sniff whether permissions or roles merely exist: a basic-access module also creates `<slug>:read` / `<slug>:manage` permissions and viewer / manager roles, so permission presence cannot tell basic from full and would wrongly default Full on an instance whose other modules are all basic. The modeler persists `settings.access_scope` on every deploy path, so this signal is populated for every module the pipeline has touched.
+
+**The question** (`AskUserQuestion`, header `Access control`, the Recommended option leading per detection; plain language, US spelling, no em-dashes):
+
+- **When the instance already uses access control:**
+  - question: *"Your other modules use role-based access control. Set `<system_name>` up the same way, or keep it to basic access (read and edit only)?"*
+  - option 1 (default): label `Advanced access control (Recommended)`, description *"Roles, permissions, approval gates, and per-stage gating, consistent with how your other modules work."*
+  - option 2: label `Basic access (read and edit)`, description *"Just read and edit. No roles to manage, no approval steps, no per-stage gating. Records and their stages still exist; moving a record through its stages just isn't restricted. You can add advanced access control later."*
+- **When the instance does not yet use access control:**
+  - question: *"How should `<system_name>` handle access control?"*
+  - option 1 (default): label `Basic access (read and edit) (Recommended)`, description *"Just read and edit, the simplest way to get going. No roles, no approval steps, no per-stage gating. You can add advanced access control later."*
+  - option 2: label `Advanced access control`, description *"Roles, permissions, approval gates on sensitive actions, and per-stage gating of record lifecycles. More to set up, fine-grained control over who can do what."*
+
+Always stamp the resolved value into the spec frontmatter `access_scope` so the modeler honors it without re-asking. When the resolution is `full`, every stage below runs exactly as documented — no change.
+
+### What `basic` authors (the contract)
+
+The lifecycle state machine still exists in a `basic` spec (every lifecycle entity keeps its `workflow_state` enum field); its transitions are simply ungated. `basic` changes the analyst's work in two ways:
+
+1. **Reduce the blueprint's authored governance to the two-permission shape.** The architect authored the blueprint's §8 / §9 abstractly (full governance when the entities/lifecycle warranted it). Under `basic`, ignore the blueprint's `baseline-admin` row, every `workflow-gate` / `override` / `narrow` permission, every §7 `requires_permission? = ✓` gate, every §3 `pattern flags` value, and the entire §9 RACI / functional-ownership layer. Emit §8.1 with exactly `<slug>:read` + `<slug>:manage`, §9.1 with viewer + manager + the single `<slug>:manage → <slug>:read` row, and force every owned entity's `**Edit permission:**` to `manage`. (When the blueprint's natural shape is already two-permission — a purely-operational module the architect classified that way — there is nothing to reduce.)
+
+2. **Suppress the analyst's own net-new governance discovery:**
+   - **Stage 5 (W3/W4/W4n/W5 workflow-permission scan)** emits nothing — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`.
+   - **Stage 7 (`select_rule`)** emits nothing — no per-row read scoping (every entity falls back to table-level `view_permission`).
+   - **Stage 9.5** forces `documentation` mode (skip the Step 0 Enable-RACI widget — never offer `living` under `basic`), emits only the `<slug>_viewer` + `<slug>_manager` baseline roles and the single `manage → read` edge, and skips RACI realization, the Processes catalog, and §9.2 functional ownership. No `persona` frontmatter is emitted.
+   - **Stage 10** keeps only permission-free computed fields / validation rules (pure data-integrity logic); it drops any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission` on a code that no longer exists), since the gating permission is gone.
+
+The result satisfies the analyst's own §8.1/§9.1 invariants by construction (exactly one baseline-read + one baseline-manage, no gate rolled under `manage`, no orphan `narrow`) and the modeler's parse-time validation. The Stage 11 pre-save verifier additionally checks `access_scope: basic` coherence (no admin/gate/override/narrow rows, no personas, no RACI realization).
 
 ---
 
@@ -320,9 +351,9 @@ Ambiguity detection requires every entity in the instance:
 semantius call crud read_entity '{}'
 ```
 
-Build an index keyed by `table_name`, carrying `{module_id, module_name, module_slug, module_type, singular_label, plural_label, description, label_column}` **plus the v0.1.2 provenance columns** `{catalog_entity_code, canonical_owner_module, entity_type, pattern_flags, catalog_entity_aliases}`. These are returned by `read_entity` / `read_field` like any other column.
+Build an index keyed by `table_name`, carrying `{module_id, module_name, module_slug, module_type, singular_label, plural_label, description, label_column}` **plus the provenance columns** `{catalog_entity_code, canonical_owner_module, entity_type, pattern_flags, catalog_entity_aliases}`. These are returned by `read_entity` / `read_field` like any other column.
 
-**The catalog provenance columns are the authoritative source for authoring intent** (v5.1+). Each fact the analyst used to recover by scanning sibling workspace files is now a platform read on this index:
+**The catalog provenance columns are the authoritative source for authoring intent.** Each authoring fact is a platform read on this index:
 
 | Authoring fact | Read from |
 |---|---|
@@ -406,12 +437,12 @@ For every row in blueprint §5.3a (outbound from this scope's masters / contribu
 - **Multiple plausible matches** (exact + near-name candidates): mark 🟡 **Ambiguous**. Stage 3 asks the user.
 - **Unresolved source**: if `from_table` is neither in this blueprint's §3 nor in the catalog, mark 🛑 (route back to architect to fix the blueprint).
 
-**Presence-conditional resolution for §5.3b context edges (v4.1+):**
+**Presence-conditional resolution for §5.3b context edges:**
 
 §5.3b carries the canonical owner's view of edges that touch this scope's embedded shells / consumed entities. The `delete_mode` column drives resolution:
 
 - `none` — fully optional; never emit a FK column. Verification summary records as 💤 dormant.
-- `none (required-if-present)` — **presence-conditional**: check the target entity in the live catalog. Target present → mark ✨ Proposed (mandatory FK at deploy time, `delete_mode = restrict` by default unless §5 names a different mode). Target absent → mark 💤 dormant (no column, no constraint). **No thinned-entity stubs** — the prior "lightweight vendors" pattern is gone; if the target isn't there, the edge is simply not realized.
+- `none (required-if-present)` — **presence-conditional**: check the target entity in the live catalog. Target present → mark ✨ Proposed (mandatory FK at deploy time, `delete_mode = restrict` by default unless §5 names a different mode). Target absent → mark 💤 dormant (no column, no constraint). **No thinned-entity stubs** — if the target isn't there, the edge is simply not realized.
 - `⚠ audit: <reason>` — the canonical owner declared a required composed child whose target sits outside the installable closure. Mark 🛑 **soft data-quality flag**: surface verbatim in the spec's §7.2 with the architect's reason text; do NOT auto-resolve. The user is expected to fix the source data upstream.
 
 For §6.2 / §6.3 handoff rows with `event_category = lifecycle`, validate that `to_state` exists in the source entity's §7 lifecycle table. Mismatch → 🛑 (the architect should have caught it via pre-save verification; if it reached the analyst the blueprint is corrupt).
@@ -420,7 +451,7 @@ For §6.2 / §6.3 handoff rows whose source entity is `embedded_master` and whos
 
 Build a `link_proposals` list for Stage 3.
 
-**FK shape consumption (v4.1+):** §5.1 / §5.2 / §5.3a now carry `delete_mode` and `fk_format` per row. The analyst **consumes verbatim** — do NOT re-derive at spec-write time. If the live catalog's field for the resolved edge has a different `format` or `reference_delete_mode`, flag as drift in Stage 3f.4. Cross-primitive `fk_format` flip (`parent ↔ reference`) is a 🔴 blocker (same posture as cross-primitive format drift).
+**FK shape consumption:** §5.1 / §5.2 / §5.3a carry `delete_mode` and `fk_format` per row. The analyst **consumes verbatim** — do NOT re-derive at spec-write time. If the live catalog's field for the resolved edge has a different `format` or `reference_delete_mode`, flag as drift in Stage 3f.4. Cross-primitive `fk_format` flip (`parent ↔ reference`) is a 🔴 blocker (same posture as cross-primitive format drift).
 
 ### 2h. Deep-inspect adopted entities (for 3b.0 / 3b.1 / 3b.2 paths)
 
@@ -470,7 +501,7 @@ The index is the truth-source for Stage 3f drift detection. Compare every bluepr
 - **Enum-value drift**: a live field's `enum_values` and the blueprint's `enum_values` differ in either direction (live has values the blueprint doesn't, or blueprint introduces values that re-classify live values). When `live_distinct_enum_values_in_use` includes any value the blueprint *drops*, this is high-risk drift. Flag for Stage 3f.
 - **Format drift**: blueprint declares a different `format` than live (e.g., live `text`, blueprint `string`). Cross-primitive changes (text → integer, text → date) are 🔴 blockers; same-primitive variations (text ↔ string ↔ multiline, integer ↔ int32 ↔ int64) are 🟡 warnings the modeler can auto-resolve.
 - **Required-ness drift**: blueprint requires a field the live entity has as optional, or vice versa. Often safe; flag for Stage 3f when the change would leave live records violating the new constraint.
-- **Permission-tier drift**: blueprint's intended `edit_permission` differs from live `edit_permission`. Tier downgrades (admin → manage) need explicit confirmation; tier upgrades (manage → admin) are usually safe but still surfaced. **v4.1 note:** the blueprint's intended tier is consumed from the §3 `write tier` column verbatim — the analyst no longer re-derives via its own Stage 9 classification. Stage 9 becomes validation-only.
+- **Permission-tier drift**: blueprint's intended `edit_permission` differs from live `edit_permission`. Tier downgrades (admin → manage) need explicit confirmation; tier upgrades (manage → admin) are usually safe but still surfaced. The blueprint's intended tier is consumed from the §3 `write tier` column verbatim; the analyst does not re-derive it via its own Stage 9 classification (Stage 9 is validation-only).
 
 Any drift found here drives Stage 3f. No drift = Stage 3f is silent.
 
@@ -501,10 +532,10 @@ If you find yourself reasoning *"the user is going to pick option 1, so I'll jus
 
 Walk every §3 row in the incoming blueprint and classify based on `role` + `mastered in` + catalog state (location **and** stamped provenance: `catalog_entity_code` / `canonical_owner_module` / `catalog_entity_aliases`) + (pre-provenance rows only) workspace spec evidence. Most placements are deterministic and need no prompt; sub-stages 3a/3b/3c/3d/3e fire only on genuine ambiguity. In the placement table below, read the **"Workspace spec evidence"** column as **"authoring-intent evidence"**: take it from the catalog's `canonical_owner_module` whenever the entity carries provenance, and only fall back to the workspace file scan for a pre-provenance entity (`catalog_entity_code == ''`).
 
-**Source of truth for placement decisions (v5.1: the catalog, not sibling files):**
+**Source of truth for placement decisions (the catalog, not sibling files):**
 
-1. **The live catalog** (via `read_module` / `read_entity`) is now the **authoritative source for both location AND authoring intent.** It tells you where entities live (`module_id`) and — since base schema v0.1.2 — each entity's stamped authoring intent directly: `canonical_owner_module` (the embedded-master / canonical-owner pointer), `catalog_entity_code` (canonical identity), `pattern_flags`, `catalog_entity_aliases`. A live entity with a **non-empty `canonical_owner_module`** is the canonical-owner-arrival signal (3b.0) the analyst used to recover by file-scanning — read it straight off the Stage 2c index.
-2. **Workspace blueprints / specs are a PRE-PROVENANCE FALLBACK only.** Before v0.1.2 the catalog did not store `mastered_in`, so the analyst parsed `semantius/blueprints/*.md` and `semantius/specs/*.md` §3 to recover it. That scan is **retired as the primary mechanism**: run it **only for a live entity whose `catalog_entity_code` is empty** (`= ''`) — i.e. an entity created before provenance stamping (or outside the pipeline). For any entity that carries provenance, the catalog wins; never let a sibling file override a stamped `canonical_owner_module` / `catalog_entity_code`. This closes the leak where an absent or drifted sibling file blinded placement.
+1. **The live catalog** (via `read_module` / `read_entity`) is the **authoritative source for both location AND authoring intent.** It tells you where entities live (`module_id`) and each entity's stamped authoring intent directly: `canonical_owner_module` (the embedded-master / canonical-owner pointer), `catalog_entity_code` (canonical identity), `pattern_flags`, `catalog_entity_aliases`. A live entity with a **non-empty `canonical_owner_module`** is the canonical-owner-arrival signal (3b.0) — read it straight off the Stage 2c index.
+2. **Workspace blueprints / specs are a PRE-PROVENANCE FALLBACK only.** Run the `semantius/blueprints/*.md` and `semantius/specs/*.md` §3 scan **only for a live entity whose `catalog_entity_code` is empty** (`= ''`) — an entity created before provenance stamping (or outside the pipeline). For any entity that carries provenance, the catalog wins; never let a sibling file override a stamped `canonical_owner_module` / `catalog_entity_code`. This closes the leak where an absent or drifted sibling file blinded placement.
 
 ```bash
 # Stage 2c provenance read (one-time, at the start of reconciliation) — the PRIMARY source:
@@ -517,7 +548,7 @@ Walk every §3 row in the incoming blueprint and classify based on `role` + `mas
 #
 # PRE-PROVENANCE FALLBACK (only when catalog_entity_code == '' on a live entity):
 #   parse semantius/blueprints/*-semantic-blueprint.md (§3 by HEADER NAME) then specs/*.md for
-#   role + mastered_in + label, exactly as before. Blueprint takes precedence over spec.
+#   role + mastered_in + label. Blueprint takes precedence over spec.
 #   The §7.2 🟡 note is NOT the signal — it's human-readable documentation. Do not parse it.
 #
 # This map is consulted by the placement table below and by 3b.0 adoption detection.
@@ -589,14 +620,20 @@ The authoritative reference for the protocol, the full yq-path registry, and pro
 
 **Policy path:** `.optionals_decided.<slug>` (per-slug verdict, `included` or `excluded`). Both directions are recorded; 2c.5 has already filtered the entity list to un-decided slugs only. This widget fires only when at least one un-decided optional remains.
 
-Blueprint §3 entries with `necessity = optional` get a single multiSelect `AskUserQuestion`:
+Blueprint §3 entries with `necessity = optional` are offered to the user as multiSelect `AskUserQuestion` choices, **one option per optional entity**:
 
-- **question**: `"This module includes some optional concepts. Which should we set up?"`
-- **header**: `"Optional concepts"`
+- **question**: `"Some parts of this module are optional. Which do you want to set up?"`
+- **header**: `"Optional parts"`
 - **multiSelect**: `true`
 - **options**: one per optional entity:
   - label: the entity's **Plural Label** (e.g. `"Career Aspirations"`)
   - description: blueprint §2 description, followed by `" Skip if you don't track this."`
+
+**The 4-option cap (mandatory).** `AskUserQuestion` allows at most **4 options per question**. Most modules have ≤4 optionals and fit one multiSelect question. When **more than 4** optional entities remain un-decided:
+
+- **Never merge two entities into one combined option** to fit the cap. The user must be able to include one without the other; a `"Issues + Service Requests"` mega-option silently forces an all-or-nothing choice and corrupts the per-slug `.optionals_decided` record.
+- **Split** the optionals across several multiSelect questions of ≤4 options each, **all carrying the same `"Optional parts"` header**, and send them together in **one** `AskUserQuestion` call (a single call holds up to 4 questions → up to 16 optionals). With more than 16 un-decided optionals, fire successive `AskUserQuestion` calls until all are covered.
+- **Keep this in its own `AskUserQuestion` call.** Do not fold the optional-parts question(s) into the access-control question (Stage 2c) or any other decision. Batching unrelated questions makes every chip inherit the first question's header (the access-control question's `"Access control"` chip would then mislabel the optional-parts question).
 
 Entities the user does NOT select get the internal annotation `dropped (optional, user declined)` on the spec entry and are skipped from all later stages. Selected entities proceed to bucket classification.
 
@@ -665,7 +702,7 @@ No host-module or manager-scope follow-up — the host is determined by B's blue
 - Option 3 (claim ownership for incoming) → `{outcome: claim, new_owner: <incoming_module>}`
 - Option 4 (abort) → write nothing (matches admin Step 7 rule 7.6 on cancel selections).
 
-**Fires when:** incoming blueprint's `role` is `master` AND the existing entity in the catalog is in a module with a DIFFERENT slug from the incoming blueprint's `system_slug`. In other words: two modules each claim master ownership of the same entity, and they disagree on which slug owns it. This is the master-vs-master case `architecture.md §11` flags (Path-2 consolidation, currently unbuilt). For now, fire the legacy 4-option widget:
+**Fires when:** incoming blueprint's `role` is `master` AND the existing entity in the catalog is in a module with a DIFFERENT slug from the incoming blueprint's `system_slug`. In other words: two modules each claim master ownership of the same entity, and they disagree on which slug owns it. This is the master-vs-master case `architecture.md §11` flags (Path-2 consolidation). Fire the 4-option widget:
 
 - **question**: `"<Plural Label> already exists in `<Existing Module Display Name>`. This blueprint also claims master ownership of <Plural Label>. What should we do?"`
 - **header**: `"Existing concept"`
@@ -719,7 +756,7 @@ Stage 2 has already applied the role-driven placement table (top of Stage 3) usi
 | Incoming `role` | Existing entity location | Workspace spec evidence | Sub-case |
 |---|---|---|---|
 | `master` | Some module X (X ≠ incoming) | X's spec carries `embedded_master mastered_in: <incoming.system_slug>` for this entity | **3b.0** (1-option take-ownership confirmation, batched if multiple entities adopt at once) |
-| `master` | Some module X (X ≠ incoming) | No matching spec evidence, OR X's spec claims `master`/`create-new` ownership | **3b.2** (master-vs-master, legacy 4-option) |
+| `master` | Some module X (X ≠ incoming) | No matching spec evidence, OR X's spec claims `master`/`create-new` ownership | **3b.2** (master-vs-master, 4-option) |
 | `embedded_master` | `<mastered_in>` module exists, entity exists there | n/a | (no prompt — `reuse-from <mastered_in>.<entity>` per placement table) |
 | `embedded_master` | Some module X (`<mastered_in>` doesn't exist yet) | (any — placement is the same regardless of A's prior intent) | **3b.1** (2-option second-mover widget — share via new shell, or silo via rename) |
 | `embedded_master` | Doesn't exist anywhere | n/a | (no prompt — first-mover, lands locally with §7.2 🟡 note per placement table) |
@@ -749,32 +786,32 @@ For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`:
 
 ### 3d. Modules-not-deployed-yet (external owner absent)
 
-> **v4.1 contract — entity-owning-module rule.** Workflow gates and pattern-flag overrides for entity E are prefixed by E's CURRENT owning module slug, not by the installing unit. The Stage 3d / 3b.0 / 3b.1 logic below routes the decision; the actual emission rules are:
+> **Entity-owning-module rule.** Workflow gates and pattern-flag overrides for entity E are prefixed by E's CURRENT owning module slug, not by the installing unit. The Stage 3d / 3b.0 / 3b.1 logic below routes the decision; the actual emission rules are:
 >
 > - **Case 1: canonical owner module installed** → consume canonically (`reuse-from <canonical-module>.<entity>`). Personas grant on canonical-prefixed codes.
 > - **Case 2: canonical owner absent AND entity does NOT exist anywhere in the live catalog** → installing unit becomes the entity's owning module. Emit the entity's full derived governance (workflow gates + pattern-flag overrides + matching §8.2 rules + boundary-crossing handoffs in §6.2 / §6.3) prefixed by the installing-unit slug. **Annotate each re-prefixed gate / override with `**Reconciliation:** re-prefixed-from <canonical-module>.<verb>`** so the deployer's Stage 4n knows to reconcile when the canonical owner later installs.
 > - **Case 3: canonical owner absent BUT entity already exists under a non-canonical owner module** → emit `reuse-from <non-canonical-module>.<entity>`. Personas grant on existing non-canonical-prefixed codes. DO NOT mint duplicate gates / overrides; DO NOT emit re-prefixed governance — it's already minted under another unit. This is the second-installer case (3b.1).
 >
-> The "you must install the master first" prompt is dropped from v4.1. A module that embeds an entity whose canonical owner is absent now ALWAYS deploys (Case 2 or Case 3). The widget below is preserved for `contributor` / `consumer` rows that legitimately can't materialize without the owner; `embedded_master` rows route through 3b.0 / 3b.1 / Case 2 instead.
+> A module that embeds an entity whose canonical owner is absent ALWAYS deploys (Case 2 or Case 3); there is no "install the master first" prompt. The widget below applies only to `contributor` / `consumer` rows that legitimately can't materialize without the owner; `embedded_master` rows route through 3b.0 / 3b.1 / Case 2 instead.
 
-**Policy path:** `.on_missing_owner` (global default; `embed_locally` / `skip`). v4.1 retires the `wait` value — modules deploy standalone. Legacy files that carry `.on_missing_owner: wait` are coerced to `embed_locally` with a one-line narration: *"Updated your old wait-for-master rule to deploy-anyway — modules now deploy standalone."*
+**Policy path:** `.on_missing_owner` (global default; `embed_locally` / `skip`). The `wait` value is not used — modules deploy standalone. A file that still carries `.on_missing_owner: wait` is coerced to `embed_locally` with a one-line narration: *"Updated your old wait-for-master rule to deploy-anyway — modules now deploy standalone."*
 
-**Fires only for `contributor` and `consumer` rows.** `embedded_master` rows with a missing owner are handled by 3b.0 / 3b.1 / Case 2 above — they always emit re-prefixed governance under the installing unit's slug; no widget fires for them in v4.1.
+**Fires only for `contributor` and `consumer` rows.** `embedded_master` rows with a missing owner are handled by 3b.0 / 3b.1 / Case 2 above — they always emit re-prefixed governance under the installing unit's slug; no widget fires for them.
 
 When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) points at a module that does NOT exist in the live catalog, group these by missing module and fire one `AskUserQuestion` per missing module.
 
-**Design intent recap** (drives the option order and "(Recommended)" placement): for `contributor`/`consumer` rows the canonical owner is treated as optional infrastructure. A module is meant to be self-contained when its dependencies aren't deployed yet, and the analyst's own Stage 3b collision flow merges duplicates automatically when those dependencies arrive later. **Embedding locally is the friction-free default**; waiting is gone.
+**Design intent recap** (drives the option order and "(Recommended)" placement): for `contributor`/`consumer` rows the canonical owner is treated as optional infrastructure. A module is meant to be self-contained when its dependencies aren't deployed yet, and the analyst's own Stage 3b collision flow merges duplicates automatically when those dependencies arrive later. **Embedding locally is the friction-free default.**
 
 - **question**: `"<Plural Label list, English comma-joined> should come from the <Missing Module Display Name or slug> module, but that module isn't deployed yet. What now?"`
 - **header**: `"Module not deployed"`
 - **multiSelect**: `false`
-- **options** (in this order — option 1 first; v4.1 dropped the "wait for master" option):
+- **options** (in this order — option 1 first; there is no "wait for master" option):
   1. label: `"Set up <Plural Label> in this module for now (Recommended)"`
      description: `"This module deploys today. If you add <Missing Module Display Name> later, you'll be asked whether to share <Plural Label> across both modules — that's a quick reassignment, your existing records stay where they are. Until then, records live in this module."`
   2. label: `"Skip <Plural Label> entirely"`
      description: `"Remove <Plural Label> from this module. Anything in the design that referenced them is dropped."`
 
-**"(Recommended)" placement**: always option 1 (v4.1). The "wait for master" option is gone — every module deploys standalone; the canonical-owner-arrival flow (Stage 3b.0) handles the reassignment without data migration.
+**"(Recommended)" placement**: always option 1. There is no "wait for master" option — every module deploys standalone; the canonical-owner-arrival flow (Stage 3b.0) handles the reassignment without data migration.
 
 **Internal mapping**:
 - Option 1 → `create-new` in this module's spec (this module is the entity's current owning module). Add a §7.2 🟡 note: *"<Plural Label> currently lives in this module. When <Missing Module Display Name> is added later, run the analyst on its blueprint and pick 'share via shared module' at the collision prompt to reassign — no data migration needed."*
@@ -1145,11 +1182,11 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 **Automatic fields, omit them**: `id`, `created_at`, `updated_at`, `label`, plus the platform-generated composed-label columns `_label` and every `<fk>_label` companion — never specify these, the platform owns them. Declare the `label_column` field as a normal row.
 
-> **Reserved field names (v5.2+).** Never draft a `field_name` that starts with `_` (reserves the entity's own `_label`) or ends with `_id_label` (reserves the `<fk>_label` FK companions). The platform rejects both on create and rename. Plain `*_label` names (e.g. `status_label`) remain allowed.
+> **Reserved field names.** Never draft a `field_name` that starts with `_` (reserves the entity's own `_label`) or ends with `_id_label` (reserves the `<fk>_label` FK companions). The platform rejects both on create and rename. Plain `*_label` names (e.g. `status_label`) remain allowed.
 
-> **`label_column` must be a string field, never a FK.** When `create_entity` runs, Semantius auto-creates a field whose `field_name` equals the `label_column`. Setting `label_column` to a FK field name causes a conflict. Junction tables: historically you added a dedicated `string` field (e.g. `product_tag_label`) to give the junction a readable label. **(v5.2+)** the platform now auto-combines a junction's parent legs into its composed `_label` (`Alice Chen › Admin`), so that dedicated string field is **optional** — add one only when you want a distinct local label beyond the combined legs.
+> **`label_column` must be a string field, never a FK.** When `create_entity` runs, Semantius auto-creates a field whose `field_name` equals the `label_column`. Setting `label_column` to a FK field name causes a conflict. Junction tables: the platform auto-combines a junction's parent legs into its composed `_label` (`Alice Chen › Admin`), so a dedicated `string` label field (e.g. `product_tag_label`) is **optional** — add one only when you want a distinct local label beyond the combined legs.
 
-> **Derive `label_parent` (v5.2+) — the entity's identity spine.** Each owned entity also gets an optional `**Label parent:**` line in §3 (omit when none). `label_parent` names the one FK whose composed `_label` prefixes this record's `_label`, so a relational record reads as its full parent chain (an interview scorecard shows the candidate, not just "Scorecard 6"). Derive it by this rule:
+> **Derive `label_parent` — the entity's identity spine.** Each owned entity also gets an optional `**Label parent:**` line in §3 (omit when none). `label_parent` names the one FK whose composed `_label` prefixes this record's `_label`, so a relational record reads as its full parent chain (an interview scorecard shows the candidate, not just "Scorecard 6"). Derive it by this rule:
 >
 > 1. **`entity_type = junction`?** → NONE — the platform auto-combines the parent legs; never set `label_parent` on a junction.
 > 2. **Self-identifying?** → NONE. The `label_column` is an intrinsic name (`*_name`, `*_title`, `*_code`, `email`); `_label` is then just the local label.
@@ -1168,13 +1205,15 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 **No identifier leakage in Description.** Use Labels, not `field_name`s, when referring to sibling fields. Use Singular/Plural Labels, not `table_name`s, when referring to other entities. Enum values stay backticked as data (`"Null until Match Status reaches `auto_matched`"`). No backticks around identifiers in prose.
 
-For deep field-format and built-in field-shape rules (when extending `users`, `roles`, etc.), see `./references/data-modeling.md`.
+For deep field-format and built-in field-shape rules (when extending `users`, `roles`, etc.), see `../use-semantius/references/data-modeling.md`.
 
 After the field tables, present for each entity a short **Relationships** section in prose. Iterate per entity until the user confirms.
 
 ---
 
 ## Stage 5: Workflow-permission scan (W3/W4/W4n/W5)
+
+> **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this stage emits **nothing** — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`. Skip straight to Stage 6. (See "Access-control scope" above.)
 
 The architect already handled W1/W2/W6 (lifecycle-terminal gates) at blueprint time — they appear in §7 `requires_permission?` rows and as `workflow-gate (lifecycle)` permissions in §8.1. This stage adds the field-driven workflow permissions:
 
@@ -1188,7 +1227,7 @@ The architect already handled W1/W2/W6 (lifecycle-terminal gates) at blueprint t
 
 Output: every W3/W4/W4n/W5 discovery adds a row to spec §8.1 Permissions catalog AND emits the corresponding `validation_rules` / `select_rule` JsonLogic on the affected entity.
 
-For full scan logic (W1/W2/W6 included for cross-reference) see the architect's archived Stage 10 — but in the analyst, only W3/W4/W4n/W5 are net-new work; W1/W2/W6 come from the blueprint.
+For full scan logic (W1/W2/W6 included for cross-reference) see the architect's Stage 10 — but in the analyst, only W3/W4/W4n/W5 are net-new work; W1/W2/W6 come from the blueprint.
 
 ---
 
@@ -1221,6 +1260,8 @@ The platform evaluates the rule client-side at form-render; the result replaces 
 
 ## Stage 7: Row-level read-access scan (`select_rule`)
 
+> **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this stage emits **nothing** — no `select_rule` on any entity (table-level `view_permission` is the only read gate). Skip to Stage 8. (See "Access-control scope" above.)
+
 For each entity, scan for row-visibility patterns:
 
 - **S1 — Ownership scope.** Entity has an `owner_id` / `submitter_id` / `assignee_id` / `author_id` FK to `users` → write a `select_rule` that returns truthy when `$user_id == owner` OR caller holds `<slug>:view_all_<plural>`.
@@ -1235,7 +1276,7 @@ Output: per-affected entity, a `**Select rule**` JSON object.
 {
   "or": [
     {"==": [{"var": "$user_id"}, {"var": "owner_id"}]},
-    {"require_permission": "<slug>:view_all_<plural>"}
+    {"has_permission": "<slug>:view_all_<plural>"}
   ]
 }
 ```
@@ -1275,30 +1316,32 @@ Surface every blocker with the entity and rule code; ask the user to revise.
 
 ---
 
-## Stage 9: Cross-tier FK reconciliation (v4.1+: validation-only)
+## Stage 9: Cross-tier FK reconciliation (validation-only)
 
-The blueprint now carries authoritative `write tier` per §3 row and authoritative `fk_format` per §5 row. Stage 9 becomes a **validation-only** sweep:
+The blueprint carries authoritative `write tier` per §3 row and authoritative `fk_format` per §5 row, so Stage 9 is a **validation-only** sweep:
 
 1. **Confirm every entity's `write tier`** from §3 lines up with §8.1 permissions: a `:manage` row has a `<slug>:manage` permission; a `:admin` row has a `<slug>:admin` permission; a `:read` row is reference-only (no write tier). Mismatch → 🔴 blocker (the architect should have caught it).
 2. **Confirm every FK column's resolved `fk_format`** matches the blueprint's intent. If the blueprint declares `fk_format: parent` for an edge whose child-tier is broader than the parent-tier, that's a structural inconsistency (the architect's cross-tier check failed) → 🔴 blocker.
-3. **Validate cross-tier FK shapes per the v3.6 rule:** child-tier should be no broader than parent-tier. The blueprint's `fk_format` and `delete_mode` MUST already encode the downgrade (cross-tier edges emit `reference` + `restrict` or `clear`, never `parent` + `cascade`). If the analyst finds a `parent` + `cascade` cross-tier edge that should have been downgraded, this is a 🔴 architect-side bug; surface the row and ask the user to re-run the architect.
-4. **(v5.2+) Validate `label_parent` is internally consistent.** For every entity carrying a `**Label parent:**` line (derived in Stage 4): the named field must be a real `reference`/`parent` FK declared on that entity in §3, and must NOT target a `junction` entity; and the line must NOT appear on a `junction` entity. A violation is a 🔴 blocker (a failure here means the derived spine name and the field list disagree). The `label_parent` graph across entities must be acyclic; a suspected cycle is a 🔴 blocker.
+3. **Validate cross-tier FK shapes:** child-tier should be no broader than parent-tier. The blueprint's `fk_format` and `delete_mode` MUST already encode the downgrade (cross-tier edges emit `reference` + `restrict` or `clear`, never `parent` + `cascade`). If the analyst finds a `parent` + `cascade` cross-tier edge that should have been downgraded, this is a 🔴 architect-side bug; surface the row and ask the user to re-run the architect.
+4. **Validate `label_parent` is internally consistent.** For every entity carrying a `**Label parent:**` line (derived in Stage 4): the named field must be a real `reference`/`parent` FK declared on that entity in §3, and must NOT target a `junction` entity; and the line must NOT appear on a `junction` entity. A violation is a 🔴 blocker (a failure here means the derived spine name and the field list disagree). The `label_parent` graph across entities must be acyclic; a suspected cycle is a 🔴 blocker.
 
-The analyst no longer auto-rewrites FK shapes here. The blueprint carries the answer; this stage just confirms the answer is internally consistent. The earlier "ask the user about each suspicious FK" widget is retired — the v3.6 architect rule emits the right shape upstream.
+The analyst does not auto-rewrite FK shapes here. The blueprint carries the answer; this stage only confirms it is internally consistent. There is no "ask the user about each suspicious FK" widget — the architect rule emits the right shape upstream.
 
 ---
 
-## Stage 9.5: §9 RACI + persona reconciliation (v4.1+; dual-path since v4.2)
+## Stage 9.5: §9 RACI + persona reconciliation (dual-path)
 
 The blueprint's §9 governance section is the authoritative carrier of baseline roles + permission hierarchy + RACI realization + functional ownership. This stage reconciles each row against the live catalog and emits drift annotations.
 
-**Two paths, chosen by RACI mode (v4.2).** Since the platform shipped its live-RACI engine (catalog tables `processes` / `raci_assignments` / `process_gates` / `raci_events`; operators `is_raci_actor` / `has_consultation`), this stage runs one of two ways per module:
-- **`documentation` mode (default, legacy):** compile the RACI matrix into RBAC grants exactly as before (Step 3 documentation path). The process axis, the R/A/C/I letters, and agent actors are not stored live.
+**Two paths, chosen by RACI mode.** The platform's live-RACI engine (catalog tables `processes` / `raci_assignments` / `process_gates` / `raci_events`; operators `is_raci_actor` / `has_consultation`) lets this stage run one of two ways per module:
+- **`documentation` mode (default):** compile the RACI matrix into RBAC grants (Step 3 documentation path). The process axis, the R/A/C/I letters, and agent actors are not stored live.
 - **`living` mode:** plan the live RACI rows (`processes`, `raci_assignments`, `process_gates`) and the enforcement rules (`is_raci_actor` / `has_consultation`) the deployer authors — **in addition to** the baseline tier grants that table access still requires. The matrix becomes queryable and enforced live.
 
 **Step 0 chooses the mode** (below). Steps 1–2 (RBAC scaffolding) and 4–5 run in both modes; Step 3 branches.
 
-**Step 0 — Enable-RACI decision (the mode gate, v4.2).** Decide whether this module is `living` or `documentation` (decision 2 of the living-RACI plan: the analyst asks, the deployer is authoritative).
+> **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this whole stage reduces to its baseline: force `documentation` mode (do NOT fire the Step 0 Enable-RACI widget), emit only the `<slug>_viewer` + `<slug>_manager` roles and the single `<slug>:manage → <slug>:read` hierarchy row, and skip RACI realization, the Processes catalog, and §9.2 functional ownership (emit each as `_(none: basic access)_`). No `persona` frontmatter. (See "Access-control scope" above.)
+
+**Step 0 — Enable-RACI decision (the mode gate).** Decide whether this module is `living` or `documentation` (decision 2 of the living-RACI plan: the analyst asks, the deployer is authoritative).
 
 > **🛑 MUST-FIRE gate (same contract as the Stage 3 widgets).** On every interactive run where the blueprint carries a §9 RACI matrix, this widget MUST fire before the spec is written. It is the most-skipped gate in this skill because it sits after the Stage 3g plan confirmation and the "write in one pass" narration — do NOT fold it into the silent spec-write. Self-check right before Stage 11: *if I am about to write the spec and have not recorded a `raci_mode` from an actual user answer (or confirmed the run is non-interactive), stop and fire this widget first.*
 
@@ -1323,11 +1366,11 @@ The blueprint's §9 governance section is the authoritative carrier of baseline 
 
 **Step 3 — Actor resolution + per-mode realization.** Walk §9.1 RACI rows. First resolve every actor to a `role_id`:
 - **Persona** (`kind = persona`): compute the slug (lowercased, underscored, hyphens → underscores): `RECRUITING-RECRUITER` → `recruiting_recruiter`. Look up the role by `slug`; missing → mark `✨ persona role to be created` (deployer's Stage 4k mints it).
-- **Skill** (`kind = skill`): resolve to a **role held by an agent user** (`users.is_agent = true`) — the agent-native parallel to a persona. Compute the slug the same way; missing → mark `✨ agent-held role to be created` **and** `✨ agent user to be provisioned` (deployer's Stage 4k). No separate `personas` / `skills` record — the matrix is `role_id`-only. _(This removes the old "🟡 informational until the platform supports it" deferral; the platform now does.)_
+- **Skill** (`kind = skill`): resolve to a **role held by an agent user** (`users.is_agent = true`) — the agent-native parallel to a persona. Compute the slug the same way; missing → mark `✨ agent-held role to be created` **and** `✨ agent user to be provisioned` (deployer's Stage 4k). No separate `personas` / `skills` record — the matrix is `role_id`-only.
 
 Then realize, **by RACI mode:**
 
-**_`documentation` mode (legacy, default)_** — compile to grants exactly as before:
+**_`documentation` mode (default)_** — compile to grants:
 - For each `raci = responsible | accountable` row → compute the granted permission codes. **Apply the entity-owning-module rule** (decision #3 from the plan): for each gate the actor is R for, look up the gate's *owning entity's current module slug* in the live catalog. The grant uses `<entity_owning_module>:<verb>` — NEVER the installing-unit slug, unless the entity's current owning module IS the installing unit. Mark each `✨ persona grant to be added` for Stage 4k.
 - For each `raci = consulted` row → mark `✨ advisory read grant to be added`.
 - For each `raci = informed` row → mark `✨ notification side-effect to be wired` (deployer's Stage 4m if the platform exposes triggers; otherwise a 🟡 informational row).
@@ -1341,7 +1384,7 @@ Then realize, **by RACI mode:**
   - **C = block:** a pre-transition `validation_rule` calling `{"has_consultation": ["<entity>", "<to_state>", {"var": "<id_column>"}]}`. Sequence it AFTER the notify transition (the consulted party must be notified before the gate can pass).
   - **C = read / R-ownership / `personal_content`:** the existing ownership `select_rule` (`$old.<owner> == $user_id`) read-scope; keep the advisory read grant.
   - **C = notify / I:** no rule — the `process_gates.emits_events` flag drives the platform's emit trigger → `raci_events`.
-- **Structural-flag mapping (living only)** — when the entity carries `has_single_approver` / `has_submit_lock` / `personal_content` (§3), realize them as live RACI checks instead of hand-authored flags: `has_single_approver` → the approval gate above + at-most-one-A; `has_submit_lock` → R-ownership + a `submit_lock` `process_gate`; `personal_content` → the ownership `select_rule`. In `documentation` mode these stay hand-authored (unchanged).
+- **Structural-flag mapping (living only)** — when the entity carries `has_single_approver` / `has_submit_lock` / `personal_content` (§3), realize them as live RACI checks instead of hand-authored flags: `has_single_approver` → the approval gate above + at-most-one-A; `has_submit_lock` → R-ownership + a `submit_lock` `process_gate`; `personal_content` → the ownership `select_rule`. In `documentation` mode these stay hand-authored.
 
 **Step 4 — Functional ownership.** Walk §9.2 rows. For each `responsibility | business function | default role | default tier`:
 - The named default role gets the named default tier on this module's baseline. Mark `✨ functional ownership grant to be added` for the deployer's Stage 4l.
@@ -1356,6 +1399,8 @@ The spec's §9 mirrors the blueprint's §9 verbatim (carry-forward), with one tr
 ---
 
 ## Stage 10: Computed fields and validation rules
+
+> **`access_scope = basic` note.** Emit computed fields and validation rules as usual **except** any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission`): under `basic` the gating permission no longer exists, so drop that rule. Pure data-integrity rules (date ordering, required-when, range checks — no permission reference) are kept; they are not access control. (See "Access-control scope" above.)
 
 Convert blueprint §8.2 business rules to JsonLogic, plus add field-level computed fields and validation rules discovered during Stage 4.
 
@@ -1380,7 +1425,7 @@ A JSON array per entity. Each entry derives a value into an existing scalar fiel
 
 Reserved variables: `$today`, `$now`, `$user_id`.
 
-Cross-entity primitives (analyst v3.2+): `{"set_record": ["<name>", "<entity>", <id_expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` let the body read columns of a parent / referenced record. See `./references/data-modeling.md` § "Cross-entity lookups inside JsonLogic".
+Cross-entity primitives: `{"set_record": ["<name>", "<entity>", <id_expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` let the body read columns of a parent / referenced record. See `../use-semantius/references/data-modeling.md` § "Cross-entity lookups inside JsonLogic".
 
 ### Validation rules
 
@@ -1439,14 +1484,14 @@ mkdir -p semantius/specs
 # then write the file at semantius/specs/<system_slug>-semantic-spec.md
 ```
 
-Do **not** write the spec at the workspace root (legacy location). The committed-artifact convention is `semantius/blueprints/` for blueprints and `semantius/specs/` for specs, so that customers can commit one folder and have all their semantic artifacts travel with their repo. If you find a legacy spec at the root (left there by an older version of this skill), do not move it automatically; the user can rm or `git mv` it themselves.
+Do **not** write the spec at the workspace root. The committed-artifact convention is `semantius/blueprints/` for blueprints and `semantius/specs/` for specs, so that customers can commit one folder and have all their semantic artifacts travel with their repo. If a spec already exists at the workspace root, do not move it automatically; the user can rm or `git mv` it themselves.
 
 ### Frontmatter
 
 ```yaml
 ---
 artifact: semantic-spec
-version: "5.2"
+version: "5.3"
 blueprint_version: "3.0"
 system_name: <from blueprint>
 system_description: <from blueprint>
@@ -1455,11 +1500,12 @@ domain_modules:
   - <system_slug>
 domain_code: <from blueprint>
 related_modules: [<from blueprint>]  # advisory only
-persona: [<from blueprint>]  # v4.1+; carry forward
-license: <from blueprint>  # v4.1+; carry forward
-module_kind: <from blueprint>  # v4.1+; informational
-tagline: <from blueprint>  # v4.1+; carry forward
-description: <from blueprint>  # v4.1+; carry forward (YAML literal block)
+persona: [<from blueprint>]  # carry forward (OMIT under access_scope: basic)
+license: <from blueprint>  # carry forward
+module_kind: <from blueprint>  # informational
+access_scope: <resolved by the analyst after Stage 2>  # basic | full — OMIT only on a non-interactive run that couldn't resolve it
+tagline: <from blueprint>  # carry forward
+description: <from blueprint>  # carry forward (YAML literal block)
 created_at: <blueprint's created_at>
 reconciled_at: <YYYY-MM-DD today>
 reconciled_against_catalog_snapshot: <ISO 8601 timestamp of the catalog read in Stage 2>
@@ -1486,15 +1532,15 @@ Use the existing spec template at `./references/semantic-spec-template.md` for t
 
 3. **§6 Cross-model link suggestions table** has an extra column `Reconciliation` with values `proposed` / `dormant` / `ambiguous-resolved` / `skipped`. Resolved rows carry the FK column name and the resolved target.
 
-4. **(v4.1+) §8.1 workflow gates / pattern-flag overrides for `embedded_master` entities whose canonical owner is absent** carry a `**Reconciliation:** re-prefixed-from <canonical-module>.<verb>` annotation. The deployer's Stage 4n reads this annotation to identify reconciliation-eligible permissions when the canonical owner later installs.
+4. **§8.1 workflow gates / pattern-flag overrides for `embedded_master` entities whose canonical owner is absent** carry a `**Reconciliation:** re-prefixed-from <canonical-module>.<verb>` annotation. The deployer's Stage 4n reads this annotation to identify reconciliation-eligible permissions when the canonical owner later installs.
 
-5. **(v4.1+) §9 governance is carry-forward.** The blueprint's §9.1 (baseline roles + permission hierarchy + RACI realization) and §9.2 (functional ownership) appear verbatim in the spec, with one transform: role slugs are normalized `-`→`_` per Stage 9.5 Step 1 (since `roles.slug` forbids the hyphens `module_slug` allows). Stage 9.5 reconciles each row against the live catalog and emits drift annotations (`✨ persona role to be created`, `✨ persona grant to be added`, `🟡 role drift on module_id`, etc.) per row.
+5. **§9 governance is carry-forward.** The blueprint's §9.1 (baseline roles + permission hierarchy + RACI realization) and §9.2 (functional ownership) appear verbatim in the spec, with one transform: role slugs are normalized `-`→`_` per Stage 9.5 Step 1 (since `roles.slug` forbids the hyphens `module_slug` allows). Stage 9.5 reconciles each row against the live catalog and emits drift annotations (`✨ persona role to be created`, `✨ persona grant to be added`, `🟡 role drift on module_id`, etc.) per row.
 
-6. **(v4.1+) §6.2 / §6.3 handoff tables carry the `transition` column** with `<to_state> _(<event_category>)_`. The source_module column follows the entity-owning-module rule: when the source entity is an `embedded_master` whose canonical owner is absent, the source_module is the installing unit; otherwise it's the canonical owner.
+6. **§6.2 / §6.3 handoff tables carry the `transition` column** with `<to_state> _(<event_category>)_`. The source_module column follows the entity-owning-module rule: when the source entity is an `embedded_master` whose canonical owner is absent, the source_module is the installing unit; otherwise it's the canonical owner.
 
-7. **Empty canonical sections carry the canonical placeholder, never an omitted heading or a legacy string.** Every canonical top-level / numbered spec section is **always present**. When §4 Relationship summary, §5 Enumerations, §6 Cross-model link suggestions, §7.1 🔴 Decisions needed, or §7.2 🟡 Future considerations has no rows, **keep the heading and write the canonical empty-section placeholder `_(none: <short reason>)_`** (lowercase `none`, colon not em-dash; bare `_(none)_` allowed) — matching `references/semantic-spec-template.md`. Do **not** emit the retired strings `None.` / `No enumerations defined.` / `No cross-model link suggestions.`, do not omit the section, and do not leave a bare empty heading. The §7.1 deploy gate keys on unresolved 🔴 *items*, not on any literal placeholder string, so the `_(none: …)_` form is safe. **Sole exception:** the §3 per-entity sub-blocks (Computed fields / Validation rules / Input type rules / Select rule) **stay omit-when-empty** — they carry no placeholder.
+7. **Empty canonical sections carry the canonical placeholder, never an omitted heading or a bare string.** Every canonical top-level / numbered spec section is **always present**. When §4 Relationship summary, §5 Enumerations, §6 Cross-model link suggestions, §7.1 🔴 Decisions needed, or §7.2 🟡 Future considerations has no rows, **keep the heading and write the canonical empty-section placeholder `_(none: <short reason>)_`** (lowercase `none`, colon not em-dash; bare `_(none)_` allowed) — matching `references/semantic-spec-template.md`. Do **not** emit the bare strings `None.` / `No enumerations defined.` / `No cross-model link suggestions.`, do not omit the section, and do not leave a bare empty heading. The §7.1 deploy gate keys on unresolved 🔴 *items*, not on any literal placeholder string, so the `_(none: …)_` form is safe. **Sole exception:** the §3 per-entity sub-blocks (Computed fields / Validation rules / Input type rules / Select rule) **stay omit-when-empty** — they carry no placeholder.
 
-8. **(v5.1+) Every §3 entity sub-section carries the provenance carriers the modeler stamps.** Two lines per OWNED entity (every `create-new`, `rename-incoming-from`, `promote-to-master` — i.e. every entity the deployer provisions), plus a `**Canonical owner:**` line for placeholder masters, carried through from the blueprint §3:
+8. **Every §3 entity sub-section carries the provenance carriers the modeler stamps.** Two lines per OWNED entity (every `create-new`, `rename-incoming-from`, `promote-to-master` — i.e. every entity the deployer provisions), plus a `**Canonical owner:**` line for placeholder masters, carried through from the blueprint §3:
    - **`**Catalog entity code:** `<canonical_code>``** — the canonical uber-model code from the blueprint's §3 `canonical code` column (defaults to the entity's `table_name` for agent-optimized naming). The deployer stamps it into `entities.catalog_entity_code` (the **canonical** code, NOT the deployed `table_name`), write-once.
    - **`**Entity type:** <entity_type>`** — the closed 6-way class from the blueprint's §3 `entity_type` column (`operational_workflow` / `operational_record` / `catalog` / `junction` / `computed`). The deployer stamps it into `entities.entity_type`. When the blueprint left it absent (pre-3.0 fallback), write `unclassified` and the deployer treats it as derive-locally — do not invent a value outside the closed set.
    - **`**Canonical owner:** <owner_module_slug>`** (placeholder masters only) — for an `embedded_master` entity that lands locally as a placeholder because its canonical owner module is not deployed (a first-mover `create-new`, or a silo `rename-incoming-from`), the blueprint's `mastered_in` slug. The deployer stamps it into `entities.canonical_owner_module`, so the canonical-owner-arrival signal is a platform read instead of a file scan. Omit the line when this module owns the entity (`role = master`), when the entity is local/custom, and on `reuse-from` / `promote-to-master` (the owner is already present, or the entity moves into it).
@@ -1504,7 +1550,7 @@ Use the existing spec template at `./references/semantic-spec-template.md` for t
    On a **reuse/merge reconciliation that renames an incoming entity onto an existing host** (the analyst chose `reuse-from <host>` for a blueprint entity whose own canonical code differs from the host's — the cross-domain merge case), the spec records the alias mapping on the **host** entity's sub-section so the deployer can APPEND it to `catalog_entity_aliases`:
    - **`**Catalog alias:** {alias_code: <incoming_canonical_code>, source_domain: <incoming_domain_code>, source_module: <incoming_system_slug>}`** — one line per absorbed identity (repeat the line if a host absorbs several). `alias_code` is the **incoming** blueprint entity's canonical code (what *this* domain called the concept); `source_domain` is this blueprint's `domain_code`; `source_module` is its `system_slug`. The deployer APPENDS this element to the host's `catalog_entity_aliases` array — it never rewrites or drops prior elements. Omit the line entirely when no merge renamed an incoming entity onto a host (the common case).
 
-9. **(v5.2+) Every §3 owned entity that has an identity spine carries a `**Label parent:**` line.** Names the one FK that is the entity's identity spine (derived in Stage 4 via the label_parent decision rule). The deployer stamps it into `entities.label_parent`; re-pointing it changes the composed `_label` with no data migration. **Omit the line** for `junction` entities (the platform auto-combines their parent legs), self-identifying entities (intrinsic `label_column`), and `reuse-from` / built-in entities (referenced, not provisioned). The modeler parses and stamps it.
+9. **Every §3 owned entity that has an identity spine carries a `**Label parent:**` line.** Names the one FK that is the entity's identity spine (derived in Stage 4 via the label_parent decision rule). The deployer stamps it into `entities.label_parent`; re-pointing it changes the composed `_label` with no data migration. **Omit the line** for `junction` entities (the platform auto-combines their parent legs), self-identifying entities (intrinsic `label_column`), and `reuse-from` / built-in entities (referenced, not provisioned). The modeler parses and stamps it.
 
 ### Pre-save verification (mandatory, non-silent)
 
@@ -1517,13 +1563,14 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | No `reuse-from` entity carries a Fields block | over-spec list |
 | No `create-new` / `rename-incoming-from` / `promote-to-master` entity is missing a Fields block | under-spec list |
 | Every `require_permission` argument is in §8.1 Permissions catalog | unbound permissions list |
-| (v4.1) Frontmatter carries the new keys: `tagline`, `description`, `persona`, `license`, `module_kind` (each either carried verbatim from blueprint or null when blueprint omitted) | missing v4.1 frontmatter keys |
-| (v4.1) §9 governance section is present and populated (§9.1 + §9.2) | missing or empty §9 |
-| (v4.2) **RACI provenance — mechanically enforced by `consistency-check.ts`.** When the spec carries a RACI matrix, frontmatter MUST carry `raci_mode` (`living`/`documentation`) AND `raci_mode_source` (`user-answer`/`computed-default`/`non-interactive`), and the §9 `**RACI mode:**` line must match `raci_mode`. The checker fails the save on any missing / invalid / mismatched value, so a silently-defaulted mode cannot ship. (The checker cannot verify a human was asked; `raci_mode_source: user-answer` is a deliberate, auditable assertion that Step 0 fired.) | RACI provenance missing / inconsistent |
-| (v4.1) Every §8.2 rule with `source_flag: has_single_approver` names a permission code that appears in §8.1 Permissions catalog (no phantom `approve_<entity>_approval`) | phantom approve-gate list |
-| (v4.1) Every `re-prefixed-from` annotation in §8.1 names a canonical module and a verb; the verb appears on the relevant entity in §3 | malformed re-prefix list |
-| (v4.1) §5 rows carry `delete_mode` and `fk_format` consumed from the blueprint, not re-derived | column-missing list |
-| (v4.1) §6.2 / §6.3 handoff rows carry the `transition` column; for `lifecycle` event_category, `to_state` exists on source entity's §7 | mismatched-state list |
+| Frontmatter carries `tagline`, `description`, `persona`, `license`, `module_kind` (each either carried verbatim from blueprint or null when blueprint omitted) | missing frontmatter keys |
+| §9 governance section is present and populated (§9.1 + §9.2) | missing or empty §9 |
+| When frontmatter `access_scope: basic`: §8.1 carries exactly `<slug>:read` + `<slug>:manage` (no `baseline-admin` / `workflow-gate` / `override` / `narrow`); no §3 entity has `**Edit permission:** admin` or a narrow tier; no §7 lifecycle state is gated; §9.1 carries only viewer + manager + the single `manage → read` row; no RACI realization / Processes / §9.2 ownership rows; no `persona` frontmatter. (Absent or `full` → no extra check.) | access_scope incoherence list |
+| **RACI provenance — mechanically enforced by `consistency-check.ts`.** When the spec carries a RACI matrix, frontmatter MUST carry `raci_mode` (`living`/`documentation`) AND `raci_mode_source` (`user-answer`/`computed-default`/`non-interactive`), and the §9 `**RACI mode:**` line must match `raci_mode`. The checker fails the save on any missing / invalid / mismatched value, so a silently-defaulted mode cannot ship. (The checker cannot verify a human was asked; `raci_mode_source: user-answer` is a deliberate, auditable assertion that Step 0 fired.) | RACI provenance missing / inconsistent |
+| Every §8.2 rule with `source_flag: has_single_approver` names a permission code that appears in §8.1 Permissions catalog (no phantom `approve_<entity>_approval`) | phantom approve-gate list |
+| Every `re-prefixed-from` annotation in §8.1 names a canonical module and a verb; the verb appears on the relevant entity in §3 | malformed re-prefix list |
+| §5 rows carry `delete_mode` and `fk_format` consumed from the blueprint, not re-derived | column-missing list |
+| §6.2 / §6.3 handoff rows carry the `transition` column; for `lifecycle` event_category, `to_state` exists on source entity's §7 | mismatched-state list |
 | Every `select_rule` column references a real field on the entity | dangling columns list |
 | No throwing operator inside any `select_rule` (`require_permission` / `throw_error` abort the per-row read; permission checks must use the non-throwing `has_permission`) | throwing-select_rule list |
 | DDL token scan (`CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE`, `DROP`, `REFERENCES`, `ON DELETE CASCADE` as SQL clause) | DDL tokens found list |
@@ -1661,7 +1708,7 @@ When the user wants to add entities, fields, rules, or §6 link rows to an exist
 4. **If adding fields to an existing owned entity**, apply Stage 4 field elicitation for the new fields. Then re-run Stages 5-10 (scans, consistency gate) on the affected entity.
 5. **If adding rules**, draft the JsonLogic; run the Stage 8 consistency gate.
 6. Stamp `version: "5.2"` (no bump unless skill version bumped).
-7. Write the updated file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input file you read in step 1 was at a legacy location (e.g., workspace root from an older deploy), leave that file alone; the new convention path is now the truth-source. Run the pre-save verification block from Stage 11.
+7. Write the updated file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input file you read in step 1 sits at the workspace root, leave that file alone; the `semantius/specs/` path is the truth-source. Run the pre-save verification block from Stage 11.
 
 ---
 
@@ -1673,7 +1720,7 @@ Use when the blueprint has materially changed (entities added/removed, role clas
 2. Drive a fresh Stage 1-10 pass with the current blueprint as input.
 3. **Carry forward** the preserved decisions where they still apply (e.g. a `promote-to-master` decision for an entity that's still in the blueprint).
 4. Show the user a diff summary: what's new, what's changed, what's removed.
-5. Stamp `version: "5.2"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec was at a legacy location (e.g., workspace root), leave the legacy file untouched; the new convention path is now the canonical location. Git tracks both files; the user can `git mv` or delete the legacy one when ready.
+5. Stamp `version: "5.2"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.
 
 ---
 
@@ -1712,7 +1759,7 @@ Lead with the structured output (tables, JSON, plans). Prose between sections st
 ## Reference material
 
 - `./references/semantic-spec-template.md` — the canonical spec format (used by Stage 11 write).
-- `./references/data-modeling.md` — field formats, built-in field shapes, JsonLogic catalog, FK rules, the Golden Rules.
+- `../use-semantius/references/data-modeling.md` — field formats, built-in field shapes, JsonLogic catalog, FK rules, the Golden Rules.
 - `../semantius-architect/SKILL.md` — produces blueprints (this skill's input).
 - `../semantius-architect/references/semantic-blueprint-template.md` — the blueprint format.
 - `../semantius-modeler/SKILL.md` — deploys specs (this skill's output).
