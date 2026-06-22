@@ -131,38 +131,21 @@ When reconciliation requires "removing" something (e.g. user wants to retire an 
 
 ## Preflight (runs before Step 0, every invocation)
 
-**1. Stay in the repo root.** Never `cd`. The semantius CLI reads `.env` from the current working directory; switching directories silently changes which tenant gets the calls. Run every `semantius` command from the session's repo root, full stop.
+The environment checks are shared across all four Semantius skills and live in one place: **[`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md)**. Do not duplicate them here.
 
-**2. Identify the active instance.** Probe via `getCurrentUser` and halt on adenin (mirror admin Preflight rule 2; analyst can be invoked directly without admin):
+- **Orchestrated by `semantius-admin`** — the input carries a handoff header with `Customizations file:` already resolved:
 
-```bash
-org=$(semantius call crud getCurrentUser | jq -r .semantius_org)
-```
+  ```
+  Run context: run_id=run-...
+  Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
+  Analyst mode: reconcile
+  Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md
+  ```
 
-If the call fails (tool not present, auth error, network), stop the whole session — no platform-agnostic fallback mode. If `org` is `adenin`, halt with: *"This workspace is pointed at the `adenin` instance. Switch workspace before continuing."*
+  When the `Run context:` block is present the admin already ran the preflight; export `CUSTOMIZATIONS_FILE` from the header's path and skip the checks.
+- **Standalone (no `Run context:` block):** run the shared preflight yourself. In brief: stay in the repo root; install the toolchain (Bun, jq, yq) if missing; probe `getCurrentUser` to install/authenticate the CLI and halt if the org is `adenin`; compute `CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"`. The full per-check procedure, install matrix, and exit handling are in the reference file.
 
-**3. Compute the customizations file path.**
-
-```bash
-CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"
-mkdir -p "$(dirname "$CUSTOMIZATIONS_FILE")"
-export CUSTOMIZATIONS_FILE
-```
-
-Narrate one short line on first invocation: *"Using customizations from `semantius/<org>/customizations.yaml`"* (if the file exists) or *"No customizations file yet; will create on first decision."* (if absent). The file is created lazily by the first widget answer.
-
-**4. Verify `yq` is installed.** Customization writes use Mike Farah's Go yq v4+. If missing, halt with a one-line install hint (e.g. `scoop install yq`). Admin Preflight performs the same check; in admin-orchestrated runs this is redundant but harmless.
-
-**Admin-orchestrated runs.** When this analyst is invoked by `semantius-admin`, the input carries a handoff header with `Customizations file:` already resolved. Export from that line instead of recomputing:
-
-```
-Run context: run_id=run-...
-Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
-Analyst mode: reconcile
-Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md
-```
-
-When the header is present, skip steps 2-3 above (admin already did them) and use the header's path. Step 4 (yq check) is still cheap to repeat.
+After preflight, narrate one short line on first invocation: *"Using customizations from `semantius/<org>/customizations.yaml`"* (if the file exists) or *"No customizations file yet; will create on first decision."* (if absent). The file is created lazily by the first widget answer.
 
 ---
 

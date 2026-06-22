@@ -53,7 +53,7 @@ Everything this skill prints to chat is read by a casual user who does not know 
 **Never surface to chat** (write to `$DIAG_LOG` instead):
 
 - **The fact that any setup is happening at all.** Do not announce that you're running checks, preflight, or setup. **Never write the words "preflight" or "silent" in chat** — they name machinery the user doesn't know exists, and "silent" in particular reads as ominous. Your FIRST words to the user are either the first `AskUserQuestion` or the plan; the tool-call rows ("Ran N commands") are the only trace the setup is allowed to leave.
-- Preflight: the org probe, the `adenin` halt check passing, the customizations-path computation, the `yq` presence check. Only a *firing* guard (org is `adenin`, or `yq` missing) produces a halt message.
+- Preflight: the org probe, the `adenin` halt check passing, the customizations-path computation, the toolchain (Bun / jq / yq) and CLI install checks. A *successful* tool install gets at most one plain line ("Installing jq..."); only a *firing* halt guard (org is `adenin`, or a required tool could not be installed) produces a halt message.
 - Internal transitions: "running preflight", "setting up the per-org customizations path", "assigning run id", phase announcements like "now inspecting the workspace".
 - CLI / tool mechanics: command names, `.tmp_admin/` paths, `curl` / `jq` / `yq` invocations, staging locations.
 - Skill-internal vocabulary: `customizations.yaml`, `run_id`, decision-path names, sub-skill mode names, raw flag tokens. (The single terse inferred-flags line from Step 6.4.2 is the one deliberate exception.)
@@ -104,45 +104,16 @@ Rules for the logs:
 
 ## Preflight (runs before Step 0, every invocation)
 
-**Preflight produces no chat output** (see Output discipline above). Do not announce it; never write the words "preflight" or "silent" to the user. Sample `$RUN_ID` and set up `$DIAG_LOG` (`diag-admin.log`) first, then run all four checks below with NO chat narration, writing their results to the log. The only user-facing output is a halt message, and only when a guard actually fires (org is `adenin`, or `yq` is missing). On all-pass, say nothing and let your first user-facing line be the first question or the plan. The `$RUN_ID` sampled here is the one reused by Step 6.2 — never re-sample it.
+**Preflight produces no chat output** (see Output discipline above). Do not announce it; never write the words "preflight" or "silent" to the user. Sample `$RUN_ID` and set up `$DIAG_LOG` (`diag-admin.log`) first, then run the four shared preflight checks with NO chat narration, writing their results to the log. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a required tool, or supplying their API key). On all-pass with every tool already installed and the CLI authenticated, say nothing and let your first user-facing line be the first question or the plan. The `$RUN_ID` sampled here is the one reused by Step 6.2 — never re-sample it.
 
-**1. Stay in the repo root.** Never `cd`. The semantius CLI reads `.env` from the current working directory, so changing into a sibling project loads a different `.env` with different credentials pointing at a different instance. Every subsequent call lands on the wrong tenant. Run every `semantius` command from the session's repo root, full stop. If verifying something requires a different directory's config, ask the user to run it and paste the output.
+**Run the shared preflight: [`references/preflight.md`](./references/preflight.md).** The canonical checks live there as the single source of truth shared by the admin and all three sub-skills:
 
-**2. Halt if the active org is `adenin`.** Probe once at the top of every invocation:
+1. **Stay in the repo root** (never `cd`; the CLI reads `.env` from cwd).
+2. **Install the supporting toolchain (Bun, jq, yq)** — auto-install any missing tool, package-manager-first with a static-binary fallback, on Windows / macOS / Linux, including the mikefarah-yq footgun guard.
+3. **Ensure the `semantius` CLI is installed and authenticated, then halt if the active org is `adenin`** — one `getCurrentUser` probe folds the install check, the auth check, and the org / `ui_baseurl` read; install the CLI if missing, ask for and save `SEMANTIUS_API_KEY` if auth fails.
+4. **Compute the customizations file path** (`CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"`).
 
-```bash
-# One probe, two values. Read the web UI base from the SAME getCurrentUser call so the
-# Step 6.8 / Step 8 close-out can build a clickable "Open in Semantius" link. Remember the
-# value for the rest of the run (as you do the org) and reuse it when composing the close-out.
-# Never hardcode the org host: the UI host (e.g. tests.semantius.app) differs from the API
-# host (tests.semantius.ai), and only getCurrentUser knows the right one.
-me=$(semantius call crud getCurrentUser)
-org=$(printf '%s' "$me" | jq -r .semantius_org)
-ui_baseurl=$(printf '%s' "$me" | jq -r .ui_baseurl)   # e.g. https://tests.semantius.app
-```
-
-If `org` is `adenin`, stop immediately. Do not classify the request, do not inspect the workspace, do not dispatch any sub-skill. Tell the user: *"This workspace is pointed at the `adenin` instance. Switch workspace before continuing."* The check is purely operational — writes against `adenin` fail with permission errors that read like CLI bugs and waste debugging time; halting up front avoids the noise.
-
-**3. Compute the customizations file path.** After the adenin halt passes, derive the per-org file location and export it for every downstream call. The folder name is the org; never duplicate the org inside the file body.
-
-```bash
-CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"
-mkdir -p "$(dirname "$CUSTOMIZATIONS_FILE")"
-export CUSTOMIZATIONS_FILE
-```
-
-If the file does not exist yet, that is fine: treat as "no policies set." The first widget answer creates it.
-
-**4. Verify yq is installed.** Customization writes use `yq` (Mike Farah's Go yq, v4+) for surgical YAML updates that preserve hand-edits and comments. If `yq` is missing, halt with a plain-English message:
-
-```bash
-command -v yq >/dev/null 2>&1 || {
-  echo "yq is required (Mike Farah's Go yq v4+). Install via your package manager (e.g. scoop install yq) and re-run."
-  exit 1
-}
-```
-
-Failing loudly up front beats every sub-skill silently skipping the policy write half-way through.
+The admin runs all four as part of an orchestrated run; it then passes the resolved `org`, `ui_baseurl`, and `CUSTOMIZATIONS_FILE` to each sub-skill via the Step 7.3 `Run context:` block, so the sub-skills skip the checks rather than repeat them. Read the reference file for the full per-check procedure, install matrix, and exit-handling tables; do not duplicate that detail here.
 
 ---
 

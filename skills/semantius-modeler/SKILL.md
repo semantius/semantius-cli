@@ -243,6 +243,15 @@ The modeler's only catalog-inspection job is a thin **pre-flight verify** (Stage
 
 ---
 
+## Preflight (runs before Step 0, every invocation)
+
+The environment checks are shared across all four Semantius skills and live in one place: **[`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md)**. Do not duplicate them here.
+
+- **Orchestrated by `semantius-admin` (a `Run context:` block is present in your input):** the admin already ran the preflight (toolchain installed, CLI authenticated, `adenin` guard passed). Skip the checks and proceed.
+- **Standalone (no `Run context:` block):** run the shared preflight yourself. In brief: stay in the repo root; install the toolchain if missing; probe `getCurrentUser` to install/authenticate the CLI and halt if the org is `adenin`. The modeler critically needs **Bun** (its deploy and sample-data scripts run with `bun run`); `jq` parses CLI JSON. The modeler does **not** consult the customizations file, so check 4 (the `CUSTOMIZATIONS_FILE` computation) does not apply — specs already carry every decision. The full per-check procedure and install matrix are in the reference file.
+
+---
+
 ## Step 0: Load the use-semantius Skill
 
 Before doing anything else, read the use-semantius skill and its data-modeling reference:
