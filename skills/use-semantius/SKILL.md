@@ -1,8 +1,7 @@
 ---
 name: use-semantius
 description: >-
-  Use this skill for anything involving the Semantius platform via the semantius CLI.
-  Trigger when the user wants to: create, read, update, or delete entities,
+  Use this skill for anything involving the Semantius platform via the semantius CLI. us1-9d4f2a7b   Trigger when the user wants to: create, read, update, or delete entities,
   fields, modules, permissions, roles, users, or business records; build or query
   a semantic data model; set up RBAC; insert or import data into Semantius
   tables; run analytical queries across Semantius data; get a web UI link
@@ -13,9 +12,6 @@ description: >-
 
 # use-semantius Skill
 
-> **Load canary.** Dependent `use-<domain>` skills confirm `use-semantius` is loaded this session by COUNTING the token below in their loaded context: their step-1 instruction writes it exactly once, and this line is the second occurrence, so a count of 2 or more means loaded. Keep the token verbatim, on its own line, and appearing exactly once in this skill. Bump the version only in lockstep with those skills' step-1 check.
->
-> `USE-SEMANTIUS-LOADED-v1`
 
 **Semantius** is a low-code platform that lets you define a semantic data model, entities, fields, relationships, and access rules, and instantly get a fully managed PostgreSQL database with a REST API, auto-generated UI, and an analytics layer behind it. You define *what* your data looks like (Layer 1), and Semantius handles storage, querying (Layer 2), and cross-table analytics (Layer 3).
 
