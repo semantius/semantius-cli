@@ -44,7 +44,7 @@ Besides the `semantius` CLI, these skills need three general-purpose tools on PA
 - **jq** — parses `semantius` JSON output, both in this preflight (check 3 reads `org` and `ui_baseurl` with `jq`) and throughout the architect / analyst bash flows.
 - **yq** — Mike Farah's Go yq v4+, the engine behind the surgical `customizations.yaml` writes (admin Step 7) that preserve hand-edits and provenance line-comments.
 
-Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if `command -v <tool>` still fails the PATH update has not reached this shell: ask the user to restart the shell (or open a new terminal) and re-run.
+Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if the tool is still not found (`command -v <tool>` on POSIX, `Get-Command <tool>` on Windows PowerShell) the PATH update has not reached this shell: ask the user to open a new terminal and re-run.
 
 For each missing tool, prefer the platform's package manager; fall back to the project's static release binary when no package manager is present. Detect the platform and use the matching cell:
 
@@ -54,14 +54,24 @@ For each missing tool, prefer the platform's package manager; fall back to the p
 | **jq** | `winget install -e --id jqlang.jq` (or `scoop install jq`, `choco install jq`) | `brew install jq` | `sudo apt-get install -y jq` / `sudo dnf install -y jq` / `sudo apk add jq` | download from https://github.com/jqlang/jq/releases/latest (`jq-windows-amd64.exe`, `jq-macos-arm64`/`-amd64`, `jq-linux-amd64`), `chmod +x`, place on PATH |
 | **yq** | `winget install -e --id MikeFarah.yq` (or `scoop install yq`, `choco install yq`) | `brew install yq` | `sudo snap install yq` or `brew install yq` (NOT `apt install yq` — see footgun below) | download `yq_<os>_<arch>` from https://github.com/mikefarah/yq/releases/latest (e.g. `yq_linux_amd64`, `yq_darwin_arm64`, `yq_windows_amd64.exe`), `chmod +x`, place on PATH |
 
-Reference flow (per tool: check, then install via the matching cell, then re-check):
+Reference flow (per tool: check, then install via the matching cell, then re-check). Use the block for the shell you are running in:
 
+**Linux / macOS (bash/zsh):**
 ```bash
 for tool in bun jq yq; do
   command -v "$tool" >/dev/null 2>&1 && continue
   # install via the platform cell above (package manager first, static binary fallback),
-  # then re-check: command -v "$tool"  (if still missing, restart shell so PATH refreshes)
+  # then re-check: command -v "$tool"  (if still missing, open a new terminal so PATH refreshes)
 done
+```
+
+**Windows (PowerShell):**
+```powershell
+foreach ($tool in 'bun','jq','yq') {
+  if (Get-Command $tool -ErrorAction SilentlyContinue) { continue }
+  # install via the Windows cell above (winget/scoop/choco first, static-binary fallback),
+  # then re-check: Get-Command $tool  (if still missing, open a new terminal so PATH refreshes)
+}
 ```
 
 **yq footgun (Linux especially).** The distro package named `yq` is frequently the *Python* yq (kislyuk/yq), whose syntax is incompatible and would break every `yq -i` write the customizations layer makes. Whether yq was already present or just installed, verify the right build is the one on PATH:
@@ -82,32 +92,46 @@ This is the front door for every Semantius call, so it self-heals a missing bina
 
 ### 3a. Is the CLI on PATH? Install it if not (no prompt)
 
-The `semantius` CLI ships as a **native installer, NOT an npm package**, so there is no base URL to ask for and no `npx` form. If the binary is missing, run the platform one-liner immediately (do not ask first), then have the user restart the shell if PATH was just updated, and re-probe.
+The `semantius` CLI ships as a **native installer, NOT an npm package**, so there is no base URL to ask for and no `npx` form. Detect the binary with the form matching your shell; if it is missing, run the matching install one-liner immediately (do not ask first), then have the user open a new terminal if PATH was just updated, and re-probe.
+
+| | Detect on PATH | Install if missing |
+|---|---|---|
+| **Linux / macOS** (bash/zsh) | `command -v semantius` | `curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh \| bash` |
+| **Windows** (PowerShell) | `Get-Command semantius -ErrorAction SilentlyContinue` | `irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 \| iex` |
+
+POSIX reference (use the `Get-Command` / `irm` cells above on Windows PowerShell):
 
 ```bash
 if ! command -v semantius >/dev/null 2>&1; then
-  # Windows (PowerShell):
-  #   irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex
-  # Linux / macOS:
-  #   curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
-  # Guide: https://github.com/semantius/semantius-cli#1-installation
-  : # run the one-liner for the detected platform, then re-check `command -v semantius`
+  : # run the matching install one-liner from the table, then re-check
 fi
 ```
 
-This is one of the places check 3 may speak to the user: say at most one plain line, e.g. *"Installing the Semantius CLI..."*, run it, and if the install itself fails surface the verbatim error plus the guide link above. If `command -v semantius` still fails after the install, the PATH update has not reached this shell: ask the user to restart the shell (or open a new terminal) and re-run, then continue.
+This is one of the places check 3 may speak to the user: say at most one plain line, e.g. *"Installing the Semantius CLI..."*, run it, and re-check.
+
+**If auto-install is not possible** — the install command fails, or the client sandbox forbids running it — do NOT limp on. Direct the user to install it themselves and stop until they confirm:
+
+> "The Semantius CLI is required but I couldn't install it automatically. See **https://www.semantius.com/docs/cli/use-semantius/** for what it is and how to install it (Linux/macOS: `curl -fsSL …/install.sh | bash`; Windows PowerShell: `irm …/install.ps1 | iex`), then re-run."
+
+If detection still fails after a successful install, the PATH update has not reached this shell: ask the user to open a new terminal and re-run, then continue.
 
 ### 3b. Probe once; this folds the auth check and reads org + UI base
 
+One probe, three values (exit status, `semantius_org`, `ui_baseurl`). Read the web UI base from the SAME `getCurrentUser` call so any close-out can build a clickable "Open in Semantius" link; remember it for the rest of the run (as you do the org) and reuse it. Never hardcode the org host: the UI host (e.g. `tests.semantius.app`) differs from the API host (`tests.semantius.ai`), and only `getCurrentUser` knows the right one. Use the block for your shell:
+
+**Linux / macOS (bash, parses with `jq`):**
 ```bash
-# One probe, three values. Read the web UI base from the SAME getCurrentUser call so any
-# close-out can build a clickable "Open in Semantius" link. Remember the value for the rest
-# of the run (as you do the org) and reuse it.
-# Never hardcode the org host: the UI host (e.g. tests.semantius.app) differs from the API
-# host (tests.semantius.ai), and only getCurrentUser knows the right one.
 me=$(semantius call crud getCurrentUser 2>&1) && rc=0 || rc=$?
 org=$(printf '%s' "$me" | jq -r .semantius_org 2>/dev/null)
 ui_baseurl=$(printf '%s' "$me" | jq -r .ui_baseurl 2>/dev/null)   # e.g. https://tests.semantius.app
+```
+
+**Windows (PowerShell, parses with `ConvertFrom-Json` — no jq needed):**
+```powershell
+$me = (semantius call crud getCurrentUser 2>&1 | Out-String); $rc = $LASTEXITCODE
+$obj = try { $me | ConvertFrom-Json } catch { $null }
+$org = $obj.semantius_org
+$ui_baseurl = $obj.ui_baseurl   # e.g. https://tests.semantius.app
 ```
 
 If the probe fails (non-zero exit, or no `semantius_org` in the response), classify by the error and act. This mirrors the `use-it-ops-starter` bootstrap exit handling; never invent a connection or onboarding option beyond these:

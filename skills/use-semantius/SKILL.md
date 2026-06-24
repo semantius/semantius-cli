@@ -13,6 +13,10 @@ description: >-
 
 # use-semantius Skill
 
+> **Load canary.** Dependent `use-<domain>` skills confirm `use-semantius` is loaded this session by COUNTING the token below in their loaded context: their step-1 instruction writes it exactly once, and this line is the second occurrence, so a count of 2 or more means loaded. Keep the token verbatim, on its own line, and appearing exactly once in this skill. Bump the version only in lockstep with those skills' step-1 check.
+>
+> `USE-SEMANTIUS-LOADED-v1`
+
 **Semantius** is a low-code platform that lets you define a semantic data model, entities, fields, relationships, and access rules, and instantly get a fully managed PostgreSQL database with a REST API, auto-generated UI, and an analytics layer behind it. You define *what* your data looks like (Layer 1), and Semantius handles storage, querying (Layer 2), and cross-table analytics (Layer 3).
 
 `semantius` is the official CLI that gives shell and agent access to two servers: `crud` (schema management + record operations) and `cube` (CubeJS-compatible analytics).
@@ -92,19 +96,18 @@ Understanding which layer you're working with determines which tools to use:
 
 ## Environment Setup
 
-**First, verify semantius is installed:**
+**First, verify semantius is installed.** `semantius --version` works on every platform; check that it is on PATH with the form for your shell:
 
-```bash
-semantius --version
-```
+- **Linux / macOS (bash/zsh):** `command -v semantius` — or just `semantius --version`
+- **Windows (PowerShell):** `Get-Command semantius -ErrorAction SilentlyContinue` — or just `semantius --version`
 
-If this command fails (command not found, exit code 127), STOP immediately. Do NOT attempt to run any semantius commands. Instead, tell the user:
+If it is not found (POSIX `command not found` / exit code 127, or PowerShell `CommandNotFoundException` / non-zero exit), STOP immediately. Do NOT attempt to run any semantius commands. Instead, tell the user:
 
-> "semantius is not installed. Please install it first:
-> - Linux/macOS: curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
-> - Windows: Run PowerShell as admin and run: irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex"
+> "semantius is not installed. See **https://www.semantius.com/docs/cli/use-semantius/** for what it is and how to install it. Quick install:
+> - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash`
+> - Windows (PowerShell): `irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex`"
 
-Do not proceed with any other tasks until the CLI is installed and `semantius --version` returns successfully.
+Do not proceed with any other tasks until the CLI is installed and `semantius --version` returns successfully. After a Windows install, the user may need to open a new terminal so the updated PATH is picked up.
 
 **Then verify environment variables:**
 
@@ -118,14 +121,25 @@ If this fails with "Missing required environment variables" or similar error, li
 
 Do not proceed until both are set and `semantius info` returns successfully.
 
-Once verified, set up credentials:
+Once verified, set up credentials. Set them for your shell, or (preferred) put them in a `.env` file.
 
+**Linux / macOS (bash/zsh):**
 ```bash
 export SEMANTIUS_API_KEY=your-api-key
 export SEMANTIUS_ORG=your-org-name
 ```
 
-Or place in a `.env` file next to the executable (Windows) or in the current directory (Linux/macOS).
+**Windows (PowerShell):**
+```powershell
+$env:SEMANTIUS_API_KEY = "your-api-key"
+$env:SEMANTIUS_ORG = "your-org-name"
+```
+
+Or place them in a `.env` file — next to the executable on Windows, or in the current working directory on Linux/macOS:
+```
+SEMANTIUS_API_KEY=your-api-key
+SEMANTIUS_ORG=your-org-name
+```
 
 ---
 
