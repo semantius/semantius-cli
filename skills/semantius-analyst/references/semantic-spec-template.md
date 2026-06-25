@@ -21,8 +21,8 @@ system_slug: {{system_slug}}
 module_type: {{domain | master}}  # optional, analyst v3.0+; omit for the default "domain". Set to "master" when authoring a master model.
 module_kind: {{domain | master | starter | …}}  # v4.1+; informational label, NOT a behavior switch
 access_scope: {{basic | full}}  # v5.3+; the access-control scope the analyst resolved after Stage 2. `basic` = two-permission fallback (read + edit, no admin tier / gates / lifecycle gating / personas / RACI); `full` = complete governance. OMIT only on a non-interactive run that couldn't resolve it (the modeler's Stage 2.5 backstop then resolves it at deploy time). The modeler honors a present value without re-asking.
-raci_mode: {{living | documentation}}  # v4.2+; REQUIRED when §9 carries a RACI matrix. Chosen at analyst Stage 9.5 Step 0; must match the §9 "RACI mode:" line. OMIT under access_scope: basic.
-raci_mode_source: {{user-answer | computed-default | non-interactive}}  # v4.2+; REQUIRED alongside raci_mode. How the mode was decided — `user-answer` ONLY when the Enable-RACI widget actually fired and the user chose; `computed-default` when an interactive run took the catalog default without asking; `non-interactive` for headless runs. consistency-check.ts rejects a RACI spec missing either key.
+raci_mode: {{living | documentation}}  # v4.2+; REQUIRED when §9 carries a RACI matrix. Auto-derived at analyst Stage 9.5 Step 0 from instance state (living iff another module already uses RACI), not a user prompt; must match the §9 "RACI mode:" line. OMIT under access_scope: basic.
+raci_mode_source: {{computed-default | non-interactive}}  # v4.2+; REQUIRED alongside raci_mode. How the mode was derived — `computed-default` for the value auto-derived from instance state on an interactive run; `non-interactive` for headless runs. (The legacy `user-answer` value is retired: raci_mode is no longer a user prompt.) consistency-check.ts rejects a RACI spec missing either key.
 domain_code: {{from blueprint; uppercase TLA / short code, e.g. ATS, HCM, ITSM, CRM}}
 naming_mode: {{template:<vendor> | agent-optimized}}
 created_at: {{YYYY-MM-DD}}

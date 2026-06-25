@@ -255,7 +255,8 @@ Resolve `access_scope` immediately after Stage 2's catalog inspection (the detec
 
 1. **Standing policy.** `.access_scopes.<system_slug>` in `$CUSTOMIZATIONS_FILE` (a prior run's choice) → use it; narrate one plain line (*"Using your earlier choice: basic access."*); skip the question.
 2. **Explicit user intent.** The triggering request explicitly said basic ("basic access", "read and edit only", "no roles / permissions", "keep it simple") or full ("full RBAC", "with roles and approvals", "lifecycle gating") → use it.
-3. **Detect + ask.** Otherwise compute the default from live state, fire the `AskUserQuestion` below, then write the answer back to `.access_scopes.<system_slug>` (same write-back protocol the analyst uses for every other customizations decision).
+3. **Flat model (nothing to decide → no question).** If the blueprint authored no governance beyond the two-permission baseline (its §8.1 is exactly `<slug>:read` + `<slug>:manage` with no `baseline-admin` row, no `workflow-gate`, no `override` / `narrow` permission) AND §9 carries no RACI matrix, then `full` and `basic` would produce an identical spec. Resolve `basic` silently; do NOT ask. (Admin tier, gates, and overrides are model-derived, so any catalog/reference entity, any lifecycle gate, any per-user override, or a RACI matrix makes the model non-flat and falls through to step 4. This is why a plain data store never gets an access-control prompt, while a governed module always does.)
+4. **Detect + ask.** Otherwise compute the default from live state, fire the `AskUserQuestion` below, then write the answer back to `.access_scopes.<system_slug>` (same write-back protocol the analyst uses for every other customizations decision).
 
 **Detection (sets which option leads as Recommended).** Count the live modules that recorded a full-access deploy, excluding the module being reconciled (so a re-deploy doesn't self-trigger):
 
@@ -280,6 +281,8 @@ This reads the choice each prior deploy recorded on its own module record (`modu
 
 Always stamp the resolved value into the spec frontmatter `access_scope` so the modeler honors it without re-asking. When the resolution is `full`, every stage below runs exactly as documented — no change.
 
+**This basic-vs-advanced question is the ONLY access-control question the analyst asks.** Under `full`, whether the RACI matrix is realized as compiled grants (`documentation`) or a live enforced engine (`living`) is **auto-derived from instance state, never a second prompt** (Stage 9.5 Step 0 below). So a `full` blueprint that carries a RACI matrix produces one of two builds, advanced-RBAC or advanced-RBAC-plus-live-RACI, selected by whether other modules already use RACI; the user is never asked to choose between them. Do NOT fire a second governance widget after this one.
+
 ### What `basic` authors (the contract)
 
 The lifecycle state machine still exists in a `basic` spec (every lifecycle entity keeps its `workflow_state` enum field); its transitions are simply ungated. `basic` changes the analyst's work in two ways:
@@ -289,7 +292,7 @@ The lifecycle state machine still exists in a `basic` spec (every lifecycle enti
 2. **Suppress the analyst's own net-new governance discovery:**
    - **Stage 5 (W3/W4/W4n/W5 workflow-permission scan)** emits nothing — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`.
    - **Stage 7 (`select_rule`)** emits nothing — no per-row read scoping (every entity falls back to table-level `view_permission`).
-   - **Stage 9.5** forces `documentation` mode (skip the Step 0 Enable-RACI widget — never offer `living` under `basic`), emits only the `<slug>_viewer` + `<slug>_manager` baseline roles and the single `manage → read` edge, and skips RACI realization, the Processes catalog, and §9.2 functional ownership. No `persona` frontmatter is emitted.
+   - **Stage 9.5** forces `documentation` mode (Stage 9.5 Step 0 auto-derives the mode; `living` is never selected under `basic`), emits only the `<slug>_viewer` + `<slug>_manager` baseline roles and the single `manage → read` edge, and skips RACI realization, the Processes catalog, and §9.2 functional ownership. No `persona` frontmatter is emitted.
    - **Stage 10** keeps only permission-free computed fields / validation rules (pure data-integrity logic); it drops any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission` on a code that no longer exists), since the gating permission is gone.
 
 The result satisfies the analyst's own §8.1/§9.1 invariants by construction (exactly one baseline-read + one baseline-manage, no gate rolled under `manage`, no orphan `narrow`) and the modeler's parse-time validation. The Stage 11 pre-save verifier additionally checks `access_scope: basic` coherence (no admin/gate/override/narrow rows, no personas, no RACI realization).
@@ -498,13 +501,12 @@ Before any field elicitation, surface every 🛑 ambiguity and every 🟡 option
 
 **🛑 MUST-FIRE rule for Stage 3 widgets (no silent auto-resolution allowed).**
 
-The widgets in 3a, 3b.0, 3b.1, 3b.2, 3c, 3d, 3e, and 3f are **mandatory user gates**, not optional prompts. **One further mandatory gate fires downstream — the Enable-RACI decision (Stage 9.5 Step 0) — and it is the single most-skipped gate in this skill, because it sits *after* the Stage 3g plan confirmation and the "write the spec in one pass" narration. Treat it as if it were listed here: whenever the blueprint carries a §9 RACI matrix, Stage 9.5 Step 0 MUST fire on an interactive run before the spec is written. Do not let the single-pass framing steamroll it.** The Convention 8 narration-restraint culture does NOT override them — that culture is about not narrating *implementation work* in chat ("Let me load the file...", "Let me classify each entity..."). It is NOT about skipping decision widgets just because a "safe default is obvious." When this stage detects a condition that calls for a widget, the widget fires. Always. No exceptions for "the answer is obvious," "the user will pick option 1 anyway," or "I can save the user a click." The user is the decision-maker; the analyst proposes, the user confirms.
+The widgets in 3a, 3b.0, 3b.1, 3b.2, 3c, 3d, 3e, and 3f are **mandatory user gates**, not optional prompts. The Convention 8 narration-restraint culture does NOT override them — that culture is about not narrating *implementation work* in chat ("Let me load the file...", "Let me classify each entity..."). It is NOT about skipping decision widgets just because a "safe default is obvious." When this stage detects a condition that calls for a widget, the widget fires. Always. No exceptions for "the answer is obvious," "the user will pick option 1 anyway," or "I can save the user a click." The user is the decision-maker; the analyst proposes, the user confirms.
 
 In particular:
 
 - **3b.0 (canonical-owner adoption)**: even though option 1 is the only sensible outcome, the widget MUST fire so the user explicitly consents to the ownership transfer. Adoption changes the catalog state in a way the user should knowingly approve.
 - **3f.1 / 3f.2 / 3f.3 / 3f.4 (drift widgets)**: even when option 1 ("keep live state, align spec to it") is the safe and obvious default, the widget MUST fire so the user knows drift was detected. Silently rewriting the spec to align to live state is a Convention 8 *violation* — the spec is the user's design, and changing field names / enum values / permission tiers behind their back is exactly the kind of "silent self-correction" Convention 8 forbids in its Narration restraint section ("Do not narrate self-corrections mid-flight; fix them silently" applies to *implementation* corrections, not *spec content* corrections).
-- **Stage 9.5 Step 0 (Enable-RACI)**: even though the catalog-aware default is usually obvious (off on a greenfield instance), the widget MUST fire on any interactive run whenever the blueprint declares a §9 RACI matrix. Silently defaulting writes a governance mode the user never chose. This gate lives far downstream (Stage 9.5) but belongs to this same MUST-FIRE contract; the physical distance from this block is exactly why it gets skipped, so it is called out here on purpose.
 - **Pre-fill the recommended option, then fire the widget** — that's the correct pattern. The user clicks "Yes" once per widget; they did not lose conversation context; they have explicit awareness of every adjustment to their design.
 
 If you find yourself reasoning *"the user is going to pick option 1, so I'll just do it and move on,"* that's the bug. Fire the widget anyway.
@@ -871,9 +873,14 @@ When suggesting `<suggested_local_name>`, pick in this order:
 - Avoid generic suffixes (`_internal`, `_local`, `_new`); they don't say what the table is for.
 - Confirm the chosen name doesn't collide with anything else in the live catalog before proposing it.
 
-### 3g. Confirm the reconciliation plan (runs before 3f drift resolution)
+### 3g. Confirm the plan and fields (the final gate, after drift resolution and field drafting)
 
-After all decisions, render a plan summary as **markdown prose** (NOT inside a triple-backtick code block — that would make the runtime mimic the fence and emit a monospaced wall of text). Use bold headings, bullet lists, and inline backticks for slugs only.
+This is the **single final confirmation gate**: it runs after every other Stage 3 decision. Before rendering the summary, complete two procedures (detailed below) so the summary reflects what will actually be built, then do not repeat them after the user confirms:
+
+1. **Resolve adopted-entity drift** (3f) for every `reuse-from` / `rename-incoming-from` / `promote-to-master` entity.
+2. **Draft the fields** (Stage 4) for every owned entity (`create-new` / `rename-incoming-from` / `promote-to-master`).
+
+Then render a plan summary as **markdown prose** (NOT inside a triple-backtick code block — that would make the runtime mimic the fence and emit a monospaced wall of text). Use bold headings, bullet lists, and inline backticks for slugs only. The summary now includes the drafted fields (see the Fields block in the render shape) so the user can spot anything they want to change before the file is written.
 
 **Render shape** — substitute the actual module, entities, pattern flags, and link decisions:
 
@@ -895,6 +902,11 @@ After all decisions, render a plan summary as **markdown prose** (NOT inside a t
 > | 🔒 | Users | use the Semantius built-in | (none) |
 > | ❌ | Career Aspirations | skipped (you opted out) | (none) |
 >
+> 🧩 **Fields** (drafted for the entities being set up, names and types only; full detail, descriptions, and rules land in the file):
+> - **Candidates** (9): Full Name *(text, label)*, Email *(email, unique)*, Phone *(text)*, Workflow State *(stages: New → Screening → Interview → Offer → Hired)*, Source *(→ Recruitment Sources)*, Owner *(→ Users)*, …
+> - **Offers** (7): Offer Title *(text, label)*, Workflow State *(stages: Draft → Approved → Sent → Accepted)*, Salary *(number)*, Candidate *(→ Candidates)*, …
+> - *(one line per entity being set up; reused, built-in, and skipped entities have no field line)*
+>
 > 🔗 **Cross-module links:** all currently dormant. None of `job_profiles`, `skill_profiles`, `job_requisitions`, `candidate_referrals`, `recruitment_agencies`, `recruitment_events`, `talent_pools`, `candidate_assessments`, `background_checks`, `onboarding_journeys`, `benefit_enrollments`, `compensation_statements`, `employees`, `pre_employees` are in your semantic model yet. Recorded as future links; no link columns are created this run.
 >
 > 🔁 **Lifecycle gates** (rebased onto this module's slug):
@@ -915,6 +927,7 @@ After all decisions, render a plan summary as **markdown prose** (NOT inside a t
 6. **No "FK columns"** / "FK emitted" — say "link columns".
 7. **Render as prose**, not as a code-fenced block.
 8. **Echo applied Additional Requirements.** When the blueprint carried an `## Additional Requirements Specification` section, add one line to the plan summary, in plain English (Convention 8 applies, this is user-facing chat, so no backticks, use Labels): summarize each requirement and name where it landed (a field you added, an open question you recorded). Example: *"📐 Extra requirements applied: added an annual cost figure and a currency code to Asset Contracts and SaaS Subscriptions; recorded the standalone-vs-full-module dedup rule as an open question."* Omit the line entirely when the blueprint had no such section.
+9. **Keep the Fields block compact.** One line per owned entity: its Plural Label, a field count, then field Labels with their format (and FK target as a Plural Label) only. Never paste full field tables, descriptions, validation rules, or full enum value lists into the summary, those live in the file and in the per-entity Adjust view. Reused, built-in, and skipped entities get no field line.
 
 **Outcome-column translation:**
 
@@ -947,15 +960,16 @@ Combine multiple flags with a comma: `Per-user records, Locks once submitted`. U
 - **header**: `"Confirm plan"`
 - **multiSelect**: `false`
 - **options**:
-  1. label `"Yes, looks good (Recommended)"`, description `"Proceed with the plan as shown. Field-level details get drafted next, then the spec is written."`
-  2. label `"Let me revise something"`, description `"Identify which entity / link / permission to revisit. The plan re-renders after the change."`
-  3. label `"Cancel"`, description `"Stop without writing the spec."`
+  1. label `"Yes, looks good (Recommended)"`, description `"Set up the entities and fields exactly as shown, then write the file."`
+  2. label `"Adjust the fields for an entity"`, description `"Pick an entity and review or change its fields (names, types, required, choices) before anything is written."`
+  3. label `"Revise the plan"`, description `"Change which entities are included, reused, renamed, or linked. The plan re-renders after the change."`
+  4. label `"Cancel"`, description `"Stop without writing the file."`
 
-On option 2 (revise), drop into one follow-up `AskUserQuestion` listing the entities and links from the plan as a multiSelect; the user picks one or more, and the analyst re-prompts the relevant Stage 3a/3b/3c/3d/3e decision for each. After all revisions, re-render the plan summary and fire the confirmation widget again. On option 3 (cancel), narrate one line ("Cancelled. No spec written.") and stop.
+On option 2 (adjust the fields), fire one follow-up `AskUserQuestion` listing the owned entities as a multiSelect; for each entity the user picks, show its full field table (the Stage 4 columns) and let them change field names, formats, required flags, labels, and enum values. Apply the edits, then re-render the plan summary and fire this confirmation widget again. On option 3 (revise the plan), drop into one follow-up `AskUserQuestion` listing the entities and links from the plan as a multiSelect; the user picks one or more, and the analyst re-prompts the relevant Stage 3a/3b/3c/3d/3e decision for each, then re-runs drift resolution and field drafting for any affected entity. After all revisions, re-render the plan summary and fire the confirmation widget again. On option 4 (cancel), narrate one line ("Cancelled. Nothing was written.") and stop.
 
-**Closing narration after the confirmation step** (only when the user said "Yes, looks good"): one short sentence stating the next action, in plain English. Example: *"Drafting sensible field shapes per the blueprint's entity descriptions (without asking field-by-field, since you said no to the customize pass), then writing the spec."* No "round-trip", no "single-pass", no internal flow vocabulary. **The "one pass" idea covers field-level drafting and the mechanical scans only — it does NOT authorize skipping the Enable-RACI decision (Stage 9.5 Step 0), which still fires on an interactive run before the write whenever the blueprint carries a §9 RACI matrix. Do not narrate "writing in one pass" and then proceed straight to the file write if that gate has not fired.**
+**Closing narration after the confirmation step** (only when the user said "Yes, looks good"): one short sentence stating the next action, in plain English. Example: *"Writing the file with the entities and fields as confirmed."* No "round-trip", no "single-pass", no internal flow vocabulary. After this, the remaining stages (governance authoring, the mechanical scans) run without further prompts: there is no downstream access-control widget, because the basic-vs-advanced decision was already made and the documentation-vs-living split is auto-derived (Stage 9.5 Step 0).
 
-### 3f. Adopted-entity drift resolution (fires before Stage 4)
+### 3f. Adopted-entity drift resolution (run from the 3g confirmation step, before field drafting)
 
 **Fires when** Stage 2h built a non-empty `adopted_entity_index` AND comparing the blueprint's intent to the live entity's field set surfaced any drift (field-name, enum-value, format, required-ness, permission tier). One widget fires per drift kind per affected entity. Resolution is recorded as either an annotation that the analyst applies to the spec being drafted, or as a 🔴 §7.1 blocker that the user must accept before the spec is written.
 
@@ -1125,6 +1139,8 @@ For every renamed `<old_token>`, grep the entire assembled spec text for `"<old_
 
 Turn each fieldless blueprint entity the spec OWNS into a fielded spec entity: draft each field's name, format, required flag, label, and (for enums) allowed values. Computed fields and validation rules are added in Stage 10; conditional input-type rules in Stage 6; row-level `select_rule` in Stage 7.
 
+**When this runs.** This stage is invoked from the 3g confirmation step, immediately after adopted-entity drift resolution and before the plan summary is rendered, so the drafted fields appear in that summary and the user can review or change them through its "Adjust the fields for an entity" path before anything is written. It is not a silent pass that runs after the user has confirmed. The field tables below are the working representation: the plan summary shows them compactly (labels and types), and a full table is shown only when the user chooses to adjust an entity.
+
 Apply this stage **only** to entities whose Reconciliation decision is `create-new`, `rename-incoming-from`, or `promote-to-master`. Skip `reuse-from` and `dropped`.
 
 **Apply the Additional Requirements first (when the blueprint carried one).** Before drafting fields, fold the `additional_requirements` note (captured in Stage 1) into this stage as MUST-honor design intent, not advisory:
@@ -1190,7 +1206,7 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 For deep field-format and built-in field-shape rules (when extending `users`, `roles`, etc.), see `../use-semantius/references/data-modeling.md`.
 
-After the field tables, present for each entity a short **Relationships** section in prose. Iterate per entity until the user confirms.
+After the field tables, present for each entity a short **Relationships** section in prose. The user reviews and confirms or changes these fields through the 3g confirmation widget's "Adjust the fields for an entity" path, not through a separate per-entity prompt here.
 
 ---
 
@@ -1320,26 +1336,21 @@ The blueprint's §9 governance section is the authoritative carrier of baseline 
 - **`documentation` mode (default):** compile the RACI matrix into RBAC grants (Step 3 documentation path). The process axis, the R/A/C/I letters, and agent actors are not stored live.
 - **`living` mode:** plan the live RACI rows (`processes`, `raci_assignments`, `process_gates`) and the enforcement rules (`is_raci_actor` / `has_consultation`) the deployer authors — **in addition to** the baseline tier grants that table access still requires. The matrix becomes queryable and enforced live.
 
-**Step 0 chooses the mode** (below). Steps 1–2 (RBAC scaffolding) and 4–5 run in both modes; Step 3 branches.
+**Step 0 derives the mode** (below; auto-derived from instance state, NOT a user question). Steps 1–2 (RBAC scaffolding) and 4–5 run in both modes; Step 3 branches.
 
-> **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this whole stage reduces to its baseline: force `documentation` mode (do NOT fire the Step 0 Enable-RACI widget), emit only the `<slug>_viewer` + `<slug>_manager` roles and the single `<slug>:manage → <slug>:read` hierarchy row, and skip RACI realization, the Processes catalog, and §9.2 functional ownership (emit each as `_(none: basic access)_`). No `persona` frontmatter. (See "Access-control scope" above.)
+> **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this whole stage reduces to its baseline: force `documentation` mode (`raci_mode = documentation`; there is no Enable-RACI widget), emit only the `<slug>_viewer` + `<slug>_manager` roles and the single `<slug>:manage → <slug>:read` hierarchy row, and skip RACI realization, the Processes catalog, and §9.2 functional ownership (emit each as `_(none: basic access)_`). No `persona` frontmatter. (See "Access-control scope" above.)
 
-**Step 0 — Enable-RACI decision (the mode gate).** Decide whether this module is `living` or `documentation` (decision 2 of the living-RACI plan: the analyst asks, the deployer is authoritative).
+**Step 0 — RACI mode (auto-derived from instance state; NOT a user question).** Whether this module is `living` or `documentation` is decided by the catalog, never by a prompt. The only meaningful signal is whether the instance already runs RACI, and that is a fact about live state, not a user preference; surfacing it as a widget duplicated the basic-vs-advanced access-control question (see "Access-control scope"). Derive it silently:
 
-> **🛑 MUST-FIRE gate (same contract as the Stage 3 widgets).** On every interactive run where the blueprint carries a §9 RACI matrix, this widget MUST fire before the spec is written. It is the most-skipped gate in this skill because it sits after the Stage 3g plan confirmation and the "write in one pass" narration — do NOT fold it into the silent spec-write. Self-check right before Stage 11: *if I am about to write the spec and have not recorded a `raci_mode` from an actual user answer (or confirmed the run is non-interactive), stop and fire this widget first.*
-
-- **Read the architect's `raci_mode` frontmatter hint** if present (pre-selected answer).
-- **Compute the catalog-aware default** from live state: is any module already using RACI? — `GET /processes?limit=1` non-empty, or any `modules.settings.raci_mode = living`. **Default `living` when ≥1 module already does; `documentation` when none do.** (A greenfield instance with no RACI elsewhere defaults off — don't impose governance overhead on a 2-user single-module setup; an ATS added to an org already running RACI defaults on.)
-- **Ask the user** to confirm (interactive runs only), defaulting to the computed value; they may override. Non-interactive run: take the computed default. **Use this exact `AskUserQuestion` wording** (written for a non-expert: no jargon, no em-dashes, do not improvise):
-  - **Option 1** label `Roles & permissions for standard access control`; description `The right people get edit and approval rights. Simple, nothing extra to manage.` (maps to `documentation`)
-  - **Option 2** label `Enforced process rules (RACI)`; description `Each step checks who's accountable and who must be consulted, with notifications and an audit trail. More to manage. Best across several modules, or when AI agents do the work.` (maps to `living`)
-  - Append `(Recommended)` to whichever matches the computed default: Option 1 on a greenfield instance, Option 2 once another module already uses RACI.
-- **Record the confirmed `raci_mode` AND its provenance** so the gate is mechanically enforced, not merely remembered. Write all three surfaces:
-  - **Frontmatter:** `raci_mode: <living|documentation>` and `raci_mode_source: <user-answer|computed-default|non-interactive>`. Set `user-answer` ONLY when the widget above actually fired and the user picked; `computed-default` when an interactive run took the catalog-aware default without asking; `non-interactive` for headless runs.
+- **Honor an explicit signal first, if present:** an architect `raci_mode` frontmatter hint, or the triggering request explicitly asking for live / enforced / audited process rules ("enforce RACI", "with live approvals and an audit trail"). Either one pins the mode.
+- **Otherwise compute from live state:** is any module already using RACI? (`GET /processes?limit=1` non-empty, or any `modules.settings.raci_mode = living`). **`living` when ≥1 module already does; `documentation` when none do.** A greenfield instance with no RACI elsewhere derives `documentation` (do not impose live-process overhead on a setup that is not using it); an ATS added to an org already running RACI derives `living`.
+- If the live instance lacks the RACI engine entirely (no `processes` entity registered), force `documentation`.
+- **Do NOT fire an `AskUserQuestion` for this.** There is no Enable-RACI widget. The user's single access-control decision (basic vs advanced) was already made at "Access-control scope"; selecting documentation vs living is this derivation's job, not a second prompt.
+- **Record the derived `raci_mode` and its provenance:**
+  - **Frontmatter:** `raci_mode: <living|documentation>` and `raci_mode_source: <computed-default|non-interactive>` (`computed-default` for the value derived on an interactive run; `non-interactive` for headless runs). This gate no longer produces `user-answer` (there is no widget to answer).
   - **§9 header line:** `**RACI mode:** \`<living|documentation>\`` (must match the frontmatter `raci_mode`).
-  - **Customizations file:** persist `.raci.<module_slug>.mode` and `.raci.<module_slug>.source` to `$CUSTOMIZATIONS_FILE` via `yq` (same write-on-answer pattern as the Stage 3 decisions), so the choice is reused on re-deploys.
-  - **Mechanical backstop:** `consistency-check.ts` (the Stage 11 pre-save gate) rejects any spec that carries a RACI matrix but is missing `raci_mode` / `raci_mode_source`, or whose §9 line disagrees with frontmatter. A silently-defaulted mode therefore cannot ship. The checker cannot prove a human was asked — so writing `raci_mode_source: user-answer` is a deliberate, auditable assertion that Step 0 fired; do not stamp it on a run where the widget did not.
-- If the live instance lacks the RACI engine entirely (no `processes` entity registered), force `documentation` and note it.
+  - **Customizations file:** persist `.raci.<module_slug>.mode` and `.raci.<module_slug>.source` to `$CUSTOMIZATIONS_FILE` via `yq`, so the derived choice is reused (and hand-editable) on re-deploys.
+  - **Mechanical backstop:** `consistency-check.ts` (the Stage 11 pre-save gate) still rejects any spec that carries a RACI matrix but is missing `raci_mode` / `raci_mode_source`, or whose §9 line disagrees with frontmatter.
 
 **Step 1 — Baseline-role drift.** Walk §9.1 baseline roles. **Normalize every role slug to the platform's `roles.slug` rule (`^[a-z0-9_]+$`) before emitting it to the spec: replace each `-` with `_`.** `module_slug` and the permission prefix derived from it may contain hyphens, but `roles.slug` may not, so the blueprint's `<system_slug>_<tier>` form (e.g. `ben-admin_viewer`) becomes `ben_admin_viewer` in the spec. This is the ONE place the normalization lives: the spec's §9.1 `role` column then carries the resolved, deploy-ready slug, and the deployer creates it verbatim without ever re-deriving `<slug>_<tier>`. Apply the identical `-`→`_` rule to every role-slug reference in the §9.1 RACI-assignment `role (slug)` column and the §9.2 functional-ownership rows, so all three sections resolve to the same role. Then, for each normalized row `<role_slug> | <slug>:read` etc., look up the role by `slug`. If missing, mark `✨ persona role to be created` for the deployer's Stage 4a-scaffold to mint. If present with mismatched `module_id` (a prior install attached it to a different module), mark as 🟡 drift; the spec carries an `**Reconciliation:** role-drift-on-module-id` note.
 
@@ -1549,7 +1560,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | Frontmatter carries `tagline`, `description`, `persona`, `license`, `module_kind` (each either carried verbatim from blueprint or null when blueprint omitted) | missing frontmatter keys |
 | §9 governance section is present and populated (§9.1 + §9.2) | missing or empty §9 |
 | When frontmatter `access_scope: basic`: §8.1 carries exactly `<slug>:read` + `<slug>:manage` (no `baseline-admin` / `workflow-gate` / `override` / `narrow`); no §3 entity has `**Edit permission:** admin` or a narrow tier; no §7 lifecycle state is gated; §9.1 carries only viewer + manager + the single `manage → read` row; no RACI realization / Processes / §9.2 ownership rows; no `persona` frontmatter. (Absent or `full` → no extra check.) | access_scope incoherence list |
-| **RACI provenance — mechanically enforced by `consistency-check.ts`.** When the spec carries a RACI matrix, frontmatter MUST carry `raci_mode` (`living`/`documentation`) AND `raci_mode_source` (`user-answer`/`computed-default`/`non-interactive`), and the §9 `**RACI mode:**` line must match `raci_mode`. The checker fails the save on any missing / invalid / mismatched value, so a silently-defaulted mode cannot ship. (The checker cannot verify a human was asked; `raci_mode_source: user-answer` is a deliberate, auditable assertion that Step 0 fired.) | RACI provenance missing / inconsistent |
+| **RACI provenance — mechanically enforced by `consistency-check.ts`.** When the spec carries a RACI matrix, frontmatter MUST carry `raci_mode` (`living`/`documentation`) AND `raci_mode_source` (`computed-default`/`non-interactive`; `raci_mode` is auto-derived from instance state, so this gate no longer produces `user-answer`), and the §9 `**RACI mode:**` line must match `raci_mode`. The checker fails the save on any missing / invalid / mismatched value. | RACI provenance missing / inconsistent |
 | Every §8.2 rule with `source_flag: has_single_approver` names a permission code that appears in §8.1 Permissions catalog (no phantom `approve_<entity>_approval`) | phantom approve-gate list |
 | Every `re-prefixed-from` annotation in §8.1 names a canonical module and a verb; the verb appears on the relevant entity in §3 | malformed re-prefix list |
 | §5 rows carry `delete_mode` and `fk_format` consumed from the blueprint, not re-derived | column-missing list |
