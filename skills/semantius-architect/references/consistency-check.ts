@@ -153,9 +153,9 @@ function checkBlueprint(text: string, lines: string[]): Issue[] {
   // Registry from §3: identifier -> { display, role }
   const s3 = topSection(lines, 3);
   // §3 catalog columns are parsed BY HEADER NAME, not by fixed offset. blueprint_version 3.0
-  // inserted `canonical code` (after data_object) and `entity_type` (before write tier), so the
+  // inserted `catalog code` (after data_object) and `entity_type` (before write tier), so the
   // old row[1]/row[2]/row[3]/row[4] offsets no longer locate data_object/singular/plural/role.
-  // Header row shape (3.0): | # | data_object | canonical code | singular | plural | role | mastered in | mastered label | necessity | pattern flags | entity_type | write tier | notes |
+  // Header row shape: | # | data_object | catalog code | singular | plural | role | mastered in | mastered label | necessity | entity_type | write tier | notes |
   // The fallbacks (1/2/3/4) keep an older 2.x header (no canonical/entity_type) parsing identically.
   const s3rows = tableRows(s3);
   const col: Record<string, number> = {};

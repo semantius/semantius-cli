@@ -52,7 +52,11 @@ semantius call crud create_permission '{"data": {"permission_name": "crm:manage"
 
 The `description` field is a compact tagline (≤40 chars) shown beside `module_name` in the selector chip, for acronyms, the plain English expansion (`CRM` → `Customer Relationship Management`); for non-acronyms a 2-4 word disambiguating phrase. Long-form prose belongs elsewhere, not on the module record.
 
-Other optional fields on `modules`: `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list.
+Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
+
+- **`icon_name`** — the module's UI icon (an icon-set handle, not a URL; distinct from the entity-level `icon_url` and the module `logo_url`).
+- **`domain_code`** — short uppercase business-domain code the module belongs to (`ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`.
+- **`access_scope`** — enum `basic` | `full`, default `basic`. `basic` for simple read/edit; `full` when the module needs role tiers, approvals, and lifecycle gating.
 
 Permission naming convention: **always `<module_slug>:<action>`** (e.g., `crm:read`, `crm:manage`). The permission prefix is the slug, not the display name, `crm:read`, never `CRM:read`.
 
@@ -200,11 +204,10 @@ Base schema **v0.1.2** ships a set of **core provenance columns** on `entities`,
 | Table | Column | Type / default | Meaning |
 |---|---|---|---|
 | `entities` | `catalog_entity_code` | TEXT `''`, non-unique | Canonical uber-model code (the rename / dialect / silo join key). `table_name` holds the deployed name and may drift; this does not. Empty = created outside the deploy pipeline. |
-| `entities` | `canonical_owner_module` | TEXT `''` | Owning-module slug for an `embedded_master` placeholder. Soft pointer, not an FK. |
+| `entities` | `catalog_owner_module` | TEXT `''` | Owning-module slug for an `embedded_master` placeholder. Soft pointer, not an FK. |
 | `entities` | `entity_type` | TEXT `'unclassified'`, CHECK ∈ 6 (`operational_workflow` / `operational_record` / `catalog` / `junction` / `computed` / `unclassified`) | Data-class axis; `write tier` derives FROM it. |
-| `entities` | `pattern_flags` | JSONB `'{}'`, object | Sparse `{flag: true}` behavior flags (`personal_content` / `submit_lock` / `single_approver` confirmed). |
 | `entities` | `catalog_entity_aliases` | JSONB `'[]'`, array | Append-only `{alias_code, source_domain, source_module, decided}` reuse/merge records. |
-| `modules` | `catalog_module_code` | TEXT `''`, non-unique | Catalog blueprint the module came from; the domain axis discovery groups by. |
+| `modules` | `catalog_module_code` | TEXT `''`, non-unique | Catalog blueprint / `system_slug` the module was provisioned from. The coarser business-domain grouping is the separate `domain_code` column (many `catalog_module_code`s can share one `domain_code`). |
 | `roles` | `catalog_role_code` | TEXT `''`, non-unique | Catalog persona the role was provisioned from. |
 
 **Rules for every skill that writes the catalog:**
@@ -938,7 +941,7 @@ Nullability is also computed by format (via the platform's `is_nullable()` rule)
 **Rule:** you do **not** need to send `default_value` on `create_field`. Only set it explicitly when the auto-default is wrong for the domain, e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string.
 
 - **Enum lifecycle ordering matters.** The auto-default for a required enum is `enum_values[0]`, so list values in lifecycle order (`draft`, `pending`, `new`, `open`, `active` first). If the natural starting value isn't first, either reorder the list or pass `default_value` explicitly.
-- **`is_nullable: false` only changes DB behavior for `reference`, `date`, `date-time`.** For other formats the column is NOT NULL with the auto-default regardless of `input_type`; declaring the field optional doesn't make it nullable.
+- **There is no settable `is_nullable` flag** — nullability is computed purely from `format` (the `is_nullable()` rule above): only `reference`, `date`, and `date-time` are nullable. For every other format the column is NOT NULL with the auto-default regardless of `input_type`; declaring the field optional doesn't make it nullable.
 
 ```bash
 # Required enum on a possibly-non-empty entity — always include default_value
@@ -1053,7 +1056,7 @@ semantius call crud create_field '{
 
 ### Choosing the Right Format
 
-The platform manages nullability internally based on format and delete-mode, do not pass an `is_nullable` flag. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
+The platform manages nullability internally based on format and delete-mode; there is no `is_nullable` flag to pass. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
 
 **Read order:** the divergent-permission-scope rule (last two rows) **overrides** the "child is owned by parent" and "M:N junction FK" rows whenever the child's edit tier differs from the parent's. Always evaluate divergence first; fall through to the same-tier rows only when tiers match.
 

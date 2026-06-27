@@ -18,6 +18,16 @@ After all creates are done, emit a **structured verification report** with expli
    - `module.default_viewer_role_id` dereferences to the role whose `slug` is the viewer row in the spec's §9.1 baseline-roles table (read verbatim, not reconstructed as `<slug>_viewer` from the module slug), `origin ∈ {"model", "model_master"}` matching the module's type, and a `role_permissions` row linking it to `<slug>:read` (verify via `read_role_permission` filtered on the resolved `role_id` + `permission_id`).
    - Same for manager and admin roles.
    - If any FK is null where the model expected a value, or if a non-null FK dereferences to the wrong natural key, surface as 🛑. Quote the row in the report by natural key — never as a bare `id=N` — so the user can recognize what failed without cross-referencing.
+   - **Provenance round-trip (catalog lineage, every module touched).** The FK checks above confirm the *scaffold* landed; this confirms the *lineage stamp* landed. Read the module row and compare its provenance against the spec front-matter (the same keys Stage 4a stamps):
+     - `module.catalog_module_code` is **non-empty** and equals the spec source (the catalog blueprint code, else `system_slug`).
+     - `module.domain_code` == front-matter `domain_code` (top-level column).
+     - `module.icon_name` == front-matter `icon_name` (top-level column).
+     - `module.settings.module_kind` == front-matter `module_kind`.
+     - `module.settings.naming_mode` == front-matter `naming_mode`.
+     - `module.settings.catalog_snapshot` == front-matter `reconciled_against_catalog_snapshot` (note the key rename: front-matter `reconciled_against_catalog_snapshot` lands in `settings.catalog_snapshot`).
+     - `module.access_scope` == the Stage 2.5 resolved scope (top-level column).
+     - `module.settings.promotion_decisions` is present and matches **when** the front-matter carried it (not required otherwise).
+     - An empty/missing `catalog_module_code`, any missing top-level provenance column (`domain_code` / `access_scope` / `icon_name`), or any missing `settings.*` key the front-matter declared, is a 🛑 — the module deployed but its lineage did not, which silently breaks the analyst's re-reconcile, behavior discovery, and the `use-*` discovery skills (all of which read these values to group the catalog and detect drift). Stage 4a stamps every key on **both** the create and the update-reconcile path, so a Stage 5 hit means the stamp did not land — re-issue `create_module` / `update_module` with the full provenance payload (4a checklist) and halt if it still will not take, rather than reporting the deploy as clean.
 
 2. **Master promotion (per promoted entity).**
    - Entity's `module_id` matches the master module's id.
@@ -44,6 +54,7 @@ After all creates are done, emit a **structured verification report** with expli
    - Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`).
    - **Lifecycle state field name (`workflow_state`).** For every entity that has a lifecycle (carries a `workflow-gate (lifecycle)` permission or a `process_gates` row), confirm the live entity has a field named exactly `workflow_state`. A lifecycle state stored under any other field name is a 🛑 — the Stage 1 parse gate should have caught it pre-write, so a Stage 5 hit means the gate was bypassed.
    - **`label_parent` round-trips.** For every owned entity whose spec carries a `**Label parent:**` line, confirm live `entities.label_parent` equals the named FK field; for every owned entity without the line, confirm live `label_parent` is null/absent. A mismatch is a 🛑 — the composed `_label` would fold on the wrong spine, or not at all. While here, confirm the deploy did **not** materialize `_label` / `<fk>_label` as real `fields` rows (a `read_field` hit on a `_`-prefixed or `*_id_label` name means the reserved-name guard was bypassed).
+   - **Entity provenance round-trip (every owned entity).** Beyond `module_id` and `label_parent` above, assert the lineage/class stamp landed (the entity analog of the module provenance check in §1): `catalog_entity_code` is **non-empty** (the catalog code, default `table_name`); `entity_type` matches the spec's `**Entity type:**` and is one of the 6 CHECK values (`unclassified` only when the spec omitted it, never `''`); `catalog_owner_module` matches the spec's `**Catalog owner:**` line (or `''` when the line is absent / the entity was promoted into its catalog home). An empty `catalog_entity_code` or an out-of-set `entity_type` is a 🛑 — the entity deployed but its catalog identity did not, breaking the analyst's re-reconcile and the `use-*` discovery skills exactly as a missing module stamp does. Re-issue `create_entity` (or `update_entity` for the value-only columns; `catalog_entity_code` is write-once, settable only while still empty) and halt if it will not take. Built-in / `reuse-from` entities are out of scope — they keep their own stamp.
 
 5a. **Text-fidelity round-trip (every entity and every field this deploy touched).** For each entity, compare live `description`, `singular_label`, `plural_label` against the parsed model values **byte-for-byte**. For each field declared in the model, compare live `description` and `title` against the model byte-for-byte. Any mismatch is a Stage 5 defect — surface the entity / field, quote both strings with their byte counts, and recommend re-issuing the offending `create_*` / `update_*` with the model-sourced text. Catches every failure mode the "Data fidelity" section enumerates: truncation (live byte-count shorter than model), normalization (live missing backticks / apostrophes / Unicode the model carried), and empty-string-clobber on `update_field` (live empty where model is non-empty). Equivalent round-trip applies to permission `description` against the §8.1 Permissions catalog `description` cell. The check is cheap (every relevant column is already in the `read_entity` / `read_field` / `read_permission` response from earlier verification steps) and is the single load-bearing assertion that catches data-mutation regressions before the user does.
 
@@ -63,8 +74,8 @@ After all creates are done, emit a **structured verification report** with expli
 === Verification report ===
 
 Modules:
-  itsm                       ✓ module_type=domain    permissions=2/2  default_roles=2/2
-  vendors_master  (NEW)      ✓ module_type=master    permissions=2/2  default_roles=2/2
+  itsm                       ✓ module_type=domain   lineage✓   permissions=2/2  default_roles=2/2
+  vendors_master  (NEW)      ✓ module_type=master   lineage✓   permissions=2/2  default_roles=2/2
 
 Roles (deployer-managed, origin ∈ {model, model_master}):
   itsm_viewer                ✓ origin=model         12 members   carries itsm:read
@@ -119,9 +130,9 @@ Personas provisioned (4k):  M personas, K total grants
   ...
 
 Re-prefixed permissions (Stage 4a-scaffold):  N permissions
-  hiring-starter:hire_candidate        (canonical ats-recruitment-pipeline not installed)
-  hiring-starter:approve_offer         (canonical ats-offers not installed)
-  hiring-starter:view_all_candidates   (canonical ats-candidate-crm not installed)
+  hiring-starter:hire_candidate        (catalog ats-recruitment-pipeline not installed)
+  hiring-starter:approve_offer         (catalog ats-offers not installed)
+  hiring-starter:view_all_candidates   (catalog ats-candidate-crm not installed)
   ...
 
 Master-install reconciliation (Stage 4n):  P entities reconciled, Q permissions renamed, R grants re-pointed

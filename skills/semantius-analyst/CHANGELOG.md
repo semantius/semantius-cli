@@ -8,6 +8,31 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## Unreleased: §3 flag removal, frontmatter simplification, `canonical_`→`catalog_` rename, row-scope playbook now analyst-owned
+
+2026-06-27. Downstream half of the platform-schema contract change (architect + use-semantius landed the upstream half; the modeler moves in lockstep). The architect's new blueprint shape removed the §3 `pattern flags` column, renamed §3 `canonical code` → `catalog code`, dropped `system_description` and added `icon_name` to frontmatter, and dropped the `has_*` §8.2 source flags. The analyst absorbs the row-scope / lock / approval authoring those flags used to hint. No version bump — `CURRENT_VERSION` stays `5.3`, `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"` (the architect still stamps `"3.0"`; the prior analyst version was never released, so this folds into `5.3`).
+
+What changed:
+
+1. **Blueprint parse (Stage 1) matches the architect's new shape.** Frontmatter: `system_description` gone, `icon_name` added, `tagline` is now the ≤40-char selector chip (→ `modules.description`). §3 columns: `catalog code` (was `canonical code`, parsed into `catalog_code`), no `pattern flags` column. §8.2 `source flag` vocabulary is `lifecycle` / `owner_edit` / `narrow_write` — the `has_single_approver` named-gate handling is gone.
+2. **Catalog provenance reads renamed.** The Stage 2c provenance index and Stage 3 placement read `catalog_owner_module` (was `canonical_owner_module`) and no longer carry `pattern_flags`. Concept rename `canonical_`→`catalog_` across the catalog-owner / re-prefix machinery (incl. the `**Catalog owner:**` spec line label the modeler parses, and `re-prefixed-from <catalog-module>.<verb>`). The authoritative English sense of "canonical" (canonical copy / source / placeholder / empty-section) is unchanged.
+3. **Row-scope / locks / approvals are now fully analyst-owned (the substantive change).** A **row-scope playbook** in Stage 7 (S1): per entity with an owner FK, choose **private** (a `select_rule` on the owner column, no override permissions) vs **owner + oversight** (`or(owner==$user_id, has_permission(<slug>:view_all_X))` + the `view_all_` / `manage_all_` `override`-tier permissions rolled up under `:admin`). Encodes the **REPLACE-semantics trap**: a `select_rule` with no `has_permission` disjunct locks admins out. Submit-then-lock / terminal-lock stay Stage 10 `validation_rules` (F6 / F9, unchanged). An approval is a §7 gated transition + §8.1 `workflow-gate` + §9 RACI Accountable — no flag, no §8.2 `has_single_approver` rule.
+4. **Dead flag scaffolding removed.** The pre-save `personal_content` and `has_single_approver` coherence checks, the §3-confirm "pattern-flag translation" table (reframed as a behavior-phrasing vocabulary), the `override (personal_content)` / `override (submit_lock)` §8.1 tiers (now plain `override`), and the living-RACI structural-flag mapping (now keyed off the analyst's own Stage 5 / 7 / 10 decisions).
+5. **Frontmatter / spec template.** Dropped `system_description`; `tagline` carries the selector-chip text; added `icon_name`. `access_scope` detection reads the top-level `modules.access_scope` column (was `settings->>access_scope`). The Stage 2 `create_module` plan and the module schema note carry `icon_name` / `domain_code` / `access_scope`.
+
+**Minor** (folds into `5.3`): no spec major-shape break an existing released spec would fail on (the prior version was unreleased). The analyst + modeler land together and are coordinated with the platform-schema go-live.
+
+## Unreleased: SKILL.md restructured into a resident spine + per-stage references
+
+2026-06-25. The analyst SKILL.md had grown to 1760 lines (roughly 70k tokens loaded into context on every trigger). Restructured it into a ~400-line resident orchestration spine plus 16 per-stage `references/*.md` files loaded on demand, mirroring the modeler's structure. The writing conventions (near-identically duplicated across all four skills) were extracted to a shared [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md).
+
+1. **Stays resident** (loaded every run): frontmatter, the three-skill workflow intro, a writing-conventions summary (with the Pre-emit check and Narration restraint kept verbatim), the version constants, the tool-ban list, Step 0/1, the access-control resolution order plus the "What basic authors" contract, the MUST-FIRE widget rule, a new stage-index table plus execution-order note, and the Stage 8 + Stage 11 pre-save verification gates.
+2. **Moved to references** (loaded on demand): every per-stage authoring detail (parse, inspect, the Stage 3 placement / collision / confirm / drift widgets, field elicitation, the workflow / input-type / select-rule scans, governance, the write mechanics, and Modes B/C/D).
+3. **Verified behavior-preserving.** Every non-separator content line survives in the spine or a reference; all 40 relative links resolve; the six relative links inside moved blocks were re-pathed for their new depth; the four dangling "(See Access-control scope above)" notes now point at the resident contract; the close-out, duplicated between the resident Closing message and the Stage 11 reference, was collapsed to a pointer. Also corrected a pre-existing dangling Step 0 reference (`references/cli-usage.md` to `../use-semantius/references/cli-usage.md`).
+4. **Pre-move version-drift fix.** Reconciled four stale version literals (the Stage 11 pre-save check, the Mode C major-assert, and the Mode C/D stamps) from `"5.0"` / `"5.2"` to `"5.3"`, matching the `CURRENT_VERSION` stamp.
+
+**No `CURRENT_VERSION` bump.** This changes SKILL.md's internal organization only: no spec-artifact shape, frontmatter-key, section-numbering, or reconciliation-annotation change, so the analyst/modeler version contract is untouched and the modeler's `EXPECTED_MAJOR` stays put. **Minor** (organizational); deferred to the maintainer like the entries below.
+
 ## Unreleased: optional-entity question respects the 4-option cap; access-control label and wording plainer
 
 2026-06-22. Two user-facing fixes in Stage 3a (Optional concepts) and Stage 2c (Access control):

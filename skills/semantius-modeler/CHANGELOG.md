@@ -8,6 +8,20 @@ Entries below are newest first.
 
 ---
 
+## Unreleased: §3 flag removal, frontmatter simplification, `canonical_`→`catalog_` rename, `domain_code`/`access_scope`/`icon_name` as top-level columns
+
+2026-06-27. Deployer-side half of the platform-schema contract change (architect + use-semantius landed the upstream half). `EXPECTED_MAJOR` stays `5` — the prior version was never deployed, so there is no installed base to migrate.
+
+Platform columns moved / renamed / deleted, so the deployer's writes change:
+
+1. **Stop stamping `entities.pattern_flags` (column deleted).** Removed the stamp from the Stage 4c provenance payload, the 4c provenance checklist row, the "`pattern_flags` is the trap" block, the Stage 1 derivation (Model-to-Entity Mapping), the SKILL.md provenance list, the `deploy-script-template.md` payload comment, and the Stage 5 entity-provenance assertion. The §3 behavior flags (`personal_content` / `submit_lock` / `single_approver` / `multi_approver`) were never platform-enforced; enforcement always lived in analyst-authored `select_rule` / `validation_rules` + RBAC.
+2. **`entities.canonical_owner_module` → `catalog_owner_module`**, and the spec line label `**Canonical owner:**` → `**Catalog owner:**` (the analyst emits it, the deployer parses it — renamed atomically across both skills). Part of the `canonical_`→`catalog_` concept rename, including the re-prefix machinery (`re-prefixed-from <catalog-module>.<verb>`, catalog-prefixed / non-catalog-prefixed permissions, Stage 2i "Catalog-owner detection"). The authoritative English sense of "canonical" (canonical copy / source / built-in list / branches) is unchanged.
+3. **`domain_code` / `access_scope` → top-level `modules` columns** (were `modules.settings` keys), plus the **new `modules.icon_name`** column. The Stage 4a create/update payload, the 4a checklist + example, the Stage 2a `create_module` plan, the module schema note, the Stage 2.5 access-scope persist + the detection query (`access_scope=eq.full`, was `settings->>access_scope=eq.full`), and the Stage 5 verify round-trip all read / write the top-level columns now. `modules.settings` keeps `naming_mode` / `module_kind` / `catalog_snapshot` / `promotion_decisions` / `raci_mode`.
+4. **`modules.description` ← frontmatter `tagline`** (was `system_description`, removed). `tagline` is now the ≤40-char selector-chip text; the `description` frontmatter key is longer marketing prose, carried only.
+5. **Approval cross-check retired (Stage 2j).** The `single_approver` / `has_single_approver` named-gate mechanism is gone; an approval is now a §7 gated transition + its §8.1 `workflow-gate` permission (minted / verified like any §8.1 row) + the §9 RACI Accountable actor. The §8.1 `override` tier no longer carries a `(personal_content)` / `(submit_lock)` parenthetical.
+
+Deploy-time correctness change (the deployer would otherwise write platform columns that no longer exist as `settings` keys / under the old names); no spec-shape change beyond the frontmatter keys above. The `settings.access_scope` / `settings.domain_code` entries further down are now historical — read them as "what was true before this entry."
+
 ## Unreleased: plain-language vocabulary pinned (entity vs. field vs. record); access-control label plainer
 
 2026-06-22. Two user-facing wording fixes, both documentation/contract (no executor-code change), `EXPECTED_MAJOR` stays `5`:

@@ -178,6 +178,8 @@ This applies to every write call where the payload contains *any* model-authored
 
 This skill emits shell and Bun (TypeScript) helper scripts during a deploy (e.g. the bulk seeders described in Stage 5, ad-hoc `update_entity` rule appliers, batch field creators when a model has many fields). These are **ephemeral one-shots**, tied to a single model and a single deploy run. They are not skill source.
 
+**The deploy script's fixed primitives are a committed resource: [`references/deploy-lib.ts`](./references/deploy-lib.ts)** — the loud `write` transport, the exit-code-aware `read1` existence check, and the halting `runDeploy` harness. Copy it into `.tmp_deploy/` and import it; never re-implement the primitives in each script. [`references/deploy-script-template.md`](./references/deploy-script-template.md) shows how to assemble the bespoke orchestration around them. A script that wraps writes in a bare `catch` and continues will report success over a partial deploy — the exact failure the "Failure is loud and halting" invariant exists to prevent.
+
 **Use Bun, not Python.** Any helper that needs more than trivial shell logic — JSON construction, response-envelope unwrapping, capturing IDs across many POSTs, conditional logic over the live catalog — is a `.ts` file run with `bun run`. Python is forbidden: Windows installs don't reliably expose `python3` on `PATH`, virtualenv state pollutes the project, and the Git Bash vs Windows-side `/tmp/` split makes script paths unreliable. Bun is a single native binary, installs once, runs the same on every platform.
 
 **Where they go:**
@@ -207,7 +209,7 @@ The spec also carries `blueprint_version` (the blueprint artifact version the an
 
 Cross-entity JsonLogic primitives (`set_record`, `let`, `throw_error`) are passed through byte-for-byte inside `validation_rules` / `computed_fields` and (with care) `select_rule`. The "column must exist on this entity" parse check skips column references qualified by a `set_record` / `let` binding (the bound variable's columns resolve against the bound entity). See `references/conflict-resolution.md`.
 
-**Permission-prefix resolution rule (the "entity-owning-module rule").** Workflow gates and pattern-flag overrides for entity E are prefixed by E's CURRENT owning module slug, not by the installing unit. The rule fires on every install regardless of `module_kind`. Stage 4a-scaffold honors it when minting gates / overrides for entities with re-prefixed-from annotations; Stage 4n handles the master-install reconciliation when a Branch-B promotion moves an entity to a new owning module (sweep every non-canonical-prefixed permission for the entity's verbs, mint sibling canonical-prefixed permissions and `role_permissions` rows, re-emit hierarchy edges; no deletes, per the no-auto-deletion rule).
+**Permission-prefix resolution rule (the "entity-owning-module rule").** Workflow gates and row-scope overrides for entity E are prefixed by E's CURRENT owning module slug, not by the installing unit. The rule fires on every install regardless of `module_kind`. Stage 4a-scaffold honors it when minting gates / overrides for entities with re-prefixed-from annotations; Stage 4n handles the master-install reconciliation when a Branch-B promotion moves an entity to a new owning module (sweep every non-catalog-prefixed permission for the entity's verbs, mint sibling catalog-prefixed permissions and `role_permissions` rows, re-emit hierarchy edges; no deletes, per the no-auto-deletion rule).
 
 The history of the deployer's contract changes lives in [`CHANGELOG.md`](./CHANGELOG.md) — what each analyst-lockstep bump changed in the deployer's parser, stage numbering, and audit checks. That file is not loaded at runtime; the body of this SKILL.md is the **current contract**, the CHANGELOG is the **history**.
 
@@ -218,6 +220,8 @@ The history of the deployer's contract changes lives in [`CHANGELOG.md`](./CHANG
 ## Your role: thin executor of a reconciled spec
 
 The analyst is the gatekeeper. The modeler executes.
+
+> **Hard prerequisite before any write: Step 0.** Everything below is the *workflow* (what to deploy, in what order). *How* each write actually talks to Semantius — response shapes, the exact field column names, nullability rules, the `update_field` id format, the Golden Rules — lives in the **use-semantius** skill you load at **Step 0** below. Step 0 is a gate you pass through before issuing a single `create_*` / `update_*`, not a "read it if you get stuck" reference. The single most common way this deploy fails is authoring a Bun script straight from the spec without loading use-semantius first, then tripping over column names and response shapes that Step 0 documents. A condensed safety-net cheat table lives in Step 0 too — but it is a backstop, not a substitute for reading the files.
 
 Semantius is a **unified platform, a universal system of records**. The analyst has already done the catalog-gatekeeping work: collision detection, similarity heuristic, merge / rename / promote widgets, optional-entity selection. By the time the modeler runs, every entity in the spec carries an explicit `**Reconciliation:**` annotation:
 
@@ -249,15 +253,14 @@ These rules apply across every stage and stay resident in the spine. The canonic
 
 ### Provenance stamping (core columns; applies to every create in this stage)
 
-The platform ships core provenance columns the modeler is the only writer of. **The deployer stamps these values at provision time** — they are how rename detection, canonical-owner-arrival, behavior discovery, and cross-domain merges become deterministic platform reads downstream (the analyst on re-reconcile, and every `use-*` discovery skill). The rules, once, for the whole stage:
+The platform ships core provenance columns the modeler is the only writer of. **The deployer stamps these values at provision time** — they are how rename detection, catalog-owner-arrival, behavior discovery, and cross-domain merges become deterministic platform reads downstream (the analyst on re-reconcile, and every `use-*` discovery skill). The rules, once, for the whole stage:
 
 - **Stamp VALUES only — never `create_field` these columns, never write `ctype`.** Core registers them with `ctype = 'core'` (so `is_core` is *derived* as `ctype <> ''`); `ctype` is privilege-locked. The modeler does **not** create these columns and does **not** stamp `is_core` — it passes the column values on the `create_*` / `update_*` payload it already sends. (If a deploy ever errors that one of these columns is missing, the platform is too old — surface that; do not try to `create_field` it.)
-- **`entities.catalog_entity_code` = the CANONICAL code**, from the spec's `**Catalog entity code:**` line (NOT `table_name`, which holds the deployed / dialect / silo name). Default to `table_name` only when the line is absent.
-- **`entities.canonical_owner_module`** = the owner-module slug from the spec's `**Canonical owner:**` line (an `embedded_master` provisioned locally as a placeholder while its canonical owner module is absent); `''` when the line is absent (this module owns the entity (`role = master`), or it is local). Soft string, not an FK.
+- **`entities.catalog_entity_code` = the catalog code**, from the spec's `**Catalog entity code:**` line (NOT `table_name`, which holds the deployed / dialect / silo name). Default to `table_name` only when the line is absent.
+- **`entities.catalog_owner_module`** = the owner-module slug from the spec's `**Catalog owner:**` line (an `embedded_master` provisioned locally as a placeholder while its catalog owner module is absent); `''` when the line is absent (this module owns the entity (`role = master`), or it is local). Soft string, not an FK.
 - **`entities.entity_type`** = the class from the spec's `**Entity type:**` line; **`'unclassified'` (never `''`) when absent.** Must be one of the six CHECK values.
-- **`entities.pattern_flags`** = the sparse `{flag: true}` object from the entity's authored flags; `{}` when none.
 - **`entities.catalog_entity_aliases`** = **APPENDED** to on a reuse/merge that renames an incoming entity onto an existing host (read the host's current array, push each new `{alias_code, source_domain, source_module, decided}` element, write back). **Never rewrite or drop prior elements**; a plain `create_entity` leaves it at `[]`.
-- **`modules.catalog_module_code`** = the catalog blueprint / `system_slug` the module was provisioned from; plus the `modules.settings` keys (`naming_mode`, `module_kind`, `domain_code`, `catalog_snapshot`, `promotion_decisions`), on `create_module` / `update_module`.
+- **`modules.catalog_module_code`** = the catalog blueprint / `system_slug` the module was provisioned from; the top-level columns `domain_code`, `access_scope`, and `icon_name`; plus the `modules.settings` keys (`naming_mode`, `module_kind`, `catalog_snapshot`, `promotion_decisions`), on `create_module` / `update_module`.
 - **`roles.catalog_role_code`** = the catalog persona/role slug a role was provisioned from, on every `create_role`.
 - **Codes are write-once at create.** The two scalar codes (`catalog_entity_code` / `catalog_module_code`) are set on the create call and **never re-sent on a later rename** — a rename touches `table_name` / `module_slug` only. Core enforces immutability-once-non-empty, so a re-send of a *changed* value is rejected; a re-run that re-sends the *same* value is a harmless idempotent no-op.
 
@@ -285,9 +288,9 @@ The environment checks are shared across all four Semantius skills and live in o
 
 ---
 
-## Step 0: Load the use-semantius Skill
+## Step 0 (hard gate): Load the use-semantius Skill
 
-Before doing anything else, read the use-semantius skill and its data-modeling reference:
+**This is a blocking prerequisite, not a suggestion. Do not author a deploy script and do not issue a single `create_*` / `update_*` call until you have read both files below.** Every write this skill makes goes through use-semantius's patterns. The failures that look like platform bugs — wrong column names, `null` rejected on a column you thought was optional, "I got an array, I expected an object" — are almost always Step 0 not being read. Read both, now:
 
 ```
 Read: ../use-semantius/SKILL.md
@@ -295,6 +298,19 @@ Read: ../use-semantius/references/data-modeling.md
 ```
 
 The data-modeling reference gives you the mandatory creation order, all field formats, the Golden Rules, and exact CLI syntax. Everything in the execution stages below follows those patterns. Also read `references/cli-usage.md` if you need help with CLI invocation, piping, or error handling.
+
+### Safety-net cheat table (does NOT replace reading the two files above)
+
+These are the traps that have actually broken deploys. This table is a backstop for when you read Step 0 but a detail slips — it is a pointer to the authoritative text, never a substitute for it. **When anything here is incomplete or seems to conflict with use-semantius, use-semantius wins; go read the cited section.**
+
+| Trap | Wrong | Right | Authoritative section |
+|---|---|---|---|
+| **Read response shape** | Treating a `crud` read as a bare object; trusting exit `0` to mean "found" | `crud` reads return a JSON **array** by default (even for one row); exit `0` + `[]` means "found nothing." Pass **`--single`** for any read that must resolve to exactly one row: it returns a bare object and exits `1` (none) / `2` (ambiguous). | use-semantius SKILL.md → *Response handling: exit code is not enough* |
+| **Make a field mandatory / unique** | A `required` field column (`"required": true`) | There is **no `required` column**. Mandatory = **`input_type: "required"`**. Unique = **`unique_value: true`**. Two different columns, two different concepts. | data-modeling.md → *All Field Properties*, *`unique_value`* |
+| **Nullability** | Sending `is_nullable` on `create_field` / `update_field` | **Never send `is_nullable`** — the platform computes nullability from `format`. Only `reference`, `date`, and `date-time` allow NULL; every other format is `NOT NULL` with an auto-default. | data-modeling.md → *`default_value`*, *Relationships* |
+| **Non-nullable integers** | `null` for `module_id` or any `integer` / `int32` / `int64` field | Integers are `NOT NULL`. `module_id` must be a real (non-null) integer id; required integer fields auto-default to `0`. Never pass `null` to an integer column. | data-modeling.md → *Key Entity Fields*, *`default_value`* |
+| **`update_field` / `delete_field` id** | A PostgREST-style `{"filters": "..."}` | Identify the field by its **composite `id` `"<table_name>.<field_name>"`**, e.g. `update_field {"id": "tickets.approved_at", "data": {...}}`. `filters` is a *read*-tool concept; `update_field` / `delete_field` take `id`. | data-modeling.md → *Updating and Deleting Entities* |
+| **Golden Rule #1 — read before write** | `create_*` straight from the spec | **Always `read_*` first.** Read-before-write is what makes every Stage 4 op idempotent, which is the whole basis of the re-run recovery model. Skip it and you double-create and corrupt dedup. | use-semantius SKILL.md → *Golden Rules* #1 |
 
 All Semantius operations in this skill are performed using the **`semantius` command-line tool**, for example:
 
@@ -362,5 +378,9 @@ For a clean, fully-completed deploy, the final assistant message is a **call-to-
 
 Everything else, what was created, what was skipped, why built-ins were reused, counts, per-entity links, caveats, justifications, belongs in the Stage 5 verification summary **before** this closing block, separated by a horizontal rule (`---`). Do not mix the two. The closing must not contain reasoning, parentheticals, or "by the way" notes; those dilute the call to action.
 
-This block is **sticky**: if a follow-up turn (audit, "did I miss anything?", fix-up, clarification) interrupts before the user has answered the sample-data question, **re-emit the same three lines at the end of the follow-up reply**. Treat them as a footer that re-attaches itself until the user accepts sample data, declines it, or explicitly closes the session ("we're done", "thanks, that's all"). Before sending any assistant message that comes after a **clean** Stage 4 completion, scan the draft: if it does not contain both the module landing-page link and the sample-data question, append the closing block. **Suppress this footer entirely when the deploy halted** (see the carve-out at the top of this section) — a halted deploy never reached a "live" state, so re-attaching a "model is live" footer would misreport the outcome.
+This block is **sticky, but only while the sample-data question is unanswered.** If a follow-up turn (audit, "did I miss anything?", fix-up, clarification) interrupts before the user has answered it, **re-emit the same three lines at the end of the follow-up reply**. Treat them as a footer that re-attaches itself until the user accepts sample data, declines it, or explicitly closes the session ("we're done", "thanks, that's all"). Before sending any assistant message that comes after a **clean** Stage 4 completion **and before the user has answered the sample-data question**, scan the draft: if it does not contain both the module landing-page link and the sample-data question, append the closing block.
+
+**Once the user answers the sample-data question, the gate is closed: never re-emit the question.** An explicit "yes" is consent, the next action is to seed and report the per-entity counts, not to ask again. A "no" or decline ends it. Critically, do **not** treat "consented but not yet seeded" (the seed run is pending, still in progress, was interrupted, or could not complete) as "unanswered" and re-attach the footer, that is exactly the confusing double-ask the user sees after they already said yes. If seeding is blocked, handle the blocker per Stage 6 (explain once, offer to hand over the script, and wait) **without** re-emitting the yes/no question.
+
+**Suppress this footer entirely when the deploy halted** (see the carve-out at the top of this section) — a halted deploy never reached a "live" state, so re-attaching a "model is live" footer would misreport the outcome.
 

@@ -15,9 +15,9 @@ Keep the section order and the table columns identical, downstream skills parse 
 artifact: semantic-blueprint
 blueprint_version: "3.0"
 license: {{license slug, e.g. MIT}}
-system_name: {{System display name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
-system_description: {{Compact tagline ≤40 chars shown beside system_name in the UI module selector. For acronyms use the plain English expansion (CRM → "Customer Relationship Management"). For non-acronym names use a 2-4 word disambiguating phrase.}}
-tagline: {{One-line marketing-voice line for catalog / card surfaces. Elevator pitch. Distinct from system_description (display name) — this is the "what's in it for me" line.}}
+system_name: {{System display name shown to the user AND used as the module name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
+icon_name: {{Module icon as an icon-set handle (not a URL), e.g. briefcase, users, ticket}}
+tagline: {{One-line marketing-voice line for catalog / card surfaces, ALSO used as the module record's short description (modules.description) shown beside the name in the selector. Elevator pitch — keep it concise enough for the chip.}}
 description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine.}}
 system_slug: {{system_slug_snake_case}}
 domain_modules:
@@ -93,34 +93,28 @@ _**Audience and register:** the downstream skills, not a human reviewer. The arc
 
 ## 3. Entities catalog
 
-| # | data_object | canonical code | singular | plural | role | mastered in | mastered label | necessity | pattern flags | entity_type | write tier | notes |
-| ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `{{table_name}}` | `{{canonical_code}}` | {{Singular Label}} | {{Plural Label}} | master \| embedded_master \| contributor \| consumer | `-` (this module owns) \| `<other_module_slug>` | `-` (this module owns) \| {{Display name of owner module}} | required \| optional | personal_content \| submit_lock \| single_approver \| - | operational_workflow \| operational_record \| catalog \| junction \| computed | `:manage` \| `:admin` \| `:read` \| `:manage` _(pending)_ | {{optional one-liner}} |
-| 2 | … | … | … | … | … | … | … | … | … | … | … | … | … |
+| # | data_object | catalog code | singular | plural | role | mastered in | mastered label | necessity | entity_type | write tier | notes |
+| ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `{{table_name}}` | `{{catalog_code}}` | {{Singular Label}} | {{Plural Label}} | master \| embedded_master \| contributor \| consumer | `-` (this module owns) \| `<other_module_slug>` | `-` (this module owns) \| {{Display name of owner module}} | required \| optional | operational_workflow \| operational_record \| catalog \| junction \| computed | `:manage` \| `:admin` \| `:read` \| `:manage` _(pending)_ | {{optional one-liner}} |
+| 2 | … | … | … | … | … | … | … | … | … | … | … |
 
 **Column rules:**
 
 - **`data_object`** — the backticked snake_case `table_name` and **nothing else** (no parenthesized label). Lower snake_case matching `[a-z][a-z0-9_]*`, always the plural form for the table name (`candidates`, not `candidate`); Semantius requirement. This is the **local / dialect** name the entity deploys under. Must equal this entity's §2 `data_object` byte-for-byte.
-- **`canonical code`** (blueprint_version 3.0+) — the entity's **canonical uber-model code**: the stable design-time identity, lower snake_case plural, backticked. This is the lineage carrier the analyst threads through to the spec and the deployer stamps into `entities.catalog_entity_code` (NOT the deployed `table_name`, which lives in `data_object` / `entities.table_name` and may drift). **Agent-optimized self-describing naming: canonical = local** — set `canonical code` equal to `data_object`. When the deployed `data_object` is a **vendor dialect** (`accounts` for canonical `customers`) or a **silo rename** (`erp_vendors` for canonical `vendors`), `canonical code` carries the canonical concept and `data_object` the deployed name. Stamp the canonical code only when the entity maps to a recognized uber-model concept you can name confidently; otherwise default `canonical code = data_object` (never invent a canonical name). Catalog-clones inherit the source slice's canonical code. The deployer treats it as write-once identity, so a later rename touches `table_name` only, never this code.
+- **`catalog code`** (blueprint_version 3.0+) — the entity's **catalog uber-model code**: the stable design-time identity, lower snake_case plural, backticked. This is the lineage carrier the analyst threads through to the spec and the deployer stamps into `entities.catalog_entity_code` (NOT the deployed `table_name`, which lives in `data_object` / `entities.table_name` and may drift). **Agent-optimized self-describing naming: catalog = local** — set `catalog code` equal to `data_object`. When the deployed `data_object` is a **vendor dialect** (`accounts` for canonical `customers`) or a **silo rename** (`erp_vendors` for canonical `vendors`), `catalog code` carries the catalog concept and `data_object` the deployed name. Stamp the catalog code only when the entity maps to a recognized uber-model concept you can name confidently; otherwise default `catalog code = data_object` (never invent a catalog name). Catalog-clones inherit the source slice's catalog code. The deployer treats it as write-once identity, so a later rename touches `table_name` only, never this code.
 - **`singular`** — the entity's **singular** display label (e.g. `Candidate`). Must equal the parenthetical in this entity's §7 lifecycle heading byte-for-byte. Maps to the platform's `entities.singular_label`.
 - **`plural`** — the entity's **plural** display label (e.g. `Candidates`). Must equal the §2 `Name` column and the §2 Mermaid node label byte-for-byte. Maps to the platform's `entities.plural_label`.
 - **`role`** — one of:
-  - `master`: this module is the canonical owner of the entity; lifecycle defined in §7. Only the canonical owner module declares `master`.
-  - `embedded_master`: this module needs the entity self-contained today, but a different module is the *intended* canonical owner (named in `mastered in`). Until that owner is installed, this module hosts the entity; once the owner installs, the entity migrates automatically without data movement. Use when the blueprint stands alone but expects a future master. Example: `candidates` in `hiring-starter` with `mastered in: ats-candidate-crm`.
+  - `master`: this module is the catalog owner of the entity; lifecycle defined in §7. Only the catalog owner module declares `master`.
+  - `embedded_master`: this module needs the entity self-contained today, but a different module is the *intended* catalog owner (named in `mastered in`). Until that owner is installed, this module hosts the entity; once the owner installs, the entity migrates automatically without data movement. Use when the blueprint stands alone but expects a future master. Example: `candidates` in `hiring-starter` with `mastered in: ats-candidate-crm`.
   - `contributor`: mastered elsewhere (per `mastered in`) but participates in this module's workflows. The analyst wires reuse-from at deploy time. Example: `skill_profiles` in `ats-candidate-crm` with `mastered in: lms-skills`.
   - `consumer`: read by this module; never written here. Example: `career_aspirations` (read-only reference from another module).
-- **`mastered in`** — `-` when this module owns the entity (role = `master`). Otherwise, the snake_case slug of the canonical owner module (`ats-candidate-crm`, `lms-skills`, `talent-succession-career`). For `embedded_master`, this names the *future* owner.
+- **`mastered in`** — `-` when this module owns the entity (role = `master`). Otherwise, the snake_case slug of the catalog owner module (`ats-candidate-crm`, `lms-skills`, `talent-succession-career`). For `embedded_master`, this names the *future* owner.
 - **`mastered label`** (formerly `label`) — `-` when `mastered in` is `-`. Otherwise, the human-readable display name of the **owning module** (`Candidate CRM`, `Skills and Learning Paths`, `Succession and Career Planning`). It names the owner module, NOT this entity (the entity's own labels are the `singular` / `plural` columns); the analyst uses it in user-facing prompts so users don't see raw slugs. For platform built-ins (`users`, `roles`), use `_(platform built-in)_` in both `mastered in` and `mastered label`.
 - **`necessity`** — `required` or `optional`. Optional entities are presented to the user during reconciliation; the user picks which to include. Common candidates for optional: `locations` (some orgs have one), `cost_centers` (some orgs don't track), `tags` (nice-to-have).
-- **`pattern flags`** — semicolon-separated flags. Currently defined:
-  - `personal_content` — the entity carries per-user content (notes, journal entries, drafts) and needs row-scope read/edit overrides (`view_all_*` / `manage_all_*` permissions in §8.1).
-  - `submit_lock` — the entity locks fields against further edits once a submit-state flag fires (interview scorecards, time entries, approvals).
-  - `single_approver` — the entity carries one approver field that gates a lifecycle transition (offers, change requests). The §8.2 rule for `has_single_approver` MUST name the actual approve gate via `permission_verb_override` (e.g. `approve_offer`); phantom `approve_<entity>_approval` codes are an error.
-  - `multi_approver` — multiple approvers gate the transition.
-  - `terminal_lock` — the entity locks fully at a terminal lifecycle state.
-  - More flags may be added; unknown flags are passed through verbatim.
+- **(behavior flags removed)** — row-scope visibility, field locks, and approval requirements are **not** §3 columns. Approvals are gated lifecycle transitions (§7 `requires_permission?` + the matching §8.1 `workflow-gate`) and/or §9 RACI. Row-scope and field-lock rules are authored by the analyst as field-level JsonLogic (`select_rule` / `validation_rules`) during reconciliation; when a specific row-scope requirement is known up front and cannot be derived, state it in the **Additional Requirements Specification** section (e.g. *"`user_bookmarks` is private to its creator — scope on `created_by`"*).
 - **`entity_type`** (blueprint_version 3.0+) — the entity's **data-class axis**, mirroring the closed upstream `data_objects.entity_type` set: one of `operational_workflow`, `operational_record`, `catalog`, `junction`, `computed` (the sixth value `unclassified` is the platform's empty default and is **not** authored here — emit a concrete class). This is the **primary classification**: `write tier` derives FROM it, never the reverse. Sourced from Stage 9 (carry-forward from the upstream `data_objects` value for catalog-clones when it is classified; otherwise derive via the Stage 9 ladder, reading §5 for junctions and §7 for workflow-vs-record). Maps to the platform's `entities.entity_type`. The set is **closed** — never coin a value outside it.
-- **`write tier`** — the entity's edit-permission tier, **DERIVED from `entity_type`** (do not classify the tier independently): `catalog` → `:admin`; `operational_workflow` / `operational_record` → `:manage`; `junction` → neighbor-based (`:manage` by default, following its parents); `computed` → `:read` (read-only). One of `:manage` (operational, default), `:admin` (reference / config), `:read` (computed / read-only), or `:manage` _(pending)_ when the tier depends on what gets installed (`embedded_master` rows whose canonical owner isn't yet present and may shift the tier). Consumed by the analyst verbatim (the analyst no longer re-derives the tier — it validates against the live catalog and emits drift only).
+- **`write tier`** — the entity's edit-permission tier, **DERIVED from `entity_type`** (do not classify the tier independently): `catalog` → `:admin`; `operational_workflow` / `operational_record` → `:manage`; `junction` → neighbor-based (`:manage` by default, following its parents); `computed` → `:read` (read-only). One of `:manage` (operational, default), `:admin` (reference / config), `:read` (computed / read-only), or `:manage` _(pending)_ when the tier depends on what gets installed (`embedded_master` rows whose catalog owner isn't yet present and may shift the tier). Consumed by the analyst verbatim (the analyst no longer re-derives the tier — it validates against the live catalog and emits drift only).
 
 ## 4. Aliases and industry synonyms
 
@@ -180,7 +174,7 @@ _Edges this scope drives: the in-scope endpoint has `role` of `master` or `contr
 
 #### 5.3b Context edges on embedded shells and consumed entities
 
-_Edges the canonical owner drives, shown for context: the in-scope endpoint has `role` of `embedded_master`, `consumer`, or `derived`._
+_Edges the catalog owner drives, shown for context: the in-scope endpoint has `role` of `embedded_master`, `consumer`, or `derived`._
 
 | from | verb | to | cardinality | necessity | delete_mode | fk_format | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -189,8 +183,8 @@ _Edges the canonical owner drives, shown for context: the in-scope endpoint has 
 **§5.3b `delete_mode` vocabulary** (distinct from §5.1 / §5.2 / §5.3a):
 
 - `none` — the edge is fully optional from this scope's perspective. No FK column emitted unless the user opts in.
-- `none (required-if-present)` — the canonical owner marks the edge as required, but it's presence-conditional from this scope's perspective: if the target entity is installed, the FK becomes mandatory; if absent, the edge is dormant (no column, no constraint). This is the row-10 framing.
-- `⚠ audit: <reason>` — a soft data-quality flag: the canonical owner declares a required edge whose target sits outside the installable closure (e.g. *"required composed child out of scope"*). The architect surfaces the flag verbatim; the analyst expects the source data fixed upstream, not modeled around. Common reason text: `required composed child out of scope`, `required parent missing`.
+- `none (required-if-present)` — the catalog owner marks the edge as required, but it's presence-conditional from this scope's perspective: if the target entity is installed, the FK becomes mandatory; if absent, the edge is dormant (no column, no constraint). This is the row-10 framing.
+- `⚠ audit: <reason>` — a soft data-quality flag: the catalog owner declares a required edge whose target sits outside the installable closure (e.g. *"required composed child out of scope"*). The architect surfaces the flag verbatim; the analyst expects the source data fixed upstream, not modeled around. Common reason text: `required composed child out of scope`, `required parent missing`.
 
 **§5.3b `fk_format` is `n/a`** — these edges are context-only; the analyst doesn't emit a field for them in this scope's spec. The owning module's spec carries the field.
 
@@ -229,7 +223,7 @@ Catalog-clone blueprints inherit this section from the source. Greenfield bluepr
 
 ### 6.4 Master providers (modules / domains that own masters this scope embeds)
 
-| data_object | role here | necessity | canonical owner(s) | slice notes |
+| data_object | role here | necessity | catalog owner(s) | slice notes |
 | --- | --- | --- | --- | --- |
 | `{{table_name}}` | contributor \| consumer | required \| optional | {{OWNER_MODULE_UPPER}} ({{DOMAIN_CODE}}) | {{e.g. "only the active_skills slice is read"}} |
 
@@ -277,8 +271,6 @@ The full permission catalog and rule list. The analyst expands this to spec-form
 | `{{system_slug}}:manage` | baseline-manage | Edit operational records | ✓ |
 | `{{system_slug}}:admin` | baseline-admin | Edit reference data and inherit every workflow gate below | - |
 | `{{system_slug}}:{{workflow_suffix}}` | workflow-gate (lifecycle) | Transition `{{table}}` into state `{{state}}` | ✓ |
-| `{{system_slug}}:view_all_{{plural}}` | override (personal_content) | View all `{{table}}` rows beyond row-scope | ✓ |
-| `{{system_slug}}:manage_all_{{plural}}` | override (personal_content) | Manage all `{{table}}` rows beyond row-scope | ✓ |
 
 **Tier vocabulary:**
 
@@ -287,24 +279,20 @@ The full permission catalog and rule list. The analyst expands this to spec-form
 - **`baseline-admin`** — module-wide edit on reference/config records and inherits every workflow-gate below.
 - **`workflow-gate (lifecycle)`** — gates a specific lifecycle transition (per §7 `requires_permission?` rows).
 - **`workflow-gate (rule)`** — gates a specific business rule (per §8.2 rules with `require_permission`).
-- **`override (personal_content)`** — broadens default row-scope visibility/edit for `personal_content`-flagged entities (per §3 pattern flags).
 - **`narrow`** — sub-tier of `baseline-manage` granted to external participants (e.g. panel interviewers); declared explicitly when the workflow involves outsiders who write specific tables without broader operational access.
 
-**Two-permission fallback:** if every entity is operational and the module declares no workflow gates and no overrides, omit `baseline-admin` and end the table at `<slug>:manage`.
+**Two-permission fallback:** if every entity is operational and the module declares no workflow gates, omit `baseline-admin` and end the table at `<slug>:manage`.
 
 ### 8.2 Business rules
 
 | rule_name | data_object | source flag | intent |
 | --- | --- | --- | --- |
-| `{{rule_name}}` | `{{table_name}}` | has_personal_content \| has_submit_lock \| has_single_approver \| lifecycle \| owner_edit \| narrow_write | {{one-sentence intent — analyst converts to JsonLogic at spec time. For `has_single_approver`, this prose must name the actual approve gate (e.g. `approve_offer`), not a phantom `approve_<entity>_approval`.}} |
+| `{{rule_name}}` | `{{table_name}}` | lifecycle \| owner_edit \| narrow_write | {{one-sentence intent — analyst converts to JsonLogic at spec time.}} |
 
-**Keep this heading.** When the module declares no flag-derived business rules, write the canonical placeholder `_(none: <short reason>)_` in place of the table — do not omit §8.2.
+**Keep this heading.** When the module declares no business rules, write the canonical placeholder `_(none: <short reason>)_` in place of the table — do not omit §8.2.
 
 **`source flag` vocabulary:**
 
-- `has_personal_content` — the entity carries `personal_content` flag in §3; the rule encodes row-scope with overrides (`view_all_<plural>`, `manage_all_<plural>`).
-- `has_submit_lock` — the entity carries `submit_lock` flag; the rule encodes the submit-then-locked posture and the `submit_<singular>` override.
-- `has_single_approver` — the entity carries `single_approver` flag; the rule REQUIRES a `permission_verb_override` naming the actual approve gate (e.g. `approve_offer`). The named gate MUST appear in §8.1 as a `workflow-gate (lifecycle)` row. Phantom `approve_<entity>_approval` codes are an authoring error caught by pre-save verification.
 - `lifecycle` — the rule gates a state transition declared in §7.
 - `owner_edit` — the rule restricts writes to the row's submitter / assignee / author.
 - `narrow_write` — the rule allows a narrow-tier role to write a specific subset of fields.
@@ -325,16 +313,15 @@ _Baseline roles, the permission hierarchy, and RACI realization are DERIVED from
 
 **Permission hierarchy:**
 
-_The hierarchy is roll-up: `:admin` includes `:manage`, `:manage` includes `:read`, `:admin` rolls up every workflow gate and pattern-flag override in §8.1, and `:manage` includes every `narrow`-tier permission in §8.1 (so full-tier holders pass the narrow check external participants hold in isolation)._
+_The hierarchy is roll-up: `:admin` includes `:manage`, `:manage` includes `:read`, `:admin` rolls up every workflow gate in §8.1, and `:manage` includes every `narrow`-tier permission in §8.1 (so full-tier holders pass the narrow check external participants hold in isolation)._
 
 | permission | includes |
 | --- | --- |
 | `{{system_slug}}:admin` | `{{system_slug}}:manage` |
 | `{{system_slug}}:manage` | `{{system_slug}}:read` |
 | `{{system_slug}}:admin` | `{{system_slug}}:{{workflow_gate_1}}` |
-| `{{system_slug}}:admin` | `{{system_slug}}:{{override_1}}` |
 | `{{system_slug}}:manage` | `{{system_slug}}:{{narrow_1}}` |
-| _(repeat one row per gate / override under `:admin`, and one row per `narrow` tier under `:manage`; emitter MUST list every §8.1 gate, override, and narrow permission)_ | |
+| _(repeat one row per gate under `:admin`, and one row per `narrow` tier under `:manage`; emitter MUST list every §8.1 gate and narrow permission)_ | |
 
 **Processes wired:**
 
@@ -369,7 +356,7 @@ _The process catalog — one row per process, referenced by `process_key` from t
 - **`consult_mode`** — only for `consulted` rows: `read` (default — passive advisory read), `notify` (push a notification when the process reaches the gated transition), or `block` (the transition is gated until the consulted party has acted, e.g. "Legal must be consulted before an offer goes out" → `block`). Leave `—` on R / A / I rows. The whole column may be omitted when every consultation is `read`.
 - **`realization`** — human-facing *intent* only. How the row is actually realized depends on the module's RACI mode (the analyst decides): in `documentation` mode it compiles to the RBAC grants below; in `living` mode it becomes live RACI rows + rules (`is_raci_actor` for A, `has_consultation` for C-block, the emit trigger for C-notify / I). Author the intent; do not encode enforcement mechanics. The mapping below is the documentation-mode default:
   - R → `grant gates [<list>] + the gated entities' write tier`. The gate list is the permission codes the actor needs to perform the process.
-  - A → `approval gate` (when the process has a `single_approver` / `multi_approver` flag in §3, the named gate from §8.2 `permission_verb_override`; otherwise `the gated entities' write tier`).
+  - A → `approval gate` (the §7 gated transition for the process's approve step — the matching §8.1 `workflow-gate` permission; otherwise `the gated entities' write tier`).
   - C → `advisory read grant` (a row-scoped read added during deploy; or `consultation lifecycle state` when the process has an explicit consultation step in §7).
   - I → `notification side effect (trigger_event / webhook_receiver)` — wired as a notify action at deploy time, not a permission.
 
@@ -404,23 +391,21 @@ _Market-level RACI: which business function OWNS / CONTRIBUTES-TO / CONSUMES thi
 - **§2 Mermaid diagram is required.** Every §3 entity must appear; every §5 edge must appear. Regenerate when entities or relationships change.
 - **§7 lifecycle states**: one sub-section per `role = master` entity that has lifecycle. Reference-data masters without lifecycle (e.g. `recruitment_sources`) are skipped from §7 but still appear in §3.
 - **§7 `requires_permission?` ✓ rows must have a matching §8.1 `workflow-gate (lifecycle)` row.** The architect's pre-save verification enforces this.
-- **§8.1 `personal_content` overrides**: for every §3 entity flagged `personal_content`, emit a `view_all_<plural>` row and a `manage_all_<plural>` row.
-- **§8.1 `submit_lock` overrides**: for every §3 entity flagged `submit_lock`, emit a `submit_<singular>` override row.
-- **§9 emission — two layers.** The §9.1 **baseline roles** and **permission hierarchy** are always emitted (derived from §8.1; the hierarchy MUST list every §8.1 gate / override under the `<slug>:admin → ...` roll-up). The §9.1 **RACI realization** + **Processes wired** catalog and **§9.2 functional ownership** are OPTIONAL — catalog-clone slices of an uber-model carry them (preserve on customize); a greenfield blueprint emits them only when the conversation surfaced real processes / personas / owning functions, otherwise omits them. When RACI realization is present, its rows MUST mention every persona in the frontmatter `persona` list (and vice versa); when it is absent, omit the `persona` key.
+- **§9 emission — two layers.** The §9.1 **baseline roles** and **permission hierarchy** are always emitted (derived from §8.1; the hierarchy MUST list every §8.1 gate under the `<slug>:admin → ...` roll-up). The §9.1 **RACI realization** + **Processes wired** catalog and **§9.2 functional ownership** are OPTIONAL — catalog-clone slices of an uber-model carry them (preserve on customize); a greenfield blueprint emits them only when the conversation surfaced real processes / personas / owning functions, otherwise omits them. When RACI realization is present, its rows MUST mention every persona in the frontmatter `persona` list (and vice versa); when it is absent, omit the `persona` key.
 - **No fields. No JsonLogic. No DDL.** The blueprint is platform-agnostic and entity-level only. Field-level work happens in the analyst's spec.
 - **The one field-level exception, `## Additional Requirements Specification`.** An OPTIONAL, omit-when-unused free-prose section between §2 and §3 for a requirement the analyst must honor but cannot derive from the entity-level structure (a field a cost / rollup view depends on, a fixed unit or currency, a cross-module dedup rule). Compact technical register, backticked identifiers expected; Conventions 6 / 8 do not apply, Conventions 1 / 2 do. Author on greenfield only when genuinely needed; preserve and adjust on clone / customize / extend. Keep it narrow, it is not a backdoor for field tables.
 - **Greenfield vs catalog-clone.** Greenfield: §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the conversation surfaced no cross-scope edges / cross-domain context; the §9 optional layer (RACI realization / Processes wired / functional ownership) is emitted only when the conversation surfaced it (an all-or-nothing trio inside §9, not a top-level-section omission — §9 and §9.1 stay present). Catalog-clone: §5.3, §6, the §9 optional layer, and `related_modules` are inherited from the source and preserved — trimmed/extended only as the customize conversation requires; any §5.3/§6 sub-block trimmed empty keeps its heading with the `_(none: …)_` placeholder.
-- **Self-containment.** The blueprint must be readable without any external context. Embed concepts the module needs even when they overlap with another module, mark as `embedded_master` in §3 with `mastered in` pointing at the intended canonical-owner module (and `label` carrying the owner's display name). The analyst resolves these at reconciliation time: when the canonical owner installs, the entity migrates automatically; until then, this module hosts it. A blueprint that fails self-containment (an entity needs another module to function) is a defect the architect FLAGS — never something to assemble around.
-- **Embedded-entity governance follows the entity, not the role.** An installing unit carrying an entity as `embedded_master` whose canonical owner is absent at deploy time emits that entity's FULL derived governance under the installing unit's slug: workflow gates (§8.1) re-prefixed, pattern-flag overrides (`view_all_<plural>` / `manage_all_<plural>` / `submit_<singular>`) + matching §8.2 rules re-prefixed, AND boundary-crossing handoffs in §6.2 / §6.3 (events the embedded entity publishes to / reacts from modules the unit doesn't "play"). Intra-set handoffs are hidden (when both source and target embedded entities live in the same installing unit, the handoff is internal). When the canonical owner later installs, the deployer reconciles every re-prefixed code onto the canonical prefix (sibling permissions + sibling role_permissions; no deletes). This convention is what lets bundles like `hiring-starter` round-trip cleanly.
+- **Self-containment.** The blueprint must be readable without any external context. Embed concepts the module needs even when they overlap with another module, mark as `embedded_master` in §3 with `mastered in` pointing at the intended canonical-owner module (and `label` carrying the owner's display name). The analyst resolves these at reconciliation time: when the catalog owner installs, the entity migrates automatically; until then, this module hosts it. A blueprint that fails self-containment (an entity needs another module to function) is a defect the architect FLAGS — never something to assemble around.
+- **Embedded-entity governance follows the entity, not the role.** An installing unit carrying an entity as `embedded_master` whose catalog owner is absent at deploy time emits that entity's FULL derived governance under the installing unit's slug: workflow gates (§8.1) re-prefixed, matching §8.2 rules re-prefixed, AND boundary-crossing handoffs in §6.2 / §6.3 (events the embedded entity publishes to / reacts from modules the unit doesn't "play"). Intra-set handoffs are hidden (when both source and target embedded entities live in the same installing unit, the handoff is internal). When the catalog owner later installs, the deployer reconciles every re-prefixed code onto the catalog prefix (sibling permissions + sibling role_permissions; no deletes). This convention is what lets bundles like `hiring-starter` round-trip cleanly.
 
 ### Front-matter rules
 
 - **`artifact: semantic-blueprint`** — fixed; identifies the file type.
-- **`blueprint_version: "3.0"`** — the blueprint format version (the schema of *this* file). Architect writes `"3.0"` for every blueprint at architect skill v5.0+ (major `3`; the `2.x → 3.0` major bump added the §3 `canonical code` and `entity_type` columns, so downstream parsers must read §3 **by header name, not column position**). Bump only when the blueprint shape changes (sections renumbered, columns added, etc.). Distinct from architect skill version.
+- **`blueprint_version: "3.0"`** — the blueprint format version (the schema of *this* file). Architect writes `"3.0"` for every blueprint at architect skill v5.0+ (major `3`; the `2.x → 3.0` major bump added the §3 `catalog code` and `entity_type` columns, so downstream parsers must read §3 **by header name, not column position**). Bump only when the blueprint shape changes (sections renumbered, columns added, etc.). Distinct from architect skill version.
 - **`license`** — catalog metadata (e.g. `MIT`). Passes through to the spec; not provisioned to the module record today (follow-up when the platform exposes a `modules.license` column).
-- **`system_name`** — display name; acronyms stay as acronyms (ATS, CRM, ITSM).
-- **`system_description`** — ≤40-char tagline used by the deployer as the module record's `description` column. Spell out acronyms (`CRM` → "Customer Relationship Management"). Distinct from `tagline` (marketing voice) and §1 Overview (analyst-voice narrative).
-- **`tagline`** — one-line marketing-voice line for catalog / card surfaces. The elevator pitch. Distinct from `system_description` (which is a short display name); not provisioned today (follow-up when the platform exposes a `modules.tagline` column).
+- **`system_name`** — the display name shown to the user; also the module name (maps to `modules.module_name`). Acronyms stay as acronyms (ATS, CRM, ITSM).
+- **`icon_name`** — the module's UI icon as an icon-set handle (not a URL), e.g. `briefcase`, `ticket`. Maps to `modules.icon_name`.
+- **`tagline`** — one-line marketing-voice line for catalog / card surfaces (the elevator pitch). Also used by the deployer as the module record's `description` column (`modules.description`), shown beside the name in the selector — so keep it concise enough for the chip. Distinct from §1 Overview (analyst-voice narrative).
 - **`description`** — longer marketing-voice prose for the catalog page. Multi-line YAML block (`|`) is fine. Reads to a buyer, not to the analyst. Distinct from §1 Overview which is analyst-voice; not provisioned today (follow-up when the platform exposes a `modules.long_description` column).
 - **`system_slug`** — lowercase snake_case identifier. Equals the module slug the deployer creates. **Never** appears as another name in §8.
 - **`domain_modules`** — typically a single entry equal to `system_slug`. Multi-module blueprints (master modules hosting multiple shared masters) list each.

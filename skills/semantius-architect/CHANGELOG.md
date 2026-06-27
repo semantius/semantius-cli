@@ -8,6 +8,18 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: §3 behavior flags removed, frontmatter simplified, canonical→catalog rename
+
+2026-06-26. Three coordinated contract changes:
+
+1. **§3 behavior flags removed (`pattern flags` column dropped).** `personal_content`, `submit_lock`, `single_approver`, `multi_approver`, and `terminal_lock` are gone — they were declarative metadata the platform never enforced (enforcement always lived in the analyst's `select_rule` / `validation_rules` + RBAC). Row-scope visibility and field locks are now authored entirely by the analyst during field elicitation; approvals are gated lifecycle transitions (§7 `requires_permission?` + §8.1 `workflow-gate`) plus the §9 RACI Accountable actor (`single_approver` / `multi_approver` were RACI-redundant). §8.1 stops emitting `view_all_` / `manage_all_` overrides; §8.2 drops the `has_*` source flags (keeps `lifecycle` / `owner_edit` / `narrow_write`). A known, non-derivable row-scope requirement goes in the `## Additional Requirements Specification` prose section.
+
+2. **Frontmatter: `system_description` removed, `icon_name` added.** `system_name` is now both the user-facing display name and the module name; `tagline` takes over feeding `modules.description`; `icon_name` (icon-set handle → `modules.icon_name`) is a new optional key.
+
+3. **`canonical_` → `catalog_` rename.** §3 `canonical code` column → `catalog code`; "canonical owner" → "catalog owner" throughout — unifying the prefix for uber-model-derived data with the deployed `catalog_entity_code` / `catalog_owner_module` columns. The *authoritative* sense of "canonical" (canonical section / placeholder / signal) is unchanged.
+
+These three contract changes (a §3 column removed, a frontmatter key removed + another added, a §3 column renamed) require the **analyst** and **modeler** to be updated in lockstep — both parse §3 by header name and read the frontmatter. Platform-side changes (`modules.icon_name` / `domain_code` / `access_scope` columns, `entities.catalog_owner_module` rename, `pattern_flags` / `is_nullable` deletion) are tracked in `use-semantius`. (Version numbers unchanged — the prior version was not deployed.)
+
 ## Unreleased: renaming a catalog-derived entity is now a silo rename (canonical lineage preserved)
 
 2026-06-21. Fixes a lineage-loss defect. Renaming a catalog-derived `embedded_master` entity (e.g. `incidents` → `issues` in the `it-ops-starter` starter, cloned from `itsm-incident-mgmt`) silently re-derived `canonical = local` and dropped `mastered in`: the entity deployed as `catalog_entity_code: service_issues` with a blank `canonical_owner_module`, instead of `catalog_entity_code: service_incidents` / `canonical_owner_module: itsm-incident-mgmt`. That severs the keys the canonical owner uses to recognize and promote/merge the entity when it later installs — it would create a duplicate instead of adopting the renamed entity.

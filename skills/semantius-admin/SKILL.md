@@ -513,7 +513,7 @@ Flow:
    ```
 
    If either errors, surface the verbatim error and stop: the platform is reachable but the catalog is not queryable, which the user must resolve before anything else.
-3. **Count the deployed modules.** From the `read_module` result, count the custom data modules: those carry a `settings.domain_code` stamp (the deploy pipeline's marker), distinct from platform built-ins. That count is the "your data platform so far" number.
+3. **Count the deployed modules.** From the `read_module` result, count the custom data modules: those carry a non-empty `domain_code` column (the deploy pipeline's marker), distinct from platform built-ins. That count is the "your data platform so far" number.
 4. **Report, and point to the catalog.** Use human language, never raw slugs:
    - **Nothing deployed yet (no custom modules):** *"You're connected to `<org>`, but no custom data modules are live yet. Semantius is built around customizable blueprints — pre-designed data models you tailor into a hyper-customized data platform. Browse them at https://www.semantius.com/blueprints, and I can deploy one for you."*
    - **Some modules already deployed:** *"You're connected to `<org>` with N data module(s) live: <plain-English names>. Every system in the catalog is a customizable blueprint you can tailor into a hyper-customized data platform — browse more at https://www.semantius.com/blueprints, and just ask me for a full status anytime."*
@@ -880,7 +880,7 @@ Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZAT
 | Architect authoring | Module display-name override | `.module_display_names.<slug>` | scalar |
 | Architect authoring | Embedded-master rename | `.aliases.<old_slug>` | object (slug, singular_label, plural_label) |
 | Analyst Stage 3a | Optional entity verdict | `.optionals_decided.<slug>` | scalar (`included` \| `excluded`) |
-| Analyst Stage 3b.0 | Canonical-owner adoption gate | `.adoption_consent` | scalar (`auto-confirm` \| `prompt-each-time`) |
+| Analyst Stage 3b.0 | Catalog-owner adoption gate | `.adoption_consent` | scalar (`auto-confirm` \| `prompt-each-time`) |
 | Analyst Stage 3b.0 | Adoption event record | `.adoptions.<entity>` | scalar (date; audit log) |
 | Analyst Stage 3b.1 / 3b.2 | Master-vs-master outcome | `.collisions.<entity>.outcome` | scalar (`share` \| `silo` \| `claim`) |
 | Analyst Stage 3b.1 / 3b.2 | Share host module | `.collisions.<entity>.host_module` | scalar (when outcome=share) |

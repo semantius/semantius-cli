@@ -54,10 +54,10 @@ Two artifact types travel between the three skills.
 
 | Section | Purpose |
 |---|---|
-| frontmatter | YAML block with `artifact`, `blueprint_version`, `system_name`, `system_description`, `system_slug`, `domain_modules`, `domain_code`, `related_modules`, `created_at` |
+| frontmatter | YAML block with `artifact`, `blueprint_version`, `system_name`, `system_slug`, `icon_name`, `domain_modules`, `domain_code`, `related_modules`, `created_at` |
 | §1 Overview | 2-3 sentence catalog narrative. No §-references, no snake_case identifiers, no platform plumbing words. |
 | §2 Entity summary | Per-entity table (Name + Description) followed by a Mermaid `flowchart LR` diagram with `classDef master / contributor / consumer / platform_builtin` |
-| §3 Entities catalog | Columns: `# / data_object / role / mastered_in / necessity / pattern_flags / notes` |
+| §3 Entities catalog | Columns: `# / data_object / role / mastered_in / necessity / notes` |
 | §4 Aliases | Industry / vendor / domain synonyms for entities (optional; "no aliases" stub allowed) |
 | §5.1 Intra-scope edges | FK/relationship rows where both endpoints are owned/co-located in this module |
 | §5.2 Built-in edges | Rows where one endpoint is a Semantius platform built-in (`users`, `roles`, …) |
@@ -67,7 +67,7 @@ Two artifact types travel between the three skills.
 | §6.3 Inbound handoffs | Events this scope reacts to |
 | §6.4 Master providers | Entities this scope embeds from other modules |
 | §7 Lifecycle states | One sub-section per `role = master` entity; columns `order / state_name / initial? / terminal? / requires_permission? / derived gate / description` |
-| §8.1 Permissions | Tiered table: `permission / tier / description / included in :admin?`. Tiers: `baseline-read`, `baseline-manage`, `baseline-admin`, `workflow-gate (lifecycle)`, `workflow-gate (rule)`, `override (personal_content)`, `narrow` |
+| §8.1 Permissions | Tiered table: `permission / tier / description / included in :admin?`. Tiers: `baseline-read`, `baseline-manage`, `baseline-admin`, `workflow-gate (lifecycle)`, `workflow-gate (rule)`, `override`, `narrow` |
 | §8.2 Business rules | High-level rule intents: `rule_name / data_object / source flag / intent` |
 
 **Key constraint:** **no fields anywhere**. No `Format`, `Required`, or `Label` columns on §3. No JSON sub-blocks for computed fields, validation rules, input-type rules, or select rules. The blueprint is entity-level only.
@@ -77,11 +77,11 @@ Two artifact types travel between the three skills.
 - `master` — owned and lifecycle-mastered by this module
 - `contributor` — mastered in another module per `mastered_in`, but participates in this module's workflows
 - `consumer` — read by this module, never written
-- `embedded` — declared here for self-containment until the canonical owner module is installed (e.g. `locations` in `ats-candidate-crm` until `iwms` is present)
+- `embedded` — declared here for self-containment until the catalog owner module is installed (e.g. `locations` in `ats-candidate-crm` until `iwms` is present)
 
 **Necessity vocabulary in §3:** `required` (always created in the spec) or `optional` (the analyst presents a multiSelect prompt at reconciliation time and skips declined ones).
 
-**Pattern flags in §3:** `personal_content` (entity holds per-user content needing row-scope read/edit overrides). Unknown flags pass through verbatim.
+**No §3 behavior flags.** §3 carries no pattern/behavior flags. Row-scope visibility and field locks are authored by the analyst as field-level JsonLogic (`select_rule` / `validation_rules`); approvals are gated lifecycle transitions (§7 `requires_permission?` + the §8.1 `workflow-gate`) and/or §9 RACI. A known, non-derivable row-scope requirement can be stated in the Additional Requirements Specification section.
 
 ### 2.2 Spec (`*-semantic-spec.md`)
 

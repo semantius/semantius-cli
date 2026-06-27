@@ -267,7 +267,7 @@ Every entity exposes a read-only **`_label`** — its composed, human-readable l
 ### `create_module`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Requires `module_name` and `module_slug`. Optional: `description`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
+| `data` | object | yes | Requires `module_name` and `module_slug`. Optional: `description`, `icon_name`, `domain_code`, `access_scope`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
 
 #### `modules` field reference
 
@@ -276,6 +276,9 @@ Every entity exposes a read-only **`_label`** — its composed, human-readable l
 | `module_name` | string | **Unique display name shown in the UI module selector and on the landing page header** (e.g. `CRM`, `ITSM`, `CMDB`). Keep acronyms as acronyms, this is the human-facing name. Required. |
 | `module_slug` | string | URL-safe slug, **required and non-empty**. Lowercase letters, digits, `_`, and `-` only (regex `^[a-z0-9_-]+$`; hyphen is now allowed). Used in URLs, permission prefixes, and as the foreign-key target when referenced from semantic-model files. Convention: matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). Accepted: `ben-admin`, `ben_admin`, `bm1`. Rejected: `""`, `Ben-Admin`, `ben admin`. Violations error with `module_slug must be lowercase alphanumeric, underscore, or hyphen`. |
 | `description` | string | Compact tagline shown beside `module_name` in the selector dropdown and on the landing page (e.g. `Customer Relationship Management`, `IT Service Management`). For acronym `module_name`s use the plain English expansion; for non-acronyms use a 2-4 word disambiguating phrase. Aim for ≤40 characters. Optional. |
+| `icon_name` | string | Name of the icon shown for the module in the UI (an icon-set handle, **not** a URL — distinct from the entity-level `icon_url` and from the module `logo_url`). Optional. |
+| `domain_code` | string | Short uppercase business-domain code the module belongs to (e.g. `ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`. Optional. |
+| `access_scope` | enum | Access-control scope: `basic` (default) for simple read/edit, or `full` for role tiers, approvals, and lifecycle gating. `enum_values: ["basic", "full"]`, default `basic`. Optional. |
 | `view_permission` | string | Permission name required to see the module in the selector (e.g. `crm:read`). Optional; when omitted the module is visible to anyone with at least one entity permission inside it. |
 | `logo_url` | string | URL or `data:` URI for the module logo shown in the selector chip. Optional. |
 | `logo_color` | string | Hex color for the logo background tile (e.g. `#4F46E5`). Optional. |
