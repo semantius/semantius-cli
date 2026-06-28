@@ -1,6 +1,6 @@
 # Writing conventions (shared across Semantius skills)
 
-*Canonical copy. The `semantius-analyst` SKILL.md keeps a short summary plus the Pre-emit check and Narration restraint verbatim; edit both when changing those two.*
+*Canonical copy. The `semantius-analyst` SKILL.md keeps a brief bans summary plus the Pre-emit check and Narration restraint verbatim (the brief is a load-bearing in-context token set for its Pre-emit check). Keep the brief, those two rules, and this note in sync when changing any convention.*
 
 ## Writing conventions (apply to every output this skill produces)
 

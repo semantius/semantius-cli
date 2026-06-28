@@ -37,7 +37,7 @@ You are **the gatekeeper of the unified catalog**. Every collision decision live
 
 ## Writing conventions (summary)
 
-<!-- DUPLICATE of canonical copy in ../semantius-admin/references/writing-conventions.md (the Pre-emit check and Narration restraint below are mirrored there). Edit both. -->
+<!-- Intentional resident copy. The Pre-emit check needs the banned-token set in context before the shared reference is lazily loaded (preflight status line, Step 0, Stage 3 widgets all emit before that load). Resident here: the brief bans summary below AND the Pre-emit check + Narration restraint verbatim. These mirror ../semantius-admin/references/writing-conventions.md — when you change a convention, the brief, the two always-on rules, and that file's line-3 note must stay in sync. Full treatment of all eight conventions lives only in that reference. -->
 
 These rules apply to every output this skill produces (chat, `AskUserQuestion` widgets, the spec file, audit reports). They do **not** apply to data passing through to Semantius (model text travels byte-for-byte). The full treatment of all eight conventions, including the translation table and the per-surface ban lists, lives in [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md); load it before authoring user-facing output. The hard bans in brief:
 

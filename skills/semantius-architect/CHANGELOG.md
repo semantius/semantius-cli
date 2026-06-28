@@ -8,6 +8,20 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: SKILL.md restructured into a resident spine + per-stage / per-mode references
+
+2026-06-28. The architect SKILL.md had grown to 1439 lines (~31k words) loaded into context on every trigger. Restructured it into a ~420-line resident orchestration spine plus 12 `references/*.md` files loaded on demand, mirroring the structure `semantius-analyst` (400-line spine + refs) and `semantius-modeler` (386 + refs) already use. No content-contract change: the blueprint artifact shape, frontmatter keys, section numbering, and authoring rules are untouched, so this is behavior-preserving.
+
+1. **Stays resident** (loaded every run): frontmatter, the three-skill workflow intro plus the `## Additional Requirements Specification` "one exception" contract, the **full** writing conventions (Conventions 1-10 + Pre-emit check + Narration restraint, kept verbatim), the version constants, Preflight, Step 0 mode routing, a new Stage pipeline index, the Pre-save verification gate (with its mechanical `consistency-check.ts` call), Scope boundaries, Tone, and the reference index.
+2. **Moved to references** (loaded on demand): every Mode A stage (1, 2, 3, 5, 6, 7, 8-9, 10, 11, 13) plus Modes B / C / D, and the shared 🔴/🟡/🟢 audit checklist (split into its own `audit-checklist.md` so the Extend and Rebuild self-audits can reference it without loading the Audit-mode prose).
+3. **Writing conventions kept resident, NOT extracted to the shared file.** Unlike the analyst (which points Conventions 1-8 at `../semantius-admin/references/writing-conventions.md`), the architect keeps its full conventions resident verbatim: its Convention 8 ban list, Pre-emit check, and Narration restraint are blueprint-authoring-flavored (not the analyst's reconciliation-flavored versions), and Conventions 9 (`⚠` data-quality annotations) and 10 (embedded-entity governance) are architect-only with no shared copy. The resident size target (~420 lines, sibling parity) is met without extracting them.
+4. **Stale stubs collapsed.** The three "moved to semantius-analyst" heading stubs (Stage 4, Stage 9b, Stages 12/12.5) became a single note in the stage index. The §3 catalog-column policy that sat under the "Stage 4 (moved)" heading is live content and moved into `stage-3-entities.md`.
+5. **Cross-file references repointed.** Mode C/D prose pointing at "Mode A Stage 13 pre-save" and "the Mode B checklist" now point at the resident Pre-save verification section and `audit-checklist.md`; the "see Stage 5 above" and "near the top of this file" self-references were repointed for their new file homes; relative links one directory deeper (`../X` → `../../X`).
+
+**Verified behavior-preserving.** Every non-separator content line survives verbatim in the spine or a reference (the only deltas are the three dropped stubs, the cross-file repoints, two heading-level changes, and the rewritten reference-material list); all relative links resolve at their new depth; the bundled `consistency-check.ts` (unmoved) still validates blueprints with exit 0.
+
+**No `CURRENT_VERSION` bump.** Organizational only: no blueprint-artifact shape, frontmatter-key, section-numbering, or convention change. `CURRENT_VERSION` stays `"5.2"`, `blueprint_version` stays `"3.0"`, and the modeler's `EXPECTED_MAJOR` is untouched. **Minor** (organizational); deferred to the maintainer like the entries below.
+
 ## Unreleased: §3 behavior flags removed, frontmatter simplified, canonical→catalog rename
 
 2026-06-26. Three coordinated contract changes:

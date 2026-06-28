@@ -19,7 +19,7 @@ if [ -f "$CUSTOMIZATIONS_FILE" ]; then
 fi
 ```
 
-On cache miss (or when the user picks an explicit cancel option), fire the widget. **If the user picked an answer (not cancel), write atomically back to the file BEFORE proceeding with the spec change.** Use the write form matching the row in `../../semantius-admin/SKILL.md` Step 7.4 (scalar via `lineComment`, list via `[-1] lineComment`, nested object via `headComment`):
+On cache miss (or when the user picks an explicit cancel option), fire the widget. **If the user picked an answer (not cancel), write atomically back to the file BEFORE proceeding with the spec change.** Use the write form matching the row in `../../semantius-admin/references/customizations-protocol.md` 7.4 (scalar via `lineComment`, list via `[-1] lineComment`, nested object via `headComment`):
 
 ```bash
 DATE=$(date +%Y-%m-%d)
@@ -38,4 +38,4 @@ When `$CUSTOMIZATIONS_FILE` is unset (a context that bypassed Preflight, which s
 
 The same rule applies to any other Bash call you fire during Stage 3 (frontmatter peeks, slug lookups, similarity scans): the `description` is user-facing prose, hold it to Convention 8's plain-language bar.
 
-The authoritative reference for the protocol, the full yq-path registry, and provenance-comment patterns is `../../semantius-admin/SKILL.md` Step 7.
+The authoritative reference for the protocol, the full yq-path registry, and provenance-comment patterns is `../../semantius-admin/references/customizations-protocol.md` (overview in `../../semantius-admin/SKILL.md` Step 7).

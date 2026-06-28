@@ -42,7 +42,7 @@ Besides the `semantius` CLI, these skills need three general-purpose tools on PA
 
 - **Bun** — the mandated runtime. The modeler writes and runs its deploy and sample-data scripts with `bun run` (its only write path); the architect / analyst run `consistency-check.ts` with `bun`. Python is forbidden across these skills.
 - **jq** — parses `semantius` JSON output, both in this preflight (check 3 reads `org` and `ui_baseurl` with `jq`) and throughout the architect / analyst bash flows.
-- **yq** — Mike Farah's Go yq v4+, the engine behind the surgical `customizations.yaml` writes (admin Step 7) that preserve hand-edits and provenance line-comments.
+- **yq** — Mike Farah's Go yq v4+, the engine behind the surgical `customizations.yaml` writes (admin Step 7 / `references/customizations-protocol.md`) that preserve hand-edits and provenance line-comments.
 
 Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if the tool is still not found (`command -v <tool>` on POSIX, `Get-Command <tool>` on Windows PowerShell) the PATH update has not reached this shell: ask the user to open a new terminal and re-run.
 

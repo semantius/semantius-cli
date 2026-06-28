@@ -24,16 +24,23 @@ description: >-
 
 The orchestrator for the three-skill Semantius pipeline plus administrative operations. Sits in front of `semantius-architect`, `semantius-analyst`, and `semantius-modeler`; routes composite operations to the right sequence of sub-skills; handles inspection, backup, and other instance-level admin tasks.
 
-## Writing conventions (apply to every output this skill produces)
+## Writing conventions
 
-These rules apply to chat output and to every artifact this skill writes:
+Every output this skill produces (chat, and the artifacts it writes) follows the shared writing conventions: US English spellings, no em-dashes, singular-subject confirmation prompts ("Looks good?"), no raw identifier leakage in user-facing prose, and plain domain language. They are the canonical set in [`references/writing-conventions.md`](./references/writing-conventions.md) and match the architect, analyst, and modeler so output reads consistently across the pipeline.
 
-1. **US English spellings, always.** Never British English (`optimize` not `optimise`, `behavior` not `behaviour`, `analyze` not `analyse`).
-2. **No em-dashes (`—`, U+2014).** Replace with `(parenthesis)`, comma, semicolon, or sentence split. The en-dash (`–`) and hyphen (`-`) are fine.
-3. **Singular-subject grammar in confirmation prompts.** "Looks good?" not "Look good?".
-4. **No identifier leakage in user-facing prose.** Use English labels, not raw `table_name` / `field_name` / `<slug>:<permission>` tokens.
+---
 
-These conventions match the architect, analyst, and modeler so output reads consistently across the pipeline.
+## Core invariants
+
+A handful of rules govern this skill end-to-end. They are stated ONCE here and referred to as "(INV-n)" throughout; sections that touch them defer to these statements instead of re-explaining them.
+
+- **INV-1 — Single write gate / informational plans.** The modeler's own pre-execute yes/no is the ONLY confirmation before a live-model write. The admin never fires an up-front "Proceed?" gate; every plan it prints is informational (print, then run). This suppresses the deploy *confirmation* only, never the scope *questions* (INV-3).
+- **INV-2 — Copy, never move.** A pre-existing artifact (especially one at the repo root) is COPIED up front into the convention folder (`semantius/blueprints/` or `semantius/specs/`); that copy becomes the working path and every edit targets it; the root original is read once and never moved, renamed, overwritten, edited, or deleted. The only files the admin relocates are ones it downloaded this run (`.tmp_admin/` into the convention folder). The Step 1.1 "Slug present in BOTH" compare-and-choose procedure and its widget are separate logic, not a restatement of this rule.
+- **INV-3 — Scope flags before the plan.** `customize` (blueprint), `review` (spec), and `deploy` (both) are resolved — inferred from intent, then asked only where ambiguous (Step 6.4) — BEFORE any plan that contains them is rendered. A bare "deploy this" still fires the customize question. Greenfield builds and catalog clones short-circuit: no scope questions, because the architect's Create pass IS the design and `deploy` is implied.
+- **INV-4 — Internal mechanics never reach chat.** Preflight, the org probe, file staging, `curl` / `jq` / `yq` plumbing, stage transitions, run-ids, and skill-internal vocabulary go to the per-run diagnostic log, never to chat. The "surface / never-surface" lists, the narration-restraint rules, and the banned-vocabulary list in Output discipline below are the resident expression of this.
+- **INV-5 — Plan rendering format.** Render every plan as markdown prose (a short heading, a numbered list, one trailing sentence), NEVER inside a triple-backtick code block. The trailing sentence names which line(s) write to the live model, or states that nothing is applied.
+- **INV-6 — Never `WebFetch`.** Fetch remote artifacts with `curl -s -L` only; `WebFetch` runs an HTML-to-markdown pass that silently strips YAML front-matter.
+- **INV-7 — `.tmp_admin/` is gitignored and ephemeral.** The run folder persists after the run; the user manages cleanup; nothing in it is committed.
 
 ---
 
@@ -67,36 +74,7 @@ Bash `description` fields obey the same rule (they render as "Ran <description>"
 
 ### Per-run diagnostic log
 
-The pipeline runs inline in a single context (the admin's, Step 4 / Step 6.7), but each sub-skill's own `SKILL.md` still writes its work to a diagnostic file named for that sub-skill's role, so the on-disk trace stays organized by stage. All files live in a single per-run folder named by the run-id. Up to four files (admin, architect, analyst, modeler), one folder.
-
-**The run-id is the timestamp, sampled ONCE.** The admin samples it as the very first action of every invocation and never re-samples it. Sub-skills do NOT call `date` themselves; they read the run-id from the `Run context:` block (Step 7.3) and derive the same folder from it. A second `date` call mid-run would be the bug the file naming is designed to prevent: multiple stages stamping different times, scattering the logs into unrelated files.
-
-```bash
-# Admin, very top of Preflight — sample the run-id ONCE for the whole invocation.
-RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"
-DIAG_DIR=".tmp_admin/$RUN_ID"
-DIAG_LOG="$DIAG_DIR/diag-admin.log"          # the admin's own file (role in the name)
-# Best-effort append; a logging failure must never change control flow.
-log_diag() { mkdir -p "$DIAG_DIR" 2>/dev/null; printf '%s %s\n' "$(date -u +%H:%M:%S)" "$1" >> "$DIAG_LOG" 2>/dev/null || true; }
-```
-
-**File naming — sub-skill role, not a re-sampled timestamp:**
-
-| Agent | Diagnostic file |
-|---|---|
-| admin (this skill) | `.tmp_admin/<run_id>/diag-admin.log` |
-| architect sub-skill | `.tmp_admin/<run_id>/diag-architect.log` |
-| analyst sub-skill | `.tmp_admin/<run_id>/diag-analyst.log` |
-| modeler sub-skill | `.tmp_admin/<run_id>/diag-modeler.log` |
-
-The admin owns `diag-admin.log`. Each sub-skill writes its own `diag-<role>.log` into the SAME folder, keyed by the shared run-id; the role lives in the filename so the logs never collide and a reader can tell at a glance which stage emitted what. (Sub-skills log per their own SKILLs; the admin sets the folder + naming convention here and holds the single run-id throughout the inline run so each stage joins it.)
-
-Rules for the logs:
-
-- **Best-effort, never blocking.** A failed write is ignored; logging never halts the run or alters a decision.
-- **Gitignored and ephemeral.** The whole `.tmp_admin/` tree is in `.gitignore`. The user manages cleanup. Nothing here is committed.
-- **Diagnostics, NOT a decision log.** They record check results, timings, and internal transitions, distinct from the banned decision/audit log (see "Things the admin must NEVER do"). Standing decisions still live only in `customizations.yaml`; git remains the decision audit trail.
-- **Never named in chat** unless a run fails and the user needs it for support. The final report (Step 6.8) prints the run-folder path once on a failed run; on a clean run, don't mention it at all.
+Internal mechanics go to a per-run diagnostic log, never to chat (INV-4). The admin samples the run-id ONCE at the top of Preflight (`RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"`) and never re-samples it; every stage writes `.tmp_admin/<run_id>/diag-<role>.log` into that one folder (`diag-admin.log`, `diag-architect.log`, ...). The logs are best-effort (a failed write never blocks the run), diagnostics only (NOT a decision log — that is `customizations.yaml` plus git), and never named in chat except the run-folder path on a failed run (Step 6.8). Full mechanics — the `log_diag` helper, the per-role file-naming table, and the log rules — are in [`references/output-discipline.md`](./references/output-discipline.md).
 
 ---
 
@@ -148,20 +126,13 @@ find . -maxdepth 1 -name '*-semantic-blueprint.md' -o -name '*-semantic-spec.md'
 
 ### 1.1 Locate artifacts in place, and COPY (never move) the deployed artifact into the convention folder
 
-The skill reads artifacts wherever they already are. It **never moves, renames, overwrites, or deletes** a file that was already in the workspace when the run started, anywhere, including the repo root. Files the user placed at the repo root stay exactly where the user put them, full stop. **But it DOES place a copy in the convention folder:** any blueprint or spec this run actually deploys must also exist at `semantius/blueprints/<file>` (blueprints) or `semantius/specs/<file>` (specs), so the artifact that was used lives alongside the rest of the project's semantic artifacts. The only files this skill ever *moves* are ones it downloaded *this run* (Step 2 / Step 6.1: from `.tmp_admin/` into the convention folder).
+Per INV-2, the skill reads artifacts wherever they are and **copies** (never moves) the deployed artifact into the convention folder. The mechanics for every deploy:
 
-**Convention-folder copy (copy UP FRONT, never move, never edit the root) — REQUIRED for every deploy.**
+- **Copy up front, with `cp`, before any edit.** As soon as a root-level artifact is resolved for this run, copy it into `semantius/blueprints/` or `semantius/specs/` (created on demand with `mkdir -p`) *immediately*, before the customize / extend / rebuild pass or the analyst runs. The convention-folder copy becomes the **working path**: every edit targets it, so it still matches exactly what was deployed; the root original is read once and never modified (editing it is a bug).
+- **Existing differing convention copy:** if a convention copy of this slug already exists and differs from the root, resolve via the "Slug present in BOTH" widget below *first*, then make the chosen version the working copy. Never blind-overwrite.
+- If the resolved artifact already lives in the convention folder, it is already the working path; nothing to copy.
 
-- Copy with `cp` (the root original is preserved byte-for-byte). **Never `mv`, never delete the source.** Move ≠ copy: a move loses the user's file, a copy does not. This rule is a copy.
-- **Copy FIRST, before any edit (not after).** As soon as a root-level artifact is resolved for this run, copy it into the convention folder *immediately*, before the customize / extend / rebuild pass (or the analyst) runs. The convention-folder copy then becomes the **working path** for the entire run: every edit targets the copy, and the root original is read once and then never modified. Because all edits land on the copy, the convention copy still matches exactly what was deployed (identical-or-newer than the root, never stale). **Editing the root original is a bug**; the whole point of the up-front copy is that the user's file at the repo root is left byte-for-byte untouched.
-- **Existing differing convention copy:** if a convention copy of this slug already exists and differs from the root, resolve via the "Slug present in BOTH" collision widget below *first*, then make the chosen authoritative version the working copy in the convention folder. Do not blind-overwrite.
-- If the resolved artifact already lives in the convention folder, it is already the working path; there is nothing to copy.
-- If a *different* convention copy already exists for the same slug, do NOT overwrite blindly — fall through to the "Slug present in BOTH" collision handling below, then refresh the convention copy from the deployed artifact once the authoritative version is settled.
-- Create `semantius/blueprints/` / `semantius/specs/` on demand (`mkdir -p`).
-
-> **Do not weaken this rule.** The ban is specifically on **moving and deleting** files the skill did not create (a filename pattern is NOT proof of ownership). A non-destructive **copy** into the convention folder is REQUIRED: the original stays put, and the deployed artifact is also persisted where the project expects it. Never scan-and-**move** (or scan-and-delete) pre-existing files; copying the single artifact this run deploys is correct and expected.
-
-The convention folders (`semantius/blueprints/`, `semantius/specs/`) are the home for every artifact the skill writes, downloads, **or deploys**. A pre-existing artifact at the repo root is copied into the convention folder up front (Step 6.1), and the convention-folder copy is what the run reads from and edits thereafter. The root original is read once and then never moved, edited, or deleted.
+The ban is specifically on **moving and deleting** files the skill did not create (a filename pattern is NOT proof of ownership). A non-destructive copy of the single artifact this run deploys is required and expected; never scan-and-move or scan-and-delete pre-existing files.
 
 **Slug present in BOTH root and the convention folder.** Pick which copy to *read* for this request. Never move or overwrite either file as a result.
 
@@ -246,34 +217,9 @@ A request can produce zero, one, or many match candidates. **All must be surface
 
 ## Step 2: Fetch remote artifacts (only when input is a URL)
 
-When the user gives an `http(s)://` URL for a blueprint or spec, fetch it into the workspace before any other step.
+When the user gives an `http(s)://` URL, fetch it before any other step using the canonical fetch-validate-place procedure in **Step 6.1**: `curl -s -L` into `.tmp_admin/<run_id>/incoming/`, validate the first 30 lines parse as front-matter with a known `artifact:` value, then move to `semantius/blueprints/<system_slug>-semantic-blueprint.md` or `semantius/specs/<system_slug>-semantic-spec.md` (folders created on demand). Never `WebFetch` (INV-6).
 
-> **Never use `WebFetch`.** It runs content through an HTML→markdown summarization pass that silently strips YAML front-matter. Use Bash + `curl` instead.
-
-```bash
-# Fetch into the gitignored staging area
-mkdir -p .tmp_admin
-curl -s -L -o .tmp_admin/incoming.md '<URL>'
-# Quick sanity: check it has the expected front-matter
-head -30 .tmp_admin/incoming.md
-```
-
-Then:
-- Read the file's front-matter.
-- Validate `artifact:` is one of `semantic-blueprint` or `semantic-spec`.
-- Rename to match the artifact's convention: `<system_slug>-semantic-blueprint.md` or `<system_slug>-semantic-spec.md`.
-- Move to the **workspace artifact folder** (created on demand):
-  - `semantic-blueprint` → `<workspace>/semantius/blueprints/<filename>`
-  - `semantic-spec` → `<workspace>/semantius/specs/<filename>`
-
-```bash
-mkdir -p semantius/blueprints semantius/specs
-mv .tmp_admin/incoming.md "semantius/blueprints/<system_slug>-semantic-blueprint.md"
-```
-
-The `semantius/` folder at the workspace root is the committed home for blueprint and spec artifacts. It is distinct from any plugin source folder (the plugin itself lives in the user's Claude Code plugin install, not in their project repo). If the folder doesn't exist yet, create it.
-
-If the fetch fails (curl non-zero exit, file empty, no front-matter, unexpected `artifact:` value), halt and report the failure verbatim to the user. Do not guess.
+On any fetch failure (curl non-zero exit, empty file, no front-matter, unknown `artifact:` value), halt and report the failure verbatim; do not guess. The `semantius/` folder at the workspace root is the committed home for these artifacts (distinct from the plugin install, which lives in the user's Claude Code plugin folder, not their project repo).
 
 ---
 
@@ -298,53 +244,20 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 
 **Why everything-deploy routes through Step 6:** one item or many, the pipeline is the same. Step 6 has the customize/deploy flag plumbing, the customizations-file handoff, the unified report. Greenfield builds and catalog clones also route through Step 6 for the analyst → modeler half and the unified report, but they carry NO `customize` / `review` / `deploy` questions: the architect's Create pass already covered design and `deploy` is implied (see "Greenfield and clone builds skip scope flags"). The only request types that bypass Step 6 are pure-architect operations (Audit on a blueprint), pure-analyst operations (Audit on a spec), and admin-only operations (status, backup, health). Anything that ends in writes to the live semantic model goes through Step 6.
 
-### Resolve scope flags BEFORE presenting the plan
+### Resolve scope flags before presenting the plan
 
-**First, gate on whether an artifact already exists — scope flags apply to existing artifacts, NOT to greenfield builds.** `customize` and `review` describe what to do with a **pre-existing** design or spec, so they only make sense when one exists:
+Scope flags are resolved before any plan that contains them is rendered (INV-3). They are routing decisions, not confirmations: `customize=yes` makes a blueprint architect → analyst → modeler, `customize=no` makes it analyst → modeler, so a plan cannot be correct until they are resolved. Greenfield builds and catalog clones short-circuit (no scope question fires; the bug guard: "create a task list" must NEVER produce *"Deploy the task-list design as designed, or edit it first?"*). For an existing artifact (a workspace file, a Step 1.3 match, or a URL fetched in Step 2):
 
-- **Greenfield build or catalog clone (the architect will CREATE the artifact; nothing exists yet):** skip scope-flag resolution entirely. Do NOT fire the `customize` / `review` / `deploy` questions. There is no design to "deploy as designed or edit first" — the architect's Create pass IS the interactive design, and `deploy` is implied by the build request. Render the greenfield plan (Pattern 4) and run; the modeler's own pre-write yes/no is the single write gate. **Bug guard:** a request like "create a task list" must NEVER produce *"Deploy the task-list design as designed, or edit it first?"* — there is no design yet.
-- **Existing artifact (a workspace file, a Step 1.3 match, or a URL fetched in Step 2):** resolve scope flags as described below.
+- **Single identified artifact** (one named file, one fetched URL, one Step 1.3 match): resolve its flags HERE, before the plan is rendered. The front-matter (`system_name`) is in hand, so the question wording is fully formed.
+- **Multi-source / glob** (items only enumerated in Step 6.1): resolve each item's flags in Step 6.4, still before that item's plan line is rendered in Step 6.6.
 
-For an existing artifact, `customize` (blueprint inputs) and `review` (spec inputs) are **routing decisions, not confirmations**: they change *which steps the plan contains* (a blueprint with `customize=yes` is architect → analyst → modeler; with `customize=no` it is analyst → modeler). A plan cannot be correct until they are resolved, so resolve them BEFORE rendering any plan, and always ask when the user's phrasing leaves a flag ambiguous. A bare "deploy this" (or "deploy the model at `<URL>`") leaves `customize` at `?` and MUST fire the customize question; never silently default it to `no`.
-
-Resolve with the inference-then-ask procedure already defined in Step 6.4 (intent table 6.4.1, exact wording 6.4, procedure 6.4.2) — do not re-derive it here:
-
-- **Single identified artifact** (one named file, one URL already fetched in Step 2, or one workspace match from Step 1.3): resolve its scope flags HERE, before the plan is rendered. The front-matter (`system_name`) is in hand, so the `AskUserQuestion` wording is fully formed.
-- **Multi-source deploy** (a deploy request with several sources, or a glob whose items are only enumerated in Step 6.1): resolve each item's flags in Step 6.4, which still runs before that item's plan line is rendered in Step 6.6.
-
-Either way the invariant holds: **scope flags are resolved before the plan that contains them is rendered.** Record the resolved values; the decision table above and the plan render below (Step 3 for audit / admin flows, Step 6.6 for pipeline flows) consume them. This is separate from the deploy confirmation discussed next: the "no up-front gate" rule governs only the deploy yes/no and never suppresses these scope questions.
+Use the inference-then-ask procedure in Step 6.4 (intent table 6.4.1, exact wording 6.4, procedure 6.4.2); do not re-derive it here. These are scope questions, not the deploy confirmation, so INV-1 never suppresses them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize question.
 
 ### Presenting the plan
 
-**By this point the scope flags are already resolved** (see "Resolve scope flags BEFORE presenting the plan" above), so the plan you render reflects the resolved `customize` / `review` / `deploy` values and always shows the right number of steps. **Pipeline flows (build, clone, deploy) do NOT render-and-run their plan here**; they hand off to Step 6, and the runnable plan is rendered in Step 6.6 after Step 6.4 has resolved each item's flags. Step 3 renders a runnable plan only for flows that bypass Step 6 (audit, admin). The patterns below describe the plan's *output shape* and apply wherever the plan is rendered. Never render a deploy plan and jump straight to spawning a sub-skill from Step 3: that skips Step 6.4.
+By this point the scope flags are resolved, so the plan reflects them and shows the right number of steps. **Pipeline flows (build, clone, deploy) do NOT render-and-run their plan here** — they hand off to Step 6, which renders the runnable plan in Step 6.6 after Step 6.4 resolves each item's flags. Step 3 renders a runnable plan only for flows that bypass Step 6 (audit, admin). Never render a deploy plan and jump straight to spawning a sub-skill from Step 3: that skips Step 6.4.
 
-The plan is always *informational*: the admin prints what will happen, then runs it. **The admin does NOT fire its own up-front "Proceed?" gate.** Write protection lives where the write actually happens: the modeler shows its own plan summary and asks a final yes/no before it touches the live model (verified in the modeler SKILL, section "The only confirmation the modeler asks"). That gate fires after the analyst has produced the spec, so the user is confirming against the real plan of what will be written. **This suppression covers the deploy *confirmation* only; it never covers the scope *questions* (`customize`, `review`), which are resolved earlier (before the plan) and are always asked when the user's phrasing is ambiguous.** **Three patterns, by what the plan touches:**
-
-**Plan-line authoring rules** (apply to every example below and every plan line you generate):
-
-1. **Lead with the action in plain English**, not with the skill name. The user is deciding whether to proceed, not which agent to fire. `"Match `ats-candidate-crm` against your semantic model"` is right; `"Run semantius-analyst to reconcile..."` leaks internal routing.
-2. **Use "your semantic model"** (or "the live semantic model") in user-facing prose, never "the catalog". Internal SKILL.md body and architecture docs can still say "catalog"; user-facing chat cannot.
-3. **Surface filenames in the close-out, not in plan lines.** Plan lines are about deciding; close-outs are about confirming what was produced. Path noise in a plan line slows the read.
-4. **Cue the interaction shape** when the step is interactive (analyst's merge/reuse questions). The user wants to know whether they'll be asked things or just watch.
-5. **State the writes** in one trailing sentence. The user needs to know which step touches the live model (the modeler asks its own yes/no right before that write).
-6. **Render the plan as regular markdown prose** in chat: a short heading, a numbered list, a one-line trailing sentence. **Do NOT wrap the plan in a triple-backtick code block.** Example blocks in this SKILL.md are presented as blockquotes (lines prefixed with `> `) precisely so you don't accidentally mimic a code-fence at runtime. Plain text and inline backticks for `slugs` are fine; the outer fence is not.
-7. **Do NOT fire an up-front confirmation gate.** The plan is informational: print it and run. Never emit a `Proceed? [y / change / cancel]` line or an `AskUserQuestion` "Proceed?" widget for the whole plan. The only write confirmation is the modeler's own pre-execute yes/no, fired after the spec exists. If the user wants to change scope or stop, they say so in chat before the pipeline reaches the modeler.
-8. **Be precise about what each step produces; never describe the system as if this step builds it.** Across the whole pipeline there are exactly three things a step can produce: a **design** (the design step), a **deployable spec** (the matching step), and changes to the **live semantic model** (the apply step). Write every plan line around the thing that step actually produces, and never invent a fourth object or a framing the platform doesn't have, inventing concepts confuses the user about what semantius is doing. Specific traps to avoid:
-   - The first step of a from-scratch build is a **design** step. Its line is `"Design the data model for your <system>, mapping out its entities and how they relate (interactive)."` Do NOT write `"Design the <planner / CRM / tracker>"` as step one: the system itself is not built until the apply step, and that phrasing makes the user think step one produces a working system.
-   - Do NOT say `"...into a blueprint"` or otherwise name the file format. `blueprint` and `frontmatter` are internal terms; say "design" or "design document". (`spec` is acceptable in admin prose, as the existing examples use it.)
-   - Do NOT conflate the system being built (the planner, the CRM) with the design artifact that describes it. They are different things; a plan line that turns one into the other ("design the planner into a blueprint") is the exact sloppiness this rule exists to prevent.
-
-**Pattern 1 — Read-only plan.** The plan includes only `semantius-analyst` (which is read-only against the live semantic model and asks its own interactive reuse/merge/promote questions during reconciliation) or admin-only operations (status, backup, health, audit).
-
-**Just announce and run.** Do NOT fire the confirmation widget. The analyst itself will surface plenty of decisions; adding a redundant pre-confirmation is friction. Example announcement (one paragraph, no list, no gate). Render as prose, not code-fenced:
-
-> Found `ats-candidate-crm-semantic-blueprint.md` in the workspace (no matching spec yet). Building the deployable spec now by matching it against your live semantic model; you'll be asked a few merge / reuse / promote questions along the way. This produces a spec file but doesn't change your live model.
-
-Then invoke the analyst immediately.
-
-**Pattern 2 — Write-bound plan.** The plan includes `semantius-modeler` (which updates the live semantic model).
-
-**Render as a numbered list (informational). Do NOT fire a confirmation widget.** Example output (render exactly like this — markdown prose, not code-fenced):
+Render per INV-1 (informational; no up-front Proceed? gate; the modeler is the single write gate) and INV-5 (markdown prose, never code-fenced). The full plan-line authoring rules, the four plan patterns (read-only / write-bound / network-fetch / greenfield), and the worked multi-item examples are in [`references/plan-shapes.md`](./references/plan-shapes.md). The canonical write-bound shape:
 
 > **Plan:**
 >
@@ -353,46 +266,7 @@ Then invoke the analyst immediately.
 >
 > Step 1 is the spec-building step: it produces the deployable spec file and asks you a few merge / reuse / promote questions; it doesn't touch your live model. Step 2 applies that spec; the modeler shows what it will change and asks a final yes/no before it updates the live model.
 
-Then run the pipeline. The plan above is informational; do not emit a `Proceed?` line or a confirmation widget here. The modeler is the single write gate.
-
-**Pattern 3 — Network-fetch plan.** The input is a URL: fetch the artifact first (Step 2), then route through Step 6 like any other deploy.
-
-**Print the URL** you're about to fetch, then proceed without firing a widget for the fetch itself: the fetch is harmless, the user can see the URL is right, and if the fetched artifact is unexpected the analyst's parser will catch it. **The fetch is not the plan.** Once the artifact lands, resolve the scope flags (the `customize` question fires here whenever the user only said "deploy this"); only THEN is the plan rendered (in Step 6.6) from the resolved flags. Do NOT render a fetch → match → apply plan and run it directly from this pattern: that skips the customize question.
-
-Example, where the user said only "deploy the model at `<URL>`". First the fetch result:
-
-> Fetching `https://example.com/blueprints/ats.md` ...
->
-> Fetched `real-estate-agent-semantic-blueprint.md` (slug: `real-estate-agent`, 7 entities). No matching spec in the workspace.
-
-Because the prompt carried no edit-first or as-is qualifier, the `customize` question fires next (exact wording in 6.4). Suppose the user picks "Deploy as designed"; the plan then renders in Step 6.6:
-
-> **Plan:**
->
-> 1. Match `real-estate-agent` against your live semantic model and write the spec.
-> 2. Apply `real-estate-agent` to your live semantic model.
->
-> Step 1 is the spec-building step: it produces the deployable spec file and asks you a few merge / reuse / promote questions; it doesn't touch your live model. Step 2 applies that spec; the modeler shows what it will change and asks a final yes/no before it updates the live model.
-
-Had the user picked "Edit the design first," the plan would carry a leading "Review and edit `real-estate-agent`" line instead. The modeler asks its own yes/no before writing either way.
-
-**Pattern 4 — Greenfield build plan (and catalog clone).** No artifact exists; the architect creates it. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask) — see "Resolve scope flags BEFORE presenting the plan". Render the plan and run. Example output (markdown prose, not code-fenced):
-
-> **Plan:**
->
-> 1. Design the data model for your task list, mapping out its entities and how they relate (interactive).
-> 2. Match the design against your live semantic model and write the spec.
-> 3. Apply it to your live semantic model.
->
-> Step 1 is interactive: I'll walk the entities and relationships with you. Step 2 builds the deployable spec and asks a few merge / reuse / promote questions; it doesn't touch your live model. Step 3 applies it; the modeler shows what it will change and asks a final yes/no before writing.
-
-The architect's interactive creation handles every design decision, so there is no separate customize step and no deploy question; the modeler is the single write gate. A catalog clone uses the same three-line shape with step 1 reading *"Clone the `<source>` design as a starting point (interactive)."*
-
-**No admin confirmation widget.** Do NOT fire an up-front `AskUserQuestion` "Proceed with the plan?" gate here. It would duplicate the modeler's own pre-execute yes/no and fire before customize and the analyst have run, asking the user "are you sure?" about a plan whose write step is still many steps away. The plan is informational; the modeler is the single write gate.
-
-**Changing scope or cancelling.** If the user wants to adjust the customize / review / deploy choices or stop after seeing the plan, they say so in chat. Re-resolve the flags (Step 6.4) and re-render the plan, or stop cleanly with one line ("Cancelled. No changes made."). No widget is needed: nothing has run, and the modeler still refuses to write without its own yes/no, so an unintended write cannot slip through.
-
-**Rule of thumb:** confirmation protects the user from unintended writes, and that protection already lives at the modeler (it shows its plan and asks yes/no before every write). A second admin-level gate adds friction without adding protection, so the admin does not fire one.
+Then run the pipeline; the modeler is the single write gate (INV-1). If the user wants to change scope or stop after seeing the plan, they say so in chat; re-resolve the flags (Step 6.4) and re-render, or stop cleanly ("Cancelled. No changes made."). Nothing has run, and the modeler still gates every write, so no unintended write can slip through.
 
 ---
 
@@ -429,74 +303,16 @@ Each sub-skill enforces its own version contract on input. The admin trusts thos
 
 ## Step 5: Admin-only operations
 
-Operations that don't involve the architect / analyst / modeler chain. The admin executes these directly via `use-semantius` (CLI patterns) without spawning sub-skill agents.
+Operations that don't involve the architect / analyst / modeler chain. The admin executes these directly via `use-semantius` (CLI patterns) without spawning sub-skill agents. Full procedures (the exact Status output template, the backup JSON shape, the listing wrappers, and the health probe) live in [`references/admin-operations.md`](./references/admin-operations.md); load it when running one of these.
 
-### 5.1 Status
+| Operation | Trigger | What it does |
+|---|---|---|
+| **Status** (5.1) | "what's deployed?", "status of semantius" | Show workspace artifacts and live modules (entity / permission counts, last deploy). Read-only. |
+| **Backup** (5.2) | "back up the catalog", "snapshot module X" | Dump the live model (optionally one module) to `semantius-backup-<ts>.json`. Read-only. |
+| **Listing** (5.3) | "list modules / entities / permissions / users / roles" | Convenience read wrappers producing readable tables. Read-only. |
+| **Health** (5.4) | "check the connection" | Probe `getCurrentUser`, read a known built-in, report OK / FAIL. |
 
-**Status** — when the user asks what is deployed, show what's in the workspace and what's live. Render as markdown prose, NOT code-fenced:
-
-> **Workspace:**
->
-> - `semantius/blueprints/ats-candidate-crm-semantic-blueprint.md` (blueprint, blueprint_version 2.0, slug `ats-candidate-crm`)
-> - `semantius/specs/ats-candidate-crm-semantic-spec.md` (spec, version 4.1, reconciled 2026-05-25, owns 6 entities)
->
-> **Live semantic model:**
->
-> - `ats-candidate-crm` — 6 entities, 7 permissions
-> - `hcm-core` — 23 entities, 9 permissions
-> - `iwms` — 14 entities, 11 permissions
->
-> Last deployed: 2026-05-25 by `martin.amm`.
-
-Implementation: read workspace front-matters; call `read_module` / `read_entity` / `read_permission` via use-semantius to list live state.
-
-### 5.2 Backup (semantic-model snapshot)
-
-**Backup** — when the user asks to back up or snapshot, dump the live semantic model into a versioned JSON file (optionally scoped to one module).
-
-Scope:
-- With a `module-slug` argument: snapshot just that module (entities, fields, permissions, role-permissions, permission-hierarchy edges, webhook receivers).
-- Without an argument: snapshot every module.
-
-Output: `semantius-backup-<YYYYMMDD-HHMMSS>.json` in the current working directory. The format is a stable, replay-friendly JSON shape (one top-level key per resource type, arrays of records).
-
-> Backup does NOT deploy or modify anything. It is read-only.
-
-Implementation:
-
-```bash
-mkdir -p .tmp_admin
-# Use postgrestRequest or read_* to dump each resource type
-# Combine into a single JSON file with deterministic key ordering
-# Move to workspace with timestamped filename
-```
-
-Backup files include a `_backup_format_version` field so future restore tooling can reject incompatible dumps.
-
-### 5.3 Listing operations
-
-| Command | Behavior |
-|---|---|
-| `list modules` | `read_module '{}'` → table of `slug / display_name / entity_count / created_at` |
-| `list entities in <module>` | `read_entity '{}'` filtered to `module_id` matching `<module>` |
-| `list permissions in <module>` | `read_permission '{}'` filtered to `module_id` |
-| `list users` | `read_user '{}'` → table of `email / display_name / is_disabled` |
-| `list roles` | `read_role '{}'` → table of `role_name / slug / module_id` |
-
-These are convenience wrappers that produce readable terminal output. No interactive prompts; pure reads.
-
-### 5.4 Health check
-
-**Health** — when the user asks to check the connection, verify the instance is reachable and a known entity reads back.
-
-```bash
-# Probe
-semantius call crud getCurrentUser
-# Verify a known built-in
-semantius call crud read_entity '{"slug": "users"}'
-```
-
-Report `OK / FAIL` with the failure mode. Exit code matches the underlying call.
+Get started (5.5) stays resident below: it is a top-level request type (Step 0) with its own onboarding flow.
 
 ### 5.5 Get started (onboarding)
 
@@ -666,7 +482,7 @@ For each item, derive its pipeline by artifact type and the **already-resolved**
 | `semantic-spec` | `review=yes` | `yes` | analyst Review → modeler |
 | `semantic-spec` | `review=yes` | `no` | analyst Review |
 
-Render the checklist as a numbered list using each file's `system_slug` (or filename if slug is missing). Apply the plan-line authoring rules from Step 3: action-first, "your semantic model", no skill-name leading, filenames surfaced in close-out (not in plan lines), markdown prose (NOT a code-fenced block). The plan is informational; do NOT add a confirmation widget at the end (the modeler asks its own yes/no before writing).
+Render the checklist as a numbered list using each file's `system_slug` (or filename if slug is missing), per the plan-line authoring rules in [`references/plan-shapes.md`](./references/plan-shapes.md) (action-first, "your semantic model", filenames surfaced in the close-out not the plan line; INV-5). The plan is informational (INV-1: no confirmation widget at the end).
 
 **Per-sub-skill line shapes:**
 
@@ -679,64 +495,7 @@ Render the checklist as a numbered list using each file's `system_slug` (or file
 
 For multi-item runs, numbering is continuous across items (item one is lines 1..k; item two is lines k+1..m; ...). Each line stands alone; don't compress repeated phrases.
 
-**Example output — 3 blueprints with `customize=no`, `deploy=yes` (each item is analyst → modeler, so 6 lines total).** Render as markdown prose (NOT code-fenced):
-
-> **Plan (3 items):**
->
-> 1. Match `hcm-core` against your live semantic model and write the spec.
-> 2. Apply `hcm-core` to your live semantic model.
-> 3. Match `ats-candidate-crm` against your live semantic model and write the spec.
-> 4. Apply `ats-candidate-crm` to your live semantic model.
-> 5. Match `itsm-helpdesk` against your live semantic model and write the spec.
-> 6. Apply `itsm-helpdesk` to your live semantic model.
->
-> Each item runs its full pipeline before the next starts. Decisions you make for one item (such as how to handle a name clash on `vendors`) are reused for later items without re-asking. Lines 2, 4, and 6 update the live model.
-
-Then run the pipeline. The plan is informational; the modeler shows its own summary and asks a final yes/no before writing each item.
-
-**Example output — 2 blueprints with `customize=no`, `deploy=no` (analyst-only / dry run, one line per item):**
-
-> **Plan (2 items):**
->
-> 1. Match `hcm-core` against your live semantic model and write the spec.
-> 2. Match `ats-candidate-crm` against your live semantic model and write the spec.
->
-> Each item runs to spec completion before the next starts. Decisions you make for one item (such as how to handle a name clash on `vendors`) are reused for later items without re-asking. Nothing is applied to your semantic model; specs are written to `semantius/specs/`.
-
-No confirmation widget (read-only, Pattern 1 applies).
-
-**Example output — 1 blueprint with `customize=yes`, `deploy=yes` (architect → analyst → modeler, 3 lines):**
-
-> **Plan (1 item):**
->
-> 1. Review and edit `real-estate-agent`.
-> 2. Match `real-estate-agent` against your live semantic model and write the spec.
-> 3. Apply `real-estate-agent` to your live semantic model.
->
-> The customize step is interactive; the matching step then asks the usual merge / reuse / promote questions. Line 3 updates the live model.
-
-Then run the pipeline. The plan is informational; the modeler shows its own summary and asks a final yes/no before writing.
-
-**Example output — 1 spec with `review=no`, `deploy=yes` (direct deploy, 1 line):**
-
-> **Plan (1 item):**
->
-> 1. Apply `ats-candidate-crm` to your live semantic model.
->
-> Line 1 updates the live model.
-
-Then run the pipeline. The plan is informational; the modeler shows its own summary and asks a final yes/no before writing.
-
-**Example output — 1 spec with `review=yes`, `deploy=yes` (review then deploy, 2 lines):**
-
-> **Plan (1 item):**
->
-> 1. Review `ats-candidate-crm` against your live semantic model.
-> 2. Apply `ats-candidate-crm` to your live semantic model.
->
-> The review step compares the spec against the current state of your live semantic model and surfaces any drift. Line 2 updates the live model.
-
-Then run the pipeline. The plan is informational; the modeler shows its own summary and asks a final yes/no before writing.
+Worked examples for every flag combination (multi-item analyst → modeler, dry-run, customize, direct spec deploy, review-then-deploy) are in [`references/plan-shapes.md`](./references/plan-shapes.md). Render them per INV-1 and INV-5; the modeler shows its own summary and asks a final yes/no before writing each item.
 
 **Trailing-sentence rule:** the last sentence in the plan tells the user what gets written. If any line is a modeler apply, end with "*Line N (and N2, ...) update the live model.*" listing the apply-line numbers. If no apply lines exist, end with "*Nothing is applied to your semantic model; specs are written to `semantius/specs/`.*"
 
@@ -744,9 +503,9 @@ Then run the pipeline. The plan is informational; the modeler shows its own summ
 
 ### 6.6 Present the plan and run
 
-Render the checklist as markdown prose per 6.5 (no code-fence wrap), then run. The admin fires NO up-front confirmation widget, for a single item or for many.
+Render the checklist per 6.5, then run (INV-1: no up-front confirmation widget, one item or many; INV-5: markdown prose).
 
-- **Run includes writes** (`deploy=yes` for any item): the plan is informational. Each item's modeler step shows its own plan summary and asks a final yes/no before it writes, so every live-model change is still explicitly confirmed at the point of the write (verified in the modeler SKILL, section "The only confirmation the modeler asks"). For a multi-item run, that is one modeler yes/no per deploying item, each fired when that item's spec is ready.
+- **Run includes writes** (`deploy=yes` for any item): per INV-1 each item's modeler step shows its own plan summary and asks a final yes/no before it writes — one modeler confirmation per deploying item, fired when that item's spec is ready.
 - **Read-only run** (`deploy=no`): announce the plan and run.
 - **Changing scope or cancelling:** if the user asks to change scope or stop after seeing the plan, re-resolve the flags (6.4) and re-render, or stop cleanly. No widget needed; nothing has run yet and the modeler still gates every write.
 
@@ -763,7 +522,7 @@ For each item:
 1. Print one narration line: `Item N of M: <slug or filename> → <pipeline>`. One line. Do not double-narrate what the sub-skill itself will narrate, and do not add a transition sentence between sub-skills (no *"Now applying it to your live model..."*, no pre-explaining the deploy step), see "Pipeline hand-offs are not narrated" in Output discipline.
 2. Establish the run context per Step 7.3's schema (stated in the conversation, not prepended to an Agent-tool call):
    - Always: `Run context:`, `Customizations file:`.
-   - Architect invocation: add `Architect mode:` (one of `create | catalog-clone | audit | extend | customize | rebuild`) and `Input artifact:` — this MUST be the **convention-folder working copy** (`semantius/blueprints/<file>`) resolved in Step 6.1, never the repo-root path. The architect edits the artifact it is handed in place, so handing it the root path is what causes the root file to be mutated; hand it the copy. Derive mode from the resolved flags (table in Step 7.2).
+   - Architect invocation: add `Architect mode:` (one of `create | catalog-clone | audit | extend | customize | rebuild`) and `Input artifact:` — this MUST be the **convention-folder working copy** (`semantius/blueprints/<file>`) resolved in Step 6.1, never the repo-root path. The architect edits the artifact it is handed in place, so handing it the root path is what causes the root file to be mutated; hand it the copy. Derive mode from the resolved flags (table in Step 7.3).
    - Analyst invocation: add `Analyst mode:` (`reconcile` for normal deploys; `audit` / `extend` / `rebuild` for other routes) and `Input artifact:` (the convention-folder working copy, never the root).
    - Modeler invocation: add `Input artifact:` (spec path) and `Deploy flag:` (`yes`/`no` per the resolved deploy choice).
 3. Enter the first sub-skill in the pipeline **inline in the main thread** (Step 4 invocation pattern): state the run context from step 2, then follow the sub-skill's `SKILL.md` in this same context so its `AskUserQuestion` prompts reach the user. Do NOT spawn it as an Agent-tool subagent.
@@ -782,7 +541,7 @@ Similarly for chat narration: when the run folder is created, narrate at most on
 
 ### 6.8 Final report
 
-After the last item (or on halt). Render as markdown prose, NOT code-fenced:
+After the last item (or on halt). Render as markdown prose (INV-5):
 
 > **2 of 3 items applied to your semantic model.**
 >
@@ -868,103 +627,13 @@ For end-to-end build flows starting from scratch, set `Architect mode: create`. 
 
 The sub-skill exports `CUSTOMIZATIONS_FILE` from the second line and proceeds. Direct invocations (no admin orchestration) compute the same path themselves at their own Step 0.
 
-### 7.4 Decision-key → yq path registry
+### 7.4–7.6 Registry, consultation pattern, and what is NOT written
 
-Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZATIONS_FILE`. This table is the single source of truth — the architect and analyst SKILLs cite specific rows but never invent new paths.
+The operational detail lives in [`references/customizations-protocol.md`](./references/customizations-protocol.md):
 
-| Source | Decision | yq path | Shape |
-|---|---|---|---|
-| Analyst (access-control scope) | Basic vs full RBAC, per module | `.access_scopes.<slug>` | scalar (`basic` \| `full`) |
-| Architect authoring | Vendor-template choice | `.naming.mode` | scalar |
-| Architect authoring | Slug-collision strategy | `.naming.on_slug_collision` | scalar |
-| Architect authoring | Module display-name override | `.module_display_names.<slug>` | scalar |
-| Architect authoring | Embedded-master rename | `.aliases.<old_slug>` | object (slug, singular_label, plural_label) |
-| Analyst Stage 3a | Optional entity verdict | `.optionals_decided.<slug>` | scalar (`included` \| `excluded`) |
-| Analyst Stage 3b.0 | Catalog-owner adoption gate | `.adoption_consent` | scalar (`auto-confirm` \| `prompt-each-time`) |
-| Analyst Stage 3b.0 | Adoption event record | `.adoptions.<entity>` | scalar (date; audit log) |
-| Analyst Stage 3b.1 / 3b.2 | Master-vs-master outcome | `.collisions.<entity>.outcome` | scalar (`share` \| `silo` \| `claim`) |
-| Analyst Stage 3b.1 / 3b.2 | Share host module | `.collisions.<entity>.host_module` | scalar (when outcome=share) |
-| Analyst Stage 3b.2 | Silo rename target | `.collisions.<entity>.rename_to` | scalar (when outcome=silo) |
-| Analyst Stage 3b.2 | Claim new owner module | `.collisions.<entity>.new_owner` | scalar (when outcome=claim) |
-| Analyst Stage 3b.2 sub | Shared-master manager scope | `.shared_master_managers` | scalar |
-| Analyst Stage 3c | Similar-name → reuse / rename | `.aliases.<incoming_slug>` | object (slug, singular_label, plural_label) |
-| Analyst Stage 3d | Missing-owner default | `.on_missing_owner` | scalar (`embed_locally` \| `skip`). Legacy `wait` entries are coerced to `embed_locally` at consult time. |
-| Analyst Stage 3d sub | Slug-collision local naming | `.slug_collision_naming` | scalar (`context-prefix` \| `module-prefix` \| `reuse-existing`) |
-| Analyst Stage 3e | Cross-scope link target | `.links.<blueprint_slug>.<field_name>` | scalar |
-| Analyst Stage 3f.1 | Field-name drift | `.drift.field_name.<entity>.<field>` | scalar |
-| Analyst Stage 3f.2 | Enum drift | `.drift.enum.<entity>.<field>` | scalar |
-| Analyst Stage 3f.3 | Permission drift | `.drift.permission.<entity>.edit_permission` | scalar |
-| Analyst Stage 3f.4 | Format drift | `.drift.format.<entity>.<field>` | scalar |
-| Modeler pre-execute | y/n consent | not cached | n/a (always asks per item) |
-
-When extending: prefer fewer, broader keys. The whole point is to deduplicate; over-specific keys defeat that. The cross-scope link path (`.links.<blueprint>.<field>`) is the deliberate exception — link targets often don't generalize across blueprints, so they're keyed by blueprint+field naturally.
-
-### 7.5 Consultation pattern (sub-skill side)
-
-Before any `AskUserQuestion` call site that maps to a row above, the sub-skill consults `$CUSTOMIZATIONS_FILE`. After a cache miss, it writes the answer back atomically with a provenance comment, BEFORE proceeding with the spec / catalog change.
-
-```bash
-# Inputs: $CUSTOMIZATIONS_FILE (path), $DECISION_PATH (yq path from 7.4),
-#         $BLUEPRINT_SLUG (the current blueprint's system_slug)
-
-# 1. Policy lookup
-if [ -f "$CUSTOMIZATIONS_FILE" ]; then
-  policy_match=$(yq -r "$DECISION_PATH" "$CUSTOMIZATIONS_FILE" 2>/dev/null)
-  if [ -n "$policy_match" ] && [ "$policy_match" != "null" ]; then
-    CHOICE_VALUE="$policy_match"
-    # Narrate one plain-English line ("Using your rule: ..."), skip AskUserQuestion.
-    return
-  fi
-fi
-
-# 2. Cache miss → fire AskUserQuestion as today. Receive $CHOICE_VALUE.
-#    If the user picked an explicit cancel option, return without writing.
-
-# 3. Atomic write-on-answer. Create the file if absent.
-mkdir -p "$(dirname "$CUSTOMIZATIONS_FILE")"
-[ -f "$CUSTOMIZATIONS_FILE" ] || printf 'version: "1.0"\n' > "$CUSTOMIZATIONS_FILE"
-
-# 4. Write with provenance comment. Shape depends on the row in 7.4:
-DATE=$(date +%Y-%m-%d)
-PROV="decided ${DATE} during ${BLUEPRINT_SLUG} deploy"
-
-# 4a. Scalar (mastership.host_module, naming.mode, on_missing_owner, ...):
-yq -i "${DECISION_PATH} = \"${CHOICE_VALUE}\" | ${DECISION_PATH} lineComment = \"${PROV}\"" "$CUSTOMIZATIONS_FILE"
-
-# 4b. List append (none in 7.4 currently, but reserved):
-# yq -i ".some_list += [\"${CHOICE_VALUE}\"] | .some_list[-1] lineComment = \"${PROV}\"" "$CUSTOMIZATIONS_FILE"
-
-# 4c. Nested object (aliases.<slug>, collisions.<entity>): yq drops lineComment
-#     on a mapping, so use headComment — the comment renders ABOVE the first
-#     child key. This is yq v4's design, not a bug.
-yq -i ".aliases.${OLD_SLUG}.slug = \"${NEW_SLUG}\" \
-      | .aliases.${OLD_SLUG}.singular_label = \"${SINGULAR}\" \
-      | .aliases.${OLD_SLUG}.plural_label = \"${PLURAL}\" \
-      | .aliases.${OLD_SLUG} headComment = \"${PROV}\"" "$CUSTOMIZATIONS_FILE"
-```
-
-**yq footguns** (verified during plan prep — do not work around with creative chaining):
-
-- `lineComment` on a mapping node is silently dropped. Use `headComment` for nested-object entries.
-- Chaining `del(... | headComment) | ...lineComment = ...` is destructive (clobbers values). Don't try to migrate a comment from one node to another — write fresh.
-- Re-writing the same scalar without a `lineComment` clause preserves the existing trailing comment. So accidental re-writes don't clobber provenance.
-
-**Cache-hit narration:** when policy auto-resolves a decision, narrate exactly one plain-English line:
-
-> *Using your rule for the vendors collision: share via the Parties master module.*
-
-Not a paragraph. Not a section header. One line. The user sees that policy resolved a decision and what it was; they don't need the full rationale repeated.
-
-**Write-on-ask discipline:** the skill that fires the prompt is the skill that writes the policy entry. No admin-side post-processing of `AskUserQuestion` results. Each sub-skill owns its decisions.
-
-**Tool-call description discipline:** the Bash tool `description` field is user-visible. Use plain language ("Saving your choice", "Checking earlier choices"), never internal vocabulary ("Append to customizations.yaml", "yq insert at .collisions").
-
-### 7.6 What is NOT written to the file
-
-- **Modeler's pre-execute `y/n`.** The modeler always asks before writing. Policy does not change this.
-- **Free-text "Other" answers** that the user typed in. The slug-collision-naming widget (3d sub) has an "Other" option; when picked, use the value for the current decision but do NOT write to `.slug_collision_naming` — the next collision should re-ask. The user's typed value is a one-off, not a standing rule.
-- **Explicit-cancel selections.** Master-vs-master option 4 ("Stop, I want to think about it") and any other cancel-style choice halts the run without writing.
-- **Decisions inside the modeler.** The modeler consumes specs only; the spec already carries every decision by the time the modeler runs.
+- **7.4 Decision-key → yq path registry** — every Stage 3 / authoring-stage widget's `$CUSTOMIZATIONS_FILE` path and value shape. It is the single source of truth for paths; the architect and analyst cite specific rows (e.g. the "Optional entity verdict" row) but never invent new ones.
+- **7.5 Consultation pattern (sub-skill side)** — policy lookup → cache-miss `AskUserQuestion` → atomic write-on-answer with a provenance comment, plus the yq footguns (`lineComment` vs `headComment` on mappings), the one-line cache-hit narration, and the write-on-ask discipline (the skill that fires the prompt is the skill that writes the entry).
+- **7.6 What is NOT written** — the modeler's pre-execute y/n, free-text "Other" answers, explicit-cancel selections, and any decision inside the modeler.
 
 ---
 
@@ -972,7 +641,7 @@ Not a paragraph. Not a section header. One line. The user sees that policy resol
 
 After successful execution:
 
-- **Pipeline runs**: state what's now live in the user's semantic model, where the produced files landed, and give the user a way **into the product** to see it: a clickable browser link, never a slash command. This is the admin's echo of the modeler's Closing Contract (see [`semantius-modeler` → "Closing Contract: clean and sticky"](../semantius-modeler/SKILL.md)); keep the two in lockstep. Apply the same plain-language rules from Step 3 ("your semantic model", action-oriented, lead with the **System Name** not the raw slug, file paths surfaced HERE not in the plan). Example (single item): *"Done. **ATS Candidate CRM** is live in your semantic model (6 entities, 7 permissions). [Open ATS Candidate CRM in Semantius →](<ui_baseurl>/ats-candidate-crm). The spec is saved under `semantius/specs/`."* For multi-item runs, use the Step 6.8 per-item link list. **Do NOT end with an instruction to run a status/developer slash command:** that's a developer affordance, it assumes the plugin is installed under an exact name in a live Claude Code session (a standalone install has no such command), and it shows a drift report instead of the user's records. The browser link is the end-user call-to-action.
+- **Pipeline runs**: state what's now live, where the produced files landed, and give the user a way **into the product**: the same clickable browser link the final report uses (Step 6.8, never a developer slash command). Lead with the **System Name**, not the raw slug; surface file paths here, not in the plan line. Example (single item): *"Done. **ATS Candidate CRM** is live in your semantic model (6 entities, 7 permissions). [Open ATS Candidate CRM in Semantius →](<ui_baseurl>/ats-candidate-crm). The spec is saved under `semantius/specs/`."* For multi-item runs, use the Step 6.8 per-item link list.
 - **Admin-only runs**: state what was produced (backup file path, list output, status report) and stop.
 
 After unsuccessful execution:
@@ -985,20 +654,14 @@ After unsuccessful execution:
 
 ## Routing for natural-language requests (without slash commands)
 
-Common phrasings and where they route:
+Every phrasing maps to one of the six request types in Step 0 (whose table carries the trigger phrases and the pipeline for each); the Step 3 decision table then refines by workspace state. A few mappings worth calling out:
 
-| User says | Step 0 type | Plan |
-|---|---|---|
-| *"Build me a CRM and deploy it"* | End-to-end build | architect (Greenfield) → analyst → modeler |
-| *"Set up ATS-Candidate-CRM from scratch"* | End-to-end build (or Clone if a catalog blueprint with that name exists) | architect → analyst → modeler |
-| *"Deploy this blueprint at https://github.com/me/x.md"* | Deploy existing | fetch → analyst → modeler |
-| *"Deploy the blueprint in my workspace"* | Deploy existing | analyst → modeler |
-| *"Deploy the spec"* | Deploy existing | modeler |
-| *"Audit this file"* | Audit (route by artifact type) | architect Audit OR analyst Audit |
-| *"What's in our instance?"* | Status | admin-only |
-| *"Back up the catalog"* | Admin | admin-only |
-| *"Snapshot module ats-candidate-crm"* | Admin | admin-only |
-| *"Clone the candidate-crm blueprint and deploy"* | Clone-and-deploy | architect (Catalog-Clone) → analyst → modeler |
+- A URL deploy is *fetch → analyst → modeler*; a workspace blueprint is *analyst → modeler*; "deploy the spec" skips the analyst (*modeler* only).
+- "Set up X from scratch" is an end-to-end build unless a catalog blueprint named X exists, in which case it is a clone.
+- "Audit this file" routes by artifact type to the architect's or analyst's Audit mode (it does not go through Step 6).
+- Status, backup, snapshot, and list are admin-only (Step 5).
+
+When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess.
 
 ---
 
@@ -1018,7 +681,17 @@ Common phrasings and where they route:
 
 ## Reference material
 
+This skill's own references (load on demand):
+
+- `./references/preflight.md` — shared environment preflight (run by all four skills)
+- `./references/writing-conventions.md` — shared writing conventions (canonical copy)
+- `./references/output-discipline.md` — per-run diagnostic-log mechanics
+- `./references/admin-operations.md` — Step 5 admin-op procedures (status / backup / list / health)
+- `./references/plan-shapes.md` — plan-line authoring rules, the four plan patterns, and worked examples
 - `./three-skill-workflow-spec.md` — full architecture spec, failure modes, debugging invariants (co-located in this skill folder)
+
+Sibling skills:
+
 - `../semantius-architect/SKILL.md` — produces blueprints
 - `../semantius-analyst/SKILL.md` — produces specs (reconciliation logic, AskUserQuestion widgets)
 - `../semantius-modeler/SKILL.md` — deploys specs (idempotent diff & apply)

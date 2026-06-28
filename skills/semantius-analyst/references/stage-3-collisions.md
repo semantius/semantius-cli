@@ -86,7 +86,7 @@ No host-module or manager-scope follow-up — the host is determined by B's blue
 - Option 1 (share) → `{outcome: share, host_module: <host>}`
 - Option 2 (silo, rename incoming) → `{outcome: silo, rename_to: <new_slug>}`
 - Option 3 (claim ownership for incoming) → `{outcome: claim, new_owner: <incoming_module>}`
-- Option 4 (abort) → write nothing (matches admin Step 7 rule 7.6 on cancel selections).
+- Option 4 (abort) → write nothing (matches the cancel-selection rule in admin `references/customizations-protocol.md`, 7.6).
 
 **Fires when:** incoming blueprint's `role` is `master` AND the existing entity in the catalog is in a module with a DIFFERENT slug from the incoming blueprint's `system_slug`. In other words: two modules each claim master ownership of the same entity, and they disagree on which slug owns it. This is the master-vs-master case [architecture.md §11](../../../docs/architecture.md) flags (Path-2 consolidation). Fire the 4-option widget:
 
@@ -205,7 +205,7 @@ When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) poin
 
 **Slug collision under option 1.** Entity slugs are globally unique. If the blueprint's bare `table_name` is already used by *another* module (e.g. blueprint wants `employees` but `northwind.employees` exists in the live catalog as a sales sample), option 1 can't create with the bare name. Fire a follow-up `AskUserQuestion`:
 
-**Policy path:** `.slug_collision_naming` (global default; `context-prefix` / `module-prefix` / `reuse-existing`). Free-text "Other" answers are NOT cached (matches admin Step 7 rule 7.6).
+**Policy path:** `.slug_collision_naming` (global default; `context-prefix` / `module-prefix` / `reuse-existing`). Free-text "Other" answers are NOT cached (matches the not-written rules in admin `references/customizations-protocol.md`, 7.6).
 
 - **question**: `"The name <Target Plural Label> is already used by the <Owner Module Display Name> module. What should we call our version?"`
 - **header**: `"Naming"`
