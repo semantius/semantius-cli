@@ -357,7 +357,7 @@ Accepts common read parameters. Filter by `including_permission_id` or `included
 ### `create_role`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object | yes | Requires: `name`, `label`, `module_id`. Optional: `description` |
+| `data` | object | yes | Requires: `role_name`. Strongly recommended for a scaffold role: `slug` (snake_case `^[a-z0-9_]+$`; auto-derived from `role_name` when omitted — pass it explicitly to control the handle), `module_id` (owning module; omit and the role is an orphan), `origin` (`"model"` for a domain-module scaffold role, `"model_master"` for a master; omit and it defaults to `"user"`). Optional: `description`. **There is no `name` or `label` field** — use `role_name` / `slug`. |
 
 ### `read_role`
 Accepts common read parameters.

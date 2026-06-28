@@ -66,24 +66,31 @@ semantius call crud create_permission_hierarchy '{
 
 ### 3. Create Roles
 
+The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$`; auto-derived from `role_name` if omitted, but pass it explicitly so the handle is deploy-controlled and not left to slugify). There is **no `name` and no `label` field** — those are a common mistake. For a role a module scaffold owns you MUST also pass:
+
+- **`module_id`** — the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and unlinked from the module record's `default_*_role_id`.
+- **`origin: "model"`** — marks it deployer-provisioned. Omit it and the role defaults to **`origin: "user"`** (admin-created), the wrong provenance for a deployed role. (`model_master` for a master-module scaffold; see the modeler skill.)
+
 ```bash
 # Viewer role — read only
 semantius call crud create_role '{
   "data": {
-    "name": "crm_viewer",
-    "label": "CRM Viewer",
+    "role_name": "CRM Viewer",
+    "slug": "crm_viewer",
     "description": "Can view CRM data",
-    "module_id": 3
+    "module_id": 3,
+    "origin": "model"
   }
 }'
 
 # Manager role — full access
 semantius call crud create_role '{
   "data": {
-    "name": "crm_manager",
-    "label": "CRM Manager",
+    "role_name": "CRM Manager",
+    "slug": "crm_manager",
     "description": "Can manage all CRM data",
-    "module_id": 3
+    "module_id": 3,
+    "origin": "model"
   }
 }'
 ```
@@ -132,7 +139,7 @@ semantius call crud create_user_role '{
 semantius call crud read_permission '{}'
 
 # Permissions for a specific module
-semantius call crud read_permission '{"filters": "name=ilike.crm:*"}'
+semantius call crud read_permission '{"filters": "permission_name=ilike.crm:*"}'
 
 # All roles
 semantius call crud read_role '{}'

@@ -17,13 +17,18 @@ The typed crud tools (`create_entity`, `create_field`, etc.) all operate on this
 **Always follow this sequence, never skip steps:**
 
 ```
-Module → Permissions → Entity → Fields
+Module → Permissions → (update_module to wire permission refs) → Entity → Fields
 ```
 
-1. **Resolve/create module**, `read_module`, then `create_module` if needed
+1. **Resolve/create module**, `read_module`, then `create_module` if needed. (Chicken-and-egg: the module's `view_permission` / `manage_permission_id` point at permissions that don't exist yet, so create the module first and wire them back in step 3.)
 2. **Resolve/create permissions**, `read_permission`, then `create_permission` if needed
-3. **Create entity**, `create_entity` with `module_id`, `view_permission`, `edit_permission`
-4. **Add fields**, `create_field` for each domain attribute (not the auto-generated ones)
+3. **Wire the module's permission references with `update_module`.** `create_module` leaves `view_permission` at the platform default (`user:read`) and `manage_permission_id` / `admin_permission_id` null. Once the permissions exist, point the module at them — skip this and the module header shows `user:read` and the manage/admin pickers are empty:
+   ```bash
+   semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "<slug>:read", "manage_permission_id": <id of <slug>:manage>}}'
+   ```
+   **Mind the column types:** `view_permission` is a **text** column holding the permission *name* (`<slug>:read`); `manage_permission_id` and `admin_permission_id` are **numeric FK** columns holding the permission *id*. The default-role columns wire the same way once roles exist: `default_viewer_role_id` / `default_manager_role_id` / `default_admin_role_id` are numeric role-id FKs (see `rbac.md`).
+4. **Create entity**, `create_entity` with `module_id`, `view_permission`, `edit_permission`
+5. **Add fields**, `create_field` for each domain attribute (not the auto-generated ones)
 
 ---
 
@@ -1128,6 +1133,8 @@ semantius call crud create_field '{"data": {"table_name": "product_tags", "field
 semantius call crud create_field '{"data": {"table_name": "product_tags", "field_name": "tag_id", "format": "parent", "reference_table": "tags", "reference_delete_mode": "cascade", "width": "default", "input_type": "default"}}'
 ```
 
+> **Do not set `label_column` on a junction.** `label_column` is optional — the live `create_entity` requires only `table_name`, `singular_label`, `module_id` — and a junction has no natural label field: the platform composes `_label` from the `parent` legs automatically. Setting `label_column` to `id` (or any auto-generated column — `label`, `created_at`, `updated_at`) makes `create_entity` fail with *column 'id' specified more than once*, because that column already exists. Omit `label_column` (as the example above does), and likewise omit `label_parent`.
+
 > **Junctions aren't binary-only.** `entity_type = junction` combines **all** `parent` legs, so an N-ary link works the same way — e.g. `(user, role, tenant)`. But an N-ary link that carries its **own attributes or lifecycle** is an association class → classify it `operational_record` / `operational_workflow`, **not** `junction`.
 
 ### Cross-module references and presence-conditional `is_required`
@@ -1264,12 +1271,14 @@ semantius call crud postgrestRequest '{
 semantius call crud read_field '{"filters": "entity=eq.<entity_id>"}'
 
 # What does this specific field reference today?
-semantius call crud read_field '{"filters": "entity=eq.<entity_id>,name=eq.<field_name>"}'
+semantius call crud read_field '{"filters": "entity=eq.<entity_id>&name=eq.<field_name>"}'
 
 # Is this entity audit-logged today?
 semantius call crud read_entity '{"filters": "id=eq.<entity_id>"}'
 # Look for audit_log: true in response
 ```
+
+> **Combine multiple filter conditions with `&`, never a comma.** `entity=eq.<id>&name=eq.<f>` ANDs two columns (PostgREST query-string syntax). A comma is only a value-list separator *inside* `in.(...)` / `or=(...)`; a top-level `col1=eq.a,col2=eq.b` does **not** mean AND — it silently matches nothing, which reads as "not found" and then triggers a duplicate create on the next write.
 
 If the live shape contradicts the recipe's assumption, abort the recipe with a clear message naming the drift, do not silently "fix it up" with extra writes. Recommend the user regenerate the affected domain skill via `semantius-skill-maker`.
 

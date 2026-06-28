@@ -60,6 +60,9 @@ export async function write(tool: string, payload: unknown): Promise<any> {
  *   2 → ambiguous   3 → transport   4 → tool   5 → auth   → THROW (never "not found").
  * `filters` are natural keys (slugs, table_names, permission codes); Bun.spawn
  * with an arg array bypasses the shell, so the inline JSON is safe.
+ * Multiple conditions join with `&` (PostgREST AND across columns), e.g.
+ * `role_id=eq.1&permission_id=eq.2` — a comma is NOT an AND separator and
+ * silently matches nothing (reads as "not found", then a duplicate create).
  */
 export async function read1(tool: string, filters: string): Promise<any | null> {
   const proc = Bun.spawn(

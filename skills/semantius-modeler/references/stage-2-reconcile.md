@@ -24,6 +24,8 @@ semantius call crud read_module --single '{"filters": "module_slug=eq.<system_sl
 
 #### 2a-scaffold: standard module scaffold (idempotent)
 
+> The committed [`scaffold-lib.ts`](./scaffold-lib.ts) `scaffoldModule()` executes steps 1-5 below in one idempotent, self-preflighting call. This section is the **contract** it implements (and what Stage 5 verifies); a deploy script calls the helper rather than re-typing the steps.
+
 Every module carries: three permissions (`<slug>:read`, `<slug>:manage`, optionally `<slug>:admin`), three default roles (named in the spec's §9.1 baseline-roles table — conventionally `<slug>_viewer` / `<slug>_manager` / `<slug>_admin`, but the §9.1 `role` column is the authoritative, deploy-ready slug and the deployer uses it verbatim, never reconstructing it from the module slug), and six FK columns on the module record (`view_permission`, `manage_permission_id`, `admin_permission_id`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`).
 
 For each module touched, idempotent steps:
