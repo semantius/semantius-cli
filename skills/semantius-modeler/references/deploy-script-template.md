@@ -33,8 +33,17 @@ bun run .tmp_deploy/deploy_<slug>.ts
 import { read1, readMany, write, runDeploy } from "./deploy-lib";
 
 runDeploy(async () => {
-  // 1. Module + scaffold. read1("read_module", `module_slug=eq.<slug>`) → create with the FULL
-  //    provenance payload (4a checklist) when null, else converge. Then permissions, hierarchy, roles.
+  // 1. Module + scaffold (idempotent; canonical detail in stage-2-reconcile.md §2a-scaffold):
+  //    a. Module: read1("read_module", `module_slug=eq.<slug>`) → write("create_module", <full 4a
+  //       provenance payload>) when null, else update_module to converge provenance. Capture the module
+  //       id from the read / a re-read after create — never off the create response.
+  //    b. Permissions (§8.1) + hierarchy chain + default roles (§9.1 slugs verbatim).
+  //    c. Wire the six module-record FK columns — THE STEP MOST OFTEN DROPPED. After (b), resolve
+  //       <slug>:manage (+ :admin when access_scope=full) and the §9.1 viewer/manager/admin role slugs
+  //       to ids (read1 by natural key), then write("update_module", {id: mod.id, data: {view_permission:
+  //       "<slug>:read", manage_permission_id, default_viewer_role_id, default_manager_role_id,
+  //       access_scope /* + admin_permission_id, default_admin_role_id when full */}}). Skip it and the
+  //       module header shows "user:read" and the default-role dropdowns are empty (Stage 5 flags it).
   // 2. Entities — apply each plan bucket decision (built-in / reuse / same-module / merge / rename / promote).
   //    ✨-New: read1("read_entity", `table_name=eq.<t>`) → write("create_entity", {data: {...}}) when null.
   //    Stamp provenance on that same payload (4c checklist): catalog_entity_code, entity_type,
@@ -74,6 +83,7 @@ Reserve `catch` for one deliberate, narrow case: a single retry of a known-trans
 4. **Never print success over a partial deploy** — the success line is reachable only on a clean resolve, and even then the "model is live" line waits for Stage 5.
 5. **Provenance on every create** — module per the 4a checklist, entity per the 4c checklist.
 6. **Fields and entities are diffed, not skipped** when they already exist (4d).
+7. **Wire the module-record scaffold after the creates** — a discrete `update_module` (by numeric `id`) sets `view_permission`, `manage_permission_id`, `default_viewer_role_id`, `default_manager_role_id` (plus `admin_permission_id` / `default_admin_role_id` when `access_scope = full`) and `access_scope`. Easy to drop because it runs *after* permissions and roles; Stage 5's module-scaffold check verifies it (scaffold step 5).
 
 ## Where the script lives, and cleanup
 

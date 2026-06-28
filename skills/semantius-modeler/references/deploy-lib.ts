@@ -76,6 +76,36 @@ export async function read1(tool: string, filters: string): Promise<any | null> 
   throw new Error(`read1 ${tool} failed (exit ${code}): ${err}`);  // 2/3/4/5 — halt
 }
 
+/**
+ * Read-before-write create that returns the AUTHORITATIVE row. The contract:
+ * never trust a `create_*` response to carry the new row's `id` / natural key
+ * (the PostgREST representation a create echoes is not a contract you can build
+ * FK resolution on — the `module_id`-null-on-permission-create failures came
+ * from exactly that assumption). Instead: `read1` by natural key first (idempotent
+ * re-run returns the existing row), `write` only when absent, then `read1` AGAIN
+ * so the caller always gets a real row with its real `id`. Throws loud if the
+ * post-create read still finds nothing (a silent partial failure).
+ *
+ *   const mod  = await ensure("read_module", `module_slug=eq.${slug}`, "create_module", moduleData);
+ *   const perm = await ensure("read_permission", `permission_name=eq.${code}`, "create_permission",
+ *                             { ...permData, module_id: mod.id });   // mod.id came from a READ, not the create
+ */
+export async function ensure(
+  readTool: string, filters: string,
+  writeTool: string, data: unknown,
+): Promise<any> {
+  const existing = await read1(readTool, filters);
+  if (existing) return existing;
+  await write(writeTool, { data });
+  const created = await read1(readTool, filters);
+  if (!created) {
+    throw new Error(
+      `ensure: ${writeTool} reported success but ${readTool} (${filters}) still returns no row`,
+    );
+  }
+  return created;
+}
+
 /** Zero-or-many read (live field dumps for the diff, dedup checks). Returns an array (`[]` = none). */
 export async function readMany(tool: string, filters: string): Promise<any[]> {
   const proc = Bun.spawn(
