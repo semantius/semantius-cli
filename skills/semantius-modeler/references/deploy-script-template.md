@@ -28,7 +28,8 @@ bun run .tmp_deploy/deploy_<slug>.ts
 | `read1(tool, filters)` | read-before-write existence checks | `0` → row, `1` → `null` (the create branch), `2/3/4/5` → **throws**. Never a `try/catch` probe. |
 | `readMany(tool, filters)` | live field dumps for the diff, dedup | array (`[]` = none); throws on transport/tool/auth error |
 | `write(tool, payload)` | every `create_*` / `update_*` / POST/PATCH | payload over stdin (prose-safe); **throws on any non-zero exit** |
-| `ensure(readTool, filters, writeTool, data)` | create-if-missing that returns the real row (with its id) | re-reads by natural key; never trusts a create response for the id |
+| `ensure(readTool, filters, writeTool, data)` | create-if-missing that returns the real row (with its id) | re-reads by natural key; never trusts a create response for the id. Pass **raw fields** as the `data` arg — `ensure` wraps them in `{data}` for the write, so do NOT pre-wrap: `ensure(..., "create_entity", { table_name, ... })`, never `{ data: {...} }` (that double-wraps to `{data:{data:...}}` and the create fails). `write()` is the opposite — it takes the full payload, so there you DO pass `{ data: f }`. |
+| `updateEntity(tableName, data)` | the update half of create-or-diff (entity column patches: `select_rule`, `computed_fields`, `module_id`, `label_parent`, …) | **owns the `update_entity` envelope** so you never hand-roll it: `table_name` is TOP-LEVEL, the changed columns go under `data`. Pass just the table name + the partial patch (`updateEntity("tickets", { select_rule })`); never write `{ table_name, data: {...} }` by hand and never bury `table_name` inside the patch. Blind PATCH — pair with a `read1`/`readMany` diff. |
 | `runDeploy(fn)` | wrap the whole orchestration | owns the `try/catch`; loud non-zero halt on any throw; success line only on clean resolve |
 
 `scaffold-lib.ts` adds the schema-coupled layer (version-stamped; bumped with the platform):
@@ -43,7 +44,7 @@ bun run .tmp_deploy/deploy_<slug>.ts
 
 ```typescript
 // .tmp_deploy/deploy_<slug>.ts
-import { read1, readMany, write, ensure, runDeploy } from "./deploy-lib";
+import { read1, readMany, write, ensure, updateEntity, runDeploy } from "./deploy-lib";
 import { scaffoldModule, verifyScaffold, preflightSchemas } from "./scaffold-lib";
 
 runDeploy(async () => {
@@ -51,6 +52,10 @@ runDeploy(async () => {
   //    stale field name (e.g. `name` vs `role_name`) BEFORE any write. List EVERY key your payloads send so
   //    a stray one is caught — and NEVER list `required` (mandatory is `input_type: "required"`, not a
   //    `required` column — the #1 from-memory trap) or `is_nullable` (platform-computed from `format`).
+  //    Preflight only the CREATE payloads you hand-author (the keys you list are the data-LEVEL columns).
+  //    Do NOT preflight `update_entity` / `update_field` — their shape is owned by `updateEntity()` and the
+  //    composite-`id` rule, and `update_entity` keys `table_name` at the TOP level (not under `data`), so
+  //    listing it here would false-fail against the tool's `data` schema.
   await preflightSchemas({
     create_entity: ["table_name", "singular_label", "module_id", "view_permission", "edit_permission"],
     create_field:  ["table_name", "field_name", "format", "reference_table", "width", "input_type"],
@@ -83,7 +88,8 @@ runDeploy(async () => {
   //    ensure() returns the row WITH its id (never read the id off a create response — that logs id=undefined).
   //    Stamp provenance on that payload (4c checklist); defer label_parent to the Spine pass. ♻️ same-module /
   //    🛑 merge need create-OR-DIFF (read live, update drifted keys) — ensure() is create-if-missing only, so
-  //    there use read1 + update_entity (keyed by `table_name`, NOT `id`).
+  //    there read1 to get the live row, then `updateEntity(t, { ...drifted })` for the patch. The helper owns
+  //    the `{table_name, data}` shape (table_name TOP-LEVEL, columns under data) — never hand-roll it.
   // 4. Fields per entity — readMany("read_field", `table_name=eq.<t>`) once, create-or-diff (4d, not create-if-missing).
   // 5. Rules + Spine pass — computed_fields / validation_rules / select_rule / input_type_rule and
   //    label_parent, all after their fields exist.

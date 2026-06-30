@@ -109,6 +109,27 @@ export async function ensure(
   return created;
 }
 
+/**
+ * `update_entity` shape, OWNED — same philosophy as `post()` owning the PostgREST
+ * `body`. `update_entity` is the one catalog write whose envelope is neither
+ * `{data}` (every `create_*`) nor a numeric/string `id` (`update_module` /
+ * `update_field`): it is keyed by `table_name` at the TOP level with the changed
+ * columns under `data` — `{"table_name": "tickets", "data": {...}}`. Hand-rolling
+ * that is exactly where deploys fumbled (table_name buried inside `data`, or the
+ * patch double-wrapped to `{data:{data:...}}`). Call sites pass the table name and
+ * the partial column patch; this owns the envelope so the shape can't be got wrong:
+ *     await updateEntity("tickets", { select_rule: {...} });
+ *     await updateEntity("subscriptions", { module_id: masterId });   // promote / move
+ * Goes through `write`, so it is loud (throws on non-zero) and counts as a write.
+ * It is a blind PATCH — pair it with a `read1`/`readMany` diff for create-or-diff
+ * paths; `ensure` is the create-if-missing helper, this is the update half.
+ */
+export async function updateEntity(
+  tableName: string, data: Record<string, unknown>,
+): Promise<any> {
+  return write("update_entity", { table_name: tableName, data });
+}
+
 /** Zero-or-many read (live field dumps for the diff, dedup checks). Returns an array (`[]` = none). */
 export async function readMany(tool: string, filters: string): Promise<any[]> {
   const proc = Bun.spawn(
@@ -158,6 +179,36 @@ export async function pgRequest(
 /** Insert one Layer-2 row and return it WITH its id (uses `body` + `--single`). The seed-script default. */
 export async function post(path: string, body: Record<string, unknown>): Promise<any> {
   return pgRequest("POST", path, body, true);
+}
+
+/**
+ * Idempotent Layer-2 insert: read by a NATURAL KEY before inserting, so a re-run
+ * CONVERGES instead of appending a second copy. `post()` is a bare INSERT — running
+ * a seed script twice inserts a whole second set of rows, and `assertSeedCounts`
+ * cannot catch it (it tallies only THIS run's inserts, so it passes while the table
+ * silently holds 2×target). seedEnsure closes that hole the way `ensure` does for
+ * catalog rows: GET by the unique key, return the existing row if present, POST only
+ * when absent. Use it INSTEAD of `post` whenever a seed script might be re-run, keyed
+ * on a column that is unique per row and stable across runs — i.e. a `unique_value`
+ * field driven by `uniq(base, i)`, since the same `i` regenerates the same key and
+ * the read finds the prior row:
+ *     await seedEnsure("/leads", row, "email");   // row.email === uniq(...)
+ * `keyField` must be a column on `body` with a non-empty value. Returns the row WITH
+ * its id either way, so FK capture works exactly like `post`.
+ */
+export async function seedEnsure(
+  path: string, body: Record<string, unknown>, keyField: string,
+): Promise<any> {
+  const key = body[keyField];
+  if (key === undefined || key === null || key === "") {
+    throw new Error(`seedEnsure ${path}: key field "${keyField}" is empty on the row`);
+  }
+  const table = path.split("?")[0];
+  const existing = await pgRequest(
+    "GET", `${table}?${keyField}=eq.${encodeURIComponent(String(key))}&limit=1`,
+  );
+  if (Array.isArray(existing) && existing.length) return existing[0];
+  return post(table, body);
 }
 
 /**

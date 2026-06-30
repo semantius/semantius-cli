@@ -132,10 +132,13 @@ cp "${CLAUDE_PLUGIN_ROOT:-.claude/skills/semantius-modeler}/references/deploy-li
 
 ```typescript
 // <cwd>/.tmp_deploy/seed_<short>.ts — run with: bun run <path>
-import { post, pgRequest, assertSeedCounts, pick, combine, uniq } from "./deploy-lib";
+import { post, seedEnsure, pgRequest, assertSeedCounts, pick, combine, uniq } from "./deploy-lib";
 // post("/campaigns", row) inserts ONE row and returns it with its id. The payload field is `body`, NOT
 // `data` — post() owns that, so never hand-roll {method, path, data}. For an FK-id pool from an existing
 // table, GET an array:  await pgRequest("GET", "/users?select=id&limit=20").
+// seedEnsure("/leads", row, "email") is the re-run-safe variant: it reads by the unique key first and
+// skips the insert if the row already exists. Use it over post() when the script might run more than
+// once — see "Re-running the seed (idempotency)" below.
 
 const COUNT = 10;                              // global default (the user's number, else 10)
 const counts: Record<string, number> = {};    // per-table tally, validated at the end
@@ -218,6 +221,26 @@ Net: `pick` for repeat-OK fields, `combine` for realistic distinct-at-scale fiel
 
 `--single` is the right default for seed inserts because every row is created individually and the cardinality contract is "exactly one". If `RETURNING` ever produces 0 rows (RLS suppressed the result) or 2+ rows (PostgREST returned multiple), the CLI exits non-zero and the script aborts — much better than silently picking `data[0]` from an empty or surprising array.
 
+### Re-running the seed (idempotency)
+
+The seed script is a **one-shot**: `post()` is a bare INSERT, so running it twice inserts a second full set of rows. `assertSeedCounts` does NOT catch this — it tallies only the rows THIS run inserted, so it still passes while the table silently holds 2×target. (This is the opposite of the deploy script, whose every write is read-before-write and re-run-convergent.) A partial first run that halted partway (e.g. a failed insert after 10 of 20 rows landed) is the common way this bites: a blind re-run appends another batch.
+
+Two ways to stay safe:
+
+- **Run it exactly once.** The normal path. If a run is interrupted partway, do NOT blindly re-run — first inspect what landed (`await pgRequest("GET", "/<table>?select=id")` and count), then either finish the remainder by hand or clear the table and reseed.
+- **Use `seedEnsure(path, row, keyField)` instead of `post`** when a re-run is plausible. It reads by a unique natural key before inserting and returns the existing row if present, so a re-run converges instead of duplicating — the same `ensure` contract the deploy script uses. The `keyField` must be unique per row and stable across runs: a `unique_value` column built with `uniq(base, i)` is ideal, because the same `i` regenerates the same key. It returns the row with its id either way, so FK capture is unchanged:
+
+  ```typescript
+  for (let i = 0; i < target("leads"); i++) {
+    const [fn, ln] = combine(i, [firstNames, lastNames]);
+    leads.push(await seedEnsure("/leads", {
+      lead_name: `${fn} ${ln}`,
+      email: uniq(`${fn}.${ln}`.toLowerCase(), i, "@example.com"),  // unique_value → the natural key
+      campaign_id: pick(campaigns, i).id,
+    }, "email"));
+  }
+  ```
+
 The script is invoked from any shell with:
 
 ```bash
@@ -227,6 +250,8 @@ bun run <cwd>/.tmp_deploy/seed_<short>.ts
 **Important for FK fields:** Capture IDs directly from each POST response, do not make a separate GET query to look them up by name. Filters with spaces (e.g. `?campaign_name=eq.Spring Launch`) require URL encoding; capturing from the POST response avoids this entirely.
 
 **Enum safety, read the model, not your intuition:** Before writing any enum value into a seed record, look it up in the model's §5 enum tables for *that specific field*. Different fields on different entities may look similar but have different allowed values (e.g., `campaigns.type` includes `"Direct Mail"` but `leads.lead_source` does not, using the wrong one will fail with a check constraint error). Never guess or copy enum values across fields.
+
+**Nullability safety, `""` not `null` for required text:** Most formats are `NOT NULL` — only `reference`, `date`, and `date-time` accept `null` (data-modeling.md → *`default_value`*). For a non-nullable TEXT column (`string`, `text`, `multiline`, `html`, `code`) that a row should leave empty, send an **empty string `""`**, never `null`: a `null` fails with a NOT NULL violation and aborts the run before `assertSeedCounts`. Only omit a field or pass `null` when its format is `reference` / `date` / `date-time` *and* it is not `input_type: "required"`.
 
 **String safety:** Inside the Bun script, `JSON.stringify` handles every character correctly — Unicode punctuation, apostrophes, backticks, multi-line strings, all pass through to `semantius` unchanged. This is exactly why the seed script is a `.ts` file and not a `.sh` file: a pure-shell seeder using `echo '{...}'` or `$PG '...'` would still break on apostrophes and embedded shell metacharacters, and "fixing" that by stripping characters from seed data is the same correctness bug as truncating descriptions. Generate realistic seed strings (including Unicode where the domain has it); do not pre-strip.
 
