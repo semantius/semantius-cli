@@ -43,12 +43,14 @@ bun run .tmp_deploy/deploy_<slug>.ts
 
 ```typescript
 // .tmp_deploy/deploy_<slug>.ts
-import { read1, readMany, write, runDeploy } from "./deploy-lib";
+import { read1, readMany, write, ensure, runDeploy } from "./deploy-lib";
 import { scaffoldModule, verifyScaffold, preflightSchemas } from "./scaffold-lib";
 
 runDeploy(async () => {
   // 0. Preflight the tools THIS script hand-authors (scaffoldModule preflights its own). Fails loud on a
-  //    stale field name (e.g. `name` vs `role_name`) BEFORE any write.
+  //    stale field name (e.g. `name` vs `role_name`) BEFORE any write. List EVERY key your payloads send so
+  //    a stray one is caught — and NEVER list `required` (mandatory is `input_type: "required"`, not a
+  //    `required` column — the #1 from-memory trap) or `is_nullable` (platform-computed from `format`).
   await preflightSchemas({
     create_entity: ["table_name", "singular_label", "module_id", "view_permission", "edit_permission"],
     create_field:  ["table_name", "field_name", "format", "reference_table", "width", "input_type"],
@@ -77,8 +79,11 @@ runDeploy(async () => {
   //    RACI roles, and the cosmetic logo_color fallback. scaffoldModule covers ONLY the baseline tiers;
   //    these stay here via ensure / write per stage-4.
   // 3. Entities — apply each plan bucket decision (built-in / reuse / same-module / merge / rename / promote).
-  //    ✨-New: read1("read_entity", `table_name=eq.<t>`) → write("create_entity", {data: {..., module_id: moduleId}}).
-  //    Stamp provenance (4c checklist); defer label_parent to the Spine pass (after fields exist).
+  //    ✨-New: `const e = await ensure("read_entity", `table_name=eq.<t>`, "create_entity", {..., module_id: moduleId});`
+  //    ensure() returns the row WITH its id (never read the id off a create response — that logs id=undefined).
+  //    Stamp provenance on that payload (4c checklist); defer label_parent to the Spine pass. ♻️ same-module /
+  //    🛑 merge need create-OR-DIFF (read live, update drifted keys) — ensure() is create-if-missing only, so
+  //    there use read1 + update_entity (keyed by `table_name`, NOT `id`).
   // 4. Fields per entity — readMany("read_field", `table_name=eq.<t>`) once, create-or-diff (4d, not create-if-missing).
   // 5. Rules + Spine pass — computed_fields / validation_rules / select_rule / input_type_rule and
   //    label_parent, all after their fields exist.

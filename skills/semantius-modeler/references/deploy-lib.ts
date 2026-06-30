@@ -126,6 +126,126 @@ export async function readMany(tool: string, filters: string): Promise<any[]> {
 }
 
 /**
+ * Layer-2 (PostgREST) call via the `postgrestRequest` crud tool — the loud
+ * transport for business-record reads/writes (the seed script's insert path).
+ * NOTE: postgrestRequest's payload field is **`body`**, NOT `data` (`data` is the
+ * Layer-1 crud-tool shape; mixing them up is a common trap — this helper owns the
+ * difference so call sites never hand-roll `{method, path, data}`). Loud: throws
+ * on any non-zero exit. `single` adds `--single` so a POST insert returns the
+ * inserted row as a bare object and the CLI fails loudly on the wrong cardinality.
+ * Returns parsed JSON (an array without `single`, the bare object with it).
+ */
+export async function pgRequest(
+  method: string, path: string, body?: unknown, single = false,
+): Promise<any> {
+  const argv = single
+    ? ["semantius", "--single", "call", "crud", "postgrestRequest"]
+    : ["semantius", "call", "crud", "postgrestRequest"];
+  const proc = Bun.spawn(argv, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const payload: Record<string, unknown> = { method, path };
+  if (body !== undefined) payload.body = body;
+  proc.stdin.write(JSON.stringify(payload));
+  proc.stdin.end();
+  const [out, err] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const code = await proc.exited;
+  if (code !== 0) throw new Error(`pgRequest ${method} ${path} failed (exit ${code}): ${err}`);
+  return out.trim() ? JSON.parse(out) : null;
+}
+
+/** Insert one Layer-2 row and return it WITH its id (uses `body` + `--single`). The seed-script default. */
+export async function post(path: string, body: Record<string, unknown>): Promise<any> {
+  return pgRequest("POST", path, body, true);
+}
+
+/**
+ * Index-cycling pick: `pool[i % pool.length]`. The seed-factory primitive — drive each row's values
+ * off the row index so a `for (let i = 0; i < target; i++)` loop both hits the count STRUCTURALLY and
+ * gives even coverage (every §5 enum value and every pool entry appears in turn). Prefer this over
+ * `Math.random()` picking, which can miss enum values and makes coverage non-deterministic.
+ */
+export const pick = <T>(pool: T[], i: number): T => pool[i % pool.length];
+
+/**
+ * Mixed-radix pick across several pools so the row index visits every COMBINATION, not lockstep.
+ * `combine(i, [firstNames, lastNames])` → `[ firstNames[i % F], lastNames[⌊i/F⌋ % L] ]`, giving F×L
+ * distinct tuples from two small pools (vs. only max(F,L) when both share the same `i`). Compose enough
+ * pools that the product of their lengths >= target, and every row's tuple is distinct. Destructure the
+ * result: `const [fn, ln] = combine(i, [firstNames, lastNames]);`.
+ */
+export const combine = <T>(i: number, pools: T[][]): T[] => {
+  const out: T[] = [];
+  let q = i;
+  for (const p of pools) { out.push(p[q % p.length]); q = Math.floor(q / p.length); }
+  return out;
+};
+
+/**
+ * Collision-proof token for a `unique_value` / DB-UNIQUE field (email, code, external id): a base string
+ * plus the strictly-increasing row index (and optional suffix). `uniq("ACCT-", i)` → "ACCT-0", "ACCT-1", …;
+ * `uniq("ava.chen", i, "@example.com")` → "ava.chen0@example.com", … Never collides because `i` is unique
+ * per row. A repeat in a `unique_value` field makes the insert fail with 409 and ABORTS the seed run before
+ * the count guard runs — so compose such fields with `uniq` (or `combine` with product >= target), never a
+ * bare `pick`.
+ */
+export const uniq = (base: string, i: number, suffix = ""): string => `${base}${i}${suffix}`;
+
+/**
+ * Seed-count guard (the mechanized form of the Stage 6 "the count is not optional"
+ * contract). Each seeded table must hit its RESOLVED target: `defaultTarget` for
+ * most, or a per-table override in `perEntity`. Overrides cover BOTH directions and
+ * both sources:
+ *   - a user-named per-table count   →  { customers: { target: 20 } }
+ *     (from a reply like "12 each but 20 customers": defaultTarget=12, override on customers)
+ *   - required-FK-id scarcity (fewer than target real ids for a required FK)
+ *                                    →  { approvals: { target: 4, reason: "only 4 users exist" } }
+ * The check is driven by `tables` — the full list of ELIGIBLE (newly-created) tables
+ * that MUST be seeded — NOT by whatever the agent happened to tally. That is
+ * load-bearing: a counts-only loop cannot see a table the agent seeded ZERO times
+ * (forgot entirely), so "every new table gets N" had no backstop; driving off
+ * `tables` catches the omission (a missing table reads as 0 → fails). Prints a
+ * per-table receipt and **exits non-zero** (halting the seed script) if any eligible
+ * table missed its target (including a table never seeded), or if an override or a
+ * tally names a table not in `tables` (a typo). This is what makes the count
+ * un-skippable — agents kept eyeballing row arrays and under-seeding (18 vs 50,
+ * 2-3 per entity), or silently skipping a whole table.
+ */
+export function assertSeedCounts(
+  counts: Record<string, number>,
+  defaultTarget: number,
+  perEntity: Record<string, { target: number; reason?: string }>,
+  tables: string[],
+): void {
+  const fails: string[] = [];
+  // Every ELIGIBLE table must hit its resolved target (a table missing from `counts`
+  // reads as 0 → fails; this is the omitted-table check a counts-only loop can't do).
+  for (const name of tables) {
+    const o = perEntity[name];
+    const want = o ? o.target : defaultTarget;
+    const tag = o ? ` (override ${o.target}${o.reason ? `: ${o.reason}` : ""})` : "";
+    const n = counts[name] ?? 0;
+    if (n === want) console.log(`  ✓ ${name}: ${n}${tag}`);
+    else fails.push(`${name} seeded ${n}, expected ${want}${tag}${name in counts ? "" : " — table never seeded"}`);
+  }
+  // Author errors: an override or a tally for a table that isn't in the eligible set.
+  for (const name of Object.keys(perEntity)) {
+    if (!tables.includes(name)) fails.push(`${name} has an override (${perEntity[name].target}) but is not in the eligible-table list`);
+  }
+  for (const name of Object.keys(counts)) {
+    if (!tables.includes(name)) fails.push(`${name} was seeded but is not in the eligible-table list (typo?)`);
+  }
+  if (fails.length) {
+    console.error(`\nSEED COUNT FAILURE — ${fails.length} problem(s):`);
+    for (const m of fails) console.error(`  🛑 ${m}`);
+    console.error("Seed every eligible table to its resolved target, then re-run.");
+    process.exit(1);
+  }
+  console.log(`\nAll ${tables.length} eligible table(s) seeded to target.`);
+}
+
+/**
  * Halting harness. Run the bespoke orchestration inside this; it OWNS the
  * try/catch so the agent's script can't add a swallow-and-continue one. On
  * success: a summary line plus a reminder that the "model is live" line waits
