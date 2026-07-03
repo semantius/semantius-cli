@@ -343,6 +343,12 @@ export const DEFAULT_CONCURRENCY = 5;
 export const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_RETRY_DELAY_MS = 1000; // 1 second base delay
 export const DEFAULT_DAEMON_TIMEOUT_SECONDS = 60; // 60 seconds idle timeout
+// How long to wait for the FIRST byte of piped stdin before concluding that no
+// input is coming. Guards against a hang when the CLI inherits an open-but-idle
+// stdin pipe from a long-lived parent (e.g. a persistent PowerShell host), where
+// stdin is not a TTY yet never reaches EOF. Once the first byte arrives, the full
+// request timeout applies to reading the rest.
+export const DEFAULT_STDIN_GRACE_MS = 500;
 
 /**
  * Debug logging utility - only logs when <PREFIX>_DEBUG is set
@@ -366,6 +372,25 @@ export function getTimeoutMs(): number {
     }
   }
   return DEFAULT_TIMEOUT_MS;
+}
+
+/**
+ * Get the first-byte grace period for reading piped stdin, in milliseconds.
+ * This is a short detection window (separate from the request timeout) that
+ * answers "is anything actually being piped in?". If neither a byte nor EOF
+ * arrives within it, there is no piped input and we proceed with empty args
+ * instead of hanging on an inherited, open-but-idle stdin pipe.
+ * @env <PREFIX>_STDIN_GRACE_MS - grace period in ms (default: 500)
+ */
+export function getStdinGraceMs(): number {
+  const envGrace = getPrefixedEnv('STDIN_GRACE_MS');
+  if (envGrace) {
+    const ms = Number.parseInt(envGrace, 10);
+    if (!Number.isNaN(ms) && ms >= 0) {
+      return ms;
+    }
+  }
+  return DEFAULT_STDIN_GRACE_MS;
 }
 
 /**

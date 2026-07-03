@@ -17,6 +17,7 @@ import {
   type McpServersConfig,
   type ServerConfig,
   getServerConfig,
+  getStdinGraceMs,
   loadConfig,
 } from '../config.js';
 import {
@@ -54,6 +55,72 @@ function parseTarget(target: string): { server: string; tool: string } {
 }
 
 /**
+ * Read piped JSON args from stdin without hanging on an inherited, open-but-idle
+ * stdin pipe. Such a pipe (common when the CLI is spawned from a long-lived
+ * parent such as a persistent PowerShell host) is not a TTY yet never delivers
+ * data or reaches EOF, so `!isTTY` alone cannot tell "input is coming" from
+ * "nothing is coming."
+ *
+ * Two independent timers disambiguate:
+ *  - `graceMs`: a short first-byte detection window. If neither a byte nor EOF
+ *    arrives within it, nothing is being piped → resolve '' (empty args).
+ *  - `maxMs`: the full request timeout, a backstop for a slow producer once data
+ *    is confirmed flowing.
+ */
+function readStdin(graceMs: number, maxMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    const chunks: Buffer[] = [];
+    let sawData = false;
+
+    const cleanup = () => {
+      clearTimeout(graceTimer);
+      clearTimeout(maxTimer);
+      stdin.off('data', onData);
+      stdin.off('end', onEnd);
+      stdin.off('error', onError);
+      stdin.pause();
+      // Don't let a still-open idle pipe keep the process alive after we bail.
+      stdin.unref?.();
+    };
+
+    const onData = (chunk: Buffer) => {
+      if (!sawData) {
+        sawData = true;
+        clearTimeout(graceTimer);
+      }
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(Buffer.concat(chunks).toString('utf-8').trim());
+    };
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
+
+    // No byte and no EOF within the grace window: nothing is being piped.
+    const graceTimer = setTimeout(() => {
+      if (!sawData) {
+        cleanup();
+        resolve('');
+      }
+    }, graceMs);
+
+    const maxTimer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`stdin read timed out after ${maxMs}ms`));
+    }, maxMs);
+
+    stdin.on('data', onData);
+    stdin.on('end', onEnd);
+    stdin.on('error', onError);
+    stdin.resume();
+  });
+}
+
+/**
  * Parse JSON arguments from string or stdin
  */
 async function parseArgs(
@@ -64,30 +131,7 @@ async function parseArgs(
   if (argsString) {
     jsonString = argsString;
   } else if (!process.stdin.isTTY) {
-    // Read from stdin with timeout - use timer cleanup to prevent memory leak
-    const timeoutMs = getTimeoutMs();
-    const chunks: Buffer[] = [];
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const readPromise = (async () => {
-      for await (const chunk of process.stdin) {
-        chunks.push(chunk);
-      }
-      return Buffer.concat(chunks).toString('utf-8').trim();
-    })();
-
-    const timeoutPromise = new Promise<string>((_, reject) => {
-      timeoutId = setTimeout(
-        () => reject(new Error(`stdin read timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      );
-    });
-
-    try {
-      jsonString = await Promise.race([readPromise, timeoutPromise]);
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
+    jsonString = await readStdin(getStdinGraceMs(), getTimeoutMs());
   } else {
     // No arguments provided
     return {};

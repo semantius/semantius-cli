@@ -355,6 +355,47 @@ describe('CLI Error Handling Tests', () => {
     });
   });
 
+  describe('stdin handling', () => {
+    // Regression: when the CLI inherits an open-but-idle stdin pipe (e.g. spawned
+    // from a persistent PowerShell host), stdin is not a TTY yet never delivers
+    // data or EOF. The first-byte grace must let the CLI proceed with empty args
+    // instead of blocking on the read. Before the fix this hung for the full
+    // request timeout (30 min).
+    test('does not hang on an open, idle stdin pipe', async () => {
+      const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
+      const proc = Bun.spawn(['bun', 'run', cliPath, 'call', 'no-such-server/tool'], {
+        env: {
+          ...process.env,
+          SEMANTIUS_NO_DAEMON: '1',
+          SEMANTIUS_API_KEY: 'test-api-key',
+          SEMANTIUS_ORG: 'test-org',
+          SEMANTIUS_STDIN_GRACE_MS: '50',
+        },
+        // 'pipe' keeps the write end open and we never write/close it, so the
+        // child's stdin stays open with no data and no EOF — the hang scenario.
+        stdin: 'pipe',
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+
+      let killed = false;
+      const killTimer = setTimeout(() => {
+        killed = true;
+        try { proc.kill(); } catch { /* already exited */ }
+      }, 15000);
+
+      const exitCode = await proc.exited;
+      clearTimeout(killTimer);
+      const stderr = await new Response(proc.stderr).text();
+
+      // Must have exited on its own (not been killed) — i.e. it did not hang.
+      expect(killed).toBe(false);
+      // And it got PAST the stdin read to the server lookup.
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain('no-such-server');
+    });
+  });
+
   describe('Common LLM command variations', () => {
     // LLMs might add "mcp" prefix
     test('errors on mcp as first arg', async () => {
