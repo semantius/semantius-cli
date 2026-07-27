@@ -67,7 +67,9 @@ fi
 echo "Running tests..."
 bun run typecheck
 bun run lint
-bun test tests/*.test.ts
+# --timeout is explicit: bun ignores [test].timeout in bunfig.toml, so the
+# default is 5 s — too tight for the tests that spawn a CLI subprocess.
+bun test --timeout 30000 tests/*.test.ts
 
 echo -e "${GREEN}Tests passed!${NC}"
 
