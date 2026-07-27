@@ -14,6 +14,7 @@ import {
   debug,
   filterTools,
   getConcurrencyLimit,
+  getEnvJwt,
   getLastLoadedConfig,
   getMaxRetries,
   getRetryDelayMs,
@@ -515,28 +516,48 @@ async function resolveJwt(
 }
 
 /**
+ * Replace the x-api-key header (any casing) with `Authorization: Bearer <jwt>`.
+ */
+function withBearer(config: HttpServerConfig, jwt: string): HttpServerConfig {
+  const newHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(config.headers ?? {})) {
+    if (k.toLowerCase() !== API_KEY_HEADER) newHeaders[k] = v;
+  }
+  newHeaders.Authorization = `Bearer ${jwt}`;
+  return { ...config, headers: newHeaders };
+}
+
+/**
  * If JWT caching is enabled and the server uses x-api-key, swap that header
  * for `Authorization: Bearer <jwt>`. Falls through to the original config
  * on any failure so a broken cache layer never blocks the actual command.
+ *
+ * A static ${PREFIX}_JWT takes precedence over everything (including
+ * isJwtCacheDisabled — it involves no cache): the token is sent as-is, with
+ * no get_cli_token call and no cache read or write. Exported for tests.
  */
-async function transformConfigWithJwt(
+export async function transformConfigWithJwt(
   serverName: string,
   config: ServerConfig,
 ): Promise<ServerConfig> {
-  if (isJwtCacheDisabled()) return config;
   if (!isHttpServer(config)) return config;
+
+  // Gate on header-KEY presence, not value truthiness: in JWT-only mode the
+  // substituted x-api-key value is '' but the server is still Semantius-auth.
+  const envJwt = getEnvJwt();
+  const hasApiKeyHeader = Object.keys(config.headers ?? {}).some(
+    (k) => k.toLowerCase() === API_KEY_HEADER,
+  );
+  if (envJwt && hasApiKeyHeader) return withBearer(config, envJwt);
+
+  if (isJwtCacheDisabled()) return config;
   const apiKey = config.headers?.[API_KEY_HEADER];
   if (!apiKey) return config;
 
   const token = await resolveJwt(apiKey, { name: serverName, config });
   if (!token) return config;
 
-  const newHeaders: Record<string, string> = {};
-  for (const [k, v] of Object.entries(config.headers ?? {})) {
-    if (k.toLowerCase() !== API_KEY_HEADER) newHeaders[k] = v;
-  }
-  newHeaders.Authorization = `Bearer ${token.jwt}`;
-  return { ...config, headers: newHeaders };
+  return withBearer(config, token.jwt);
 }
 
 /**
@@ -678,6 +699,9 @@ async function withRetries<T>(args: {
   } catch (err) {
     const k = classifyRetry(err);
     if (!k) throw err;
+    // A static ${PREFIX}_JWT cannot be re-fetched — retrying the same token
+    // against a JWT rejection is pointless, so fail immediately.
+    if (k === 'jwt' && getEnvJwt()) throw err;
     kind = k;
     lastError = err instanceof Error ? err : new Error(String(err));
   }
@@ -734,9 +758,10 @@ async function withRetries<T>(args: {
         error: lastError.message,
       });
       // Stop the moment the error is no longer retryable; otherwise carry the
-      // (possibly changed) kind into the next attempt.
+      // (possibly changed) kind into the next attempt. A shift to 'jwt' under
+      // a static ${PREFIX}_JWT is equally unrecoverable — stop there too.
       const nextKind = classifyRetry(err);
-      if (!nextKind) throw lastError;
+      if (!nextKind || (nextKind === 'jwt' && getEnvJwt())) throw lastError;
       kind = nextKind;
     }
   }

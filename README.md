@@ -9,7 +9,7 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 - 🤖 **Agent-Optimized** - Designed for AI coding agents (Gemini CLI, Claude Code, etc.)
 - 🔌 **Semantius Platform** - Connects to your Semantius organization's `crud` and `cube` MCP servers
 - ⚡ **Fast** - Connections and tokens are cached between calls, so repeated invocations stay responsive
-- 🔑 **Zero Config** - Works out of the box with `SEMANTIUS_API_KEY` and `SEMANTIUS_ORG` set
+- 🔑 **Zero Config** - Works out of the box with `SEMANTIUS_API_KEY` and `SEMANTIUS_ORG` set (or a single `SEMANTIUS_API_KEY=org:key`)
 - 💡 **Actionable Errors** - Structured error messages with available servers and recovery suggestions
 
 ## Quick Start
@@ -44,6 +44,14 @@ export SEMANTIUS_ORG=your-org-name
 # Option 2: .env file (current directory first, then next to the executable)
 # SEMANTIUS_API_KEY=your-api-key
 # SEMANTIUS_ORG=your-org-name
+
+# Option 3: single-value credential — an "org:" prefix on the API key
+# replaces SEMANTIUS_ORG (the prefix wins if both are set)
+export SEMANTIUS_API_KEY=your-org-name:your-api-key
+
+# Option 4: bring your own token — a static JWT is sent directly
+# (no token exchange, no token cache); also accepts the "org:" prefix
+export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
 ```
 
 The CLI automatically connects to your Semantius MCP servers (`crud` and `cube`) — no config file needed.
@@ -284,8 +292,9 @@ configurations side by side in the same `.env`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SEMANTIUS_API_KEY` | API key for Semantius (**required**) | (none) |
-| `SEMANTIUS_ORG` | Organization name for Semantius (**required**) | (none) |
+| `SEMANTIUS_API_KEY` | API key for Semantius (**required** unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
+| `SEMANTIUS_ORG` | Organization name for Semantius (**required** unless supplied via an `org:` prefix on the API key or JWT) | (none) |
+| `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
 | `SEMANTIUS_CONFIG_PATH` | Path to config file | (none) |
 | `SEMANTIUS_DEBUG` | Enable debug output | `false` |
 | `SEMANTIUS_TIMEOUT` | Request timeout (seconds) | `1800` (30 min) |
@@ -315,6 +324,9 @@ To disable the cache and re-authenticate on every call, pass
 degrades performance and should only be used when your threat model
 forbids any credential-derived material on disk, or when running in a
 read-only container where the cache file cannot be written anyway.
+
+A static `SEMANTIUS_JWT` bypasses the cache entirely — the token is never
+read from or written to disk, and no token exchange takes place.
 
 ## Using with AI Agents
 
@@ -459,7 +471,7 @@ echo '{}' | bun run dev call crud getCurrentUser
 Required env vars (`SEMANTIUS_API_KEY`, `SEMANTIUS_ORG`) are picked up from
 your shell or from a `.env` next to the binary / in the user config dir.
 Use `--env <prefix>` to test a different credential set (e.g.
-`--env STAGING` reads `STAGING_API_KEY` / `STAGING_ORG`).
+`--env STAGING` reads `STAGING_API_KEY` / `STAGING_ORG` / `STAGING_JWT`).
 
 #### 2. Verbose / debug output
 

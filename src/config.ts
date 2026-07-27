@@ -194,6 +194,78 @@ export function prefixedEnvName(name: string): string {
   return `${_envPrefix}_${name}`;
 }
 
+/**
+ * Split an "org:credential" value at the FIRST colon. Safe because none of
+ * the credential formats contain a colon (API keys are dash-delimited, JWTs
+ * are base64url + dots) and org names are DNS labels. Returns the raw value
+ * unchanged when there is no colon or either side is empty (malformed).
+ */
+export function splitOrgPrefix(raw: string): { org?: string; value: string } {
+  const colon = raw.indexOf(':');
+  if (colon <= 0 || colon === raw.length - 1) return { value: raw };
+  return { org: raw.slice(0, colon), value: raw.slice(colon + 1) };
+}
+
+/**
+ * The static JWT from ${PREFIX}_JWT with any "org:" prefix stripped.
+ * Returns undefined when the var is unset or empty. When set, the CLI uses
+ * this token directly — no get_cli_token call and no token cache I/O.
+ */
+export function getEnvJwt(): string | undefined {
+  const raw = getPrefixedEnv('JWT');
+  if (!raw) return undefined;
+  return splitOrgPrefix(raw).value || undefined;
+}
+
+/**
+ * Required env vars that are actually missing: ORG is always required
+ * (normalizeCredentialEnv may have filled it from an "org:" prefix), and
+ * API_KEY only when no static JWT is provided.
+ */
+export function getMissingRequiredEnvVars(): string[] {
+  const missing: string[] = [];
+  if (!getEnvJwt() && !process.env[`${_envPrefix}_API_KEY`]) {
+    missing.push(`${_envPrefix}_API_KEY`);
+  }
+  if (!process.env[`${_envPrefix}_ORG`]) {
+    missing.push(`${_envPrefix}_ORG`);
+  }
+  return missing;
+}
+
+/**
+ * Normalize credential env vars in place after .env loading:
+ *   - Hoist an "org:" prefix from ${PREFIX}_API_KEY / ${PREFIX}_JWT into
+ *     ${PREFIX}_ORG (deliberately overwriting an existing ORG — the prefix
+ *     wins). JWT is processed second so its org beats the API key's.
+ *   - In JWT-only mode, backfill ${PREFIX}_API_KEY='' so the default
+ *     config's ${PREFIX}_API_KEY reference substitutes cleanly under strict
+ *     mode (undefined would throw; empty string is fine).
+ * Idempotent: hoisted values contain no colon and the backfill only fires
+ * while API_KEY is undefined, so repeated calls are no-ops.
+ */
+export function normalizeCredentialEnv(): void {
+  const apiKeyName = `${_envPrefix}_API_KEY`;
+  const jwtName = `${_envPrefix}_JWT`;
+  const orgName = `${_envPrefix}_ORG`;
+
+  const hoist = (name: string): void => {
+    const raw = process.env[name];
+    if (!raw?.includes(':')) return;
+    const { org, value } = splitOrgPrefix(raw);
+    if (!org) return;
+    process.env[name] = value;
+    process.env[orgName] = org;
+  };
+
+  hoist(apiKeyName);
+  hoist(jwtName);
+
+  if (process.env[jwtName] && process.env[apiKeyName] === undefined) {
+    process.env[apiKeyName] = '';
+  }
+}
+
 // ============================================================================
 // User Config Directory
 // ============================================================================
@@ -328,6 +400,10 @@ export async function loadDotEnv(searchDir?: string): Promise<void> {
     const loaded = await loadEnvFile(userConfigEnvPath);
     if (loaded && !_loadedEnvDir) _loadedEnvDir = userConfigDir;
   }
+
+  // Hoist "org:" credential prefixes and backfill for JWT-only mode. Runs on
+  // every loadDotEnv call (main + loadConfig) — idempotent by design.
+  normalizeCredentialEnv();
 }
 
 // ============================================================================

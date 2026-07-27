@@ -24,6 +24,7 @@ describe('CLI Error Handling Tests', () => {
           SEMANTIUS_NO_DAEMON: '1',
           SEMANTIUS_API_KEY: 'test-api-key',
           SEMANTIUS_ORG: 'test-org',
+          SEMANTIUS_JWT: '',
         },
         stdin: null,
         stdout: 'pipe',
@@ -369,6 +370,7 @@ describe('CLI Error Handling Tests', () => {
           SEMANTIUS_NO_DAEMON: '1',
           SEMANTIUS_API_KEY: 'test-api-key',
           SEMANTIUS_ORG: 'test-org',
+          SEMANTIUS_JWT: '',
           SEMANTIUS_STDIN_GRACE_MS: '50',
         },
         // 'pipe' keeps the write end open and we never write/close it, so the

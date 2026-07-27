@@ -23,11 +23,13 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_SECONDS,
+  getMissingRequiredEnvVars,
   getRequiredEnvVarNames,
   getUserConfigDir,
   listServerNames,
   loadConfig,
   loadDotEnv,
+  prefixedEnvName,
   setEnvPrefix,
 } from './config.js';
 import {
@@ -440,7 +442,8 @@ function parseArgs(args: string[]): ParsedArgs {
  */
 function printHelp(): void {
   const requiredVars = getRequiredEnvVarNames();
-  const missingVars = requiredVars.filter((v) => !process.env[v]);
+  const jwtVar = prefixedEnvName('JWT');
+  const missingVars = getMissingRequiredEnvVars();
   const configDir = getUserConfigDir();
 
   console.log(`
@@ -499,8 +502,12 @@ Examples:
   semantius --env PROD info crud                   # Use PROD_API_KEY / PROD_ORG
 
 Environment Variables (all respect --env <prefix>; default prefix shown):
-  ${requiredVars[0].padEnd(28)} API key for Semantius (required)
-  ${requiredVars[1].padEnd(28)} Organization name for Semantius (required)
+  ${requiredVars[0].padEnd(28)} API key for Semantius (required unless ${jwtVar} is set).
+                               Value may be "org:key" — the org prefix overrides ${requiredVars[1]}
+  ${requiredVars[1].padEnd(28)} Organization name for Semantius (required unless supplied
+                               via an "org:" prefix on the API key or JWT)
+  ${jwtVar.padEnd(28)} Static JWT sent as "Authorization: Bearer" directly; skips
+                               get_cli_token and the token cache. Value may be "org:jwt"
   SEMANTIUS_DEBUG=1            Verbose debug logging to stderr
   SEMANTIUS_TIMEOUT=N          Request timeout in seconds (default: 1800)
   SEMANTIUS_CONCURRENCY=N      Max parallel server connections (default: 5)
@@ -542,7 +549,7 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
  * Exits with an error listing each missing variable by name.
  */
 function checkRequiredEnvVars(): void {
-  const missing = getRequiredEnvVarNames().filter((v) => !process.env[v]);
+  const missing = getMissingRequiredEnvVars();
 
   if (missing.length > 0) {
     for (const v of missing) {
@@ -602,7 +609,7 @@ async function main(): Promise<void> {
   if (args.command === 'version') {
     await loadDotEnv();
     console.log(`semantius v${VERSION}`);
-    const missingVars = getRequiredEnvVarNames().filter((v) => !process.env[v]);
+    const missingVars = getMissingRequiredEnvVars();
     if (missingVars.length > 0) {
       console.log(`
 ⚠  Missing required environment variables:

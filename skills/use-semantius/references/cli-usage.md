@@ -29,6 +29,14 @@ export SEMANTIUS_ORG=your-org-name
 # Contents:
 # SEMANTIUS_API_KEY=your-api-key
 # SEMANTIUS_ORG=your-org-name
+
+# Option 3: single-value credential — an "org:" prefix on the API key
+# replaces SEMANTIUS_ORG (the prefix wins if both are set)
+export SEMANTIUS_API_KEY=your-org-name:your-api-key
+
+# Option 4: static JWT used directly as the Bearer token
+# (no token exchange, no token cache); also accepts the "org:" prefix
+export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
 ```
 
 ---
@@ -284,8 +292,9 @@ MCP_DEBUG=1 semantius info          # Show daemon debug output
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SEMANTIUS_API_KEY` | (required) | API key |
-| `SEMANTIUS_ORG` | (required) | Organization name |
+| `SEMANTIUS_API_KEY` | (required unless `SEMANTIUS_JWT` is set) | API key; value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG` |
+| `SEMANTIUS_ORG` | (required unless supplied via `org:` prefix) | Organization name |
+| `SEMANTIUS_JWT` | (none) | Static JWT sent as `Authorization: Bearer` directly; skips the token exchange and cache. Value may be `org:jwt` |
 | `MCP_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
 | `MCP_CONCURRENCY` | `5` | Servers processed in parallel |
 | `MCP_MAX_RETRIES` | `3` | Retry attempts for transient errors |

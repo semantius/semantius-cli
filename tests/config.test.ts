@@ -16,6 +16,10 @@ import {
   setEnvPrefix,
   getEnvPrefix,
   getRequiredEnvVarNames,
+  getMissingRequiredEnvVars,
+  getEnvJwt,
+  splitOrgPrefix,
+  normalizeCredentialEnv,
   getUserConfigDir,
 } from '../src/config';
 
@@ -62,7 +66,10 @@ describe('config', () => {
         const savedConfigPath = process.env.SEMANTIUS_CONFIG_PATH;
         delete process.env.SEMANTIUS_CONFIG_PATH;
 
-        // Set env vars so substitution works
+        // Set env vars so substitution works. Clear any ambient SEMANTIUS_JWT
+        // so credential normalization can't hoist a different org.
+        const savedJwt = process.env.SEMANTIUS_JWT;
+        delete process.env.SEMANTIUS_JWT;
         process.env.SEMANTIUS_API_KEY = 'test-key';
         process.env.SEMANTIUS_ORG = 'test-org';
 
@@ -76,6 +83,9 @@ describe('config', () => {
         // Restore
         if (savedConfigPath !== undefined) {
           process.env.SEMANTIUS_CONFIG_PATH = savedConfigPath;
+        }
+        if (savedJwt !== undefined) {
+          process.env.SEMANTIUS_JWT = savedJwt;
         }
         delete process.env.SEMANTIUS_API_KEY;
         delete process.env.SEMANTIUS_ORG;
@@ -340,6 +350,202 @@ describe('config', () => {
     test('getRequiredEnvVarNames reflects custom prefix', () => {
       setEnvPrefix('STAGING');
       expect(getRequiredEnvVarNames()).toEqual(['STAGING_API_KEY', 'STAGING_ORG']);
+    });
+  });
+
+  describe('splitOrgPrefix', () => {
+    test('value without colon is returned unchanged', () => {
+      expect(splitOrgPrefix('sk-abc-secret')).toEqual({ value: 'sk-abc-secret' });
+    });
+
+    test('splits org:value at the first colon', () => {
+      expect(splitOrgPrefix('my-org:sk-abc-secret')).toEqual({
+        org: 'my-org',
+        value: 'sk-abc-secret',
+      });
+    });
+
+    test('empty org side is treated as malformed (unchanged)', () => {
+      expect(splitOrgPrefix(':sk-abc')).toEqual({ value: ':sk-abc' });
+    });
+
+    test('empty value side is treated as malformed (unchanged)', () => {
+      expect(splitOrgPrefix('my-org:')).toEqual({ value: 'my-org:' });
+    });
+
+    test('splits at the FIRST colon, preserving the rest', () => {
+      expect(splitOrgPrefix('a:b:c')).toEqual({ org: 'a', value: 'b:c' });
+    });
+  });
+
+  describe('credential env normalization', () => {
+    const VARS = [
+      'SEMANTIUS_API_KEY',
+      'SEMANTIUS_ORG',
+      'SEMANTIUS_JWT',
+      'PROD_API_KEY',
+      'PROD_ORG',
+      'PROD_JWT',
+    ];
+    let saved: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      setEnvPrefix('SEMANTIUS');
+      saved = {};
+      for (const v of VARS) {
+        saved[v] = process.env[v];
+        delete process.env[v];
+      }
+    });
+
+    afterEach(() => {
+      setEnvPrefix('SEMANTIUS');
+      for (const v of VARS) {
+        if (saved[v] !== undefined) {
+          process.env[v] = saved[v];
+        } else {
+          delete process.env[v];
+        }
+      }
+    });
+
+    test('hoists org prefix from API key and overwrites SEMANTIUS_ORG', () => {
+      process.env.SEMANTIUS_API_KEY = 'key-org:sk-abc-secret';
+      process.env.SEMANTIUS_ORG = 'env-org';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBe('sk-abc-secret');
+      expect(process.env.SEMANTIUS_ORG).toBe('key-org');
+    });
+
+    test('bare API key leaves SEMANTIUS_ORG untouched', () => {
+      process.env.SEMANTIUS_API_KEY = 'sk-abc-secret';
+      process.env.SEMANTIUS_ORG = 'env-org';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBe('sk-abc-secret');
+      expect(process.env.SEMANTIUS_ORG).toBe('env-org');
+    });
+
+    test('hoists org prefix from JWT', () => {
+      process.env.SEMANTIUS_JWT = 'jwt-org:eyJhbGciOiJIUzI1NiJ9.e30.sig';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_JWT).toBe('eyJhbGciOiJIUzI1NiJ9.e30.sig');
+      expect(process.env.SEMANTIUS_ORG).toBe('jwt-org');
+    });
+
+    test('JWT org wins over API key org when both are prefixed', () => {
+      process.env.SEMANTIUS_API_KEY = 'key-org:sk-abc-secret';
+      process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
+      process.env.SEMANTIUS_ORG = 'env-org';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_ORG).toBe('jwt-org');
+    });
+
+    test('malformed prefixed values are left untouched', () => {
+      process.env.SEMANTIUS_API_KEY = ':sk-abc';
+      process.env.SEMANTIUS_JWT = 'my-org:';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBe(':sk-abc');
+      expect(process.env.SEMANTIUS_JWT).toBe('my-org:');
+      expect(process.env.SEMANTIUS_ORG).toBeUndefined();
+    });
+
+    test('backfills empty API key in JWT-only mode', () => {
+      process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBe('');
+    });
+
+    test('does not backfill API key when JWT is empty', () => {
+      process.env.SEMANTIUS_JWT = '';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBeUndefined();
+    });
+
+    test('is idempotent', () => {
+      process.env.SEMANTIUS_API_KEY = 'key-org:sk-abc-secret';
+      process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      const after = {
+        key: process.env.SEMANTIUS_API_KEY,
+        org: process.env.SEMANTIUS_ORG,
+        jwt: process.env.SEMANTIUS_JWT,
+      };
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBe(after.key!);
+      expect(process.env.SEMANTIUS_ORG).toBe(after.org!);
+      expect(process.env.SEMANTIUS_JWT).toBe(after.jwt!);
+    });
+
+    test('respects the active env prefix and leaves other prefixes alone', () => {
+      setEnvPrefix('PROD');
+      process.env.PROD_JWT = 'prod-org:eyJ.e30.sig';
+      process.env.SEMANTIUS_JWT = 'sem-org:other.jwt.sig';
+      normalizeCredentialEnv();
+      expect(process.env.PROD_JWT).toBe('eyJ.e30.sig');
+      expect(process.env.PROD_ORG).toBe('prod-org');
+      expect(process.env.PROD_API_KEY).toBe('');
+      expect(process.env.SEMANTIUS_JWT).toBe('sem-org:other.jwt.sig');
+      expect(process.env.SEMANTIUS_ORG).toBeUndefined();
+    });
+
+    test('getEnvJwt returns undefined when unset or empty', () => {
+      expect(getEnvJwt()).toBeUndefined();
+      process.env.SEMANTIUS_JWT = '';
+      expect(getEnvJwt()).toBeUndefined();
+    });
+
+    test('getEnvJwt returns the bare token', () => {
+      process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
+      expect(getEnvJwt()).toBe('eyJ.e30.sig');
+    });
+
+    test('getEnvJwt strips an org prefix defensively', () => {
+      process.env.SEMANTIUS_JWT = 'my-org:eyJ.e30.sig';
+      expect(getEnvJwt()).toBe('eyJ.e30.sig');
+    });
+
+    test('getMissingRequiredEnvVars: nothing set → both missing', () => {
+      expect(getMissingRequiredEnvVars()).toEqual(['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG']);
+    });
+
+    test('getMissingRequiredEnvVars: API key + ORG set → none missing', () => {
+      process.env.SEMANTIUS_API_KEY = 'sk-abc-secret';
+      process.env.SEMANTIUS_ORG = 'test-org';
+      expect(getMissingRequiredEnvVars()).toEqual([]);
+    });
+
+    test('getMissingRequiredEnvVars: JWT makes the API key optional', () => {
+      process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
+      process.env.SEMANTIUS_ORG = 'test-org';
+      expect(getMissingRequiredEnvVars()).toEqual([]);
+    });
+
+    test('getMissingRequiredEnvVars: JWT alone still requires ORG', () => {
+      process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
+      expect(getMissingRequiredEnvVars()).toEqual(['SEMANTIUS_ORG']);
+    });
+
+    test('loadConfig resolves the default config in JWT-only mode', async () => {
+      const originalCwd = process.cwd();
+      process.chdir(tempDir);
+      try {
+        const savedConfigPath = process.env.SEMANTIUS_CONFIG_PATH;
+        delete process.env.SEMANTIUS_CONFIG_PATH;
+
+        process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
+
+        const config = await loadConfig();
+        const crud = config.mcpServers.crud as any;
+        expect(crud.url).toBe('https://jwt-org.semantius.ai/mcp');
+        // API key was backfilled to '' so strict substitution succeeds
+        expect(crud.headers['x-api-key']).toBe('');
+
+        if (savedConfigPath !== undefined) {
+          process.env.SEMANTIUS_CONFIG_PATH = savedConfigPath;
+        }
+      } finally {
+        process.chdir(originalCwd);
+      }
     });
   });
 

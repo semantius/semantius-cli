@@ -64,7 +64,7 @@ describe('CLI Integration Tests', () => {
       // - stdin: null prevents hanging when CLI tries to read stdin
       // - env is passed explicitly for reliable cross-platform behavior
       const proc = Bun.spawn(['bun', 'run', cliPath, '-c', configPath, ...args], {
-        env: { ...process.env, SEMANTIUS_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org' },
+        env: { ...process.env, SEMANTIUS_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org', SEMANTIUS_JWT: '' },
         stdin: null,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -302,6 +302,7 @@ describe('CLI Integration Tests', () => {
           SEMANTIUS_NO_DAEMON: '1',
           SEMANTIUS_API_KEY: 'test-api-key',
           SEMANTIUS_ORG: 'test-org',
+          SEMANTIUS_JWT: '',
         },
       });
       const exitCode = await proc.exited;
@@ -382,7 +383,7 @@ describe('HTTP Transport Integration Tests', () => {
 
     try {
       const proc = Bun.spawn(['bun', 'run', cliPath, '-c', configPath, ...args], {
-        env: { ...process.env, SEMANTIUS_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org' },
+        env: { ...process.env, SEMANTIUS_NO_DAEMON: '1', SEMANTIUS_API_KEY: 'test-api-key', SEMANTIUS_ORG: 'test-org', SEMANTIUS_JWT: '' },
         stdin: null,
         stdout: 'pipe',
         stderr: 'pipe',

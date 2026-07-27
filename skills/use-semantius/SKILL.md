@@ -112,10 +112,11 @@ semantius info
 ```
 
 If this fails with "Missing required environment variables" or similar error, list what's missing and STOP. Required variables:
-- `SEMANTIUS_API_KEY`, your API key
-- `SEMANTIUS_ORG`, your organization name
+- `SEMANTIUS_API_KEY`, your API key (optional when `SEMANTIUS_JWT` is set)
+- `SEMANTIUS_ORG`, your organization name (optional when supplied as an `org:` prefix on the API key or JWT, e.g. `SEMANTIUS_API_KEY=your-org:your-api-key`)
+- `SEMANTIUS_JWT`, a static JWT used directly as the Bearer token (skips the token exchange and cache; value may also be `org:jwt`)
 
-Do not proceed until both are set and `semantius info` returns successfully.
+Do not proceed until they are set and `semantius info` returns successfully.
 
 Once verified, set up credentials. Set them for your shell, or (preferred) put them in a `.env` file.
 
@@ -123,12 +124,16 @@ Once verified, set up credentials. Set them for your shell, or (preferred) put t
 ```bash
 export SEMANTIUS_API_KEY=your-api-key
 export SEMANTIUS_ORG=your-org-name
+# or as a single value:
+export SEMANTIUS_API_KEY=your-org-name:your-api-key
 ```
 
 **Windows (PowerShell):**
 ```powershell
 $env:SEMANTIUS_API_KEY = "your-api-key"
 $env:SEMANTIUS_ORG = "your-org-name"
+# or as a single value:
+$env:SEMANTIUS_API_KEY = "your-org-name:your-api-key"
 ```
 
 Or place them in a `.env` file — next to the executable on Windows, or in the current working directory on Linux/macOS:
