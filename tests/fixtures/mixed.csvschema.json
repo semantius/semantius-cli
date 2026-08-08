@@ -1,9 +1,10 @@
 [
   {
+    "header": "id",
     "field_name": "id",
     "col_no": 1,
     "format": "integer",
-    "decimal_places": 0,
+    "precision": 0,
     "required": true,
     "sample_values": [
       1,
@@ -20,10 +21,11 @@
     ]
   },
   {
+    "header": "price",
     "field_name": "price",
     "col_no": 2,
     "format": "number",
-    "decimal_places": 3,
+    "precision": 3,
     "required": true,
     "sample_values": [
       1,
@@ -40,10 +42,11 @@
     ]
   },
   {
+    "header": "category",
     "field_name": "category",
     "col_no": 3,
     "format": "enum",
-    "decimal_places": 0,
+    "precision": 0,
     "required": true,
     "enum_values": [
       "alpha",
@@ -52,10 +55,11 @@
     ]
   },
   {
+    "header": "flag01",
     "field_name": "flag01",
     "col_no": 4,
-    "format": "bool",
-    "decimal_places": 0,
+    "format": "boolean",
+    "precision": 0,
     "required": true,
     "sample_values": [
       "0",
@@ -63,10 +67,11 @@
     ]
   },
   {
+    "header": "optional",
     "field_name": "optional",
     "col_no": 5,
     "format": "string",
-    "decimal_places": 0,
+    "precision": 0,
     "required": false,
     "sample_values": [
       "opt-1",
@@ -83,10 +88,11 @@
     ]
   },
   {
+    "header": "birth_date",
     "field_name": "birth_date",
     "col_no": 6,
-    "format": "date-only",
-    "decimal_places": 0,
+    "format": "date",
+    "precision": 0,
     "required": true,
     "sample_values": [
       "2024-01-01",
@@ -103,10 +109,11 @@
     ]
   },
   {
+    "header": "updated_at",
     "field_name": "updated_at",
     "col_no": 7,
-    "format": "date",
-    "decimal_places": 0,
+    "format": "date-time",
+    "precision": 0,
     "required": true,
     "sample_values": [
       "2024-01-01T00:00:00Z",
@@ -123,10 +130,11 @@
     ]
   },
   {
+    "header": "status",
     "field_name": "status",
     "col_no": 8,
     "format": "string",
-    "decimal_places": 0,
+    "precision": 0,
     "required": true,
     "sample_values": [
       "status-1",

@@ -107,11 +107,44 @@ const BOOLEAN_PAIRS = new Set([
   "no|yes",
 ]);
 
-function createColumnState(fieldName, colNo) {
+// Semantius derives a `<reference>_id_label` column for every reference field, so a
+// field name ending that way would collide with a generated one.
+const RESERVED_FIELD_NAME = /(?:^|_)id_label$/;
+
+function normalizeFieldName(header) {
+  return header
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+// Raw headers are not usable as physical column names, so the normalized suggestion
+// is derived here instead of being left to each consumer. Names are resolved in
+// column order, so the same header row always yields the same field names.
+export function toFieldNames(headers) {
+  const taken = new Set();
+
+  return headers.map((header, index) => {
+    const base = normalizeFieldName(header) || `field_${index + 1}`;
+    let fieldName = base;
+    let suffix = 1;
+
+    while (RESERVED_FIELD_NAME.test(fieldName) || taken.has(fieldName)) {
+      suffix += 1;
+      fieldName = `${base}_${suffix}`;
+    }
+
+    taken.add(fieldName);
+    return fieldName;
+  });
+}
+
+function createColumnState(header, fieldName, colNo) {
   return {
+    header,
     field_name: fieldName,
     col_no: colNo,
-    decimal_places: 0,
+    precision: 0,
     format: "string",
     required: true,
     non_empty_count: 0,
@@ -199,7 +232,7 @@ function inspectValue(state, rawValue) {
     if (!isNumberString(value)) {
       state.can_be_number = false;
     } else {
-      state.decimal_places = Math.max(state.decimal_places, getDecimalPlaces(value));
+      state.precision = Math.max(state.precision, getDecimalPlaces(value));
     }
   }
 
@@ -239,7 +272,7 @@ function getBaseFormat(state) {
   }
 
   if (state.is_date) {
-    return state.is_date_only ? "date-only" : "date";
+    return state.is_date_only ? "date" : "date-time";
   }
 
   return "string";
@@ -264,7 +297,7 @@ function finalizeColumn(state) {
   let format = baseFormat;
 
   if (isBooleanEnum(uniqueValues)) {
-    format = "bool";
+    format = "boolean";
   } else if (uniqueValues.length > 0 && uniqueValues.length <= MAX_ENUM) {
     format = "enum";
   }
@@ -272,10 +305,11 @@ function finalizeColumn(state) {
   const isNumeric = baseFormat === "integer" || baseFormat === "number";
 
   const schema = {
+    header: state.header,
     field_name: state.field_name,
     col_no: state.col_no,
     format,
-    decimal_places: isNumeric ? state.decimal_places : 0,
+    precision: isNumeric ? state.precision : 0,
     required: state.required,
   };
 
@@ -362,7 +396,10 @@ export async function inspectCsvFile(filePath, { maxRecords = MAX_RECORDS } = {}
     for await (const row of parser) {
       if (headers === null) {
         headers = row.map((value) => String(value));
-        states = headers.map((fieldName, index) => createColumnState(fieldName, index + 1));
+        const fieldNames = toFieldNames(headers);
+        states = headers.map((header, index) =>
+          createColumnState(header, fieldNames[index], index + 1),
+        );
         continue;
       }
 
@@ -383,7 +420,7 @@ export async function inspectCsvFile(filePath, { maxRecords = MAX_RECORDS } = {}
     source.destroy();
   }
 
-  if (headers === null || headers.every((fieldName) => fieldName.trim() === "")) {
+  if (headers === null || headers.every((header) => header.trim() === "")) {
     throw new CsvSchemaError(
       ERROR_CODES.NO_HEADER_ROW,
       `No header row found in ${resolvedPath}`,

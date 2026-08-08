@@ -2,7 +2,7 @@
  * Type declarations for the vendored ./csv-schema.js.
  *
  * csv-schema.js is a VERBATIM copy of src/index.js from
- * https://github.com/semantius/csv-schema at commit 7288e4b. That repo is
+ * https://github.com/semantius/csv-schema at commit 12d0c7f. That repo is
  * private and unpublished, so it cannot be a dependency — CI and the release
  * build only check out semantius-cli. Re-sync with a plain copy:
  *
@@ -17,16 +17,24 @@ export type CsvFieldFormat =
   | 'integer'
   | 'number'
   | 'date'
-  | 'date-only'
+  | 'date-time'
   | 'string'
-  | 'bool'
+  | 'boolean'
   | 'enum';
 
 export interface FieldSchema {
+  /** The raw CSV header, verbatim. Not usable as a physical column name. */
+  header: string;
+  /** snake_case suggestion derived from the header; unique within the file. */
   field_name: string;
   col_no: number;
   format: CsvFieldFormat;
-  decimal_places: number;
+  /** Decimal places; 0 for every non-numeric format. */
+  precision: number;
+  /**
+   * Every inspected row had a value. Maps to `input_type: "required"` on
+   * create_field — never send `required` to create_field itself.
+   */
   required: boolean;
   /** Present only when format is "enum". */
   enum_values?: string[];
@@ -84,6 +92,16 @@ export function toErrorJson(
   error: unknown,
   path?: string,
 ): { error: CsvSchemaErrorJson };
+
+/**
+ * Normalizes raw headers into unique snake_case field-name suggestions, in
+ * column order: lowercased, non-alphanumerics collapsed to `_`, leading and
+ * trailing `_` trimmed. A header that normalizes to nothing becomes
+ * `field_<col_no>`. Names that would collide, or that end in the reserved
+ * `_id_label` suffix Semantius generates for reference fields, get a numeric
+ * suffix.
+ */
+export function toFieldNames(headers: string[]): string[];
 
 export function inspectCsvFile(
   filePath: string,

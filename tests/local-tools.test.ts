@@ -144,14 +144,42 @@ describe('local-tools', () => {
 
       expect(byName.id.format).toBe('integer');
       expect(byName.price.format).toBe('number');
-      expect(byName.price.decimal_places).toBe(3);
+      expect(byName.price.precision).toBe(3);
       expect(byName.category.format).toBe('enum');
       expect(byName.category.enum_values).toEqual(['alpha', 'beta', 'gamma']);
-      expect(byName.flag01.format).toBe('bool');
+      expect(byName.flag01.format).toBe('boolean');
       expect(byName.optional.required).toBe(false);
-      expect(byName.birth_date.format).toBe('date-only');
-      expect(byName.updated_at.format).toBe('date');
+      // "date" is date-only; a value with a time component is "date-time".
+      expect(byName.birth_date.format).toBe('date');
+      expect(byName.updated_at.format).toBe('date-time');
       expect(byName.status.format).toBe('string');
+    });
+
+    test('keeps the raw header and adds a normalized field_name', async () => {
+      const headersPath = join(tempDir, 'headers.csv');
+      await copyFile(join(FIXTURES_DIR, 'headers.csv'), headersPath);
+
+      const result = await callUtils('get_csvschema', { path: headersPath });
+
+      expect((result as ToolResult).isError).toBeFalsy();
+      const { schema } = resultJson(result);
+      expect(
+        (schema as FieldSchema[]).map(({ header, field_name }) => [
+          header,
+          field_name,
+        ]),
+      ).toEqual([
+        ['First Name', 'first_name'],
+        // Collides with column 1 once normalized, so it is deduped.
+        ['first-name', 'first_name_2'],
+        ['  Total (€) ', 'total'],
+        // Semantius generates <reference>_id_label columns, so the raw form is
+        // reserved and the suggestion is suffixed away from it.
+        ['customer_id_label', 'customer_id_label_2'],
+        ['', 'field_5'],
+        ['2024 Revenue', '2024_revenue'],
+        ['id label', 'id_label_2'],
+      ]);
     });
 
     test('maxRecords caps how much of the file is inspected', async () => {
