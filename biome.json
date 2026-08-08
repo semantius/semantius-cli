@@ -9,7 +9,8 @@
     "ignoreUnknown": false,
     "ignore": [
       "node_modules",
-      "dist"
+      "dist",
+      "src/local-tools/csv-schema.js"
     ]
   },
   "formatter": {

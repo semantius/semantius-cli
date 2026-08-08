@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtemp, writeFile, rm, mkdir, realpath } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, copyFile, rm, mkdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,6 +14,7 @@ describe('CLI Integration Tests', () => {
   let tempDir: string;
   let configPath: string;
   let testFilePath: string;
+  let csvFilePath: string;
 
   beforeAll(async () => {
     // Create temp directory for test files
@@ -24,6 +25,11 @@ describe('CLI Integration Tests', () => {
     // Create a test file to read
     testFilePath = join(tempDir, 'test.txt');
     await writeFile(testFilePath, 'Hello from test file!');
+
+    // CSV for the built-in utils server; copied because get_csvschema writes
+    // its output next to the input file
+    csvFilePath = join(tempDir, 'mixed.csv');
+    await copyFile(join(import.meta.dir, '..', 'fixtures', 'mixed.csv'), csvFilePath);
 
     // Create subdirectory with more files
     const subDir = join(tempDir, 'subdir');
@@ -294,8 +300,7 @@ describe('CLI Integration Tests', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('utils');
-      expect(result.stdout).toContain('file-size');
-      expect(result.stdout).toContain('file-date');
+      expect(result.stdout).toContain('get_csvschema');
     });
 
     test('info utils shows built-in transport and tools', async () => {
@@ -303,55 +308,43 @@ describe('CLI Integration Tests', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('built-in');
-      expect(result.stdout).toContain('file-size');
-      expect(result.stdout).toContain('file-date');
+      expect(result.stdout).toContain('get_csvschema');
     });
 
     test('grep finds utils tools', async () => {
-      const result = await runCli(['grep', 'file-*']);
+      const result = await runCli(['grep', 'get_*']);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('file-size');
-      expect(result.stdout).toContain('file-date');
+      expect(result.stdout).toContain('get_csvschema');
     });
 
-    test('call utils/file-size returns the byte count', async () => {
+    test('call utils/get_csvschema writes and returns the schema', async () => {
       const result = await runCli([
         'call',
         'utils',
-        'file-size',
-        JSON.stringify({ path: testFilePath }),
+        'get_csvschema',
+        JSON.stringify({ path: csvFilePath }),
       ]);
 
       expect(result.exitCode).toBe(0);
-      // 'Hello from test file!' is 21 bytes
-      expect(result.stdout.trim()).toBe('21');
+      const { outputPath, schema } = JSON.parse(result.stdout.trim());
+      expect(outputPath).toBe(`${csvFilePath}.csvschema.json`);
+      expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual(schema);
+      expect(schema.map((f: { field_name: string }) => f.field_name)).toContain(
+        'category'
+      );
     });
 
-    test('call utils/file-date returns an ISO 8601 timestamp', async () => {
+    test('call utils/get_csvschema with missing file reports an error', async () => {
       const result = await runCli([
         'call',
         'utils',
-        'file-date',
-        JSON.stringify({ path: testFilePath }),
-      ]);
-
-      expect(result.exitCode).toBe(0);
-      // JSON string output: "2026-08-06T20:53:10.548Z"
-      const parsed = JSON.parse(result.stdout.trim());
-      expect(new Date(parsed).toISOString()).toBe(parsed);
-    });
-
-    test('call utils/file-size with missing file reports an error', async () => {
-      const result = await runCli([
-        'call',
-        'utils',
-        'file-size',
-        JSON.stringify({ path: join(tempDir, 'does-not-exist.txt') }),
+        'get_csvschema',
+        JSON.stringify({ path: join(tempDir, 'does-not-exist.csv') }),
       ]);
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain('File not found');
+      expect(result.stderr).toContain('FILE_NOT_FOUND');
     });
   });
 

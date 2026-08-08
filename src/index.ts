@@ -466,8 +466,8 @@ Formats (both work):
   semantius call server/tool '{}'                  Slash-separated
 
 Built-in server:
-  A "utils" server with local tools (file-size, file-date) is always
-  available alongside configured servers, e.g. semantius call utils/file-size '{"path":"..."}'
+  A "utils" server with local tools (get_csvschema) is always
+  available alongside configured servers, e.g. semantius call utils/get_csvschema '{"path":"data.csv"}'
 
 Options:
   -h, --help               Show this help message

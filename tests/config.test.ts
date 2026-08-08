@@ -134,7 +134,7 @@ describe('config', () => {
         configPath,
         JSON.stringify({
           mcpServers: {
-            utils: { allowedTools: ['file-size'] },
+            utils: { allowedTools: ['get_csvschema'] },
           },
         })
       );
@@ -142,7 +142,7 @@ describe('config', () => {
       const config = await loadConfig(configPath);
       const utils = config.mcpServers.utils as any;
       expect(utils.builtin).toBe(true);
-      expect(utils.allowedTools).toEqual(['file-size']);
+      expect(utils.allowedTools).toEqual(['get_csvschema']);
     });
 
     test('utils entry with both command and url still errors', async () => {

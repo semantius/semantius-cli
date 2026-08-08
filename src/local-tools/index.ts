@@ -7,14 +7,13 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { version as VERSION } from '../../package.json' with { type: 'json' };
-import fileDate from './file-date.js';
-import fileSize from './file-size.js';
+import getCsvSchema from './get-csvschema.js';
 import type { LocalTool } from './types.js';
 
 export const UTILS_INSTRUCTIONS =
   'Built-in utility tools bundled with the semantius CLI (no server connection involved). File paths are resolved relative to the current working directory.';
 
-export const localTools: LocalTool[] = [fileSize, fileDate];
+export const localTools: LocalTool[] = [getCsvSchema];
 
 export function createUtilsServer(): McpServer {
   const server = new McpServer(
