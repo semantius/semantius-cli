@@ -19,6 +19,7 @@ import {
   getMaxRetries,
   getRetryDelayMs,
   getTimeoutMs,
+  isBuiltinServer,
   isDaemonEnabled,
   isHttpServer,
   isToolAllowed,
@@ -233,6 +234,14 @@ export async function connectToServer(
   serverName: string,
   config: ServerConfig,
 ): Promise<ConnectedClient> {
+  // Built-in servers run in-process (see local-tools/connection.ts) and are
+  // short-circuited in getConnection before this point is ever reached.
+  if (isBuiltinServer(config)) {
+    throw new Error(
+      `Built-in server "${serverName}" does not use a transport connection`,
+    );
+  }
+
   // Collect stderr for better error messages
   const stderrChunks: string[] = [];
 
@@ -787,6 +796,16 @@ export async function getConnection(
   serverName: string,
   config: ServerConfig,
 ): Promise<McpConnection> {
+  // Built-in servers run in-process — no daemon, JWT, or retry layers apply.
+  // Must short-circuit before all of them.
+  if (isBuiltinServer(config)) {
+    debug(`Using in-process built-in server for ${serverName}`);
+    const { createBuiltinConnection } = await import(
+      './local-tools/connection.js'
+    );
+    return createBuiltinConnection(serverName, config);
+  }
+
   // Clean up any orphaned daemons on first call
   await cleanupOrphanedDaemons();
 

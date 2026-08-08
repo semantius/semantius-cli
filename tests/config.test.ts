@@ -77,6 +77,7 @@ describe('config', () => {
 
         expect(config.mcpServers.crud).toBeDefined();
         expect(config.mcpServers.cube).toBeDefined();
+        expect((config.mcpServers.utils as any).builtin).toBe(true);
         expect((config.mcpServers.crud as any).url).toBe('https://test-org.semantius.ai/mcp');
         expect((config.mcpServers.crud as any).headers['x-api-key']).toBe('test-key');
 
@@ -92,6 +93,70 @@ describe('config', () => {
       } finally {
         process.chdir(originalCwd);
       }
+    });
+
+    test('injects the built-in utils server', async () => {
+      const configPath = join(tempDir, 'mcp_servers.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            test: { command: 'echo' },
+          },
+        })
+      );
+
+      const config = await loadConfig(configPath);
+      expect((config.mcpServers.utils as any).builtin).toBe(true);
+      expect(listServerNames(config)).toContain('utils');
+    });
+
+    test('user utils entry with url shadows the built-in server', async () => {
+      const configPath = join(tempDir, 'mcp_servers.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            utils: { url: 'https://example.com/mcp' },
+          },
+        })
+      );
+
+      const config = await loadConfig(configPath);
+      const utils = config.mcpServers.utils as any;
+      expect(utils.url).toBe('https://example.com/mcp');
+      expect(utils.builtin).toBeUndefined();
+    });
+
+    test('bare utils entry passes validation and merges filter overrides', async () => {
+      const configPath = join(tempDir, 'mcp_servers.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            utils: { allowedTools: ['file-size'] },
+          },
+        })
+      );
+
+      const config = await loadConfig(configPath);
+      const utils = config.mcpServers.utils as any;
+      expect(utils.builtin).toBe(true);
+      expect(utils.allowedTools).toEqual(['file-size']);
+    });
+
+    test('utils entry with both command and url still errors', async () => {
+      const configPath = join(tempDir, 'mcp_servers.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: {
+            utils: { command: 'echo', url: 'https://example.com' },
+          },
+        })
+      );
+
+      await expect(loadConfig(configPath)).rejects.toThrow('both');
     });
 
     test('throws on invalid JSON', async () => {
@@ -272,7 +337,9 @@ describe('config', () => {
       expect(names).toContain('alpha');
       expect(names).toContain('beta');
       expect(names).toContain('gamma');
-      expect(names.length).toBe(3);
+      // The built-in utils server is always injected alongside configured ones
+      expect(names).toContain('utils');
+      expect(names.length).toBe(4);
     });
   });
 

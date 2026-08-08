@@ -465,6 +465,10 @@ Formats (both work):
   semantius call server tool '{}'                  Space-separated
   semantius call server/tool '{}'                  Slash-separated
 
+Built-in server:
+  A "utils" server with local tools (file-size, file-date) is always
+  available alongside configured servers, e.g. semantius call utils/file-size '{"path":"..."}'
+
 Options:
   -h, --help               Show this help message
   -v, --version            Show version number

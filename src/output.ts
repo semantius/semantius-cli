@@ -4,7 +4,7 @@
 
 import type { ToolInfo } from './client.js';
 import type { ServerConfig } from './config.js';
-import { isHttpServer } from './config.js';
+import { isBuiltinServer, isHttpServer } from './config.js';
 
 // ANSI color codes
 const colors = {
@@ -113,7 +113,9 @@ export function formatServerDetails(
     `${color('Server:', colors.bold)} ${color(serverName, colors.cyan)}`,
   );
 
-  if (isHttpServer(config)) {
+  if (isBuiltinServer(config)) {
+    lines.push(`${color('Transport:', colors.bold)} built-in`);
+  } else if (isHttpServer(config)) {
     lines.push(`${color('Transport:', colors.bold)} HTTP`);
     lines.push(`${color('URL:', colors.bold)} ${config.url}`);
   } else {

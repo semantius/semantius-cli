@@ -50,7 +50,22 @@ export interface HttpServerConfig extends BaseServerConfig {
   timeout?: number;
 }
 
-export type ServerConfig = StdioServerConfig | HttpServerConfig;
+/**
+ * Built-in server configuration (in-process, ships inside the binary).
+ * Injected by loadConfig — never written by users, though a bare config
+ * entry under a built-in server's name may carry filter overrides.
+ */
+export interface BuiltinServerConfig extends BaseServerConfig {
+  builtin: true;
+}
+
+export type ServerConfig =
+  | StdioServerConfig
+  | HttpServerConfig
+  | BuiltinServerConfig;
+
+/** Names reserved for built-in in-process servers */
+export const BUILTIN_SERVER_NAMES = ['utils'] as const;
 
 export interface McpServersConfig {
   mcpServers: Record<string, ServerConfig>;
@@ -157,6 +172,15 @@ export function isStdioServer(
   config: ServerConfig,
 ): config is StdioServerConfig {
   return 'command' in config;
+}
+
+/**
+ * Check if a server config is a built-in in-process server
+ */
+export function isBuiltinServer(
+  config: ServerConfig,
+): config is BuiltinServerConfig {
+  return 'builtin' in config && config.builtin === true;
 }
 
 // ============================================================================
@@ -707,6 +731,28 @@ export function getLastLoadedConfig(): McpServersConfig | undefined {
 }
 
 /**
+ * Merge built-in in-process servers into a loaded config.
+ *
+ * Collision policy: a user entry with "command" or "url" under a built-in
+ * name is a real server and wins (with a warning). A bare user entry
+ * (neither key) carries only filter overrides and is merged onto the
+ * built-in marker.
+ */
+function injectBuiltinServers(config: McpServersConfig): McpServersConfig {
+  for (const name of BUILTIN_SERVER_NAMES) {
+    const existing = config.mcpServers[name];
+    if (existing && ('command' in existing || 'url' in existing)) {
+      console.error(
+        `[semantius] Warning: config entry "${name}" shadows the built-in ${name} server`,
+      );
+      continue;
+    }
+    config.mcpServers[name] = { ...existing, builtin: true };
+  }
+  return config;
+}
+
+/**
  * Load and parse MCP servers configuration
  */
 export async function loadConfig(
@@ -741,7 +787,9 @@ export async function loadConfig(
       // No config file found — use built-in default config
       debug('No config file found; using built-in default config');
       await loadDotEnv();
-      const defaults = substituteEnvVarsInObject(getDefaultConfig());
+      const defaults = injectBuiltinServers(
+        substituteEnvVarsInObject(getDefaultConfig()),
+      );
       _lastLoadedConfig = defaults;
       return defaults;
     }
@@ -793,6 +841,11 @@ export async function loadConfig(
     const hasUrl = 'url' in serverConfig;
 
     if (!hasCommand && !hasUrl) {
+      // A bare entry under a built-in server's name carries only filter
+      // overrides (allowedTools/disabledTools) for that built-in server.
+      if ((BUILTIN_SERVER_NAMES as readonly string[]).includes(serverName)) {
+        continue;
+      }
       throw new Error(
         formatCliError({
           code: ErrorCode.CLIENT_ERROR,
@@ -819,7 +872,7 @@ export async function loadConfig(
   }
 
   // Substitute environment variables
-  config = substituteEnvVarsInObject(config);
+  config = injectBuiltinServers(substituteEnvVarsInObject(config));
 
   _lastLoadedConfig = config;
   return config;

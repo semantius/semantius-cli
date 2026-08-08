@@ -288,6 +288,73 @@ describe('CLI Integration Tests', () => {
     });
   });
 
+  describe('built-in utils server', () => {
+    test('list includes utils and its tools', async () => {
+      const result = await runCli([]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('utils');
+      expect(result.stdout).toContain('file-size');
+      expect(result.stdout).toContain('file-date');
+    });
+
+    test('info utils shows built-in transport and tools', async () => {
+      const result = await runCli(['info', 'utils']);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('built-in');
+      expect(result.stdout).toContain('file-size');
+      expect(result.stdout).toContain('file-date');
+    });
+
+    test('grep finds utils tools', async () => {
+      const result = await runCli(['grep', 'file-*']);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('file-size');
+      expect(result.stdout).toContain('file-date');
+    });
+
+    test('call utils/file-size returns the byte count', async () => {
+      const result = await runCli([
+        'call',
+        'utils',
+        'file-size',
+        JSON.stringify({ path: testFilePath }),
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      // 'Hello from test file!' is 21 bytes
+      expect(result.stdout.trim()).toBe('21');
+    });
+
+    test('call utils/file-date returns an ISO 8601 timestamp', async () => {
+      const result = await runCli([
+        'call',
+        'utils',
+        'file-date',
+        JSON.stringify({ path: testFilePath }),
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      // JSON string output: "2026-08-06T20:53:10.548Z"
+      const parsed = JSON.parse(result.stdout.trim());
+      expect(new Date(parsed).toISOString()).toBe(parsed);
+    });
+
+    test('call utils/file-size with missing file reports an error', async () => {
+      const result = await runCli([
+        'call',
+        'utils',
+        'file-size',
+        JSON.stringify({ path: join(tempDir, 'does-not-exist.txt') }),
+      ]);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('File not found');
+    });
+  });
+
   describe('error handling', () => {
     test('handles missing config gracefully', async () => {
       const cliPath = join(import.meta.dir, '..', '..', 'src', 'index.ts');
@@ -450,6 +517,9 @@ describe('HTTP Transport Integration Tests', () => {
  */
 describe('--single flag Integration Tests', () => {
   let serverReachable = false;
+  // Located dynamically in beforeAll — the tests org is a shared environment
+  // that gets reseeded, so no specific record id can be assumed to exist.
+  let moduleId: number;
 
   beforeAll(async () => {
     const apiKey = process.env.SEMANTIUS_API_KEY;
@@ -464,6 +534,26 @@ describe('--single flag Integration Tests', () => {
       });
       serverReachable = response.status < 500;
     } catch {
+      serverReachable = false;
+    }
+    if (!serverReachable) return;
+
+    // Find any existing module to test against
+    const probe = await runCli([
+      '--diag',
+      'call', 'crud', 'read_module',
+      JSON.stringify({ limit: 1, select: 'id' }),
+    ]);
+    try {
+      const rows = JSON.parse(probe.stdout);
+      if (Array.isArray(rows) && rows.length === 1) {
+        moduleId = rows[0].id;
+      }
+    } catch {
+      // fall through
+    }
+    if (moduleId === undefined) {
+      console.log('Skipping --single tests: no module found to test against');
       serverReachable = false;
     }
   });
@@ -490,17 +580,16 @@ describe('--single flag Integration Tests', () => {
       console.log('Skipping: CRUD server not reachable');
       return;
     }
-    // id=eq.2 is the _public module — guaranteed to exist and be unique
     const result = await runCli([
       '--single',
       'call', 'crud', 'read_module',
-      JSON.stringify({ filters: 'id=eq.2' }),
+      JSON.stringify({ filters: `id=eq.${moduleId}` }),
     ]);
 
     expect(result.exitCode).toBe(0);
     // Response is a single JSON object (not an array)
     const parsed = JSON.parse(result.stdout);
-    expect(parsed).toMatchObject({ id: 2, module_name: '_public' });
+    expect(parsed).toMatchObject({ id: moduleId });
     expect(Array.isArray(parsed)).toBe(false);
   });
 
@@ -528,7 +617,7 @@ describe('--single flag Integration Tests', () => {
     const result = await runCli([
       '--diag',
       'call', 'crud', 'read_module',
-      JSON.stringify({ filters: 'id=eq.2' }),
+      JSON.stringify({ filters: `id=eq.${moduleId}` }),
     ]);
 
     expect(result.exitCode).toBe(0);
@@ -545,12 +634,12 @@ describe('--single flag Integration Tests', () => {
     const withSingle = await runCli([
       '--single',
       'call', 'crud', 'read_module',
-      JSON.stringify({ filters: 'id=eq.1001' }),
+      JSON.stringify({ filters: `id=eq.${moduleId}` }),
     ]);
     const withoutSingle = await runCli([
       '--diag',
       'call', 'crud', 'read_module',
-      JSON.stringify({ filters: 'id=eq.1001' }),
+      JSON.stringify({ filters: `id=eq.${moduleId}` }),
     ]);
 
     expect(withSingle.exitCode).toBe(0);
@@ -572,7 +661,7 @@ describe('--single flag Integration Tests', () => {
     const result = await runCli([
       '--single',
       'call', 'crud', 'postgrestRequest',
-      JSON.stringify({ method: 'GET', path: '/modules?id=eq.1001' }),
+      JSON.stringify({ method: 'GET', path: `/modules?id=eq.${moduleId}` }),
     ]);
 
     expect(result.exitCode).toBe(0);
@@ -580,7 +669,7 @@ describe('--single flag Integration Tests', () => {
     // Should be the row directly, not { request, response: { data: {...} } }
     expect(parsed).not.toHaveProperty('request');
     expect(parsed).not.toHaveProperty('response');
-    expect(parsed).toMatchObject({ id: 1001 });
+    expect(parsed).toMatchObject({ id: moduleId });
   });
 
   test('--single --diag returns the full envelope', async () => {
@@ -591,14 +680,14 @@ describe('--single flag Integration Tests', () => {
     const result = await runCli([
       '--single', '--diag',
       'call', 'crud', 'postgrestRequest',
-      JSON.stringify({ method: 'GET', path: '/modules?id=eq.1001' }),
+      JSON.stringify({ method: 'GET', path: `/modules?id=eq.${moduleId}` }),
     ]);
 
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed).toHaveProperty('request');
     expect(parsed).toHaveProperty('response');
-    expect((parsed.response as { data: { id: number } }).data.id).toBe(1001);
+    expect((parsed.response as { data: { id: number } }).data.id).toBe(moduleId);
   });
 
   test('--single surfaces real server errors instead of MULTIPLE_ROWS', async () => {
