@@ -195,10 +195,12 @@ function formatServersMarkdown(servers: ServerWithTools[]): string {
  * Execute the markdown dump command
  */
 export async function markdownCommand(options: MarkdownOptions): Promise<void> {
-  const sections: string[] = [];
-
-  // 1. README.md
-  sections.push(readDocFile('README.md'));
+  // 1. README.md — emitted before any network I/O. Server discovery below
+  // connects to every configured server and can stall on an unresponsive
+  // host; the local documentation must not be held hostage to that. Buffering
+  // both sections and printing once at the end meant an unreachable server
+  // suppressed the README too, so `semantius -md` produced nothing at all.
+  console.log(readDocFile('README.md'));
 
   // 2. All servers with all tools and descriptions
   let config: McpServersConfig;
@@ -210,18 +212,17 @@ export async function markdownCommand(options: MarkdownOptions): Promise<void> {
   }
 
   const serverNames = listServerNames(config);
-
-  if (serverNames.length > 0) {
-    const concurrencyLimit = getConcurrencyLimit();
-    const servers = await processWithConcurrency(
-      serverNames,
-      (name) => fetchServerTools(name, config),
-      concurrencyLimit,
-    );
-
-    servers.sort((a, b) => a.name.localeCompare(b.name));
-    sections.push(formatServersMarkdown(servers));
+  if (serverNames.length === 0) {
+    return;
   }
 
-  console.log(sections.join('\n\n---\n\n'));
+  const concurrencyLimit = getConcurrencyLimit();
+  const servers = await processWithConcurrency(
+    serverNames,
+    (name) => fetchServerTools(name, config),
+    concurrencyLimit,
+  );
+
+  servers.sort((a, b) => a.name.localeCompare(b.name));
+  console.log(`\n---\n\n${formatServersMarkdown(servers)}`);
 }

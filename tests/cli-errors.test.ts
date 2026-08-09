@@ -11,6 +11,18 @@ import { join } from 'node:path';
 describe('CLI Error Handling Tests', () => {
   const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
 
+  // These are argument-parsing tests: none of them should touch the network.
+  // Without an explicit config the CLI falls back to the built-in default
+  // config, which points "crud"/"cube" at https://${ORG}.semantius.{ai,io} —
+  // so commands that actually connect (-md, info, grep) dialled production
+  // with a bogus org. That made them non-hermetic and platform-dependent:
+  // client.connect() has no connect timeout, so the run lasted exactly as
+  // long as those hosts took to answer. A fast rejection passed; a stalled
+  // response hung until the kill timer fired and the test saw a killed
+  // process instead of exit 0.
+  // This fixture has no remote servers (only the in-process "utils" builtin).
+  const configPath = join(import.meta.dir, 'fixtures', 'no-servers.json');
+
   async function runCli(
     args: string[]
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -25,23 +37,33 @@ describe('CLI Error Handling Tests', () => {
           SEMANTIUS_API_KEY: 'test-api-key',
           SEMANTIUS_ORG: 'test-org',
           SEMANTIUS_JWT: '',
+          SEMANTIUS_CONFIG_PATH: configPath,
+          // Belt-and-braces: cap the retry budget so no future config change
+          // here can spend the default 30-minute budget on backoff.
+          SEMANTIUS_MAX_RETRIES: '0',
+          SEMANTIUS_TIMEOUT: '10',
         },
         stdin: null,
         stdout: 'pipe',
         stderr: 'pipe',
       });
 
-      // Kill the process after 4 s to prevent indefinite hangs when the CLI
-      // tries to connect to a non-existent MCP server (e.g. on Windows where
-      // TCP timeouts are longer than on Linux/macOS).
+      // Safety net against an indefinite hang. With the offline config above
+      // every command finishes in well under a second, so hitting this timer
+      // means something genuinely hung — the marker keeps that distinguishable
+      // from a real non-zero exit when a test fails on exitCode.
+      let timedOut = false;
       const killTimer = setTimeout(() => {
+        timedOut = true;
         try { proc.kill(); } catch { /* process may have already exited */ }
-      }, 4000);
+      }, 8000);
 
       const exitCode = await proc.exited;
       clearTimeout(killTimer);
       const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
+      const stderr =
+        (await new Response(proc.stderr).text()) +
+        (timedOut ? '\n[test] CLI killed after 8000ms timeout\n' : '');
       return { stdout, stderr, exitCode };
     } catch (error: any) {
       return {

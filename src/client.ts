@@ -14,6 +14,7 @@ import {
   debug,
   filterTools,
   getConcurrencyLimit,
+  getConnectTimeoutMs,
   getEnvJwt,
   getLastLoadedConfig,
   getMaxRetries,
@@ -100,6 +101,55 @@ function getRetryConfig(): RetryConfig {
     maxDelayMs: Math.min(10000, retryBudgetMs / 2),
     totalBudgetMs,
   };
+}
+
+/**
+ * A connect attempt that exceeded the per-attempt ceiling. Flagged so
+ * withRetry does not retry it: the message contains "timed out", which
+ * isTransientError matches, and retrying a stalled host would multiply one
+ * 60s wait into four. One ceiling is the whole budget for a stall.
+ */
+class ConnectTimeoutError extends Error {
+  readonly noRetry = true;
+}
+
+/**
+ * Await client.connect() with a ceiling, tearing the transport down if the
+ * ceiling fires so a half-open request cannot keep the process alive.
+ * A ceiling of 0 (or a stdio transport) means "wait indefinitely".
+ */
+async function connectWithCeiling(
+  client: Client,
+  transport: StdioClientTransport | StreamableHTTPClientTransport,
+  ceilingMs: number,
+): Promise<void> {
+  if (ceilingMs <= 0) {
+    await client.connect(transport);
+    return;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      client.connect(transport),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new ConnectTimeoutError(
+                `Connection timed out after ${ceilingMs}ms — server accepted the connection but did not complete the MCP handshake`,
+              ),
+            ),
+          ceilingMs,
+        );
+      }),
+    ]);
+  } catch (error) {
+    await safeClose(() => transport.close());
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -194,6 +244,7 @@ async function withRetry<T>(
       const remainingBudget = config.totalBudgetMs - (Date.now() - startTime);
       const shouldRetry =
         attempt < config.maxRetries &&
+        !(lastError as { noRetry?: boolean }).noRetry &&
         isTransientError(lastError) &&
         remainingBudget > 1000; // At least 1s remaining
 
@@ -277,7 +328,13 @@ export async function connectToServer(
     }
 
     try {
-      await client.connect(transport);
+      // stdio servers get no ceiling: npx cold starts and interactive auth
+      // prompts legitimately outlast any bound we could pick.
+      await connectWithCeiling(
+        client,
+        transport,
+        isHttpServer(config) ? getConnectTimeoutMs() : 0,
+      );
     } catch (error) {
       const err = error as Error;
       // Enhance HTTP errors with the target URL

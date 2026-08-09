@@ -439,6 +439,14 @@ export async function loadDotEnv(searchDir?: string): Promise<void> {
  */
 export const DEFAULT_TIMEOUT_SECONDS = 1800; // 30 minutes
 export const DEFAULT_TIMEOUT_MS = DEFAULT_TIMEOUT_SECONDS * 1000;
+// Ceiling on a single HTTP connect attempt. Deliberately generous — an HTTP
+// MCP server answers `initialize` in well under a second, so this only ever
+// fires on a server that is reachable but stalled. Applies to HTTP transports
+// only: stdio servers legitimately take much longer to become ready (npx cold
+// start, interactive auth prompts) and are left unbounded.
+export const DEFAULT_CONNECT_TIMEOUT_SECONDS = 60;
+export const DEFAULT_CONNECT_TIMEOUT_MS =
+  DEFAULT_CONNECT_TIMEOUT_SECONDS * 1000;
 export const DEFAULT_CONCURRENCY = 5;
 export const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_RETRY_DELAY_MS = 1000; // 1 second base delay
@@ -472,6 +480,24 @@ export function getTimeoutMs(): number {
     }
   }
   return DEFAULT_TIMEOUT_MS;
+}
+
+/**
+ * Get the ceiling on a single HTTP connect attempt, in milliseconds.
+ * Separate from <PREFIX>_TIMEOUT, which is the budget for a whole operation
+ * including retries: without a per-attempt bound a reachable-but-stalled
+ * server hangs the CLI indefinitely, since client.connect() never settles.
+ * @env <PREFIX>_CONNECT_TIMEOUT - seconds (default: 60, use 0 to disable)
+ */
+export function getConnectTimeoutMs(): number {
+  const envTimeout = getPrefixedEnv('CONNECT_TIMEOUT');
+  if (envTimeout) {
+    const seconds = Number.parseInt(envTimeout, 10);
+    if (!Number.isNaN(seconds) && seconds >= 0) {
+      return seconds * 1000;
+    }
+  }
+  return DEFAULT_CONNECT_TIMEOUT_MS;
 }
 
 /**

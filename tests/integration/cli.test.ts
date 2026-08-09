@@ -430,7 +430,10 @@ describe('HTTP Transport Integration Tests', () => {
     } catch {
       serverReachable = false;
     }
-  });
+    // Explicit hook timeout: the probe above may itself burn 5s, which races
+    // bun's 5s default and fails the hook instead of falling through to
+    // serverReachable = false. Must stay comfortably above the probe budget.
+  }, 30000);
 
   afterAll(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -550,7 +553,10 @@ describe('--single flag Integration Tests', () => {
       console.log('Skipping --single tests: no module found to test against');
       serverReachable = false;
     }
-  });
+    // Explicit hook timeout: the reachability probe can burn its full 5s and
+    // the module probe then spawns a CLI process, so this hook routinely
+    // exceeds bun's 5s default and fails the whole block on a slow network.
+  }, 30000);
 
   // Runs CLI without a config file — uses built-in default (crud + cube)
   async function runCli(
