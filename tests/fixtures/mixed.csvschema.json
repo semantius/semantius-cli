@@ -1,153 +1,208 @@
-[
-  {
-    "header": "id",
-    "field_name": "id",
-    "col_no": 1,
-    "format": "integer",
-    "precision": 0,
-    "required": true,
-    "sample_values": [
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8,
-      9,
-      10,
-      11
-    ]
-  },
-  {
-    "header": "price",
-    "field_name": "price",
-    "col_no": 2,
-    "format": "number",
-    "precision": 3,
-    "required": true,
-    "sample_values": [
-      1,
-      1.2,
-      1.23,
-      1.234,
-      2,
-      2.1,
-      2.22,
-      3.333,
-      4,
-      4.4,
-      -5.55
-    ]
-  },
-  {
-    "header": "category",
-    "field_name": "category",
-    "col_no": 3,
-    "format": "enum",
-    "precision": 0,
-    "required": true,
-    "enum_values": [
-      "alpha",
-      "beta",
-      "gamma"
-    ]
-  },
-  {
-    "header": "flag01",
-    "field_name": "flag01",
-    "col_no": 4,
-    "format": "boolean",
-    "precision": 0,
-    "required": true,
-    "sample_values": [
-      "0",
-      "1"
-    ]
-  },
-  {
-    "header": "optional",
-    "field_name": "optional",
-    "col_no": 5,
-    "format": "string",
-    "precision": 0,
-    "required": false,
-    "sample_values": [
-      "opt-1",
-      "opt-2",
-      "opt-3",
-      "opt-4",
-      "opt-5",
-      "opt-7",
-      "opt-8",
-      "opt-9",
-      "opt-10",
-      "opt-11",
-      "opt-12"
-    ]
-  },
-  {
-    "header": "birth_date",
-    "field_name": "birth_date",
-    "col_no": 6,
-    "format": "date",
-    "precision": 0,
-    "required": true,
-    "sample_values": [
-      "2024-01-01",
-      "2024-01-02",
-      "2024-01-03",
-      "2024-01-04",
-      "2024-01-05",
-      "2024-01-06",
-      "2024-01-07",
-      "2024-01-08",
-      "2024-01-09",
-      "2024-01-10",
-      "2024-01-11"
-    ]
-  },
-  {
-    "header": "updated_at",
-    "field_name": "updated_at",
-    "col_no": 7,
-    "format": "date-time",
-    "precision": 0,
-    "required": true,
-    "sample_values": [
-      "2024-01-01T00:00:00Z",
-      "2024-01-02T01:00:00Z",
-      "2024-01-03T02:00:00Z",
-      "2024-01-04T03:00:00Z",
-      "2024-01-05T04:00:00Z",
-      "2024-01-06T05:00:00Z",
-      "2024-01-07T06:00:00Z",
-      "2024-01-08T07:00:00Z",
-      "2024-01-09T08:00:00Z",
-      "2024-01-10T09:00:00Z",
-      "2024-01-11T10:00:00Z"
-    ]
-  },
-  {
-    "header": "status",
-    "field_name": "status",
-    "col_no": 8,
-    "format": "string",
-    "precision": 0,
-    "required": true,
-    "sample_values": [
-      "status-1",
-      "status-2",
-      "status-3",
-      "status-4",
-      "status-5",
-      "status-6",
-      "status-7",
-      "status-8",
-      "status-9",
-      "status-10",
-      "status-11"
-    ]
-  }
-]
+{
+  "id_mode": "id",
+  "record_count": 12,
+  "fields": [
+    {
+      "header": "id",
+      "field_name": "id",
+      "col_no": 1,
+      "format": "integer",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "header": "price",
+      "field_name": "price",
+      "col_no": 2,
+      "format": "number",
+      "precision": 3,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        1,
+        1.2,
+        1.23,
+        1.234,
+        2,
+        2.1,
+        2.22,
+        3.333,
+        4,
+        4.4,
+        -5.55
+      ]
+    },
+    {
+      "header": "category",
+      "field_name": "category",
+      "col_no": 3,
+      "format": "enum",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "enum_values": [
+        "alpha",
+        "beta",
+        "gamma"
+      ]
+    },
+    {
+      "header": "flag01",
+      "field_name": "flag01",
+      "col_no": 4,
+      "format": "boolean",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        "0",
+        "1"
+      ]
+    },
+    {
+      "header": "optional",
+      "field_name": "optional",
+      "col_no": 5,
+      "format": "string",
+      "precision": 0,
+      "required": false,
+      "sample_values": [
+        "opt-1",
+        "opt-2",
+        "opt-3",
+        "opt-4",
+        "opt-5",
+        "opt-7",
+        "opt-8",
+        "opt-9",
+        "opt-10",
+        "opt-11",
+        "opt-12"
+      ]
+    },
+    {
+      "header": "birth_date",
+      "field_name": "birth_date",
+      "col_no": 6,
+      "format": "date",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        "2024-01-01",
+        "2024-01-02",
+        "2024-01-03",
+        "2024-01-04",
+        "2024-01-05",
+        "2024-01-06",
+        "2024-01-07",
+        "2024-01-08",
+        "2024-01-09",
+        "2024-01-10",
+        "2024-01-11"
+      ]
+    },
+    {
+      "header": "updated_at",
+      "field_name": "updated_at",
+      "col_no": 7,
+      "format": "date-time",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        "2024-01-01T00:00:00Z",
+        "2024-01-02T01:00:00Z",
+        "2024-01-03T02:00:00Z",
+        "2024-01-04T03:00:00Z",
+        "2024-01-05T04:00:00Z",
+        "2024-01-06T05:00:00Z",
+        "2024-01-07T06:00:00Z",
+        "2024-01-08T07:00:00Z",
+        "2024-01-09T08:00:00Z",
+        "2024-01-10T09:00:00Z",
+        "2024-01-11T10:00:00Z"
+      ]
+    },
+    {
+      "header": "status",
+      "field_name": "status",
+      "col_no": 8,
+      "format": "string",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        "status-1",
+        "status-2",
+        "status-3",
+        "status-4",
+        "status-5",
+        "status-6",
+        "status-7",
+        "status-8",
+        "status-9",
+        "status-10",
+        "status-11"
+      ]
+    },
+    {
+      "header": "email",
+      "field_name": "email",
+      "col_no": 9,
+      "format": "email",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        "user1@example.com",
+        "user2@example.com",
+        "user3@example.com",
+        "user4@example.com",
+        "user5@example.com",
+        "user6@example.com",
+        "user7@example.com",
+        "user8@example.com",
+        "user9@example.com",
+        "user10@example.com",
+        "user11@example.com"
+      ]
+    },
+    {
+      "header": "website",
+      "field_name": "website",
+      "col_no": 10,
+      "format": "url",
+      "precision": 0,
+      "required": true,
+      "input_type": "required",
+      "sample_values": [
+        "https://example.com/1",
+        "http://example.org/2",
+        "https://example.com/3",
+        "ftp://files.example.net/4",
+        "https://example.com/5",
+        "http://sub.example.co.uk/6",
+        "https://example.com/7",
+        "https://example.com/8",
+        "https://example.com/9",
+        "https://example.com/10",
+        "https://example.com/11"
+      ]
+    }
+  ]
+}

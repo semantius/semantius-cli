@@ -139,6 +139,35 @@ export function toFieldNames(headers) {
   });
 }
 
+const EMAIL_VALUE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+function isEmailValue(value) {
+  return EMAIL_VALUE.test(value);
+}
+
+// A protocol and a host are both required: a bare "www.example.com" is not reliably
+// distinguishable from ordinary text, and schemes like mailto: carry no host.
+function isUrlValue(value) {
+  if (!URL_SCHEME.test(value) || /\s/.test(value)) {
+    return false;
+  }
+
+  try {
+    return new URL(value).host !== "";
+  } catch {
+    return false;
+  }
+}
+
+// Semantic formats are recognized by elimination: every field starts as a candidate for
+// each one and a single invalid value rules it out for good. Listing a new format here is
+// all it takes to detect it. Order is the precedence order when several formats survive.
+const SEMANTIC_FORMATS = [
+  { name: "email", isValid: isEmailValue },
+  { name: "url", isValid: isUrlValue },
+];
+
 function createColumnState(header, fieldName, colNo) {
   return {
     header,
@@ -156,6 +185,7 @@ function createColumnState(header, fieldName, colNo) {
     is_date: true,
     is_date_only: true,
     date_signature: null,
+    semantic_formats: Object.fromEntries(SEMANTIC_FORMATS.map(({ name }) => [name, true])),
     unique_values: new Set(),
   };
 }
@@ -252,6 +282,12 @@ function inspectValue(state, rawValue) {
       }
     }
   }
+
+  for (const { name, isValid } of SEMANTIC_FORMATS) {
+    if (state.semantic_formats[name] && !isValid(value)) {
+      state.semantic_formats[name] = false;
+    }
+  }
 }
 
 function getBaseFormat(state) {
@@ -291,15 +327,30 @@ function isBooleanEnum(uniqueValues) {
   return BOOLEAN_PAIRS.has(pair);
 }
 
+// A semantic format only ever refines a string: numeric and date columns already have a
+// more specific format, and a column with nothing in it proves nothing.
+function getSemanticFormat(state, baseFormat) {
+  if (state.non_empty_count === 0 || baseFormat !== "string") {
+    return null;
+  }
+
+  return SEMANTIC_FORMATS.find(({ name }) => state.semantic_formats[name])?.name ?? null;
+}
+
 function finalizeColumn(state) {
   const uniqueValues = [...state.unique_values];
   const baseFormat = getBaseFormat(state);
-  let format = baseFormat;
+  const semanticFormat = getSemanticFormat(state, baseFormat);
+  let format = semanticFormat ?? baseFormat;
 
-  if (isBooleanEnum(uniqueValues)) {
-    format = "boolean";
-  } else if (uniqueValues.length > 0 && uniqueValues.length <= MAX_ENUM) {
-    format = "enum";
+  // A column of addresses stays an email field even when it happens to hold few enough
+  // distinct values to look like an enum, so the semantic format short-circuits both.
+  if (semanticFormat === null) {
+    if (isBooleanEnum(uniqueValues)) {
+      format = "boolean";
+    } else if (uniqueValues.length > 0 && uniqueValues.length <= MAX_ENUM) {
+      format = "enum";
+    }
   }
 
   const isNumeric = baseFormat === "integer" || baseFormat === "number";
@@ -313,6 +364,10 @@ function finalizeColumn(state) {
     required: state.required,
   };
 
+  if (state.required) {
+    schema.input_type = "required";
+  }
+
   if (format === "enum") {
     schema.enum_values = uniqueValues;
   } else if (format === "integer" || format === "number") {
@@ -322,6 +377,24 @@ function finalizeColumn(state) {
   }
 
   return schema;
+}
+
+// How a consumer should get to a primary key: the file already carries an `id` column,
+// the leading column is an id under another name and has to be moved into `id`, or there
+// is nothing usable. Derived from the finalized fields so it agrees with the `format` a
+// consumer sees. `field_name` is always lower-cased, so no case handling is needed.
+function detectIdMode(fields) {
+  if (fields.some((field) => field.format === "integer" && field.field_name === "id")) {
+    return { id_mode: "id" };
+  }
+
+  const first = fields[0];
+
+  if (first && first.format === "integer" && first.field_name.endsWith("id")) {
+    return { id_mode: "move", id_move_column: first.header };
+  }
+
+  return { id_mode: "none" };
 }
 
 function normalizeMaxRecords(maxRecords) {
@@ -428,7 +501,9 @@ export async function inspectCsvFile(filePath, { maxRecords = MAX_RECORDS } = {}
     );
   }
 
-  return states.map(finalizeColumn);
+  const fields = states.map(finalizeColumn);
+
+  return { ...detectIdMode(fields), record_count: recordCount, fields };
 }
 
 export async function writeSchemaFile(

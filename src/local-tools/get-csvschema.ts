@@ -4,7 +4,7 @@ import { defineLocalTool } from './types.js';
 export default defineLocalTool({
   name: 'get_csvschema',
   description:
-    'Inspect a local CSV file and write its field schema to <file>.csvschema.json, returning the output path and the schema',
+    'Inspect a local CSV file and write its field schema to <file>.csvschema.json, returning the output path and the schema (id_mode, record_count, and one entry per column in fields)',
   inputSchema: {
     path: z
       .string()

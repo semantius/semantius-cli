@@ -330,9 +330,10 @@ describe('CLI Integration Tests', () => {
       const { outputPath, schema } = JSON.parse(result.stdout.trim());
       expect(outputPath).toBe(`${csvFilePath}.csvschema.json`);
       expect(JSON.parse(await readFile(outputPath, 'utf8'))).toEqual(schema);
-      expect(schema.map((f: { field_name: string }) => f.field_name)).toContain(
-        'category'
-      );
+      expect(
+        schema.fields.map((f: { field_name: string }) => f.field_name)
+      ).toContain('category');
+      expect(schema.id_mode).toBe('id');
     });
 
     test('call utils/get_csvschema with missing file reports an error', async () => {

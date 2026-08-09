@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { createBuiltinConnection } from '../src/local-tools/connection';
 import { UTILS_INSTRUCTIONS, localTools } from '../src/local-tools/index';
-import type { FieldSchema } from '../src/local-tools/csv-schema';
+import type { CsvSchema } from '../src/local-tools/csv-schema';
 import type { ServerConfig } from '../src/config';
 
 const BUILTIN_CONFIG: ServerConfig = { builtin: true };
@@ -56,13 +56,19 @@ async function exists(path: string): Promise<boolean> {
 describe('local-tools', () => {
   let tempDir: string;
   let csvPath: string;
-  let expectedSchema: FieldSchema[];
+  let expectedSchema: CsvSchema;
+
+  /** Copies a fixture into tempDir, since the tool writes next to its input. */
+  async function useFixture(name: string): Promise<string> {
+    const path = join(tempDir, name);
+    await copyFile(join(FIXTURES_DIR, name), path);
+    return path;
+  }
 
   beforeAll(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'semantius-local-tools-'));
     // The tool writes its output next to the input, so work on a copy.
-    csvPath = join(tempDir, 'mixed.csv');
-    await copyFile(join(FIXTURES_DIR, 'mixed.csv'), csvPath);
+    csvPath = await useFixture('mixed.csv');
     expectedSchema = JSON.parse(
       await readFile(join(FIXTURES_DIR, 'mixed.csvschema.json'), 'utf8'),
     );
@@ -139,7 +145,7 @@ describe('local-tools', () => {
       const result = await callUtils('get_csvschema', { path: csvPath });
       const { schema } = resultJson(result);
       const byName = Object.fromEntries(
-        (schema as FieldSchema[]).map((f) => [f.field_name, f]),
+        (schema as CsvSchema).fields.map((f) => [f.field_name, f]),
       );
 
       expect(byName.id.format).toBe('integer');
@@ -153,18 +159,91 @@ describe('local-tools', () => {
       expect(byName.birth_date.format).toBe('date');
       expect(byName.updated_at.format).toBe('date-time');
       expect(byName.status.format).toBe('string');
+      expect(byName.email.format).toBe('email');
+      expect(byName.website.format).toBe('url');
+    });
+
+    test('exports input_type only for required fields', async () => {
+      const result = await callUtils('get_csvschema', { path: csvPath });
+      const byName = Object.fromEntries(
+        (resultJson(result).schema as CsvSchema).fields.map((f) => [
+          f.field_name,
+          f,
+        ]),
+      );
+
+      // `required` describes the CSV; `input_type` is what create_field takes.
+      expect(byName.id.required).toBe(true);
+      expect(byName.id.input_type).toBe('required');
+      expect(byName.optional.required).toBe(false);
+      expect(byName.optional.input_type).toBeUndefined();
+    });
+
+    test('reports id_mode and record_count', async () => {
+      const idResult = await callUtils('get_csvschema', { path: csvPath });
+      const idSchema = resultJson(idResult).schema as CsvSchema;
+      // mixed.csv has an integer `id` column, and 12 data rows.
+      expect(idSchema.id_mode).toBe('id');
+      expect(idSchema.id_move_column).toBeUndefined();
+      expect(idSchema.record_count).toBe(12);
+
+      const movePath = await useFixture('id-move.csv');
+      const moveSchema = resultJson(
+        await callUtils('get_csvschema', { path: movePath }),
+      ).schema as CsvSchema;
+      // Leading integer column named like an id: the raw header is the one to
+      // move into `id`, not the normalized field_name.
+      expect(moveSchema.id_mode).toBe('move');
+      expect(moveSchema.id_move_column).toBe('Customer Id');
+
+      const nonePath = await useFixture('id-none.csv');
+      const noneSchema = resultJson(
+        await callUtils('get_csvschema', { path: nonePath }),
+      ).schema as CsvSchema;
+      // `id` here is a string, and the integer id column is not first.
+      expect(noneSchema.id_mode).toBe('none');
+      expect(noneSchema.id_move_column).toBeUndefined();
+    });
+
+    test('detects email and url, and prefers them over enum', async () => {
+      const formatsPath = await useFixture('formats.csv');
+      const result = await callUtils('get_csvschema', { path: formatsPath });
+
+      expect((result as ToolResult).isError).toBeFalsy();
+      const byName = Object.fromEntries(
+        (resultJson(result).schema as CsvSchema).fields.map((f) => [
+          f.field_name,
+          f,
+        ]),
+      );
+
+      expect(byName.email.format).toBe('email');
+      expect(byName.website.format).toBe('url');
+      // Few enough distinct addresses to look like an enum; email still wins,
+      // so the column exports sample_values rather than enum_values.
+      expect(byName.few_emails.format).toBe('email');
+      expect(byName.few_emails.enum_values).toBeUndefined();
+      expect(byName.few_emails.sample_values).toBeTruthy();
+      // One bad value rules the candidate out for the whole column.
+      expect(byName.bad_email.format).toBe('string');
+      // No scheme, so not reliably a url.
+      expect(byName.bare_host.format).toBe('string');
+      // Empty values only clear `required`; they never rule a format out.
+      expect(byName.nullable_email.format).toBe('email');
+      expect(byName.nullable_email.required).toBe(false);
+      // Nothing non-empty proves nothing.
+      expect(byName.blank.format).toBe('string');
     });
 
     test('keeps the raw header and adds a normalized field_name', async () => {
-      const headersPath = join(tempDir, 'headers.csv');
-      await copyFile(join(FIXTURES_DIR, 'headers.csv'), headersPath);
+      const headersPath = await useFixture('headers.csv');
 
       const result = await callUtils('get_csvschema', { path: headersPath });
 
       expect((result as ToolResult).isError).toBeFalsy();
       const { schema } = resultJson(result);
       expect(
-        (schema as FieldSchema[]).map(({ header, field_name }) => [
+        (schema as CsvSchema).fields.map(({ header, field_name }) => [
           header,
           field_name,
         ]),
@@ -189,12 +268,12 @@ describe('local-tools', () => {
       });
 
       expect((result as ToolResult).isError).toBeFalsy();
-      const { schema } = resultJson(result);
-      const category = (schema as FieldSchema[]).find(
-        (f) => f.field_name === 'category',
-      );
+      const schema = resultJson(result).schema as CsvSchema;
+      const category = schema.fields.find((f) => f.field_name === 'category');
       // Only the first data row was read, so the enum has a single value.
       expect(category?.enum_values).toEqual(['alpha']);
+      // record_count reflects the capped scan, not the file's 12 rows.
+      expect(schema.record_count).toBe(1);
     });
 
     test('resolves relative paths against cwd', async () => {

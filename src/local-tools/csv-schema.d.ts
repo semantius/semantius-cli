@@ -2,9 +2,11 @@
  * Type declarations for the vendored ./csv-schema.js.
  *
  * csv-schema.js is a VERBATIM copy of src/index.js from
- * https://github.com/semantius/csv-schema at commit 12d0c7f. That repo is
- * private and unpublished, so it cannot be a dependency — CI and the release
- * build only check out semantius-cli. Re-sync with a plain copy:
+ * https://github.com/semantius/csv-schema, synced from that repo's working
+ * tree for its unreleased 2.0.0 (staged on top of commit 12d0c7f — re-pin this
+ * to the real hash once it is committed upstream). That repo is private and
+ * unpublished, so it cannot be a dependency — CI and the release build only
+ * check out semantius-cli. Re-sync with a plain copy:
  *
  *   cp ../csv-schema/src/index.js src/local-tools/csv-schema.js
  *
@@ -18,6 +20,8 @@ export type CsvFieldFormat =
   | 'number'
   | 'date'
   | 'date-time'
+  | 'email'
+  | 'url'
   | 'string'
   | 'boolean'
   | 'enum';
@@ -28,18 +32,40 @@ export interface FieldSchema {
   /** snake_case suggestion derived from the header; unique within the file. */
   field_name: string;
   col_no: number;
+  /**
+   * "email" and "url" only ever refine a string, and they win outright over
+   * the boolean/enum checks.
+   */
   format: CsvFieldFormat;
   /** Decimal places; 0 for every non-numeric format. */
   precision: number;
   /**
-   * Every inspected row had a value. Maps to `input_type: "required"` on
-   * create_field — never send `required` to create_field itself.
+   * Every inspected row had a value. Describes the CSV data and has no
+   * create_field counterpart — send `input_type` instead.
    */
   required: boolean;
+  /** "required", present only when `required` is true. */
+  input_type?: 'required';
   /** Present only when format is "enum". */
   enum_values?: string[];
   /** Present for every non-enum format. Numbers for integer/number fields. */
   sample_values?: Array<string | number>;
+}
+
+/**
+ * How a consumer reaches a primary key. "id": an integer field named `id`
+ * already exists. "move": the first field is an integer whose name ends in
+ * `id`, and its raw header is reported as `id_move_column`. "none": neither.
+ */
+export type CsvIdMode = 'id' | 'move' | 'none';
+
+export interface CsvSchema {
+  id_mode: CsvIdMode;
+  /** The raw header to move into `id`. Present only when id_mode is "move". */
+  id_move_column?: string;
+  /** Data records inspected — below the file's row count when maxRecords cut the scan short. */
+  record_count: number;
+  fields: FieldSchema[];
 }
 
 export interface InspectOptions {
@@ -106,10 +132,10 @@ export function toFieldNames(headers: string[]): string[];
 export function inspectCsvFile(
   filePath: string,
   options?: InspectOptions,
-): Promise<FieldSchema[]>;
+): Promise<CsvSchema>;
 
 export function writeSchemaFile(
   filePath: string,
   outputPath?: string,
   options?: InspectOptions,
-): Promise<{ outputPath: string; schema: FieldSchema[] }>;
+): Promise<{ outputPath: string; schema: CsvSchema }>;

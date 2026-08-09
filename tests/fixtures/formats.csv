@@ -1,0 +1,13 @@
+email,few_emails,website,bad_email,bare_host,nullable_email,blank
+a1@example.com,ops@example.com,https://www.example.com/,x1@example.com,www.example1.com,n1@example.com,
+a2@example.com,sales@example.com,http://example.org/path,x2@example.com,www.example2.com,n2@example.com,
+a3@example.com,help@example.com,ftp://files.example.net/pub,x3@example.com,www.example3.com,,
+a4@example.com,ops@example.com,https://example.com,x4@example.com,www.example4.com,n4@example.com,
+a5@example.com,sales@example.com,https://sub.example.co.uk/a/b,x5@example.com,www.example5.com,n5@example.com,
+a6@example.com,help@example.com,http://192.168.0.1:8080/,x6@example.com,www.example6.com,,
+a7@example.com,ops@example.com,https://example.com/?q=1,x7@example.com,www.example7.com,n7@example.com,
+a8@example.com,sales@example.com,https://example.com/#frag,x8@example.com,www.example8.com,n8@example.com,
+a9@example.com,help@example.com,http://www.example.io/,not-an-email,www.example9.com,,
+a10@example.com,ops@example.com,https://example.travel/,x10@example.com,www.example10.com,n10@example.com,
+a11@example.com,sales@example.com,ftp://ftp.example.org/,x11@example.com,www.example11.com,n11@example.com,
+a12@example.com,help@example.com,https://example.com/last,x12@example.com,www.example12.com,n12@example.com,
