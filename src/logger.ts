@@ -23,6 +23,10 @@
  * ('retry_fresh_token', raw token attached, gated on "jwt") and transient
  * capacity retries ('retry_transient', no credential, emitted at any level).
  *
+ * Daemon lifecycle transitions are appended via logDaemonEvent
+ * ('daemon_start' from the CLI that spawned it, 'daemon_stop' from the daemon
+ * itself), also emitted at any level.
+ *
  * One JSON line is appended per matching invocation, containing the start
  * timestamp, total wall-clock duration, time spent in MCP requests, the exit
  * code, the full CLI invocation, the target HTTP server URL (when one was
@@ -275,6 +279,19 @@ export function enableFromEnv(applyDefaults = false): void {
   _logLevels = parseLogLevels(levels);
 }
 
+/**
+ * Absolute path of the active log file, or undefined when logging is disabled
+ * or writing to stderr. Lets the daemon spawner hand the exact destination to
+ * the daemon process, which cannot re-derive it itself: the daemon loads no
+ * .env (bare filenames would resolve to the wrong directory) and always runs
+ * under the default SEMANTIUS env prefix (custom --env prefixes would not be
+ * read).
+ */
+export function getResolvedLogFilePath(): string | undefined {
+  if (!_enabled || !_logFileValue) return undefined;
+  return resolveLogPath(_logFileValue);
+}
+
 export function startMcpRequest(): void {
   if (!_enabled) return;
   if (_mcpInFlightStart !== undefined) return; // ignore nested
@@ -409,6 +426,42 @@ export function logRetryEvent(event: {
     ...(event.error ? { error: event.error } : {}),
     ...(_currentUrl ? { url: _currentUrl } : {}),
     ...(isJwt && _currentJwt ? { jwt: _currentJwt } : {}),
+  };
+
+  appendLogLine(`${JSON.stringify(entry)}\n`);
+}
+
+/**
+ * Append a structured JSONL line for a daemon lifecycle transition. Emitted
+ * whenever logging is enabled, regardless of LOG_LEVELS (like
+ * 'retry_transient'): the events are rare — one start and one stop per daemon
+ * lifetime — and carry no credential.
+ *
+ * 'daemon_start' is written by the CLI invocation that spawned the daemon;
+ * 'daemon_stop' is written by the daemon process itself (which received the
+ * resolved log path via its environment), since idle-timeout shutdowns happen
+ * with no CLI invocation running.
+ */
+export function logDaemonEvent(event: {
+  event: 'daemon_start' | 'daemon_stop';
+  server: string;
+  pid: number;
+  reason?: string;
+  uptimeMs?: number;
+}): void {
+  if (!_enabled) return;
+  if (!_logFileValue && !_logToConsole) return;
+
+  const entry = {
+    ts: new Date().toISOString(),
+    log_type: 'event',
+    event: event.event,
+    server: event.server,
+    pid: event.pid,
+    ...(event.reason ? { reason: event.reason } : {}),
+    ...(typeof event.uptimeMs === 'number'
+      ? { uptime_ms: event.uptimeMs }
+      : {}),
   };
 
   appendLogLine(`${JSON.stringify(entry)}\n`);

@@ -303,9 +303,9 @@ configurations side by side in the same `.env`.
 | `SEMANTIUS_RETRY_DELAY` | Base retry delay (milliseconds) | `1000` |
 | `SEMANTIUS_STRICT_ENV` | Error on missing `${VAR}` in config | `true` |
 | `SEMANTIUS_NO_DAEMON` | Disable connection caching; open a fresh connection per call (Linux/macOS only — no-op on Windows) | `false` |
-| `SEMANTIUS_DAEMON_TIMEOUT` | How long a cached connection stays open after last use (seconds, Linux/macOS only) | `60` |
+| `SEMANTIUS_DAEMON_TIMEOUT` | How long a cached connection stays open after last use (seconds, Linux/macOS only) | `300` |
 | `SEMANTIUS_DISABLE_JWT_CACHE` | Disable the encrypted token cache; re-authenticate on every request | `false` |
-| `SEMANTIUS_LOG_FILE` | Append one JSONL line per invocation to this path. Bare filename is written next to the loaded `.env` (or in the user config dir); absolute/relative paths are used as-is. | (none) |
+| `SEMANTIUS_LOG_FILE` | Append one JSONL line per invocation to this path. Bare filename is written next to the loaded `.env` (or in the user config dir); absolute/relative paths are used as-is. Daemon lifecycle transitions are also logged (at any level) as `log_type: "event"` lines: `daemon_start` when a CLI invocation spawns a daemon, and `daemon_stop` (with `reason` — `idle_timeout`, `sigterm`, `sigint`, or `close_request` — and `uptime_ms`) when it shuts down. | (none) |
 | `SEMANTIUS_LOG_LEVELS` | Comma-separated subset of `{all, error, slow, jwt}` that filters which invocations are logged. `error` = exit code != 0; `slow` = wall time > 1000 ms; `jwt` = error mentions "JWT" (also adds a structured `jwt` field with the token value and appends one JSONL line per JWT-retry attempt). Multiple values OR-combine (e.g. `error,slow`). Unknown/empty falls back to `all`. | `all` |
 
 ### Token cache

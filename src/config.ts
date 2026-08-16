@@ -450,7 +450,7 @@ export const DEFAULT_CONNECT_TIMEOUT_MS =
 export const DEFAULT_CONCURRENCY = 5;
 export const DEFAULT_MAX_RETRIES = 3;
 export const DEFAULT_RETRY_DELAY_MS = 1000; // 1 second base delay
-export const DEFAULT_DAEMON_TIMEOUT_SECONDS = 60; // 60 seconds idle timeout
+export const DEFAULT_DAEMON_TIMEOUT_SECONDS = 300; // 5 minutes idle timeout
 // How long to wait for the FIRST byte of piped stdin before concluding that no
 // input is coming. Guards against a hang when the CLI inherits an open-but-idle
 // stdin pipe from a long-lived parent (e.g. a persistent PowerShell host), where
@@ -585,7 +585,7 @@ export function isDaemonEnabled(): boolean {
 
 /**
  * Get daemon idle timeout in milliseconds
- * @env <PREFIX>_DAEMON_TIMEOUT - timeout in seconds (default: 60)
+ * @env <PREFIX>_DAEMON_TIMEOUT - timeout in seconds (default: 300)
  */
 export function getDaemonTimeoutMs(): number {
   const envTimeout = getPrefixedEnv('DAEMON_TIMEOUT');

@@ -519,13 +519,16 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
   SEMANTIUS_RETRY_DELAY=N      Base retry backoff in ms (default: 1000)
   SEMANTIUS_NO_DAEMON=1        Disable connection caching (force fresh connections)
   SEMANTIUS_DISABLE_JWT_CACHE=1 Disable the encrypted token cache (re-authenticate every request)
-  SEMANTIUS_DAEMON_TIMEOUT=N   Daemon idle timeout in seconds (default: 60)
+  SEMANTIUS_DAEMON_TIMEOUT=N   Daemon idle timeout in seconds (default: 300)
   SEMANTIUS_STRICT_ENV=false   Warn (don't error) on unresolved \${VAR} refs in config
   SEMANTIUS_CONFIG_PATH=<path> Path to mcp_servers.json (overrides default search)
   SEMANTIUS_LOG_FILE=<path>    Append one JSONL line per invocation to <path>.
                                Bare filename (e.g. semantius.jsonl) is written
                                next to the loaded .env (or in the user config
                                dir). Absolute or relative paths are used as-is.
+                               Daemon start/stop events (daemon_start,
+                               daemon_stop with reason + uptime) are also
+                               logged, at any level.
   SEMANTIUS_LOG_LEVELS=<list>  Comma-separated subset of {all, error, slow,
                                jwt}. Filters which invocations are logged.
                                Default: all. "error" = exit_code != 0; "slow" =

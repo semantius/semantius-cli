@@ -22,6 +22,7 @@ import {
   removePidFile,
   removeSocketFile,
 } from './daemon.js';
+import { getResolvedLogFilePath, logDaemonEvent } from './logger.js';
 
 // ============================================================================
 // Daemon Connection
@@ -149,12 +150,20 @@ async function spawnDaemon(
 
   const configJson = JSON.stringify(config);
 
+  // Hand the daemon the exact resolved log destination so its stop events
+  // land in the same file (see getResolvedLogFilePath for why it cannot
+  // re-derive the path itself).
+  const logPath = getResolvedLogFilePath();
+
   // Spawn detached process
   const proc = Bun.spawn({
     cmd: ['bun', 'run', daemonScript, '--daemon', serverName, configJson],
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      ...(logPath ? { SEMANTIUS_LOG_FILE: logPath } : {}),
+    },
   });
 
   // Wait for daemon to signal readiness or fail
@@ -178,6 +187,11 @@ async function spawnDaemon(
         if (text.includes('DAEMON_READY')) {
           if (!resolved) {
             resolved = true;
+            logDaemonEvent({
+              event: 'daemon_start',
+              server: serverName,
+              pid: proc.pid,
+            });
             // Don't await the process, let it run detached
             proc.unref();
             resolve(true);

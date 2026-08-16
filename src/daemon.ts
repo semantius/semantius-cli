@@ -28,6 +28,7 @@ import {
   getSocketDir,
   getSocketPath,
 } from './config.js';
+import { enableFromEnv, logDaemonEvent } from './logger.js';
 
 // ============================================================================
 // Types
@@ -161,15 +162,34 @@ export async function runDaemon(
   const socketPath = getSocketPath(serverName);
   const configHash = getConfigHash(config);
   const timeoutMs = getDaemonTimeoutMs();
+  const startedAtMs = Date.now();
+
+  // Pick up the resolved log path the spawning CLI placed in our environment
+  // so daemon_stop events land in the same log file as everything else.
+  enableFromEnv();
 
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpClient: ConnectedClient | null = null;
   let server: ReturnType<typeof Bun.listen> | null = null;
+  let ready = false;
   const activeConnections = new Set<unknown>();
 
   // Cleanup function
-  const cleanup = async () => {
+  const cleanup = async (reason: string) => {
     debug(`[daemon:${serverName}] Shutting down...`);
+
+    // Log first (synchronous append): only for daemons that reached ready
+    // state, so a failed startup never produces a stop without a start.
+    if (ready) {
+      ready = false;
+      logDaemonEvent({
+        event: 'daemon_stop',
+        server: serverName,
+        pid: process.pid,
+        reason,
+        uptimeMs: Date.now() - startedAtMs,
+      });
+    }
 
     if (idleTimer) {
       clearTimeout(idleTimer);
@@ -220,19 +240,19 @@ export async function runDaemon(
     }
     idleTimer = setTimeout(async () => {
       debug(`[daemon:${serverName}] Idle timeout reached, shutting down`);
-      await cleanup();
+      await cleanup('idle_timeout');
       process.exit(0);
     }, timeoutMs);
   };
 
   // Handle signals
   process.on('SIGTERM', async () => {
-    await cleanup();
+    await cleanup('sigterm');
     process.exit(0);
   });
 
   process.on('SIGINT', async () => {
-    await cleanup();
+    await cleanup('sigint');
     process.exit(0);
   });
 
@@ -258,7 +278,7 @@ export async function runDaemon(
       `[daemon:${serverName}] Failed to connect:`,
       (error as Error).message,
     );
-    await cleanup();
+    await cleanup('startup_failed');
     process.exit(1);
   }
 
@@ -321,7 +341,7 @@ export async function runDaemon(
         case 'close':
           // Graceful shutdown requested
           setTimeout(async () => {
-            await cleanup();
+            await cleanup('close_request');
             process.exit(0);
           }, 100);
           return { id: request.id, success: true, data: 'closing' };
@@ -376,13 +396,14 @@ export async function runDaemon(
     resetIdleTimer();
 
     // Signal readiness by writing to stdout (parent will read this)
+    ready = true;
     console.log('DAEMON_READY');
   } catch (error) {
     console.error(
       `[daemon:${serverName}] Failed to start socket server:`,
       (error as Error).message,
     );
-    await cleanup();
+    await cleanup('startup_failed');
     process.exit(1);
   }
 }
