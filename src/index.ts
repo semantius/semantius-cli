@@ -476,7 +476,8 @@ Options:
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
   --diag                   (call) Output full JSON response instead of just response.data
                            (whoami) Also show the bearer token used for the request
-  --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows
+  --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows.
+                           Rejected (exit 1) for bulk calls: an array in data/body/id/table_name
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1

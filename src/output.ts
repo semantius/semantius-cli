@@ -34,6 +34,58 @@ function color(text: string, colorCode: string): string {
 }
 
 /**
+ * The subset of a JSON Schema property we render in parameter listings.
+ */
+export interface JsonSchemaProperty {
+  type?: string | string[];
+  description?: string;
+  items?: unknown;
+  anyOf?: unknown[];
+  oneOf?: unknown[];
+}
+
+/**
+ * Human-readable type label for a JSON Schema (sub)schema, for parameter
+ * listings in `info` and `-md`.
+ *
+ * Plain `type` strings pass through. Unions render TypeScript-style so the
+ * shape is obvious at a glance:
+ *   - `anyOf` / `oneOf`            → variants joined with ` | ` (deduped)
+ *   - `type: ['string', 'null']`   → `string | null`
+ *   - `type: 'array'`              → `<items>[]` (`any[]` when items is absent)
+ * Anything without a recognisable type is `any`.
+ *
+ * The motivating case is the crud server's bulk-capable tools, whose zod
+ * `z.union([schema, z.array(schema).min(1)])` arrives as
+ * `{ anyOf: [{type:'object',…}, {type:'array', items:…}] }` with no top-level
+ * `type` — rendering that as `object | object[]` (or `integer | integer[]`
+ * for update_* / delete_* ids) instead of `any` is what tells an agent the
+ * parameter accepts an array.
+ */
+export function schemaTypeLabel(schema: unknown): string {
+  if (schema === null || typeof schema !== 'object') return 'any';
+  const s = schema as JsonSchemaProperty;
+
+  const variants = s.anyOf ?? s.oneOf;
+  if (Array.isArray(variants) && variants.length > 0) {
+    return [...new Set(variants.map(schemaTypeLabel))].join(' | ');
+  }
+
+  if (Array.isArray(s.type)) {
+    return s.type.length > 0 ? s.type.join(' | ') : 'any';
+  }
+
+  if (s.type === 'array') {
+    const items = schemaTypeLabel(s.items);
+    // Parenthesise a union element type so `(string | null)[]` isn't misread
+    // as `string | null[]`.
+    return items.includes(' | ') ? `(${items})[]` : `${items}[]`;
+  }
+
+  return s.type || 'any';
+}
+
+/**
  * Format server list for display
  */
 export function formatServerList(
@@ -147,7 +199,7 @@ export function formatServerDetails(
 
     // Show parameters from schema
     const schema = tool.inputSchema as {
-      properties?: Record<string, { type?: string; description?: string }>;
+      properties?: Record<string, JsonSchemaProperty>;
       required?: string[];
     };
     if (schema.properties) {
@@ -156,7 +208,7 @@ export function formatServerDetails(
         const required = schema.required?.includes(name)
           ? 'required'
           : 'optional';
-        const type = prop.type || 'any';
+        const type = schemaTypeLabel(prop);
         const desc =
           withDescriptions && prop.description ? ` - ${prop.description}` : '';
         lines.push(`      • ${name} (${type}, ${required})${desc}`);

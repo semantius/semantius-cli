@@ -272,6 +272,25 @@ export function invalidJsonArgsError(
   };
 }
 
+/**
+ * `--single` was combined with a bulk (array) argument. `--single` sets
+ * `Accept: application/vnd.pgrst.object+json`, which asks PostgREST for
+ * exactly one row; the crud server's typed tools accept an array in
+ * `data` (create_*) or `id` / `table_name` (update_* / delete_*) — and
+ * `postgrestRequest` an array `body` — for bulk operations whose response is
+ * always an array. The two are contradictory, so reject client-side before
+ * any network I/O instead of surfacing PostgREST's opaque 406.
+ */
+export function singleWithArrayInputError(key: string): CliError {
+  return {
+    code: ErrorCode.CLIENT_ERROR,
+    type: 'SINGLE_ARRAY_INPUT',
+    message: `--single cannot be combined with an array in "${key}"`,
+    details: `--single requests exactly one row (Accept: application/vnd.pgrst.object+json), but an array in "${key}" is a bulk request whose response is an array of records.`,
+    suggestion: `Drop --single for bulk calls (the response is an array of affected records), or pass a single object/value in "${key}".`,
+  };
+}
+
 export function unknownOptionError(option: string): CliError {
   // Provide context-aware suggestions for common mistakes
   let suggestion: string;

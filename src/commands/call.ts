@@ -27,6 +27,7 @@ import {
   invalidTargetError,
   isAuthErrorMessage,
   serverConnectionError,
+  singleWithArrayInputError,
   toolExecutionError,
   toolNotFoundError,
 } from '../errors.js';
@@ -37,8 +38,20 @@ export interface CallOptions {
   args?: string; // JSON arguments
   configPath?: string;
   diag?: boolean; // When true, output full JSON instead of just response.data
-  single?: boolean; // When true, inject accept: application/vnd.pgrst.object+json; exit 1 on 0 rows, exit 2 on 2+ rows
+  // When true, inject accept: application/vnd.pgrst.object+json; exit 1 on
+  // 0 rows, exit 2 on 2+ rows. Rejected (exit 1) when a bulk argument
+  // (array in data/body/id/table_name) is present — see BULK_ARG_KEYS.
+  single?: boolean;
 }
+
+/**
+ * Argument keys that carry a bulk (array) payload on the crud server's tools:
+ * `data` (create_*: one record or an array of records), `body`
+ * (postgrestRequest: same), and `id` / `table_name` (update_* / delete_*: one
+ * key or an array of keys → `id=in.(...)`). A bulk call always returns an
+ * array of records, which contradicts `--single`'s exactly-one-row contract.
+ */
+const BULK_ARG_KEYS = ['data', 'body', 'id', 'table_name'] as const;
 
 /**
  * Parse target into server and tool name
@@ -271,6 +284,18 @@ export async function callCommand(options: CallOptions): Promise<void> {
   }
 
   if (options.single) {
+    // Bulk input (array data/body/id/table_name) can never satisfy the
+    // exactly-one-row contract; fail here, before config load and any
+    // network I/O, instead of surfacing PostgREST's 406 as a server error.
+    // (JSON.parse may legally yield null or a primitive here — guard before indexing.)
+    const bulkKey =
+      args !== null && typeof args === 'object'
+        ? BULK_ARG_KEYS.find((key) => Array.isArray(args[key]))
+        : undefined;
+    if (bulkKey) {
+      console.error(formatCliError(singleWithArrayInputError(bulkKey)));
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
     args = { ...args, accept: 'application/vnd.pgrst.object+json' };
   }
 

@@ -325,6 +325,68 @@ describe('CLI Error Handling Tests', () => {
     });
   });
 
+  describe('--single with bulk (array) input', () => {
+    // The crud server's typed tools accept an array in `data` (create_*) and
+    // `id` / `table_name` (update_* / delete_*) for bulk operations; the
+    // response is then always an array, which contradicts --single. The CLI
+    // must reject that combination client-side, before any config/network.
+
+    test('rejects --single with an array in data (bulk create)', async () => {
+      const result = await runCli([
+        'call', 'crud', 'create_field', '--single',
+        '{"data":[{"table_name":"t","field_name":"a","title":"A"},{"table_name":"t","field_name":"b","title":"B"}]}',
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('SINGLE_ARRAY_INPUT');
+      expect(result.stderr).toContain('"data"');
+    });
+
+    test('rejects --single with an array in id (bulk delete/update)', async () => {
+      const result = await runCli(['call', 'crud', 'delete_role', '--single', '{"id":[1,2,3]}']);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('SINGLE_ARRAY_INPUT');
+      expect(result.stderr).toContain('"id"');
+    });
+
+    test('rejects --single with an array in table_name (bulk entity update)', async () => {
+      const result = await runCli([
+        'call', 'crud', 'update_entity', '--single',
+        '{"table_name":["a","b"],"data":{"audit_log":true}}',
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('SINGLE_ARRAY_INPUT');
+      expect(result.stderr).toContain('"table_name"');
+    });
+
+    test('rejects --single with an array body on postgrestRequest', async () => {
+      const result = await runCli([
+        'call', 'crud', 'postgrestRequest', '--single',
+        '{"method":"POST","path":"/contacts","body":[{"a":1},{"a":2}]}',
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('SINGLE_ARRAY_INPUT');
+    });
+
+    test('still accepts --single with a single object / scalar key', async () => {
+      // With the offline fixture the call proceeds past the guard and fails
+      // later on the unknown "crud" server — the point is that the array
+      // guard did NOT fire.
+      const single = await runCli([
+        'call', 'crud', 'create_field', '--single', '{"data":{"table_name":"t","field_name":"a","title":"A"}}',
+      ]);
+      expect(single.stderr).not.toContain('SINGLE_ARRAY_INPUT');
+
+      const scalarId = await runCli(['call', 'crud', 'delete_role', '--single', '{"id":7}']);
+      expect(scalarId.stderr).not.toContain('SINGLE_ARRAY_INPUT');
+    });
+
+    test('does not crash on non-object JSON args under --single', async () => {
+      const result = await runCli(['call', 'crud', 'read_role', '--single', 'null']);
+      expect(result.stderr).not.toContain('SINGLE_ARRAY_INPUT');
+      expect(result.stderr).not.toContain('TypeError');
+    });
+  });
+
   describe('Malformed target paths (LLM mistakes)', () => {
     // Case 21: Too many slashes
     test('handles triple slash path', async () => {

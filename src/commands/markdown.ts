@@ -21,12 +21,13 @@ import {
   loadConfig,
 } from '../config.js';
 import { ErrorCode } from '../errors.js';
+import { type JsonSchemaProperty, schemaTypeLabel } from '../output.js';
 
 export interface MarkdownOptions {
   configPath?: string;
 }
 
-interface ServerWithTools {
+export interface ServerWithTools {
   name: string;
   tools: ToolInfo[];
   instructions?: string;
@@ -126,9 +127,17 @@ async function fetchServerTools(
 }
 
 /**
+ * Escape a value for use inside a GFM table cell: a literal `|` would start a
+ * new column (type labels such as `object | object[]` contain one).
+ */
+function tableCell(text: string): string {
+  return text.replace(/\|/g, '\\|');
+}
+
+/**
  * Format all servers and their tools as markdown
  */
-function formatServersMarkdown(servers: ServerWithTools[]): string {
+export function formatServersMarkdown(servers: ServerWithTools[]): string {
   const lines: string[] = [];
 
   lines.push('# MCP Servers');
@@ -168,7 +177,7 @@ function formatServersMarkdown(servers: ServerWithTools[]): string {
       }
 
       const schema = tool.inputSchema as {
-        properties?: Record<string, { type?: string; description?: string }>;
+        properties?: Record<string, JsonSchemaProperty>;
         required?: string[];
       };
 
@@ -179,8 +188,8 @@ function formatServersMarkdown(servers: ServerWithTools[]): string {
         lines.push('|------|------|----------|-------------|');
         for (const [name, prop] of Object.entries(schema.properties)) {
           const required = schema.required?.includes(name) ? 'yes' : 'no';
-          const type = prop.type || 'any';
-          const desc = prop.description || '';
+          const type = tableCell(schemaTypeLabel(prop));
+          const desc = tableCell(prop.description || '');
           lines.push(`| \`${name}\` | ${type} | ${required} | ${desc} |`);
         }
         lines.push('');
