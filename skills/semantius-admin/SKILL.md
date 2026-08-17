@@ -1,23 +1,21 @@
 ---
 name: semantius-admin
 description: >-
-  Orchestrates the three-skill Semantius pipeline (`semantius-architect` →
-  `semantius-analyst` → `semantius-modeler`) and handles administrative
-  operations on a Semantius instance. **Trigger when the user's intent spans
-  more than one skill, when they reference a remote blueprint URL, when they
-  say "deploy this blueprint", "deploy these blueprints", "deploy all of
-  these", "set up these systems", "build me a system and deploy it", "set up
-  a CRM end-to-end", "clone the candidate-crm blueprint and deploy",
-  "what's deployed in our instance?", "status of semantius", "audit this
-  file" (without naming a specific skill), "back up the catalog", "snapshot
-  the module", "get started", "I'm new here, set this up", or any variation
-  that requires inspecting workspace artifacts and routing to the right
-  sub-skill.** Also trigger when a deploy request carries multiple URLs,
-  paths, or a glob. Do NOT trigger when the user explicitly
-  invokes a single sub-skill ("audit this spec with semantius-analyst",
-  "run the modeler"), let those direct calls go through. The admin skill is
-  the front door for end-to-end and ambiguous requests, not a wrapper around
-  every Semantius interaction.
+  Orchestrates the Semantius pipeline (`semantius-architect`,
+  `semantius-analyst`, `semantius-modeler`) and handles instance
+  administration. **Trigger when intent spans more than one skill, on a remote
+  blueprint URL, or on "deploy this blueprint", "deploy these blueprints",
+  "deploy all of these", "set up these systems", "build me a system and deploy
+  it", "set up a CRM end-to-end", "clone the candidate-crm blueprint and
+  deploy", "what's deployed in our instance?", "status of semantius", "audit
+  this file" (naming no specific skill), "back up the catalog", "snapshot the
+  module", "get started", "I'm new here, set this up", or anything needing
+  workspace artifacts inspected and routed to the right sub-skill.** Also
+  trigger on a deploy request with multiple URLs, paths, or a glob. Do NOT
+  trigger when the user invokes one sub-skill directly (not "audit this spec
+  with semantius-analyst", not "run the modeler"); let those through. Front
+  door for end-to-end and ambiguous requests, not a wrapper on Semantius
+  calls.
 ---
 
 # Semantius Admin
@@ -114,13 +112,24 @@ If the request is ambiguous, ask one clarifying question via `AskUserQuestion`. 
 
 ## Step 1: Inspect the workspace
 
-Before dispatching, scan the workspace for relevant artifacts. This determines what state the pipeline is in and which step to start from.
+**Gate: does the request already name an exact, unambiguous source?** A URL, or an exact file path, resolves the source completely — there is nothing left to discover about *where the artifact is*. In that case do NOT run a general workspace inventory. Instead:
+
+1. Derive the candidate slug from the named source (the URL/file's own filename: `it-ops-starter-semantic-blueprint.md` → `it-ops-starter`; `related_modules`/other metadata is not needed for this, just the filename stem).
+2. Run ONE targeted **exact-filename** existence check against the convention folders only — `test -f semantius/blueprints/<slug>-semantic-blueprint.md` / `semantius/specs/<slug>-semantic-spec.md`. **Exact filename, never a glob, never a substring/prefix/suffix match.** A file is either named `it-ops-starter-semantic-blueprint.md` and is the artifact, or it is named anything else (`v0-it-ops-starter-semantic-blueprint.md`, `it-ops-starter-v2-semantic-blueprint.md`, `my-it-ops-starter-semantic-blueprint.md`) and is **not a match** — full stop, it does not get read, opened, `cmp`'d, or mentioned. A blueprint's name is its filename; `*<slug>*` glob matching treats "contains the slug as a substring" as "is the artifact," which is exactly backwards — it pulls in prefixed/suffixed variants nobody named and burns a read-and-compare cycle on each one. If the exact-name file is absent, that's a miss: proceed to Step 2 (fetch the named URL) or build fresh, same as if the workspace were empty. Do not fall back to searching for "something close."
+3. Do **not** run the legacy root-level scan at all for a named-source request. Root-level legacy placement is a migration-era concern for artifacts nobody named explicitly; it has no bearing on a request that already says exactly what to fetch and deploy. If the user separately mentions a root-level file by name, that's a *named* source too and step 2's exact-filename check (pointed at root instead) covers it — still not a scan, still exact-match only.
+
+**Only when the request does NOT name an explicit source** (status checks, "what's deployed", a bare "deploy this" with nothing else in the workspace to disambiguate, onboarding) does a general inventory make sense, because there IS something to discover — which artifact, if any, the vague request could mean:
 
 ```bash
 # Primary location (the convention): semantius/blueprints/ and semantius/specs/
 find semantius/blueprints semantius/specs -maxdepth 1 -name '*.md' 2>/dev/null
 
-# Legacy locations: blueprints/specs left at the workspace root by older runs
+# Legacy locations: blueprints/specs left at the workspace root by older runs.
+# Still scope this to any slug hints the request text does contain (e.g. "the ATS
+# blueprint" → scope to *ats*), never a blanket `*-semantic-blueprint.md` glob —
+# that pulls every unrelated file at the repo root into consideration for zero
+# benefit. Only fall back to the fully unscoped glob when the request truly gives
+# no slug hint at all (rare: "what's sitting in my workspace root?").
 find . -maxdepth 1 -name '*-semantic-blueprint.md' -o -name '*-semantic-spec.md' 2>/dev/null
 ```
 
@@ -182,7 +191,14 @@ The workspace summary itself is internal: it goes to `$DIAG_LOG`, not chat. The 
 
 ### 1.3 Match check: surface pre-existing artifacts that could satisfy the request
 
-**Hard rule, no exceptions.** Before constructing any plan, the admin checks whether the workspace already contains a blueprint or spec that could satisfy the user's request. If it does, the admin MUST tell the user and let them choose between deploying the existing artifact, starting over, or auditing it first. Silently building a new blueprint when a matching one already exists, or silently routing the deploy through an existing spec the user didn't know about, is the failure mode this section closes.
+Before constructing any plan, the admin checks whether the workspace already contains a blueprint or spec that could satisfy the user's request. If it does, the admin MUST tell the user and let them choose between deploying the existing artifact, starting over, or auditing it first. Silently building a new blueprint when a matching one already exists, or silently routing the deploy through an existing spec the user didn't know about, is the failure mode this section closes.
+
+**Exception: exact-source bypass — skip the widget entirely.** The widget above exists to resolve *ambiguity* about which artifact the user meant. There is no ambiguity, and the widget must NOT fire, when both of the following hold:
+
+1. The request names an exact, unambiguous source: a URL, or an exact file path/name. (Inferred matches from slug/keyword similarity, per the "What counts as a match" tests below, do NOT qualify — those are exactly the ambiguous case the widget is for.)
+2. The workspace already has a blueprint or spec for that source, and it is confirmed **byte-identical** to the named source (fetch it — Step 2 — and `cmp -s` it against the workspace copy per Step 1.1's comparison) or, for a spec, the workspace spec's `source_blueprint` reconciles a byte-identical blueprint and was reconciled **on or after** that blueprint's current content.
+
+When both hold, there is nothing to decide: the workspace artifact *is* the thing the user asked for, byte-for-byte, already reconciled. Log the match to `$DIAG_LOG` and go straight to the plan (deploy the existing spec through the modeler if one is current; otherwise blueprint → analyst → modeler). Asking "what do you want to do?" about a file that is a verified exact match of what was explicitly requested is not resolving ambiguity, it's manufacturing it, and it wastes the user's time. If the fetched source differs even slightly from the workspace copy, the exception does not apply, fall through to the normal match-check widget (the difference is real ambiguity: did the user want the update applied, or did they mean to keep what's there?).
 
 **What counts as a match.** Walk every blueprint and spec in the Step 1.2 workspace summary and apply the following tests against the user's request text:
 
@@ -660,6 +676,7 @@ Every phrasing maps to one of the six request types in Step 0 (whose table carri
 - "Set up X from scratch" is an end-to-end build unless a catalog blueprint named X exists, in which case it is a clone.
 - "Audit this file" routes by artifact type to the architect's or analyst's Audit mode (it does not go through Step 6).
 - Status, backup, snapshot, and list are admin-only (Step 5).
+- Importing a data file (CSV) into a single entity, existing or new, is not admin territory and not a pipeline deploy: route to the `semantius-importer` skill.
 
 When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess.
 

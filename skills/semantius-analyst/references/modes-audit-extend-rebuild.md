@@ -29,7 +29,7 @@ These run on every owned entity (skip `reuse-from` / `dropped`):
 - **Relationship integrity**:
   - Every FK has a §4 row (🔴 if missing).
   - Every FK has a `relationship_label` annotation in §3 Notes (🟡 if missing).
-  - §2 Mermaid edge label matches §3 `relationship_label` byte-for-byte (🟡 if drift).
+  - §2 Mermaid edge direction + verb matches what §3 `relationship_label` + §4 `Cardinality`/`Kind` derive (🔴 if drift — mechanically enforced by `consistency-check.ts`, not an eyeball check; see `stage-11-write.md` "Generate §2, never hand-author it"). If a hand-edit drifted §2 out of sync, regenerate it with `consistency-check.ts --emit-mermaid` rather than patching the diagram by hand.
   - `format: parent` + `Delete: clear` is a 🔴 (parent-owned child cannot orphan-survive parent).
   - `format: reference` + `Delete: cascade` is a 🟡 (probably should be `parent`).
 
@@ -83,12 +83,12 @@ End with: *"Run `semantius-analyst` Extend mode to fix specific items, or fix ma
 
 When the user wants to add entities, fields, rules, or §6 link rows to an existing spec:
 
-1. Read the current spec. Note its `version` (must be `"5.3"` major; older → Mode D Rebuild first).
+1. Read the current spec. Note its `version` (must be `"5.4"` major; older → Mode D Rebuild first).
 2. Capture what to add (entity / field / rule) via conversation.
 3. **If adding entities**, re-run Stage 2 reconciliation against the live catalog for the new entities only. Same collision detection, same widgets.
 4. **If adding fields to an existing owned entity**, apply Stage 4 field elicitation for the new fields. Then re-run Stages 5-10 (scans, consistency gate) on the affected entity.
 5. **If adding rules**, draft the JsonLogic; run the Stage 8 consistency gate.
-6. Stamp `version: "5.3"` (no bump unless skill version bumped).
+6. Stamp `version: "5.4"` (no bump unless skill version bumped).
 7. Write the updated file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input file you read in step 1 sits at the workspace root, leave that file alone; the `semantius/specs/` path is the truth-source. Run the pre-save verification block from Stage 11.
 
 ---
@@ -101,4 +101,4 @@ Use when the blueprint has materially changed (entities added/removed, role clas
 2. Drive a fresh Stage 1-10 pass with the current blueprint as input.
 3. **Carry forward** the preserved decisions where they still apply (e.g. a `promote-to-master` decision for an entity that's still in the blueprint).
 4. Show the user a diff summary: what's new, what's changed, what's removed.
-5. Stamp `version: "5.3"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.
+5. Stamp `version: "5.4"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.

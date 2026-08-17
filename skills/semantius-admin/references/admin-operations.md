@@ -63,8 +63,10 @@ These are convenience wrappers that produce readable terminal output. No interac
 **Health** — when the user asks to check the connection, verify the instance is reachable and a known entity reads back.
 
 ```bash
-# Probe
-semantius call crud getCurrentUser
+# Probe — pass '{}' explicitly even though this tool takes no args: a bare
+# no-argument call reads its payload from stdin, which hangs indefinitely on
+# Windows/PowerShell (see use-semantius/SKILL.md "Core CLI Commands").
+semantius call crud getCurrentUser '{}'
 # Verify a known built-in
 semantius call crud read_entity '{"slug": "users"}'
 ```

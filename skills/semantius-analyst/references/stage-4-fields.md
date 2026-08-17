@@ -42,6 +42,10 @@ For each owned entity, draft a field list. Present each entity as its own table 
 1. **Master-detail children.** Child is a constituent part of the parent and has no meaning outside it: `order_lines.order_id → orders`, `comments.post_id → posts`.
 2. **Junction-table FKs.** **Every** leg of a junction is `parent` — a binary junction has two (`feature_votes.feature_id`, `feature_votes.user_id`); an N-ary junction `(user, role, tenant)` has three. But an N-ary link that carries **its own attributes or a lifecycle** is an association class, not a junction: classify it `operational_record` / `operational_workflow` and give it a single `label_parent` spine plus flat discriminator FKs, rather than `entity_type = junction`.
 
+   In §4 each junction leg is one row with `Kind = junction` and `fk_format = parent` — the two columns differ (see the §4 template's "`Kind` vs `fk_format`" rule). Do not collapse the leg's `Kind` down to `parent`.
+
+   **Preserve the M:N verb — don't drop it on decomposition.** When a junction materializes an `A <verb> B` many-to-many edge from the blueprint (e.g. `asset_contracts covers saas_applications`), the relationship's verb is a real detail that must survive. Stamp `relationship_label: "<verb>"` on the junction leg pointing back to the **source** entity of that edge — the blueprint §5 `from` side (`asset_contract_id → asset_contracts` carries `relationship_label: "covers"`). Leave the other leg (`saas_application_id → saas_applications`) bare: its inverse verb isn't declared anywhere and would be an invention. The §2 diagram emitter then renders `asset_contracts -->|covers| asset_contract_saas_applications`, so the verb is not lost when the M:N is normalized into a junction. Pure master-detail ownership `parent` legs (an order line's `order_id`) stay bare unless the blueprint declared a verb for them.
+
 Everything else is `reference`. `parent` implies cascade-on-delete; `reference` is non-owning (`clear` or `restrict`).
 
 **Naming a field that holds a relationship:** `<target_singular>_id` for references/parents (`account_id`, `assigned_user_id`, `parent_case_id`). The Reference column expresses target and cardinality: `→ accounts (N:1)`.
@@ -67,10 +71,16 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 **Set `relationship_label` for every FK field.** Specific verb in parent voice: `accounts → opportunities` is `"owns"`; `users → tasks` (owner) is `"manages"`. Avoid filler (`"has"`, `"references"`). Self-references: pick `"parent of"` / `"manages"` / `"reports to"`. When same parent has multiple FKs from the same child, verbs must differentiate (`"created"` vs `"assigned"`). Annotate as `relationship_label: "<verb>"` in §3 Notes. §2 Mermaid edge label and this annotation must agree byte-for-byte.
 
+**Optional v5.4 Notes markers (round-trip carriers; author rarely, `semantius-optimizer` emits them from live).** Two field-presentation markers may appear in the Notes cell; both are OPTIONAL with an omit-when-default rule, so a hand-authored spec normally leaves them off and lets the platform defaults stand:
+- `width: <s|m|w>` — the field's display width. Bare value, NOT backticked, exactly like `precision: 2`. Emit ONLY when non-default; omit when the platform default (`default`).
+- `` `searchable` `` — backticked bare marker, exactly like `` `unique` ``. Emit ONLY when the field's live `searchable` is true.
+
+Keep the deterministic Notes marker order so a forward-authored spec and a reverse-engineered one stay byte-identical (this is the order `semantius-optimizer` emits, so match it exactly). For the label-column field: `` `label_column` `` (then `, `unique`` when it is a natural key). For every other field: `` `unique` `` · `` `searchable` `` · `enum_values` (with inline `default`) · FK (`→ table (N:1)`, `relationship_label`) · `precision` · `cube_type` · `parent label` · `width` · `default`.
+
 **Fill the §3 Description column only when structured metadata can't convey the meaning.** Fill when units are not in the type (`effort_score` → *"RICE effort in person-months"*), ranges not encoded as a validation rule, direction-mattering semantics, sign / polarity conventions, freeform-string shape hints, or jargon titles a non-specialist couldn't parse cold. Leave blank when title is plain English, restates field_name, or the FK/enum/validation already encodes the meaning.
 
 **No identifier leakage in Description.** Use Labels, not `field_name`s, when referring to sibling fields. Use Singular/Plural Labels, not `table_name`s, when referring to other entities. Enum values stay backticked as data (`"Null until Match Status reaches `auto_matched`"`). No backticks around identifiers in prose.
 
 For deep field-format and built-in field-shape rules (when extending `users`, `roles`, etc.), see `../../use-semantius/references/data-modeling.md`.
 
-After the field tables, present for each entity a short **Relationships** section in prose. The user reviews and confirms or changes these fields through the 3g confirmation widget's "Adjust the fields for an entity" path, not through a separate per-entity prompt here.
+After the field tables, present for each entity a short **Relationships** section in prose. Write it with the template's canonical forms, referencing every entity and FK by its unique `table_name` / `field_name` (never a display label or a name-derived noun), so it round-trips byte-for-byte with the `semantius-optimizer` reverse pass. The user reviews and confirms or changes these fields through the 3g confirmation widget's "Adjust the fields for an entity" path, not through a separate per-entity prompt here.

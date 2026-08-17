@@ -1,0 +1,31 @@
+id,sku,Product Name,rating,status,In Stock,weight_kg,notes,created_at,Contact Email,Product URL
+1,0001,Alu Bracket S,4,active,y,0.25,Standard shelf bracket,2025-01-04,sales@acme.example,https://catalog.example.com/p/0001
+2,0002,Alu Bracket M,5,active,y,0.4,,2025-01-04,sales@acme.example,https://catalog.example.com/p/0002
+3,0003,Alu Bracket L,3,active,n,0.62,Heavy duty variant,2025-01-05,support@acme.example,https://catalog.example.com/p/0003
+4,0004,Steel Hinge 40mm,4,active,y,0.11,,2025-01-08,ops@acme.example,https://catalog.example.com/p/0004
+5,0005,Steel Hinge 60mm,2,retired,n,0.18,Superseded by 80mm model,2025-01-09,sales@acme.example,https://catalog.example.com/p/0005
+6,0006,Steel Hinge 80mm,5,active,y,0.27,Replaces the 60mm hinge,2025-01-09,support@acme.example,https://catalog.example.com/p/0006
+7,0007,Oak Panel 30x30,4,active,y,1.85,Sold in packs of four,2025-01-12,purchasing@acme.example,https://catalog.example.com/p/0007
+8,0008,Oak Panel 60x60,4,active,n,,Awaiting supplier restock,2025-01-12,purchasing@acme.example,https://catalog.example.com/p/0008
+9,0009,Oak Panel 90x90,3,new,n,,Not yet priced,2025-01-15,quality@acme.example,https://catalog.example.com/p/0009
+10,0010,Pine Shelf 80cm,3,active,y,2.4,,2025-01-16,sales@acme.example,https://catalog.example.com/p/0010
+11,0011,Pine Shelf 120cm,4,active,y,3.55,,2025-01-16,ops@acme.example,https://catalog.example.com/p/0011
+12,0012,Wall Anchor Set,5,active,y,0.09,Includes 24 anchors and screws,2025-01-19,sales@acme.example,https://catalog.example.com/p/0012
+13,0013,Ceiling Hook 5kg,3,active,y,0.05,,2025-01-22,support@acme.example,https://catalog.example.com/p/0013
+14,0014,Ceiling Hook 10kg,4,active,y,0.08,Rated for concrete ceilings only,2025-01-22,quality@acme.example,https://catalog.example.com/p/0014
+15,0015,LED Strip 2m,5,active,y,0.14,,2025-01-25,sales@acme.example,https://catalog.example.com/p/0015
+16,0016,LED Strip 5m,5,active,y,0.31,Warm white,2025-01-25,ops@acme.example,https://catalog.example.com/p/0016
+17,0017,LED Driver 24W,4,active,y,0.2,,2025-01-27,purchasing@acme.example,https://catalog.example.com/p/0017
+18,0018,Cable Duct 1m,3,active,y,0.16,,2025-01-29,sales@acme.example,https://catalog.example.com/p/0018
+19,0019,Cable Duct 2m,3,active,n,0.33,,2025-01-29,support@acme.example,https://catalog.example.com/p/0019
+20,0020,Corner Joint Kit,2,retired,n,0.12,Discontinued January batch,2025-02-02,quality@acme.example,https://catalog.example.com/p/0020
+21,0021,Glass Door 40cm,4,new,n,4.1,Tempered glass,2025-02-04,purchasing@acme.example,https://catalog.example.com/p/0021
+22,0022,Glass Door 60cm,4,new,n,5.9,,2025-02-04,purchasing@acme.example,https://catalog.example.com/p/0022
+23,0023,Drawer Rail 35cm,4,active,y,0.42,Soft close,2025-02-07,sales@acme.example,https://catalog.example.com/p/0023
+24,0024,Drawer Rail 45cm,5,active,y,0.51,,2025-02-07,ops@acme.example,https://catalog.example.com/p/0024
+25,0025,Drawer Rail 55cm,4,active,y,0.6,,2025-02-08,sales@acme.example,https://catalog.example.com/p/0025
+26,0026,Felt Pad Sheet,3,active,y,0.03,Self adhesive,2025-02-11,support@acme.example,https://catalog.example.com/p/0026
+27,0027,Leveling Foot M8,4,active,y,0.07,,2025-02-12,quality@acme.example,https://catalog.example.com/p/0027
+28,0028,Leveling Foot M10,4,active,y,0.1,Load rated to 150kg,2025-02-12,ops@acme.example,https://catalog.example.com/p/0028
+29,0029,Touch Latch,3,active,y,0.06,Push to open,2025-02-14,sales@acme.example,https://catalog.example.com/p/0029
+30,0030,Magnet Catch,4,active,y,0.04,,2025-02-15,purchasing@acme.example,https://catalog.example.com/p/0030

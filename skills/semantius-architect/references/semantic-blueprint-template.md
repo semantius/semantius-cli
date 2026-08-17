@@ -14,11 +14,11 @@ Keep the section order and the table columns identical, downstream skills parse 
 ---
 artifact: semantic-blueprint
 blueprint_version: "3.0"
-license: {{license slug, e.g. MIT}}
+license: {{license slug, e.g. MIT — publish-only: omit the key entirely on internal-only blueprints}}
 system_name: {{System display name shown to the user AND used as the module name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
 icon_name: {{Module icon as an icon-set handle (not a URL), e.g. briefcase, users, ticket}}
 tagline: {{One-line marketing-voice line for catalog / card surfaces, ALSO used as the module record's short description (modules.description) shown beside the name in the selector. Elevator pitch — keep it concise enough for the chip.}}
-description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine.}}
+description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine. Publish-only: omit the key entirely on internal-only blueprints.}}
 system_slug: {{system_slug_snake_case}}
 domain_modules:
   - {{system_slug}}
@@ -38,12 +38,14 @@ created_at: {{YYYY-MM-DD}}
 
 ## 2. Entity summary
 
+**Entity order (canonical).** Sequence entities by their §3 `entity_type` tier, then alphabetically by `data_object` within each tier: (1) `catalog` masters/lookups, (2) `operational_record` / `operational_workflow` / `computed` / `unclassified`, (3) `junction`, then (4) platform built-ins (`users`, …) last. Use this exact order in this §2 table, the Mermaid nodes, and the §3 catalog. It is deterministic from `entity_type` + `data_object` alone, so the analyst's spec and the reverse pass (`semantius-optimizer`) reproduce the same order; never order by discovery or authoring convenience.
+
 | Name | data_object | Description |
 | --- | --- | --- |
-| {{Plural Label 1}} | `{{table_name_1}}` | {{One-sentence description of what a record represents and when it's created.}} |
+| {{Plural Label 1}} | `{{table_name_1}}` | {{1-2 sentence description of what a record represents and when it's created — the authoritative deployed text; see column rules}} |
 | {{Plural Label 2}} | `{{table_name_2}}` | … |
 
-**Column rules:** `Name` is the entity's **plural** display label and MUST equal the §3 `plural` column byte-for-byte. `data_object` is the bare backticked `table_name` (lower snake_case `[a-z][a-z0-9_]*`, no parenthesized label) and MUST equal the §3 `data_object`. The Mermaid node label below also uses the **plural** label.
+**Column rules:** `Name` is the entity's **plural** display label and MUST equal the §3 `plural` column byte-for-byte. `data_object` is the bare backticked `table_name` (lower snake_case `[a-z][a-z0-9_]*`, no parenthesized label) and MUST equal the §3 `data_object`. The Mermaid node label below also uses the **plural** label. `Description` is the entity's **single authoritative, deploy-quality description** (1-2 sentences: what a record represents and when it's created). It is the sole source of truth for this text across the whole pipeline: the analyst carries it **verbatim** into the spec's §3 `**Description:**` and derives the §2 Purpose one-liner from its first sentence, and the modeler deploys it to `entities.description` (the text users see in the product). So write the real product-facing description here, not a bare field-list — what you write is what ships. Downstream stages do not re-author it.
 
 ```mermaid
 flowchart LR
@@ -305,11 +307,13 @@ _Baseline roles, the permission hierarchy, and RACI realization are DERIVED from
 
 **Baseline roles:**
 
+_Role slugs use `{{system_slug}}` **with every `-` replaced by `_`** (call it `{{role_slug_base}}`), because `roles.slug` is constrained to `^[a-z0-9_]+$` and forbids the hyphens `module_slug` allows — e.g. `it-ops-starter` → `it_ops_starter_viewer`. Emit the deploy-ready underscored form here so it flows through the spec verbatim; do not rely on a downstream normalization. Permission names (the `baseline grant` column) keep the hyphenated `{{system_slug}}` prefix — `permissions.permission_name` allows hyphens._
+
 | role | baseline grant |
 | --- | --- |
-| `{{system_slug}}_viewer` | `{{system_slug}}:read` |
-| `{{system_slug}}_manager` | `{{system_slug}}:manage` |
-| `{{system_slug}}_admin` | `{{system_slug}}:admin` _(omit when the module has no `:admin` tier)_ |
+| `{{role_slug_base}}_viewer` | `{{system_slug}}:read` |
+| `{{role_slug_base}}_manager` | `{{system_slug}}:manage` |
+| `{{role_slug_base}}_admin` | `{{system_slug}}:admin` _(omit when the module has no `:admin` tier)_ |
 
 **Permission hierarchy:**
 

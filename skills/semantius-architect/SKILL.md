@@ -1,28 +1,21 @@
 ---
 name: semantius-architect
 description: >-
-  Produces and maintains **semantic blueprints** — entity-level
-  markdown specifications that list entities, their roles
-  (master / contributor / consumer / embedded), relationships, lifecycle
-  states, and permissions. Blueprints carry NO field-level detail —
-  field-level work is the `semantius-analyst` skill's job, which reconciles
-  the blueprint with the live Semantius catalog and produces a deployable
-  spec. **Trigger whenever the user expresses a need for any kind of business
-  system or data-backed tool**, regardless of how they phrase it: "design a
-  data model for X", "build a system like X", "spec out a
-  CRM/ITSM/HRIS/LMS/ERP/PIM/CMS/PM/field service/billing/CMS", "model a
-  domain", "I need a helpdesk / CRM / HR system / applicant tracker / roadmap
-  tool / ticketing system / inventory system / etc.", "I need a tool to track
-  / plan / manage / organize / record / capture X", "I need something to
-  handle X", "help me build a system for X", "I want to track X in a
-  structured way". Do NOT answer such requests by recommending off-the-shelf
-  SaaS products. Also trigger to review, audit, check, update, customize,
-  extend, rebuild, or reanalyze an existing `*-semantic-blueprint.md` file,
-  and to **clone an existing catalog blueprint** as a starting point for a
-  similar system. Use for greenfield modeling and for catalog clones (mirror
-  an existing curated blueprint, then customize). Output: a
-  `<system_slug>-semantic-blueprint.md` file. Hand off to `semantius-analyst`
-  to produce a deployable spec.
+  Produces and maintains **semantic blueprints**: entity-level specs of
+  entities, roles (master / contributor / consumer / embedded), relationships,
+  lifecycle states, and permissions. Blueprints carry NO field-level detail;
+  `semantius-analyst` reconciles blueprints with the live catalog into a spec.
+  **Trigger on any need for a business system or data-backed tool**, however
+  phrased: "design a data model", "build a system like X", "model a domain",
+  "spec out a CRM/ITSM/HRIS/LMS/ERP/PIM/CMS/PM/field service/billing", "I need
+  a helpdesk / CRM / HR system / applicant tracker / roadmap tool / ticketing
+  system / inventory system", "a tool to track / plan / manage / organize /
+  record / capture X", "something to handle X". Never recommend off-the-shelf
+  SaaS. Also trigger to review, audit, check, update, customize, extend,
+  rebuild, or reanalyze an existing
+  `*-semantic-blueprint.md`, or **clone a curated catalog blueprint** and
+  customize it. Covers greenfield and clones. Outputs a blueprint for
+  `semantius-analyst`.
 ---
 
 # Semantius Architect
@@ -217,7 +210,7 @@ When you bump, **update `CURRENT_VERSION` in this section's heading and rewrite 
 - **Older major than `CURRENT_VERSION` (or no `version` key, treated as major `0`)**, the file's shape may not match current rules. **This skill does not carry per-version translation rules.** The semantic content of a model (entities, fields, relationships, enum values, business intent) is stable across schema bumps; only the encoding changes. So the analyst treats older files as **archived knowledge**: the LLM reads the file as natural-language content, extracts the semantic model, and offers the user one of two next steps. (a) **Re-author at current major**, drive a Mode D Rebuild pass using the extracted content as input; the output is a brand-new file at `CURRENT_VERSION`, the old file is left untouched (git tracks it). (b) **Reference only**, load the entities and relationships into context for the conversation, propose no edits, hand nothing to the deployer; useful when the user just wants to discuss "how did we model X before?" without rebuilding. Audit and Extend modes refuse to operate on older-major files directly: they would otherwise try to apply current-major rules against a shape that doesn't match.
 - **Newer major than `CURRENT_VERSION`**, error. The file was written by a future version of this skill that knows things this one doesn't. Refuse to operate; ask the user to update the skill.
 
-The downstream `semantic-model-deployer` skill maintains its own `EXPECTED_MAJOR` constant and rejects models whose major differs. The two skills must be kept in sync; bumping major in this skill always implies a coordinated bump in the deployer.
+The downstream `semantius-modeler` skill maintains its own `EXPECTED_MAJOR` constant and rejects models whose major differs. The two skills must be kept in sync; bumping major in this skill always implies a coordinated bump in the deployer.
 
 ---
 
@@ -286,7 +279,7 @@ Follow these stages in order. Do not skip ahead: each stage produces input the n
 
 | Stage | Purpose | Read first |
 |---|---|---|
-| 1. Capture | Capture the system; catalog-surface text; `module_kind` | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
+| 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
 | 2. Naming | Legacy-vendor vs agent-optimized naming; built-in field alignment | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
 | 3. Entities | Propose the entity list; `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in`) | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
 | 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify; render, don't gate) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
@@ -295,7 +288,7 @@ Follow these stages in order. Do not skip ahead: each stage produces input the n
 | 8 + 9. Rules & classification | Business-rule intent; `entity_type` ladder + derived write tier; master-cluster hints | [`references/stage-8-9-rules-classification.md`](references/stage-8-9-rules-classification.md) |
 | 10. Workflow perms | W1 / W2 / W6 workflow-gate scan (architect scope) | [`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md) |
 | 11. Governance | Persona discovery; Processes catalog; RACI realization; §9 emission | [`references/stage-11-governance.md`](references/stage-11-governance.md) |
-| 13. Write | Template; frontmatter; keep-with-placeholder rule; then the resident Pre-save verification below | [`references/stage-13-write.md`](references/stage-13-write.md) |
+| 13. Write | Finalize catalog surface (`tagline`, `module_kind`; `description` / `license` only when publishing); template; frontmatter; keep-with-placeholder rule; then the resident Pre-save verification below | [`references/stage-13-write.md`](references/stage-13-write.md) |
 
 **Field-level stages live in the analyst, not here.** Stages 4 (fields), 9b (cross-tier FK reconciliation), and 12 / 12.5 (select-rule + view/edit consistency) are not architect stages: the blueprint stops at entity level (only §3 catalog, §5 edges, §7 lifecycle, §8 permissions). The analyst runs those after this skill writes the blueprint, so run `semantius-analyst` next to elicit field-level detail.
 
@@ -338,6 +331,7 @@ Before writing, run these checks **silently** — do NOT narrate them in chat. T
 | Every canonical top-level / numbered section is present (no omitted canonical section, no bare empty heading); each empty one carries the canonical `_(none: <short reason>)_` placeholder, NOT an old-form free-text stub (`_(no cross-scope edges declared in greenfield mode...)_`, `_(no cross-domain context...)_`, `_(no industry-scoped aliases...)_`, similar) | halt; name the missing canonical section or the old-form stub, and tell the user to keep the heading with a `_(none: <short reason>)_` placeholder |
 | No raw HTML anywhere in the file body (`<details>`, `<summary>`, `</details>`, or any other `<tag>`). A collapsible inherited from a catalog source must be flattened to a plain markdown table — the tags stripped, the table kept | halt; name the offending lines |
 | Greenfield-mode files (`naming_mode` present) carry `departments` / `industries` frontmatter ONLY when populated; otherwise omit. `related_modules` is now allowed in greenfield as an advisory list | halt; remove the offending stubs |
+| `description` / `license` are publish-only and travel together: both present when the Stage 13 publish question was answered "publishing", both absent otherwise. An empty stub (`description: ""`) or a lone one of the pair is a failure | halt; name the stray, empty, or missing key |
 | Catalog-clone-mode files (`naming_mode` absent) carry no `naming_mode` key | halt; remove the offending key |
 
 **Mechanical consistency gate (mandatory — this is enforcement, not eyeballing).** The cross-section rows above (Mermaid ⟺ §3, §2 ⟺ §3, Mermaid ⟺ §5, and the §7 / §6.4 / §8.2 resolution) are NOT verified by re-reading the file. After writing the candidate file, run the bundled deterministic checker shipped alongside this skill and require a clean exit:
@@ -414,6 +408,8 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) — the shared writing conventions (Conventions 1-8). This skill keeps its own fuller copy resident, including the architect-only Conventions 9-10 and the Pre-emit / Narration restraint phrased for blueprint authoring.
 - [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) — environment preflight (shared by all four skills).
 - [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) — Semantius platform reference (entity naming rules, built-in tables, field format rules, relationship rules). Load it to reason about platform constraints during blueprint design.
+- [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md) — JsonLogic rule reference: entity-level (`computed_fields`, `validation_rules`) and field-level (`input_type_rule`) rules, extension operators, cross-entity lookups. Mostly analyst territory; load only when reasoning about rule feasibility.
+- [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md) — row-level security (`select_rule`) reference: REPLACE-vs-AND semantics, oversight disjuncts.
 - [`../semantius-analyst/SKILL.md`](../semantius-analyst/SKILL.md) — downstream skill that reconciles the blueprint against live Semantius and produces a `*-semantic-spec.md`. Invoke after the blueprint is written.
 - [`../semantius-modeler/SKILL.md`](../semantius-modeler/SKILL.md) — deploys the spec to live Semantius. The architect doesn't invoke this directly; it's the third link in the chain.
 

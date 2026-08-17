@@ -8,7 +8,7 @@ The goal is to give the user a clear, actionable quality report — not just a l
 
 ### How to run the audit
 
-**Before checking anything else, read `../../use-semantius/references/data-modeling.md`**. This file is the authoritative source of Semantius platform constraints — entity naming rules, built-in tables, field format rules, relationship rules. It is updated independently of this skill. Any rule there about naming, formats, or relationships overrides or extends the audit checklist. **Note:** this skill no longer treats Semantius built-ins (`users`, `roles`, etc.) as forbidden in the model — the model is self-contained and the semantic-model-deployer skill deduplicates at deploy-time. The `data-modeling.md` reference is still the source of truth for other platform rules.
+**Before checking anything else, read `../../use-semantius/references/data-modeling.md`**. This file is the authoritative source of Semantius platform constraints — entity naming rules, built-in tables, field format rules, relationship rules. It is updated independently of this skill. Any rule there about naming, formats, or relationships overrides or extends the audit checklist. **Note:** this skill no longer treats Semantius built-ins (`users`, `roles`, etc.) as forbidden in the model — the model is self-contained and the semantius-modeler skill deduplicates at deploy-time. The `data-modeling.md` reference is still the source of truth for other platform rules. Rule-level constraints (JsonLogic `computed_fields` / `validation_rules`, `select_rule`) live in the sibling references `../../use-semantius/references/jsonlogic.md` and `../../use-semantius/references/select-rule.md`; read those too during an audit.
 
 Read the file in full, then work through each check in the audit checklist (`audit-checklist.md`). Group your findings into three severity levels:
 
@@ -141,7 +141,7 @@ Trigger phrases the user is likely to use:
 
 Read the file in full. Extract:
 - The original `initial_request` (immutable, byte-for-byte preserve into the new file)
-- The domain category, vendor `naming_mode`, and `tagline`
+- The domain category, vendor `naming_mode`, `tagline`, and the publish-only keys (`description`, `license`) when present — their presence means the prior file was publish-ready, so the Stage 13 publish question defaults to "publishing" with these values as the draft
 - The entity list with one-line purposes (from §2)
 - Business rules documented in §3 prose, computed/validation rule blocks, §7.1 decisions, and §7.2 future considerations
 - Curated metadata: `departments`, `industries`, `related_modules`

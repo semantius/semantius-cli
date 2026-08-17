@@ -29,14 +29,6 @@ export SEMANTIUS_ORG=your-org-name
 # Contents:
 # SEMANTIUS_API_KEY=your-api-key
 # SEMANTIUS_ORG=your-org-name
-
-# Option 3: single-value credential — an "org:" prefix on the API key
-# replaces SEMANTIUS_ORG (the prefix wins if both are set)
-export SEMANTIUS_API_KEY=your-org-name:your-api-key
-
-# Option 4: static JWT used directly as the Bearer token
-# (no token exchange, no token cache); also accepts the "org:" prefix
-export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
 ```
 
 ---
@@ -62,6 +54,8 @@ Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably.
 | `-v, --version` | Show version |
 | `-d, --with-descriptions` | Include tool descriptions in listing |
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
+| `--single` | (`call` only) Expect exactly one row: bare object on stdout, exit 1 on 0 rows, exit 2 on 2+ rows. **Rejected (exit 1, `SINGLE_ARRAY_INPUT`) for bulk calls** — an array in `data` / `body` / `id` / `table_name` always answers with an array of records. |
+| `--diag` | (`call`) Print the full `{request, response}` envelope instead of just `response.data` |
 
 ---
 
@@ -106,9 +100,9 @@ $ semantius info crud
 Server: crud
 Tools:
   create_entity
-    Creates a new entity record in the entities table
+    Creates a new entity record in the entities table … Accepts a single object or an array of objects (bulk insert)
     Parameters:
-      • data (object, required) - Data object containing fields for the new entity
+      • data (object | object[], required) - Data object containing fields for the new entity, or a non-empty array of such objects …
   read_entity
     ...
 
@@ -119,16 +113,25 @@ $ semantius info crud/create_entity
 Tool: create_entity
 Server: crud
 Description:
-  Creates a new entity record in the entities table
+  Creates a new entity record in the entities table … Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.
 Input Schema:
   {
     "type": "object",
     "properties": {
-      "data": { "type": "object", "description": "Data object..." }
+      "data": {
+        "anyOf": [
+          { "type": "object", "properties": { ... } },
+          { "type": "array", "minItems": 1, "items": { "type": "object", "properties": { ... } } }
+        ],
+        "description": "Data object ... or a non-empty array of such objects to create several entity records in one request ..."
+      },
+      "accept": { "type": "string", "description": "..." }
     },
     "required": ["data"]
   }
 ```
+
+The `anyOf` is how every bulk-capable parameter appears: `data` on `create_*` is `object | object[]`, `id` on `update_*` / `delete_*` (and `table_name` on the entity tools) is `<scalar> | <scalar>[]`. Newer CLIs render that union as `object | object[]` in the parameter listing; older ones print `any` — read the schema, the capability is server-side either way.
 
 ### Output Streams
 
@@ -162,18 +165,30 @@ semantius call crud read_entity '{"filters": "table_name=eq.products"}'
 # Pipe
 echo '{"data": {"name": "My Record"}}' | semantius call crud create_entity
 
-# Heredoc — no '-' needed with call subcommand
+# Heredoc — no '-' needed with call subcommand. Several fields → ONE call: `data` is an array
+# (items may carry different keys; the response is the array of created fields)
 semantius call crud create_field <<EOF
 {
-  "data": {
-    "table_name": "products",
-    "field_name": "price",
-    "title": "Price",
-    "format": "number",
-    "precision": 2,
-    "width": "auto",
-    "input_type": "default"
-  }
+  "data": [
+    {
+      "table_name": "products",
+      "field_name": "price",
+      "title": "Price",
+      "format": "number",
+      "precision": 2,
+      "width": "default",
+      "input_type": "default"
+    },
+    {
+      "table_name": "products",
+      "field_name": "status",
+      "title": "Status",
+      "format": "enum",
+      "enum_values": ["active", "discontinued"],
+      "width": "default",
+      "input_type": "default"
+    }
+  ]
 }
 EOF
 
@@ -181,7 +196,27 @@ EOF
 cat args.json | semantius call crud create_entity
 ```
 
-**Why stdin?** Shell interpretation of `{}`, quotes, and special characters requires careful escaping. Stdin bypasses shell parsing entirely.
+**Why stdin?** Shell interpretation of `{}`, quotes, and special characters requires careful escaping. Stdin bypasses shell parsing entirely — and a bulk payload (an array of records) is exactly the multi-line JSON stdin is for.
+
+### Building a bulk payload in Bun
+
+When the records come from data (a file, a previous read, a loop), assemble the array in a Bun script and pipe it over stdin — one call, one transaction:
+
+```typescript
+// bun run add-fields.ts
+const rows = ["price", "cost", "margin"].map((name, i) => ({
+  table_name: "products", field_name: name, title: name[0].toUpperCase() + name.slice(1),
+  format: "number", precision: 2, width: "default", input_type: "default", field_order: 30 + i * 10,
+}));
+const proc = Bun.spawn(["semantius", "call", "crud", "create_field"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+proc.stdin.write(JSON.stringify({ data: rows }));   // ONE create_field call for all rows
+proc.stdin.end();
+const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+if (code !== 0) throw new Error(`create_field failed (exit ${code}): ${err}`);   // nothing landed — one transaction
+console.log(`${JSON.parse(out).length} field(s) created`);                       // the response is an array
+```
+
+Never `for (const r of rows) await call("create_field", { data: r })` — N calls where one array call would do is the failure the platform's batching rule names. Keep one call to roughly 100 rows; split larger sets into a few calls.
 
 ---
 
@@ -232,10 +267,15 @@ semantius call crud read_entity '{"filters": "module_id=eq.3"}' \
 semantius call crud read_entity '{"limit": 10}' \
   | jq -r '.[] | "\(.table_name): \(.label_column)"'
 
-# 4. Conditional execution: check entity exists before adding a field
+# 4. Conditional execution: check entity exists before adding fields (all new fields in ONE call)
 semantius call crud read_entity '{"filters": "table_name=eq.products"}' \
   | jq -e '.[0]' \
-  && semantius call crud create_field '{"data": {"table_name": "products", "field_name": "sku", "title": "SKU", "format": "string", "width": "auto", "input_type": "default"}}'
+  && semantius call crud create_field '{"data": [{"table_name": "products", "field_name": "sku", "title": "SKU", "format": "string", "width": "default", "input_type": "default"}, {"table_name": "products", "field_name": "barcode", "title": "Barcode", "format": "string", "width": "default", "input_type": "default"}]}'
+
+# 4b. Bulk create with the read-before-write sweep: ONE in.() read over every item, then ONE create, then ONE verify read
+semantius call crud read_field '{"filters": "table_name=eq.products&field_name=in.(sku,barcode)", "select": "field_name"}'   # [] → both missing
+semantius call crud create_field '{"data": [ ...the missing fields... ]}'                                                       # one call, one transaction
+semantius call crud read_field '{"filters": "table_name=eq.products&field_name=in.(sku,barcode)", "select": "field_name"}' | jq 'length'   # verify: 2
 
 # 5. Save output to file
 semantius call cube load '{"query": {"measures": ["Sales.count"], "dimensions": ["Products.category"]}}' \
@@ -260,6 +300,7 @@ fi
 - Use `jq -e` for conditional checks (exit code 1 if false/null)
 - Use `2>/dev/null` to suppress errors when testing existence
 - Use `| jq -s '.'` to combine multiple JSON outputs into an array
+- Batch related writes: build the array first (a `jq` expression, a Bun script), then **one** `create_*` / `update_*` / `delete_*` call, then one `read_*` with `in.(...)` to verify — never a `while read` loop that issues one write per line
 
 **jq availability check:** If `jq` may not be available (e.g., minimal containers), detect first:
 ```bash
@@ -292,9 +333,8 @@ MCP_DEBUG=1 semantius info          # Show daemon debug output
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SEMANTIUS_API_KEY` | (required unless `SEMANTIUS_JWT` is set) | API key; value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG` |
-| `SEMANTIUS_ORG` | (required unless supplied via `org:` prefix) | Organization name |
-| `SEMANTIUS_JWT` | (none) | Static JWT sent as `Authorization: Bearer` directly; skips the token exchange and cache. Value may be `org:jwt` |
+| `SEMANTIUS_API_KEY` | (required) | API key |
+| `SEMANTIUS_ORG` | (required) | Organization name |
 | `MCP_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
 | `MCP_CONCURRENCY` | `5` | Servers processed in parallel |
 | `MCP_MAX_RETRIES` | `3` | Retry attempts for transient errors |
@@ -341,8 +381,8 @@ The CLI automatically retries transient failures with exponential backoff.
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `1` | Bad args / config / JSON, **or** `--single` returned zero rows (mutually exclusive flows) |
-| `2` | `--single` returned two or more rows |
+| `1` | Bad args / config / JSON (including `--single` combined with an array in `data` / `body` / `id` / `table_name` — `SINGLE_ARRAY_INPUT`, rejected before any network I/O), **or** `--single` returned zero rows (mutually exclusive flows) |
+| `2` | `--single` returned two or more rows (also what an `in.(...)` filter that matches several rows produces under `--single` — use an array read for multi-key sweeps) |
 | `3` | Network / transport failure (transient, retryable: `ECONNREFUSED`, `ETIMEDOUT`, `5xx`, `429` after retry exhaustion) |
 | `4` | Tool execution failed (RLS denial, duplicate key, schema violation, validation rule) |
 | `5` | Auth failure (missing/invalid `SEMANTIUS_API_KEY`, `401`, `403`) |
@@ -362,7 +402,10 @@ Notes:
 - Exit `4` is the bucket for any error returned by the tool itself
   (PostgREST rejection, RLS denial, unique-key violation, platform
   `validation_rules`). The response body on stderr carries the
-  structured error; surface it verbatim.
+  structured error; surface it verbatim. For a bulk call (array
+  `data` / `id` / `body`) a `4` means the whole call was rolled back
+  — nothing landed; fix the offending row the error names and
+  re-issue the one call, never a loop of single-record calls.
 
 ---
 

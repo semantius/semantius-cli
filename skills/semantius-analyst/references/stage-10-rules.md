@@ -2,6 +2,8 @@
 
 *Reference for `semantius-analyst` (Stage 10).*
 
+Read: `../../use-semantius/references/jsonlogic.md` — the `computed_fields` / `validation_rules` contract (evaluation semantics, reserved variables, extension operators, cross-entity lookups).
+
 ## Stage 10: Computed fields and validation rules
 
 > **`access_scope = basic` note.** Emit computed fields and validation rules as usual **except** any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission`): under `basic` the gating permission no longer exists, so drop that rule. Pure data-integrity rules (date ordering, required-when, range checks — no permission reference) are kept; they are not access control. (See the "What basic authors" access-control contract in SKILL.md.)
@@ -29,7 +31,7 @@ A JSON array per entity. Each entry derives a value into an existing scalar fiel
 
 Reserved variables: `$today`, `$now`, `$user_id`.
 
-Cross-entity primitives: `{"set_record": ["<name>", "<entity>", <id_expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` let the body read columns of a parent / referenced record. See `../../use-semantius/references/data-modeling.md` § "Cross-entity lookups inside JsonLogic".
+Cross-entity primitives: `{"set_record": ["<name>", "<entity>", <id_expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` let the body read columns of a parent / referenced record. See `../../use-semantius/references/jsonlogic.md` § "Cross-entity lookups inside JsonLogic".
 
 ### Validation rules
 

@@ -2,6 +2,8 @@
 
 *Reference for `semantius-analyst` (Stage 7).*
 
+Read: `../../use-semantius/references/select-rule.md` — the `select_rule` contract (REPLACE-vs-AND semantics, `has_permission`, performance limits).
+
 ## Stage 7: Row-level read-access scan (`select_rule`)
 
 > **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this stage emits **nothing** — no `select_rule` on any entity (table-level `view_permission` is the only read gate). Skip to Stage 8. (See the "What basic authors" access-control contract in SKILL.md.)

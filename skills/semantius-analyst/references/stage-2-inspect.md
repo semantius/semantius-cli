@@ -16,11 +16,25 @@ Look up the module by `system_slug`:
 semantius call crud read_module --single '{"filters": "module_slug=eq.<system_slug>"}'
 ```
 
-- **Exit 0 (exists)**: capture the `id`, treat as re-reconcile. The spec will write `update_module` to refresh name / description if they drifted; entities below diff against live.
+- **Exit 0 (exists)**: capture the `id` **and the `version` / `version_date`** (used by the 2a.1 drift gate below), treat as re-reconcile. The spec will write `update_module` to refresh name / description if they drifted; entities below diff against live.
 - **Exit 1 (missing)**: plan a `create_module` with `module_name = <system_name>`, `module_slug = <system_slug>`, `description = <tagline>`, `icon_name = <icon_name>`, `domain_code = <domain_code>`, `module_type = "domain"`.
 - **Exit 2 (duplicate)**: hard catalog bug — surface and stop.
 
-> **Module schema note.** Modules carry `module_name` (display, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `description` (≤40-char selector chip, sourced from frontmatter `tagline`), `icon_name`, the top-level columns `domain_code` and `access_scope`, and `module_type` (`"domain"` default). The §1 Overview prose does NOT go on the module record.
+> **Module schema note.** Modules carry `module_name` (display, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `description` (≤40-char selector chip, sourced from frontmatter `tagline`), `icon_name`, the top-level columns `domain_code` and `access_scope`, `module_type` (`"domain"` default), and the platform-maintained `version` (monotonic integer, bumped on any schema change to the module's owned entities / fields / enum values / permissions) + `version_date`. The §1 Overview prose does NOT go on the module record.
+
+### 2a.1. Version-match gate: has prod drifted since the last deploy?
+
+**Runs whenever 2a hit Exit 0 (the module already exists) AND the spec carries a `deployed_version`** in its front-matter (the modeler stamps `deployed_version` / `deployed_version_date` / `deployed_related_versions` at the end of a clean deploy — modeler Stage 5b). This is the O(1) drift gate that decides whether a deeper owned-entity reconcile is needed; it is the owned-entity analog of the adopted-entity safety net in 2h.
+
+Compare the live `.version` captured in 2a against the spec's front-matter `deployed_version`:
+
+- **Match** (`live.version == deployed_version`): nothing in this module has changed since the spec was last deployed. There is no prod-side drift on the owned entities — **skip the owned-entity deep inspection** and let Stage 3f stay silent for them. This is the whole point of the stamp: the common "nobody touched prod since deploy" case costs a single read.
+- **Mismatch** (`live.version != deployed_version`): the module's schema changed in prod since the last deploy (edited via the UI or a direct `use-semantius` call the modeler did not make). The spec's owned entities may now be stale, and applying an edit blindly could propose reverting a prod change. **Deep-inspect the owned entities the same way 2h inspects adopted ones** — capturing the COMPLETE property set (every entity- and field-level column plus every JsonLogic block; see the 2h index), not a subset — but build the comparison index **against the spec's own current Fields blocks and rule blocks: the spec is the "intended" side here, standing in for the blueprint that 2h/3f normally compare against.** Then drive every divergence through Stage 3f: it fires **one widget per difference**, each offering *"keep the live value (update the spec to match prod)"* vs *"keep the spec value (migrate prod on deploy)"* vs both/cancel — exactly the per-delta choice. Surface it plainly before any field work: *"Your live model changed since this was last deployed; reconciling N differences before applying your edit."*
+- **Spec has no `deployed_version`** (never deployed through a version-aware modeler, or an older spec): treat as **unknown** — fall back to existing behavior (no owned-entity short-circuit; adopted-entity 2h runs exactly as today). The gate never skips a needed check; it only *optimizes* the runs where it can prove nothing changed.
+
+Also compare each entry in the spec's `deployed_related_versions` map against the live `version` of that source module (a `reuse-from` / `promote-to-master` owner). A mismatch there means an entity this spec REUSES — owned by another module — drifted; deep-inspect that reused entity via 2h and route through Stage 3f as usual.
+
+**Graceful degradation.** If the live module row carries no `version` column (the platform predates it), skip the gate and fall back to full inspection. The gate is an optimization and an early-warning net, never a substitute for 2h's per-entity checks when drift is possible.
 
 ### 2b. Inspect Semantius built-ins
 
@@ -162,33 +176,46 @@ semantius call crud read_permission --single '{"filters": "id=eq.<entity.edit_pe
 semantius call cube query '{"measures": ["<entity>.count"], "dimensions": ["<entity>.<enum_field>"]}'
 ```
 
-**Build per-adopted-entity index** with the following shape (used by Stage 3f and Stage 11 verification):
+**Build per-adopted-entity index — capture the COMPLETE comparable property set, not a subset.** Every column `read_entity` / `read_field` returns is a drift axis EXCEPT the platform-managed / auto columns the analyst never authors (`id`, `created_at`, `updated_at`, `field_order`, `ctype` / `is_core`, `module_id`). A divergence on ANY captured property is drift the user must resolve in Stage 3f. Shape (used by Stage 3f and Stage 11 verification):
 
 ```
 adopted_entity_index[<entity_slug>] = {
-  live_module_slug: "<source module slug>",
-  live_module_name: "<source module display name>",
-  live_edit_permission: "<perm_code or null>",
+  live_module_slug, live_module_name,
+  // entity-level properties — every one is a drift axis:
+  entity: {
+    description, singular_label, plural_label,
+    label_column, label_parent, order_column, id_column,
+    view_permission, edit_permission, edit_mode, cube_mode, icon_url,
+    select_rule,                       // JsonLogic object (whole)
+    computed_fields,                   // JsonLogic array, keyed by .name
+    validation_rules,                  // JsonLogic array, keyed by .code
+  },
   fields: {
     <field_name>: {
-      format: "<format>",
-      required: bool,
-      enum_values: ["<v1>", "<v2>", ...] | null,
-      default: "<value or null>",
-      live_records_using_field: <count from cube>,
-      live_distinct_enum_values_in_use: ["<v>", ...] | null,
+      // EVERY field column is a drift axis:
+      format, input_type (required), unique_value,
+      default_value, enum_values,
+      precision, scale,                          // numeric precision / scale
+      description, title,
+      reference_table, reference_delete_mode,    // FK shape
+      width, searchable,                         // v5.4 UI columns
+      input_type_rule,                           // JsonLogic object
+      // live-usage signals, to grade risk (not compared, used to classify):
+      live_records_using_field, live_distinct_enum_values_in_use,
     },
     ...
   },
 }
 ```
 
-The index is the truth-source for Stage 3f drift detection. Compare every blueprint-declared field against the live entity's fields by name:
+The index is the truth-source for Stage 3f drift detection. **Compare EVERY captured property (entity-level and field-level) live-vs-intended by name — the categories below are exhaustive, not illustrative. No property is exempt from the scan.** The first five categories have specialized handling (rename migration, live-record data risk, JsonLogic cascade); **every remaining scalar property falls to the generic resolver 3f.6, and every JsonLogic block to the rule-block resolver 3f.7** — so `description`, `default_value`, `precision`/`scale`, `title`, `unique_value`, `reference_delete_mode`, `view_permission`, the UI columns, and every `select_rule` / `computed_fields` / `validation_rules` / `input_type_rule` are validated, never silently kept. Compare:
 
 - **Field-name drift candidate**: the spec declares `<spec_field>` that doesn't exist live, AND there exists a live field with similar semantic role (same format family, same general purpose). Common case: the lifecycle state field — the spec always names it `workflow_state` (fixed; see Stage 4), but a legacy live entity may hold the same state under `status` / `state` / `lifecycle_state`. Both are conceptually "where in the lifecycle this record is." Flag as a 🛑 for Stage 3f resolution; because the deployer requires the canonical `workflow_state` name, that resolution is a rename/migration to `workflow_state`, not "keep the live name" (see 3f.1).
 - **Enum-value drift**: a live field's `enum_values` and the blueprint's `enum_values` differ in either direction (live has values the blueprint doesn't, or blueprint introduces values that re-classify live values). When `live_distinct_enum_values_in_use` includes any value the blueprint *drops*, this is high-risk drift. Flag for Stage 3f.
 - **Format drift**: blueprint declares a different `format` than live (e.g., live `text`, blueprint `string`). Cross-primitive changes (text → integer, text → date) are 🔴 blockers; same-primitive variations (text ↔ string ↔ multiline, integer ↔ int32 ↔ int64) are 🟡 warnings the modeler can auto-resolve.
 - **Required-ness drift**: blueprint requires a field the live entity has as optional, or vice versa. Often safe; flag for Stage 3f when the change would leave live records violating the new constraint.
 - **Permission-tier drift**: blueprint's intended `edit_permission` differs from live `edit_permission`. Tier downgrades (admin → manage) need explicit confirmation; tier upgrades (manage → admin) are usually safe but still surfaced. The blueprint's intended tier is consumed from the §3 `write tier` column verbatim; the analyst does not re-derive it via its own Stage 9 classification (Stage 9 is validation-only).
+- **Any-other-scalar-property drift (the catch-all — this is what makes the scan exhaustive)**: the live value differs from the intended value on ANY remaining property not covered above — `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` (entity- or field-level as applicable). Route every one to **Stage 3f.6**. None is auto-kept.
+- **Rule-block drift**: a JsonLogic block differs, matched by natural key — `select_rule` (per entity), `computed_fields[]` (by `.name`), `validation_rules[]` (by `.code`), `input_type_rule` (per field). A body / message / `title` / `description` difference, OR a rule present on only one side, is drift. Route to **Stage 3f.7**.
 
-Any drift found here drives Stage 3f. No drift = Stage 3f is silent.
+Any drift found here drives Stage 3f. No drift = Stage 3f is silent. **Completeness is mandatory:** every property in the index is compared, and every divergence gets a 3f decision or a §7.1 blocker — the Stage 11 pre-save gate ("adopted-entity drift resolution complete") fails the save if any detected drift is left unresolved.

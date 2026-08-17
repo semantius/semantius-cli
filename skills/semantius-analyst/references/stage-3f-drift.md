@@ -4,9 +4,14 @@
 
 ### 3f. Adopted-entity drift resolution (run from the 3g confirmation step, before field drafting)
 
-**Fires when** Stage 2h built a non-empty `adopted_entity_index` AND comparing the blueprint's intent to the live entity's field set surfaced any drift (field-name, enum-value, format, required-ness, permission tier). One widget fires per drift kind per affected entity. Resolution is recorded as either an annotation that the analyst applies to the spec being drafted, or as a 🔴 §7.1 blocker that the user must accept before the spec is written.
+**Fires when** a per-entity comparison surfaced any drift between the live entity and the **intended** definition, on ANY property: field-name (3f.1), enum-value (3f.2), permission-tier (3f.3), format/required-ness (3f.4), every other scalar property (3f.6), and every JsonLogic rule block (3f.7). The scan is property-exhaustive (see 2h) — no property is skipped. One widget fires per drift kind per affected entity. Resolution is recorded as either an annotation that the analyst applies to the spec being drafted, or as a 🔴 §7.1 blocker that the user must accept before the spec is written.
 
-The principle: **the live catalog is the truth-source for what already exists; the blueprint is the truth-source for what's new. When they disagree on an existing thing, the user decides.** The safe default for every widget is "keep the live state and align the spec to it" — that path has zero risk to existing data.
+**Two comparison sources feed this stage — the widgets and mappings below are identical for both:**
+
+1. **Adopted-entity path (Reconcile from a blueprint).** Stage 2h built a non-empty `adopted_entity_index`; the **intended** side is the blueprint's declared fields for `promote-to-master` / `rename-incoming-from` / `reuse-from` entities. This is the original path.
+2. **Owned-entity path (Extend / edit of a deployed spec, after the 2a.1 version gate found a mismatch).** The **intended** side is the spec's own current Fields blocks for its OWNED entities; live has drifted underneath since the last deploy. Same 2h deep-inspect, same widgets — read "the spec" wherever a widget below says "the spec/blueprint declares".
+
+The principle: **the live catalog is the truth-source for what already exists; the spec/blueprint is the truth-source for what's intended. When they disagree on an existing thing, the user decides.** The safe default for every widget is "keep the live state and align the spec to it" — that path has zero risk to existing data.
 
 #### 3f.1 Field-name drift (same concept, different name)
 
@@ -167,3 +172,41 @@ For every renamed `<old_token>`, grep the entire assembled spec text for `"<old_
 **For 3f.3 option 3** (pin to both — adds hierarchy row, no actual rename): no cascade needed.
 
 **For 3f.2 option 2 / option 3** (enum changes): walk JsonLogic for literal value comparisons against the changed enum values, plus update each entity's `enum_values` and `default` lists.
+
+#### 3f.6 Generic per-property drift (every scalar property NOT covered by 3f.1–3f.4)
+
+**Policy path:** `.drift.property.<entity>.<field|entity>.<property>`.
+
+**This is the catch-all that guarantees EVERY property is validated, not just the specialized five.** Fires when any captured property outside 3f.1–3f.4 differs between live and intended. Covers, at minimum: `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` — entity- or field-level as applicable. Grade each divergence by risk, then resolve; **nothing is auto-applied silently — every drifted property is shown and decided.**
+
+- **Cosmetic / zero-data-risk** (`description`, `title`, `width`, `searchable`, `order_column`, `id_column`, `label_column`, `icon_url`, `edit_mode`, `cube_mode`, `unique_value` true→false, `precision`/`scale` INCREASE, `default_value` on a field with **no** live records): batch ALL of these for the entity into ONE consolidated review widget (multiSelect) so the user isn't clicking through dozens, while still seeing the full set. Each row: `"<Entity>.<field>.<property>: live=<L> / spec=<S>"`. Pre-checked = adopt the live value into the spec (the safe align-to-live default); unchecked = keep the spec value (written to prod on deploy).
+- **Value-change with a consequence** (`default_value` change on a field WITH live records, `unique_value` false→true with no live duplicates, `view_permission` tier change, `reference_delete_mode` change): one keep-live / apply-spec widget PER property (same 3-option shape as 3f.3), spelling out the consequence (new records get a different default; a read-visibility change; a delete-cascade change).
+- **Potentially destructive** (`precision`/`scale` REDUCTION where live values exceed the new precision, `unique_value` false→true where live duplicates exist): 🔴 §7.1 blocker, no silent apply — same posture as the cross-primitive format blocker in 3f.4. Document the required data reconciliation.
+
+**Internal mapping:** adopt-live → the spec property aligns to the live value; keep-spec → the spec retains its value and the modeler's plan carries the `update_*` (or a §7.1 blocker for the destructive tier). Every resolved property is recorded so the Stage 11 completeness gate passes.
+
+#### 3f.7 Rule-block drift (JsonLogic: `select_rule`, `computed_fields`, `validation_rules`, `input_type_rule`)
+
+**Policy path:** `.drift.rule.<entity>.<rule_key>`.
+
+**Fires when** a JsonLogic block differs between live and intended, matched by its natural key:
+- `select_rule` — one per entity; compare the whole logic object + its `description`.
+- `computed_fields[]` — matched by `.name`; compare `.logic` + `.title` / `.description`.
+- `validation_rules[]` — matched by `.code`; compare `.logic` + `.message` / `.description`.
+- `input_type_rule` — one per field; compare the logic object.
+
+A rule present on ONLY one side (live carries one the spec dropped, or the spec adds one live lacks) is also drift.
+
+- **question**: `"`<Entity>` has a <rule kind> that differs between your live model and the spec. Live: `<short gloss of live logic>`. Spec: `<short gloss of spec logic>`. Which should win?"`
+- **header**: `"Rule drift"`  **multiSelect**: `false`
+- **options** (3 + Cancel):
+  1. label: `"Keep the live rule (update the spec) (Recommended)"` — the spec's rule block aligns to live verbatim.
+  2. label: `"Keep the spec rule (apply it to prod on deploy)"` — the spec retains its rule; the modeler writes it. **Callout**: a `select_rule` or `validation_rule` change alters read visibility or write gating — name the effect (mirrors the modeler's read-visibility callout).
+  3. label: `"Keep both"` — only offered for `computed_fields` / `validation_rules` when the two entries have distinct `name` / `code`; both survive.
+  4. label: `"Cancel"`.
+
+**Internal mapping:** option 1 → spec rule = live; option 2 → spec rule kept, modeler applies; option 3 → union (distinct keys only); option 4 → halt. If keeping either side indirectly references a field or permission that a 3f.1 / 3f.3 decision renamed, run the 3f.5 JsonLogic cascade afterward.
+
+---
+
+**Completeness mandate (the guarantee behind this whole stage).** 3f.1–3f.5 handle the properties with special consequences; **3f.6 and 3f.7 are the catch-alls that make coverage total.** Every property the 2h index captured is compared, and every divergence lands in exactly one of 3f.1–3f.7 (or a §7.1 blocker). "I only checked the obvious ones" is the bug this stage exists to prevent — the Stage 11 pre-save gate fails the save if any drift the 2h scan surfaced was left without a decision.

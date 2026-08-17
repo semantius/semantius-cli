@@ -2,6 +2,8 @@
 
 *Reference for `semantius-analyst` (Stage 6).*
 
+Read: `../../use-semantius/references/jsonlogic.md` — the `input_type_rule` contract (return values, fail-open fallback, client-side evaluation).
+
 ## Stage 6: Conditional input-type scan
 
 For each entity, mechanically scan for fields whose displayed `input_type` should derive from the current record's state instead of staying fixed. Scan rules:

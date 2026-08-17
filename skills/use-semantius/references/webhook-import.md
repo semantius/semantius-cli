@@ -1,6 +1,9 @@
 # Semantius Webhook Import Reference
 
-When importing many records from a CSV, Excel, or TXT file, use the webhook-based import rather than calling `create_*` tools one record at a time.
+When importing many records from a CSV, Excel, or TXT file, never insert them one record at a time. Two batched paths exist:
+
+- **Agent-driven load (the CLI is at hand):** `postgrestRequest` with an **array `body`** — one POST per batch of ~100–250 rows, every row carrying the same keys (see crud-tools.md § "Bulk insert via `postgrestRequest`"). For a local CSV, prefer the `semantius-importer` skill: it introspects the file's schema (`utils/get_csvschema`), creates or reuses the entity, and bulk-loads exactly this way, with retries and count verification built in.
+- **Signed webhook (this reference):** an external system pushes rows to a receiver endpoint, one HTTP request per row, and the rows flow through webhook receiver logs. Use it when the producer is not the agent (a SaaS integration, a nightly export job) or when the audit trail of receiver logs is wanted.
 
 ---
 
@@ -8,6 +11,7 @@ When importing many records from a CSV, Excel, or TXT file, use the webhook-base
 
 | Approach | Best for | Requires |
 |----------|----------|---------|
+| **`postgrestRequest` array body** (not a webhook) | The agent has the file and the CLI; fastest, batched, no receiver to set up — or just use `semantius-importer` | `semantius` CLI |
 | **Bun script** | Any file, clean code, fast | `bun` installed |
 | **Pure shell** (curl + openssl) | Simple CSVs, no extra deps | `curl`, `openssl`, `awk` or `node` |
 | **Python script** | Already have Python, complex transforms | `python3`, `requests` |
@@ -234,6 +238,7 @@ build_json() {
 
 ok=0; failed=0; row=0
 failed_file="failed_rows.txt"
+resp_file="wh_response.tmp"   # response-body scratch beside the script, never /tmp
 > "$failed_file"
 
 while IFS=',' read -r code title category price stock active; do
@@ -245,7 +250,7 @@ while IFS=',' read -r code title category price stock active; do
   TIMESTAMP=$(date +%s)
   SIG=$(sign "$MSG_ID" "$TIMESTAMP" "$BODY")
 
-  HTTP_STATUS=$(curl -s -o /tmp/wh_response -w "%{http_code}" -X POST "$WEBHOOK_URL" \
+  HTTP_STATUS=$(curl -s -o "$resp_file" -w "%{http_code}" -X POST "$WEBHOOK_URL" \
     -H "Content-Type: application/json" \
     -H "webhook-id: $MSG_ID" \
     -H "webhook-timestamp: $TIMESTAMP" \
@@ -253,7 +258,7 @@ while IFS=',' read -r code title category price stock active; do
     -d "$BODY")
 
   if [ "$HTTP_STATUS" -ge 300 ]; then
-    echo "Row $row FAILED ($HTTP_STATUS): $(cat /tmp/wh_response)" | tee -a "$failed_file"
+    echo "Row $row FAILED ($HTTP_STATUS): $(cat "$resp_file")" | tee -a "$failed_file"
     ((failed++)) || true
   else
     ((ok++)) || true
@@ -263,6 +268,7 @@ while IFS=',' read -r code title category price stock active; do
   sleep 0.05
 done < "$CSV_FILE"
 
+rm -f "$resp_file"
 echo "Done: $ok ok, $failed failed"
 [ "$failed" -gt 0 ] && echo "Failed rows in $failed_file"
 ```

@@ -1,0 +1,20 @@
+[
+  {"query": "import this CSV into semantius", "should_trigger": true},
+  {"query": "I have products.csv from our old shop system - create an entity for it and load the data", "should_trigger": true},
+  {"query": "just create an entity from this file, don't import anything yet", "should_trigger": true},
+  {"query": "does this CSV match our products table? which fields are missing?", "should_trigger": true},
+  {"query": "what entity shape would this export file need in semantius?", "should_trigger": true},
+  {"query": "bulk load these 10k rows from a file into our instance", "should_trigger": true},
+  {"query": "introspect c:/data/customers.csv and tell me what schema it implies", "should_trigger": true},
+  {"query": "load this month's inventory export into the assets table", "should_trigger": true},
+  {"query": "Generate 50k product records from a CSV into our webhook receiver - bun is installed", "should_trigger": false},
+  {"query": "set up a webhook receiver so our ERP can push order rows continuously", "should_trigger": false},
+  {"query": "deploy this blueprint", "should_trigger": false},
+  {"query": "build me a CRM with companies, contacts, and deals", "should_trigger": false},
+  {"query": "Convert this CSV to JSON using python", "should_trigger": false},
+  {"query": "ok so my boss just sent me this xlsx file (its in my downloads, called something like 'Q4 sales final FINAL v2.xlsx') and she wants me to add a column that shows the profit margin as a percentage. The revenue is in column C and costs are in column D i think. she wants me to upload this to our semantius db", "should_trigger": false},
+  {"query": "add a status field to the products entity", "should_trigger": false},
+  {"query": "export the orders table to CSV", "should_trigger": true},
+  {"query": "merge these two CSV files and sort by date", "should_trigger": false},
+  {"query": "insert a new category record and link 2 products to it", "should_trigger": false}
+]

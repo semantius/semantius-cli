@@ -1,25 +1,20 @@
 ---
 name: semantius-modeler
 description: >-
-  Deploys a *-semantic-spec.md file (produced by the `semantius-analyst`
-  skill) to a live Semantius instance using the `semantius` CLI. The spec is
-  already reconciled against the live catalog by the analyst — every entity
-  carries an explicit `Reconciliation:` annotation (`create-new`,
-  `reuse-from`, `rename-incoming-from`, `promote-to-master`, or `dropped`),
-  every cross-model link is resolved, every collision decision is baked in.
-  The modeler is a thin executor: parse spec → verify reconciliation
-  annotations still hold against live → render plan → execute writes → verify
-  → optional sample data. The modeler does NOT detect collisions, classify
-  entities, drive merge / rename / promotion widgets, or ask the user about
-  catalog ambiguity — that's the analyst's job and the spec is the artifact
-  that carries those decisions. If a spec lacks reconciliation annotations or
-  the live catalog has drifted since the analyst ran, the modeler refuses to
-  execute and routes the user back to the analyst. Trigger when the user has a
-  `*-semantic-spec.md` and wants to deploy / apply / push / implement it,
-  including phrasings like "deploy the spec", "apply the schema", "push this
-  to Semantius", "implement the spec", "now make it real". If the user
-  references a `*-semantic-blueprint.md`, route them through the analyst
-  first.
+  Deploys a `*-semantic-spec.md` (from `semantius-analyst`) to a live
+  Semantius instance via the `semantius` CLI. Already reconciled: every entity
+  carries a `Reconciliation:` annotation (create-new, reuse-from,
+  rename-incoming-from, promote-to-master, dropped), every cross-model link
+  resolved, every collision decision baked in. A thin executor: parse spec,
+  verify annotations hold against live, render plan, execute writes, verify,
+  optional sample data. It does NOT detect collisions, classify entities,
+  drive merge/rename/promotion widgets, or ask about catalog ambiguity; that
+  is the analyst's job, carried in the spec. If annotations are missing or the
+  catalog drifted since the analyst ran, the modeler refuses and routes the
+  user back to the analyst. Trigger when the user has a spec and wants to
+  deploy / apply / push / implement the spec ("deploy the spec", "apply the
+  schema", "push this to Semantius", "now make it real"). If the user
+  references a `*-semantic-blueprint.md`, route through the analyst first.
 ---
 
 # semantius-modeler Skill
@@ -166,7 +161,7 @@ Build the payload with `JSON.stringify` inside the Bun script (as the in-script 
 
 This applies to every write call where the payload contains *any* model-authored text: `create_entity`, `update_entity`, `create_field`, `update_field`, `create_permission`, `update_permission`, anything else that carries user prose or JsonLogic.
 
-**4. Each call carries its own complete payload.** When iterating over multiple entities or fields whose model declarations *look similar* (e.g. the four `*_comments` entities each declare a `visibility` field with the same description and the same `input_type_rule`), do not "optimize" by writing one full payload then short payloads for the rest. Every `create_field` call carries every column the model declares for that field — `description` included — every time. The four comment entities each get their own complete `create_field` for `visibility`, each with the full description string. Identical text repeated across entities is the **expected case**, not a redundancy to eliminate. Generating a batch script that re-uses the first entity's payload as a template and elides "duplicate" keys for subsequent entities is exactly how the `service_request_comments.visibility.description` empty-string regression happens.
+**4. Each record carries its own complete payload.** When iterating over multiple entities or fields whose model declarations *look similar* (e.g. the four `*_comments` entities each declare a `visibility` field with the same description and the same `input_type_rule`), do not "optimize" by writing one full payload then short payloads for the rest. Every `create_field` record — every item of the array a bulk call sends — carries every column the model declares for that field, `description` included, every time. The four comment entities each get their own complete `visibility` item, each with the full description string. Identical text repeated across entities is the **expected case**, not a redundancy to eliminate. Bulk calls make this trap easier to fall into, not harder: the server fills an *omitted* key of one array item from the column default, so an item that "borrows" its description from the previous item silently lands with `''`. Generating a batch script that re-uses the first entity's payload as a template and elides "duplicate" keys for subsequent entities is exactly how the `service_request_comments.visibility.description` empty-string regression happens.
 
 **5. `update_*` calls are minimal.** PostgREST PATCH semantics: keys you send are written, keys you omit are left alone. When Stage 4f issues `update_field` to set `data.input_type_rule = <jsonlogic>`, the payload contains **only** `input_type_rule` — never include `description`, `title`, `format`, or any other column unless the model genuinely declares a drift on that column too. **Specifically: the rule-entry's own `description` field** (the analyst's commentary about *the rule itself*, like `"Visibility is editable for the author..."`) **is not the same thing as the field-column's `description`** (the analyst's description of *what the column stores*, like `"Public replies are visible to the requester; internal notes are agent-only"`). The rule-entry's `description` lives **inside** `input_type_rule`'s JsonLogic-array entry and travels into Semantius as part of that array. It must never leak out to become the field's `description` column. Two different surfaces, two different meanings, never crossed.
 
@@ -178,7 +173,7 @@ This applies to every write call where the payload contains *any* model-authored
 
 This skill emits shell and Bun (TypeScript) helper scripts during a deploy (e.g. the bulk seeders described in Stage 5, ad-hoc `update_entity` rule appliers, batch field creators when a model has many fields). These are **ephemeral one-shots**, tied to a single model and a single deploy run. They are not skill source.
 
-**The deploy script's committed resources are two files:** [`references/deploy-lib.ts`](./references/deploy-lib.ts) (schema-agnostic primitives — the loud `write` transport, the exit-code-aware `read1` / `readMany` existence checks, the create-or-read `ensure`, and the halting `runDeploy` harness; knows no column names, so it never changes) and [`references/scaffold-lib.ts`](./references/scaffold-lib.ts) (schema-coupled and version-stamped — the baseline-scaffold builder `scaffoldModule()` plus the live-schema `preflightSchemas` guard). Copy both into `.tmp_deploy/` and import them; never re-implement the primitives or hand-roll the baseline scaffold in each script. [`references/deploy-script-template.md`](./references/deploy-script-template.md) shows how to assemble the bespoke orchestration around them. A script that wraps writes in a bare `catch` and continues will report success over a partial deploy — the exact failure the "Failure is loud and halting" invariant exists to prevent.
+**The deploy script's committed resources are two files:** [`references/deploy-lib.ts`](./references/deploy-lib.ts) (schema-agnostic primitives — the loud `write` transport, the exit-code-aware `read1` / `readMany` / `readIn` existence checks, the create-or-read `ensure` and its bulk twins `ensureMany` / `ensurePairs` / `createMany` (one array `create_*` call per set of records, ids from a re-read), the Layer-2 `postMany` / `seedEnsureMany` for seed rows, and the halting `runDeploy` harness; knows no column names, so it never changes) and [`references/scaffold-lib.ts`](./references/scaffold-lib.ts) (schema-coupled and version-stamped — the baseline-scaffold builder `scaffoldModule()`, one array call per row kind, plus the live-schema `preflightSchemas` guard). Copy both into `.tmp_deploy/` and import them; never re-implement the primitives or hand-roll the baseline scaffold in each script. [`references/deploy-script-template.md`](./references/deploy-script-template.md) shows how to assemble the bespoke orchestration around them. A script that wraps writes in a bare `catch` and continues will report success over a partial deploy — the exact failure the "Failure is loud and halting" invariant exists to prevent.
 
 **Use Bun, not Python.** Any helper that needs more than trivial shell logic — JSON construction, response-envelope unwrapping, capturing IDs across many POSTs, conditional logic over the live catalog — is a `.ts` file run with `bun run`. Python is forbidden: Windows installs don't reliably expose `python3` on `PATH`, virtualenv state pollutes the project, and the Git Bash vs Windows-side `/tmp/` split makes script paths unreliable. Bun is a single native binary, installs once, runs the same on every platform.
 
@@ -290,16 +285,18 @@ The environment checks are shared across all four Semantius skills and live in o
 
 ## Step 0 (hard gate): Load the use-semantius Skill
 
-**This is a blocking prerequisite, not a suggestion. Do not author a deploy script and do not issue a single `create_*` / `update_*` call until you have read both files below.** Every write this skill makes goes through use-semantius's patterns. The failures that look like platform bugs — wrong column names, `null` rejected on a column you thought was optional, "I got an array, I expected an object" — are almost always Step 0 not being read. Read both, now:
+**This is a blocking prerequisite, not a suggestion. Do not author a deploy script and do not issue a single `create_*` / `update_*` call until you have read all four files below.** Every write this skill makes goes through use-semantius's patterns. The failures that look like platform bugs — wrong column names, `null` rejected on a column you thought was optional, "I got an array, I expected an object" — are almost always Step 0 not being read. Read all four, now:
 
 ```
 Read: ../use-semantius/SKILL.md
 Read: ../use-semantius/references/data-modeling.md
+Read: ../use-semantius/references/jsonlogic.md
+Read: ../use-semantius/references/select-rule.md
 ```
 
-The data-modeling reference gives you the mandatory creation order, all field formats, the Golden Rules, and exact CLI syntax. Everything in the execution stages below follows those patterns. Also read `references/cli-usage.md` if you need help with CLI invocation, piping, or error handling.
+The data-modeling reference gives you the mandatory creation order, all field formats, the Golden Rules, and exact CLI syntax. The jsonlogic and select-rule references define the rule properties the spec carries and this skill deploys verbatim (`computed_fields`, `validation_rules`, `input_type_rule`, `select_rule`). Everything in the execution stages below follows those patterns. Also read `../use-semantius/references/cli-usage.md` if you need help with CLI invocation, piping, or error handling.
 
-### Safety-net cheat table (does NOT replace reading the two files above)
+### Safety-net cheat table (does NOT replace reading the files above)
 
 These are the traps that have actually broken deploys. This table is a backstop for when you read Step 0 but a detail slips — it is a pointer to the authoritative text, never a substitute for it. **When anything here is incomplete or seems to conflict with use-semantius, use-semantius wins; go read the cited section.**
 
@@ -315,6 +312,10 @@ These are the traps that have actually broken deploys. This table is a backstop 
 | **Golden Rule #1 — read before write** | `create_*` straight from the spec | **Always `read_*` first.** Read-before-write is what makes every Stage 4 op idempotent, which is the whole basis of the re-run recovery model. Skip it and you double-create and corrupt dedup. | use-semantius SKILL.md → *Golden Rules* #1 |
 | **Trusting a create response for the new id** | Reading `.id` (or `module_id`, any natural key) off the `create_*` / `write()` return value | **Do not depend on the create response carrying the new row's `id` or natural key.** Resolve it with a `read1` by natural key *after* the create (or use the `ensure` helper in `deploy-lib.ts`, which read-before-writes then re-reads). This is the same "resolve, use, throw away" rule the Lookup conventions already state for FK targets. | This file → *Lookup conventions* (FK writes that demand a numeric id) |
 | **Wrong field names from memory** | Copying a `create_*` payload from memory or a stale example (e.g. `name` / `label` on `create_role`) | `create_role` takes `role_name` + `slug` + `module_id` + `origin` (no `name` / `label`); a domain-module role needs `origin: "model"` + `module_id` or it orphans at `origin: "user"`. When unsure of any tool's exact fields, run **`semantius info crud <tool>`** — it prints the live input schema, cheaper than a failed write. | use-semantius `references/rbac.md`; live `semantius info crud <tool>` |
+| **`label_parent` on `create_entity`** | Passing `label_parent: "<fk_field_name>"` in the SAME `create_entity` call that also declares that FK field | `label_parent` names a field that must **already exist** on the entity — the platform validates it against live columns at write time, and on a fresh `create_entity` none of the model's own fields exist yet (only the auto-generated ones do). The FK field the spec names as `label_parent` is created moments later by a separate `create_field` call, so setting `label_parent` inline always fails with `(23514) label_parent "<field>" is not a field of entity "<table>"`. **Always create the entity first (omit `label_parent`), create the named FK field, THEN issue a follow-up `update_entity` (via `updateEntity` in `deploy-lib.ts`) to set `label_parent`.** | data-modeling.md → *Key Entity Fields* (`label_parent`); Stage 1 parse → *Model-to-Entity Mapping* |
+| **A loop of single-record creates** | `for (const f of fields) await write("create_field", { data: f })`, or one `ensure(...)` per entity / permission / role | Every typed `create_*` takes `data` as an **array** (items may have different keys; one request, one transaction; the response is always an array), and `update_*` / `delete_*` take an `id` array. **More than one record of the same kind pending → ONE call**: `ensureMany` for the entities of the spec and the fields of an entity, `ensurePairs` for hierarchy edges / grants, `scaffoldModule` for the baseline, `postMany` for seed rows. N single calls where one array call would do is a defect. A failed bulk call landed nothing — fix and re-run, never fall back to per-row calls. | use-semantius SKILL.md → *Golden Rules* (batching); `deploy-lib.ts` → `ensureMany` / `createMany` |
+| **Fields before all entities exist** | Entity 1 → its fields → entity 2 → its fields … (a field on entity 1 whose `reference_table` is entity 2 fails: entity 2 does not exist yet) | **Create every entity of the spec first (one `create_entity` call), then the fields (one `create_field` call per entity).** Then every in-spec `reference_table` — later-in-§3 targets, self-references, promote-create rows — resolves immediately; there is no second pass. | Stage 4 → order block, 4c / 4d |
+| **`--single` with an array** | `--single` (or `pgRequest(..., true)`) on a call whose `data` / `body` / `id` / `table_name` is an array | The CLI rejects it (exit 1, `SINGLE_ARRAY_INPUT`): a bulk response is always an array. Drop `--single` and read the array; multi-key reads go through `readMany` / `readIn` (`in.(...)`), never `read1`. | use-semantius SKILL.md → *Response handling* → *Writes* |
 
 All Semantius operations in this skill are performed using the **`semantius` command-line tool**, for example:
 
@@ -323,7 +324,7 @@ semantius call crud read_module --single '{"filters": "module_slug=eq.lead_manag
 semantius call crud create_entity '{"data": {...}}'
 ```
 
-**Always pass `--single` on reads filtered by a unique key** (`id=eq.<int>`, `module_slug=eq.<slug>`, `permission_name=eq.<code>`, `table_name=eq.<unique>`, composite unique keys). `--single` is supported on every `crud` read tool, returns a bare object instead of a one-element array, exits 1 when the row doesn't exist, and exits 2 when the filter is ambiguous — so the canonical "exists / missing / duplicate" branches collapse to the shell exit code, no `[0]` indexing or `[]` checking. Reserve array reads for genuinely zero-or-many queries (catalog sweeps like `read_entity '{}'`, per-table field dumps, list filters).
+**Always pass `--single` on reads filtered by a unique key** (`id=eq.<int>`, `module_slug=eq.<slug>`, `permission_name=eq.<code>`, `table_name=eq.<unique>`, composite unique keys). `--single` is supported on every `crud` read tool, returns a bare object instead of a one-element array, exits 1 when the row doesn't exist, and exits 2 when the filter is ambiguous — so the canonical "exists / missing / duplicate" branches collapse to the shell exit code, no `[0]` indexing or `[]` checking. Reserve array reads for genuinely zero-or-many queries (catalog sweeps like `read_entity '{}'`, per-table field dumps, list filters) **and for the read-before-write sweep over a set** (`table_name=in.(a,b,c)` before one bulk `create_entity`; `readIn` / `ensureMany` in `deploy-lib.ts`) — an `in.()` filter with `--single` exits 2 as soon as two rows match. `--single` is never combined with an array `data` / `body` / `id` / `table_name` (the CLI rejects it, exit 1 `SINGLE_ARRAY_INPUT`): bulk writes always answer with an array.
 
 ### Lookup conventions: prefer natural keys, never narrate numeric ids
 
@@ -363,7 +364,7 @@ Work through the stages in order. **Before executing each stage, read its refere
 | 2.5 Access scope | Resolve basic vs full RBAC (frontmatter, then live setting, then ask). The two-permission projection table lives here. | `references/stage-2-reconcile.md` |
 | 3. Plan | Render the plan + ambiguity decisions; the cross-model-link flow. **Gate A** (pre-write integrity) fires here. | `references/stage-3-plan.md` |
 | 4. Execute | All writes, sub-stages 4a-4n (module, permissions, entities, fields, rules, master-data, personas/RACI, reconciliation). **Gate B** fires here. Provenance, fail-loud, and no-deletion (above) govern every write. | `references/stage-4-execute.md` |
-| 5. Verify | Structured verification report + per-area FK and text-fidelity round-trips. | `references/stage-5-verify.md` |
+| 5. Verify | Structured verification report + per-area FK and text-fidelity round-trips. On a clean deploy, Stage 5b stamps the deployed `modules.version` / `version_date` (and each reused/promoted module's version) back into the spec front-matter — the analyst's drift gate reads it next run. | `references/stage-5-verify.md` |
 | 6. Sample data | Consent-gated seeding (see the consent gate above). | `references/stage-6-sample-data.md` |
 
 Whenever any stage hits a conflict, ambiguity, format mismatch, or collision, consult `references/conflict-resolution.md` on demand.

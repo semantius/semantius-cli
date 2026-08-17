@@ -36,7 +36,7 @@ After verification, ask the sample-data question on its own (this is a gate, not
 - **Counts can vary per table, and that's expected.** There is a global default (`COUNT`, 10 unless the user names another global number) and an optional per-table override map (`perEntity`). The user's reply sets both: *"yes"* → every table = 10; *"12 each"* → `COUNT = 12`; *"12 each but 20 customers"* → `COUNT = 12` and `perEntity = { customers: { target: 20 } }`. Overrides go **up or down** — a per-table number the user named is just as valid above the default as below it.
 - **FK-id scarcity is just a downward override with a reason.** When a **required** FK into an ineligible table can supply fewer than the target distinct real IDs, set `perEntity[table] = { target: <available>, reason: "<why>" }`. The guard accepts the lower count and the receipt surfaces the reason — never silently truncate.
 - **Generate rows by looping to the target — do NOT hand-write a literal array of N rows.** The script pattern below loops `for (let i = 0; i < target(table); i++)` and builds each row from curated value pools via `pick(pool, i)` (from `deploy-lib.ts`). This makes the count **structural**: the loop cannot emit fewer than the target, and `pick` cycles pools and §5 enum values by index so data stays realistic AND every enum value appears. Hand-written literal arrays are exactly where rows get dropped under volume (10 tables × 10 rows = 100 literals), which is why a plain "yes → 10 each" so often came back short. The pools are illustrative; size them to the target and fill from the domain.
-- **The guard is the backstop, not the primary mechanism.** Declare `const COUNT` + `perEntity` + **`const eligibleTables = [...]`** (every newly-created table that must be seeded), tally `counts[table] = rows.length`, and END the script with `assertSeedCounts(counts, COUNT, perEntity, eligibleTables)` (from `deploy-lib.ts`). It prints a per-table receipt and **exits non-zero if any eligible table missed its resolved target — including a table you forgot to seed at all**: the check is driven by `eligibleTables`, so a silently-skipped table reads as 0 and fails, which a counts-only check could not catch. With loop-to-target generation it should never fire; it catches the residual mistakes (a wrong `target()`, an early FK-pool exhaustion, a whole forgotten table) and turns the old silent under-seed into a loud halt. This replaces the "count the `post(...)` calls by hand" self-check that kept getting skipped (18 vs 50, 2-3 per entity).
+- **The guard is the backstop, not the primary mechanism.** Declare `const COUNT` + `perEntity` + **`const eligibleTables = [...]`** (every newly-created table that must be seeded), tally `counts[table] = rows.length`, and END the script with `assertSeedCounts(counts, COUNT, perEntity, eligibleTables)` (from `deploy-lib.ts`). It prints a per-table receipt and **exits non-zero if any eligible table missed its resolved target — including a table you forgot to seed at all**: the check is driven by `eligibleTables`, so a silently-skipped table reads as 0 and fails, which a counts-only check could not catch. With loop-to-target generation it should never fire; it catches the residual mistakes (a wrong `target()`, an early FK-pool exhaustion, a whole forgotten table) and turns the old silent under-seed into a loud halt. This replaces the "count the inserts by hand" self-check that kept getting skipped (18 vs 50, 2-3 per entity). Tally from the array `postMany` returns (`counts[table] = rows.length`), not from the number of calls (one call per table).
 
 ### How sample data gets written (read this before any insert)
 
@@ -87,7 +87,7 @@ Create records in dependency order (entities with no parent FKs first, junction 
 
 **Generate a single Bun (TypeScript) script** for all sample data rather than making individual CLI calls. This avoids context bloat from dozens of sequential tool invocations. Write the script under `<cwd>/.tmp_deploy/seed_<short>.ts`, run it once with `bun run`, check the output, and delete it. **Never write generated scripts into the skill folder or the working directory root.** They are ephemeral one-shots; persisting them across runs accumulates as catalog drift, mixes throw-away artifacts with skill source, and survives session boundaries. See the "Generated artifacts" section above for the full rule.
 
-A Bun script is preferred over a `.sh` script for seeding because it keeps JSON construction, response-envelope unwrapping, and FK-id capture in one cross-platform runtime — no `python3 -c` extractors, no shell-quoting puzzles for record bodies containing apostrophes or Unicode, no Windows-vs-Git-Bash subprocess-piping surprises. The script consists of sequential `semantius call crud postgrestRequest` calls, one per record, capturing inserted IDs directly from the POST response for use in FK fields.
+A Bun script is preferred over a `.sh` script for seeding because it keeps JSON construction, response-envelope unwrapping, and FK-id capture in one cross-platform runtime — no `python3 -c` extractors, no shell-quoting puzzles for record bodies containing apostrophes or Unicode, no Windows-vs-Git-Bash subprocess-piping surprises. The script builds each table's rows in a loop and inserts them with **one `postgrestRequest` POST per table** (an array `body`; `postMany` / `seedEnsureMany` in `deploy-lib.ts`, ≤100 rows per call), capturing the inserted ids from the returned array for use in FK fields of the next table. Never one call per record: 10 rows × 6 tables is 6 calls, not 60.
 
 ### postgrestRequest response shape
 
@@ -97,16 +97,19 @@ By default `semantius call` **already unwraps to `response.data`** — stdout is
 - `--single` → stdout is `{...}` (single object); exit 1 on 0 rows, exit 2 on 2+ rows
 - `--diag` → stdout is `{"request":..., "response":{"data":..., ...}}` (full envelope)
 
-For a `POST` that inserts one row, **always use `--single`** so you get the object directly and the CLI fails loudly if the insert returned the wrong cardinality. For a `GET` you expect to match one row, `--single` doubles as a sanity check.
+For a `POST` that inserts a **single** row, use `--single` so you get the object directly and the CLI fails loudly if the insert returned the wrong cardinality. For a `GET` you expect to match one row, `--single` doubles as a sanity check. A bulk insert (array `body`, the seed default) **cannot** use `--single` — the CLI rejects the combination (exit 1, `SINGLE_ARRAY_INPUT`) because the response is always an array; read the ids off that array.
 
 ```bash
-# Correct — --single returns the inserted row as a bare object
+# Bulk insert (the seed default) — array body, no --single, stdout is the array of inserted rows WITH ids
+IDS=$(semantius call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":[{...},{...},{...}]}' \
+  | bun -e 'console.log((await Bun.stdin.json()).map(r => r.id).join(","))')
+
+# Single row — --single returns the inserted row as a bare object
 ID=$(semantius --single call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":{...}}' \
   | bun -e 'console.log((await Bun.stdin.json()).id)')
 
-# Also correct — no flag, stdout is the array, take [0]
-ID=$(semantius call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":{...}}' \
-  | bun -e 'console.log((await Bun.stdin.json())[0].id)')
+# WRONG — --single with an array body: rejected by the CLI (SINGLE_ARRAY_INPUT), nothing is sent
+semantius --single call crud postgrestRequest '{"method":"POST","path":"/campaigns","body":[{...},{...}]}'
 
 # WRONG — stdout is already unwrapped; there is no .response.data unless you passed --diag
 ID=$(... | bun -e 'console.log((await Bun.stdin.json()).response.data[0].id)')
@@ -123,7 +126,7 @@ COUNT=$(semantius call crud postgrestRequest '{"method":"GET","path":"/campaigns
 
 ### Script pattern
 
-Seed scripts reuse the committed [`deploy-lib.ts`](./deploy-lib.ts) for the loud Layer-2 transport — **`post(path, body)` inserts one row (via `body` + `--single`) and returns it WITH its id**. Copy that one file in first; a seed script needs **only** `deploy-lib.ts` — do NOT import `scaffold-lib.ts` (the scaffold is already deployed):
+Seed scripts reuse the committed [`deploy-lib.ts`](./deploy-lib.ts) for the loud Layer-2 transport — **`postMany(path, rows)` inserts a whole table's rows in ONE `postgrestRequest` POST (array `body`, ≤100 rows per call) and returns them WITH their ids**; `seedEnsureMany(path, rows, keyField)` is the re-run-safe variant. Copy that one file in first; a seed script needs **only** `deploy-lib.ts` — do NOT import `scaffold-lib.ts` (the scaffold is already deployed):
 
 ```bash
 mkdir -p .tmp_deploy
@@ -132,13 +135,18 @@ cp "${CLAUDE_PLUGIN_ROOT:-.claude/skills/semantius-modeler}/references/deploy-li
 
 ```typescript
 // <cwd>/.tmp_deploy/seed_<short>.ts — run with: bun run <path>
-import { post, seedEnsure, pgRequest, assertSeedCounts, pick, combine, uniq } from "./deploy-lib";
-// post("/campaigns", row) inserts ONE row and returns it with its id. The payload field is `body`, NOT
-// `data` — post() owns that, so never hand-roll {method, path, data}. For an FK-id pool from an existing
-// table, GET an array:  await pgRequest("GET", "/users?select=id&limit=20").
-// seedEnsure("/leads", row, "email") is the re-run-safe variant: it reads by the unique key first and
-// skips the insert if the row already exists. Use it over post() when the script might run more than
-// once — see "Re-running the seed (idempotency)" below.
+import { postMany, seedEnsureMany, pgRequest, assertSeedCounts, pick, combine, uniq } from "./deploy-lib";
+// postMany("/campaigns", rows) inserts ALL of a table's rows in one call and returns them with their ids.
+// The payload field is `body`, NOT `data` — postMany() owns that, so never hand-roll {method, path, data}.
+// Build the rows in the loop, insert once per table; FK pools come from the returned array. For an FK-id
+// pool from an existing table, GET an array:  await pgRequest("GET", "/users?select=id&limit=20").
+// UNIFORM KEYS: postgrestRequest is the raw PostgREST path, so every row of one table must carry the SAME
+// key set — `null` for a nullable column (reference / date / date-time), "" / 0 for a NOT NULL text /
+// number; never omit a key on some rows and never a conditional spread. postMany asserts this up front.
+// seedEnsureMany("/leads", rows, "email") is the re-run-safe variant: it reads the keys first (`in.()`)
+// and inserts only the missing rows. Use it over postMany() when the script might run more than once —
+// see "Re-running the seed (idempotency)" below. post() / seedEnsure() remain for a genuine single row;
+// a `for … await post()` loop over a table is the named anti-pattern.
 
 const COUNT = 10;                              // global default (the user's number, else 10)
 const counts: Record<string, number> = {};    // per-table tally, validated at the end
@@ -161,13 +169,14 @@ const campaignNames = ["Spring Launch", "Fall Promo", "Black Friday", "Q1 Webina
   "Product Hunt Push", "Holiday Bundle", "Win-back Email", "Beta Invite", "EMEA Roadshow"];
 const campaignStates = ["draft", "active", "paused", "completed"];   // §5 enum — cycled so each appears
 console.log("=== Seeding campaigns ===");
-const campaigns = [];
+const campaignRows = [];
 for (let i = 0; i < target("campaigns"); i++) {
-  campaigns.push(await post("/campaigns", {
+  campaignRows.push({                       // build the row; every row carries the SAME keys
     campaign_name: pick(campaignNames, i),
     workflow_state: pick(campaignStates, i),
-  }));
+  });
 }
+const campaigns = await postMany("/campaigns", campaignRows);   // ONE call; rows WITH ids
 counts.campaigns = campaigns.length;
 
 // --- leads (FK → campaigns) ---
@@ -175,16 +184,17 @@ counts.campaigns = campaigns.length;
 const firstNames = ["Jane", "Carlos", "Mei", "Tom", "Aisha", "Liam", "Sofia", "Raj", "Nina", "Omar"];
 const lastNames  = ["Smith", "Reyes", "Chen", "Becker", "Khan", "Murphy", "Rossi", "Patel", "Novak", "Haddad"];
 console.log("=== Seeding leads ===");
-const leads = [];
+const leadRows = [];
 for (let i = 0; i < target("leads"); i++) {
   const [fn, ln] = combine(i, [firstNames, lastNames]);   // distinct for i < 100
-  leads.push(await post("/leads", {
+  leadRows.push({
     lead_name: `${fn} ${ln}`,
     // `email` carries unique_value → MUST be collision-proof: append the row index (uniq), never a bare pick.
     email: uniq(`${fn}.${ln}`.toLowerCase(), i, "@example.com"),
-    campaign_id: pick(campaigns, i).id,   // FK: cycle the real parent ids captured above (never assume sequential)
-  }));
+    campaign_id: pick(campaigns, i).id,   // FK: cycle the real parent ids from the array above (never assume sequential)
+  });
 }
+const leads = await postMany("/leads", leadRows);               // ONE call (or seedEnsureMany("/leads", leadRows, "email") when re-runs are plausible)
 counts.leads = leads.length;
 
 // Last line — the mechanized count guard (backstop). Driven by eligibleTables, so it ALSO fails if a whole
@@ -201,44 +211,49 @@ assertSeedCounts(counts, COUNT, perEntity, eligibleTables);
 `pick(pool, i)` cycles (`pool[i % len]`), so a flat pool yields at most `pool.length` distinct values — above that it repeats. Do NOT fix that by hand-authoring an N-entry pool; that reintroduces the literal-volume problem the loop removed. Generate uniqueness **compositionally** or **by index**:
 
 - **`combine` for multiplicative distinct values.** `combine(i, [firstNames, lastNames])` walks `i` in mixed radix, so two 10-pools give 100 distinct tuples (F×L), three give F×L×M. Size pools so the product ≥ target. Destructure: `const [fn, ln] = combine(i, [firstNames, lastNames]);`. (Picking both with the same `i` — `pick(first,i)` + `pick(last,i)` — is the lockstep bug: only `max(F,L)` distinct, not `F×L`.)
-- **`unique_value` / DB-UNIQUE fields are a hard rule (as load-bearing as Enum safety).** Identify every field with `unique_value: true` first (the model's field tables, or `read_field`). A repeat there makes the POST fail with **409**, `post()` throws, and the run aborts on the first cycle-induced duplicate (row `pool.length + 1`) — **`assertSeedCounts` never runs, so the count guard cannot catch it.** Make these distinct by construction: `account_code: uniq("ACCT-", i)`; `email: uniq(\`${fn}.${ln}\`.toLowerCase(), i, "@example.com")`; or `combine(...)` with product ≥ target. The strictly-increasing `i` guarantees no collision.
-- **Plausible-but-distinct middle ground.** For medium-cardinality real-world fields (company / vendor / address) where the target exceeds any sensible pool, compose a base with the index or a qualifier: `` `${pick(streets, i)} ${100 + i}` ``, `` `${pick(roots, i)} ${pick(suffixes, Math.floor(i / roots.length))}` ``. Low-cardinality fields (status, category, boolean) stay on `pick` — repeats are fine.
+- **`unique_value` / DB-UNIQUE fields are a hard rule (as load-bearing as Enum safety).** Identify every field with `unique_value: true` first (the model's field tables, or `read_field`). A repeat there makes the table's POST fail with **409** — and because `postMany` sends the whole table in one all-or-nothing call, **none of that table's rows land**, `postMany` throws, and the run aborts — **`assertSeedCounts` never runs, so the count guard cannot catch it.** Make these distinct by construction: `account_code: uniq("ACCT-", i)`; `email: uniq(\`${fn}.${ln}\`.toLowerCase(), i, "@example.com")`; or `combine(...)` with product ≥ target. The strictly-increasing `i` guarantees no collision.
+- **Check the pool size before reaching for `uniq()` — do not apply it reflexively to every `unique_value` field.** `uniq(base, i)` is for when the pool is *smaller* than the target and would otherwise repeat. When the pool already has **≥ target** distinct entries, `pick(pool, i)` alone is already collision-free for `i < target` — appending `uniq()`'s index anyway is not just redundant, it actively corrupts the value. This bites hardest on **human-facing label-column fields** (`application_name`, `product_name`, `vendor_name`, anything that is the record's display name): a naive `uniq(\`${pick(appNames, i)} \`, i)` renders as `"Slack 0"`, `"1Password 9"` — a bare trailing digit that reads like a garbled version number or serial, not a real product name, and is immediately visible to the user in every list view. Before adding a suffix to any label field, count the pool: pool.length >= target → drop `uniq()` entirely, use bare `pick(pool, i)`. Only fall through to a suffix when the pool is genuinely smaller than the target (see the next bullet), and even then prefer `combine()` over a bare index so the result still reads as a plausible name.
+- **Plausible-but-distinct middle ground.** For medium-cardinality real-world fields (company / vendor / address) where the target *does* exceed any sensible pool, compose a base with a qualifier that still reads as a name, not a bare index glued onto one: `` `${pick(streets, i)} ${100 + i}` `` (a street address legitimately carries a number), `` `${pick(roots, i)} ${pick(suffixes, Math.floor(i / roots.length))}` `` (two words, no digit), or a parenthetical variant tag (`` `${pick(products, i)} (${pick(["EU", "US", "APAC"], Math.floor(i / products.length))})` ``). Reserve a bare numeric suffix (`uniq(name, i)`) for code-like or machine-facing fields (`account_code`, `email`, `sku`) where a trailing number is expected and normal; never glue a bare index onto a field that is a human display name / label column. Low-cardinality fields (status, category, boolean) stay on `pick` — repeats are fine.
 - **Correlated fields: derive in-loop from one driver** (coherence without N literals):
   ```typescript
   const days = (n: number) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  const subscriptionRows = [];
   for (let i = 0; i < target("subscriptions"); i++) {
     const state = pick(["trialing", "active", "churned"], i);
-    await post("/subscriptions", {
+    subscriptionRows.push({
       workflow_state: state,
-      churned_at: state === "churned" ? days(-7 * (i + 1)) : null,   // past, only when churned
+      churned_at: state === "churned" ? days(-7 * (i + 1)) : null,   // past, only when churned — null keeps the key present
       renews_at:  state === "churned" ? null : days(30),             // future otherwise
       seat_code:  uniq("SEAT-", i),                                  // unique_value → index-composed
     });
   }
+  const subscriptions = await postMany("/subscriptions", subscriptionRows);   // one call, uniform keys
   ```
 
 Net: `pick` for repeat-OK fields, `combine` for realistic distinct-at-scale fields, `uniq` for must-not-collide fields, in-loop derivation for correlated fields. The count stays structural (the loop); uniqueness stays compositional (the helpers); neither needs hand-authoring N rows.
 
-`--single` is the right default for seed inserts because every row is created individually and the cardinality contract is "exactly one". If `RETURNING` ever produces 0 rows (RLS suppressed the result) or 2+ rows (PostgREST returned multiple), the CLI exits non-zero and the script aborts — much better than silently picking `data[0]` from an empty or surprising array.
+**Cardinality is asserted per call, not per row.** `postMany` sends N rows and checks that PostgREST returned N — if `RETURNING` ever produces fewer (RLS suppressed rows) or the insert failed, it throws and the script aborts, so nothing silently picks `data[0]` from an empty or surprising array. `--single` keeps that role only for a genuine single-row `post()`; it cannot be combined with an array body.
 
 ### Re-running the seed (idempotency)
 
-The seed script is a **one-shot**: `post()` is a bare INSERT, so running it twice inserts a second full set of rows. `assertSeedCounts` does NOT catch this — it tallies only the rows THIS run inserted, so it still passes while the table silently holds 2×target. (This is the opposite of the deploy script, whose every write is read-before-write and re-run-convergent.) A partial first run that halted partway (e.g. a failed insert after 10 of 20 rows landed) is the common way this bites: a blind re-run appends another batch.
+The seed script is a **one-shot**: `postMany()` (like `post()`) is a bare INSERT, so running it twice inserts a second full set of rows. `assertSeedCounts` does NOT catch this — it tallies only the rows THIS run inserted, so it still passes while the table silently holds 2×target. (This is the opposite of the deploy script, whose every write is read-before-write and re-run-convergent.) A partial first run that halted partway (e.g. the `leads` call failed after the `campaigns` call landed) is the common way this bites: a blind re-run appends another set of campaigns. Note that one bulk call is all-or-nothing, so a table is either fully seeded or untouched — the partial state is always "some tables done, later ones not".
 
 Two ways to stay safe:
 
-- **Run it exactly once.** The normal path. If a run is interrupted partway, do NOT blindly re-run — first inspect what landed (`await pgRequest("GET", "/<table>?select=id")` and count), then either finish the remainder by hand or clear the table and reseed.
-- **Use `seedEnsure(path, row, keyField)` instead of `post`** when a re-run is plausible. It reads by a unique natural key before inserting and returns the existing row if present, so a re-run converges instead of duplicating — the same `ensure` contract the deploy script uses. The `keyField` must be unique per row and stable across runs: a `unique_value` column built with `uniq(base, i)` is ideal, because the same `i` regenerates the same key. It returns the row with its id either way, so FK capture is unchanged:
+- **Run it exactly once.** The normal path. If a run is interrupted partway, do NOT blindly re-run — first inspect what landed (`await pgRequest("GET", "/<table>?select=id")` and count), then either finish the remaining tables by hand or clear the table and reseed.
+- **Use `seedEnsureMany(path, rows, keyField)` instead of `postMany`** when a re-run is plausible. It reads the whole table's keys first (one `keyField=in.(…)` GET per ≤100 rows), inserts only the missing rows in one POST, and returns every row (existing or new) WITH its id in input order, so a re-run converges instead of duplicating — the same `ensure` contract the deploy script uses. The `keyField` must be unique per row, present on every row, and stable across runs: a `unique_value` column built with `uniq(base, i)` is ideal, because the same `i` regenerates the same key. FK capture is unchanged:
 
   ```typescript
+  const leadRows = [];
   for (let i = 0; i < target("leads"); i++) {
     const [fn, ln] = combine(i, [firstNames, lastNames]);
-    leads.push(await seedEnsure("/leads", {
+    leadRows.push({
       lead_name: `${fn} ${ln}`,
       email: uniq(`${fn}.${ln}`.toLowerCase(), i, "@example.com"),  // unique_value → the natural key
       campaign_id: pick(campaigns, i).id,
-    }, "email"));
+    });
   }
+  const leads = await seedEnsureMany("/leads", leadRows, "email");   // re-run-safe: reads the keys, inserts only the missing rows
   ```
 
 The script is invoked from any shell with:
@@ -247,7 +262,7 @@ The script is invoked from any shell with:
 bun run <cwd>/.tmp_deploy/seed_<short>.ts
 ```
 
-**Important for FK fields:** Capture IDs directly from each POST response, do not make a separate GET query to look them up by name. Filters with spaces (e.g. `?campaign_name=eq.Spring Launch`) require URL encoding; capturing from the POST response avoids this entirely.
+**Important for FK fields:** Capture IDs directly from the array each table's POST returns (`postMany` / `seedEnsureMany` hand you the rows with ids), do not make a separate GET query to look them up by name. Filters with spaces (e.g. `?campaign_name=eq.Spring Launch`) require URL encoding; capturing from the POST response avoids this entirely. (This is a Layer-2 rule: catalog writes via `create_*` still resolve ids by re-reading — see the deploy script's `ensureMany`.)
 
 **Enum safety, read the model, not your intuition:** Before writing any enum value into a seed record, look it up in the model's §5 enum tables for *that specific field*. Different fields on different entities may look similar but have different allowed values (e.g., `campaigns.type` includes `"Direct Mail"` but `leads.lead_source` does not, using the wrong one will fail with a check constraint error). Never guess or copy enum values across fields.
 

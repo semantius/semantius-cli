@@ -128,21 +128,32 @@ ui_baseurl=$(printf '%s' "$me" | jq -r .ui_baseurl 2>/dev/null)   # e.g. https:/
 
 **Windows (PowerShell, parses with `ConvertFrom-Json` — no jq needed):**
 ```powershell
-$me = (semantius call crud getCurrentUser 2>&1 | Out-String); $rc = $LASTEXITCODE
+# Pass '{}' explicitly. A bare no-argument `semantius call` reads its payload
+# from stdin; in a persistent PowerShell session that stdin pipe never reaches
+# EOF, so the call hangs forever with no error and no timeout (not a
+# network/auth problem — do not retry, add the explicit '{}' instead).
+$me = (semantius call crud getCurrentUser '{}' 2>&1 | Out-String); $rc = $LASTEXITCODE
 $obj = try { $me | ConvertFrom-Json } catch { $null }
 $org = $obj.semantius_org
 $ui_baseurl = $obj.ui_baseurl   # e.g. https://tests.semantius.app
 ```
+
+**Parse the full `getCurrentUser` response — never pipe it through `head` / `tail` / `cut` before `jq`.** The blocks above capture the whole output into a variable and read `semantius_org` and `ui_baseurl` with independent `jq` / `ConvertFrom-Json` reads; do not truncate the JSON, or you silently drop `ui_baseurl` (a single-line response means even `head -1` is not safe to assume). Keep the capture-then-parse shape.
+
+**A successful probe ends credential handling.** If `getCurrentUser` returns a user object with `semantius_org`, authentication is settled for the entire session — whatever mechanism supplied it (an API key in `.env`, a JWT-preauthenticated environment, ambient credentials injected by the harness). Do not inspect, create, or edit `.env`, do not ask for an API key, and do not revisit credentials later in the run. The credential steps below exist ONLY on the failure path, and only for genuine auth evidence.
 
 If the probe fails (non-zero exit, or no `semantius_org` in the response), classify by the error and act. This mirrors the `use-it-ops-starter` bootstrap exit handling; never invent a connection or onboarding option beyond these:
 
 | Probe result | What you DO | What you SAY (shape) |
 |---|---|---|
 | `command not found` / `not recognized` / ENOENT (binary missing despite 3a) | The install in 3a did not take or PATH did not refresh. Re-run the install one-liner, then ask the user to restart the shell and re-run. | *"Installing the Semantius CLI..."* (then, if needed) *"Please restart your shell so the CLI is on PATH, then re-run."* |
-| Auth failure (401, expired token, missing or invalid `.env`) | Ask the user for their API key, write `SEMANTIUS_API_KEY=<key>` to the `.env` the CLI reads (repo root / cwd), then re-run the probe. Do NOT ask for a base URL or offer to provision anything. | *"I need your Semantius API key to connect. Generate one at https://app.semantius.com/dashboard (Settings > API Keys), paste it here, and I'll save it and continue."* |
+| Transient / network error (exit 3, timeout, connection refused, 5xx) | Re-probe **once**. If it fails again, surface the error verbatim and stop. A transient error is NOT an auth failure and never justifies touching `.env` or asking for a key. | *(show the exact error, then)* *"The Semantius API isn't reachable right now. Please check connectivity and re-run."* |
+| **Explicit** auth failure (exit 5, `401`, `403`, expired or invalid token) | Only on this evidence: ask the user for their API key, write `SEMANTIUS_API_KEY=<key>` to the `.env` the CLI reads (repo root / cwd), then re-run the probe. Do NOT ask for a base URL or offer to provision anything. If the session was authenticated by something other than an API key (JWT preauth), surface the error instead of converting the session to key auth. | *"I need your Semantius API key to connect. Generate one at https://app.semantius.com/dashboard (Settings > API Keys), paste it here, and I'll save it and continue."* |
 | JWT-audience error (`required audience not found, received [...]`) | Surface the error verbatim and wait; do not retry in a loop. | *(show the exact error, then)* *"This looks like a server-side auth-scope issue. Could you check the API key's audience?"* |
 
 Re-probe after the install or after saving the key; only continue once `getCurrentUser` returns a user object with `semantius_org`. Write the resolved `.env` with `SEMANTIUS_API_KEY=<key>` (append or update the line; preserve any other keys already in the file). All of this stays out of chat except the single install line or the API-key request above.
+
+**Read the key from `.env`; never carry it forward inline.** The CLI reads `SEMANTIUS_API_KEY` from `.env` on every call, so once it is saved you never pass it again — do **not** hardcode it or re-emit it in an inline `export SEMANTIUS_API_KEY=...` in a later command. Two reasons this matters: (1) a key pasted into chat can carry invisible corruption — most commonly a literal `…` (U+2026 horizontal ellipsis) or `...` where a console truncated a long token for display, plus stray whitespace or smart quotes — and the `getCurrentUser` probe above is exactly what catches that *before* any real work; carrying the raw pasted string into export statements bypasses the file the probe validated and re-introduces the bad value. (2) The `.env` file is the single source of truth, so any later script that needs the key should let the CLI read it (or read it from the file with `$(grep '^SEMANTIUS_API_KEY=' .env | cut -d= -f2-)`), never re-type it. If a probe ever fails with an auth error *after* a successful one, suspect a stale inline copy, not the saved `.env`.
 
 ### 3c. Halt if `org` is `adenin`
 

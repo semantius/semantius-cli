@@ -1,24 +1,20 @@
 ---
 name: semantius-analyst
 description: >-
-  Reconciles a `*-semantic-blueprint.md` (produced by the `semantius-architect`
-  skill) against the live Semantius catalog and produces a deployable
-  `*-semantic-spec.md`. **Trigger when the user has a blueprint and wants it
-  turned into a deployable spec**, or when they say: "reconcile this blueprint
-  with semantius", "what's already in the catalog that this blueprint can
-  reuse", "extend the blueprint into a deployable spec", "fold this blueprint
-  into the live catalog", "make the blueprint match what we already have", or
-  any variation that involves comparing a blueprint to live Semantius state and
-  filling in field-level detail. The analyst is the gatekeeper of the unified
-  catalog: it inspects every blueprint entity against built-ins, same-module
-  duplicates, shared masters, cross-module collisions, and near-name collisions;
-  drives the user through merge / rename / reuse / promote decisions; confirms
-  which optional blueprint entities to include; and only then elicits
-  field-level detail (fields, formats, validation rules, computed fields,
-  input-type rules, select rules) for the entities the spec will OWN. Reused
-  entities are referenced, not respecified. Output: a
-  `<system_slug>-semantic-spec.md` that the `semantius-modeler` skill deploys
-  with no further interactive decisions.
+  Reconciles a `*-semantic-blueprint.md` (from `semantius-architect`) against
+  the live catalog into a `*-semantic-spec.md`. **Trigger when the user has a
+  blueprint to turn into or extend into a deployable spec**, or on "reconcile
+  this blueprint with semantius", "what in the catalog can this blueprint
+  reuse", "fold this blueprint into the live catalog", "make the blueprint
+  match what we already have", or any ask comparing a blueprint to live state
+  and filling in field-level detail. Gatekeeper of the unified catalog: the
+  analyst inspects every blueprint entity against built-ins, same-module
+  duplicates, shared masters, cross-module and near-name collisions; drives
+  merge/rename/reuse/promote decisions; confirms which optional blueprint
+  entities to include; then elicits field-level detail (formats, validation
+  rules, computed fields, input-type and select rules) only for entities the
+  spec OWNs. Reused entities are referenced, not respecified. Spec deploys via
+  `semantius-modeler`, no further interactive decisions.
 ---
 
 # Semantius Analyst
@@ -65,9 +61,9 @@ A useful test: *"if I deleted this chat message before sending, would the user n
 
 ---
 
-## Skill version: `CURRENT_VERSION = "5.3"` and `EXPECTED_BLUEPRINT_VERSION = "3.0"`
+## Skill version: `CURRENT_VERSION = "5.4"` and `EXPECTED_BLUEPRINT_VERSION = "3.0"`
 
-This skill stamps every spec file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"5.3"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
+This skill stamps every spec file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"5.4"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
 
 The analyst reads `blueprint_version` from the blueprint's front-matter. **Major** must equal `EXPECTED_BLUEPRINT_VERSION`'s major (currently `"3.0"`, i.e. major `3` — minor is informational and not compared). Major older → ask the user to regenerate the blueprint via `semantius-architect` Mode D Rebuild. Major newer → ask the user to update this analyst skill.
 
@@ -84,6 +80,23 @@ The analyst plans renames, merges, and promotions as **rewires** (FK reseats, hi
 Banned in all flows: `delete_entity`, `delete_field`, `delete_module`, `delete_permission`, `delete_permission_hierarchy`, `delete_role`, `delete_role_permission`, `delete_user`, `delete_user_role`, `delete_webhook_receiver`, `delete_webhook_receiver_log`, `delete_api_key`.
 
 When reconciliation requires "removing" something (e.g. user wants to retire an entity that exists in the live catalog), produce a §7.1 🔴 blocker asking the user to confirm a manual cleanup pass after deploy, OR a §7.2 🟡 deferral. Never plan the delete.
+
+### 🚫 NEVER touch the user's files — the analyst only WRITES its own spec
+
+This is an **absolute, non-negotiable rule with no exceptions and no "helpful" override.** The analyst's ONLY filesystem write is creating/updating the single spec file it was invoked to produce (`semantius/specs/<slug>-semantic-spec.md`, or an explicit path the user gave). Nothing else on disk is ever the analyst's to touch.
+
+**The analyst MUST NEVER, under any circumstances:**
+
+- **Delete, remove, `rm`, or unlink any file** — not a stale spec, not a duplicate, not a `master1`/`master2`/`draftN` variant, not a backup, not "leftover cruft," nothing. Ever.
+- **Rename, move, `mv`, or overwrite any pre-existing file** other than the exact spec file it is writing.
+- **"Clean up," "tidy," "consolidate," "deduplicate," or "organize"** the workspace, the specs folder, the blueprints folder, or anything else. Cleanup is **NOT part of this skill's job.** Full stop.
+- **Offer, suggest, recommend, or ask permission to** do any of the above. Do not surface a cleanup option in an `AskUserQuestion`, do not mention it in chat, do not propose it as a "next step." If the analyst notices duplicate or stale-looking files, it says **nothing** about deleting them — it simply writes its own spec and leaves every other file exactly as it found it.
+
+**Duplicate / stale / oddly-named spec files are none of the analyst's business.** If the workspace contains other `*-semantic-spec.md` files (from prior runs, other branches, whatever), the analyst treats them as read-only context at most and **leaves them untouched**. The presence of a `master3` file that "already matches live" is NOT a reason to rename it, delete siblings, or skip work — reconcile as asked and write to the target path.
+
+**If the user themselves explicitly asks for a deletion or rename**, the analyst still does not perform it silently as part of reconciliation: confirm the exact file(s) and the exact operation in plain language, and only act on an unambiguous, file-specific instruction — never on the analyst's own initiative or inference. The default, the fallback, and the behavior under any ambiguity is **always "leave it alone."**
+
+Rationale: these are the user's design artifacts and their git working tree. They review and commit. A skill that deletes or renames files the user did not ask it to touch destroys work and trust. Writing one spec file is the entire filesystem footprint of this skill.
 
 ---
 
@@ -116,7 +129,7 @@ Read: ../use-semantius/SKILL.md
 Read: ../use-semantius/references/data-modeling.md
 ```
 
-The data-modeling reference gives you the mandatory creation order, all field formats, the Golden Rules, and exact CLI syntax. Everything below follows those patterns. Also read `../use-semantius/references/cli-usage.md` if you need help with CLI invocation, piping, or error handling.
+The data-modeling reference gives you the mandatory creation order, all field formats, the Golden Rules, and exact CLI syntax. Everything below follows those patterns. Also read `../use-semantius/references/cli-usage.md` if you need help with CLI invocation, piping, or error handling. The rule-level references (`../use-semantius/references/jsonlogic.md` for `computed_fields` / `validation_rules` / `input_type_rule`, `../use-semantius/references/select-rule.md` for `select_rule`) are loaded by the stage files that author them (Stages 6, 7, 10) — don't preload them here.
 
 All Semantius operations in this skill are performed using the **`semantius` command-line tool**, e.g.:
 
@@ -195,7 +208,7 @@ The lifecycle state machine still exists in a `basic` spec (every lifecycle enti
 2. **Suppress the analyst's own net-new governance discovery:**
    - **Stage 5 (W3/W4/W4n/W5 workflow-permission scan)** emits nothing — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`.
    - **Stage 7 (`select_rule`)** emits nothing — no per-row read scoping (every entity falls back to table-level `view_permission`).
-   - **Stage 9.5** forces `documentation` mode (Stage 9.5 Step 0 auto-derives the mode; `living` is never selected under `basic`), emits only the `<slug>_viewer` + `<slug>_manager` baseline roles and the single `manage → read` edge, and skips RACI realization, the Processes catalog, and §9.2 functional ownership. No `persona` frontmatter is emitted.
+   - **Stage 9.5** forces `documentation` mode (Stage 9.5 Step 0 auto-derives the mode; `living` is never selected under `basic`), emits only the viewer + manager baseline roles (role slugs normalized `-`→`_`, e.g. `it_ops_starter_viewer`) and the single `manage → read` edge, and skips RACI realization, the Processes catalog, and §9.2 functional ownership. No `persona` frontmatter is emitted.
    - **Stage 10** keeps only permission-free computed fields / validation rules (pure data-integrity logic); it drops any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission` on a code that no longer exists), since the gating permission is gone.
 
 The result satisfies the analyst's own §8.1/§9.1 invariants by construction (exactly one baseline-read + one baseline-manage, no gate rolled under `manage`, no orphan `narrow`) and the modeler's parse-time validation. The Stage 11 pre-save verifier additionally checks `access_scope: basic` coherence (no admin/gate/override/narrow rows, no personas, no RACI realization).
@@ -274,7 +287,7 @@ Failure modes (all 🔴 blockers, halt save):
 
 - A `require_permission` argument references a permission code not in §8.1.
 - A `select_rule` references a column that isn't on this entity.
-- A `select_rule` JsonLogic body contains a **throwing operator** (`require_permission` or `throw_error`). A `select_rule` compiles to a per-row `FOR SELECT` policy evaluated on every read; a throw aborts the entire read instead of hiding the row. Permission checks inside a `select_rule` must use the non-throwing `has_permission` (it returns `false` rather than throwing). See use-semantius `data-modeling.md`, which calls `require_permission` *"Wrong shape for `select_rule`"*. This is the check whose absence let `require_permission` ship inside a read rule.
+- A `select_rule` JsonLogic body contains a **throwing operator** (`require_permission` or `throw_error`). A `select_rule` compiles to a per-row `FOR SELECT` policy evaluated on every read; a throw aborts the entire read instead of hiding the row. Permission checks inside a `select_rule` must use the non-throwing `has_permission` (it returns `false` rather than throwing). See use-semantius `jsonlogic.md`, which calls `require_permission` *"Wrong shape for `select_rule`"*. This is the check whose absence let `require_permission` ship inside a read rule.
 - An entity's `**Edit permission:** admin` annotation but the `baseline-admin` row (`<slug>:admin`) isn't declared in §8.1.
 - An `override`-tier `view_all_<plural>` / `manage_all_<plural>` row in §8.1 with no `select_rule` on the matching entity (the row-scope playbook's owner + oversight shape mints both together), or vice versa.
 - A `<slug>:<workflow>` permission declared in §8.1 but never invoked by any `require_permission` rule.
@@ -292,7 +305,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 
 | Check | Failure surfaces as |
 |---|---|
-| `version` is `"5.3"` | front-matter has wrong major |
+| `version` is `"5.4"` | front-matter has wrong major |
 | Every blueprint §3 entity has a Reconciliation decision | missing decisions list |
 | No `reuse-from` entity carries a Fields block | over-spec list |
 | No `create-new` / `rename-incoming-from` / `promote-to-master` entity is missing a Fields block | under-spec list |
@@ -310,7 +323,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | Identifier-leakage scan (backticks around tokens, `table_name`/`field_name` in user-facing prose surfaces) | leakage list |
 | Em-dash scan (`—`) | em-dash list |
 | US-spelling scan (`-ise` / `-our` / `-ised` tokens) | British-spelling list |
-| §2 Mermaid completeness (every §3 entity is a node, every §4 row is an edge, every edge has a verb matching `relationship_label`) | diagram drift |
+| §2 Mermaid completeness AND correctness (every §3 entity is a node; every §4 row is an edge; every edge's **direction** and **verb** are mechanically derived from §3 `relationship_label` + §4 `Cardinality`/`Kind`, not hand-authored — see Stage 11 "Generate §2, never hand-author it") | diagram drift |
 | §7.1 🔴 blockers count | block count; halt save if > 0 |
 | **Adopted-entity drift resolution complete** — every drift surfaced by Stage 2h has either a Stage 3f decision applied OR a §7.1 🔴 blocker documenting why it's deferred | unresolved drift list (entity, drift kind, expected resolution) |
 | **JsonLogic field references resolve** — every `{"var": "<token>"}` in every `computed_fields`, `validation_rules`, `input_type_rules`, and `select_rule` references a field that exists on the relevant entity (either declared in the spec's Fields block, or carried from live state via Stage 2h for adopted/reused entities, or known to be a Semantius built-in column like `id`, `created_at`) | dangling JsonLogic var list (entity, rule code/name, unresolved token) |
@@ -327,7 +340,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 bun ".claude/skills/semantius-architect/references/consistency-check.ts" "semantius/specs/<slug>-semantic-spec.md"
 ```
 
-For a spec it byte-compares: the frontmatter `entities:` list ⟺ §2 `Table name` ⟺ §3 sub-section headings (the entity set, strict 1:1); §2 `Singular label` ⟺ the §3 heading singular label (per entity); and that every §4 / §5 / §8.2 / mermaid reference resolves to a declared entity. It is **content-agnostic** — it never judges language or casing, only that every occurrence of a name agrees. A non-zero exit prints the exact entity and the disagreeing locations; fix every reported line and re-run until exit 0 before narrating the close-out. Do not substitute reading for running it.
+For a spec it byte-compares: the frontmatter `entities:` list ⟺ §2 `Table name` ⟺ §3 sub-section headings (the entity set, strict 1:1); §2 `Singular label` ⟺ the §3 heading singular label (per entity); that every §4 / §5 / §8.2 / mermaid reference resolves to a declared entity; and that every §2 mermaid edge's direction + verb agrees with what §3 `relationship_label` + §4 `Cardinality`/`Kind` derive (a `parent`-kind row is always drawn as a bare arrow with no verb, per the junction convention; every other row's verb comes from §3, never invented at diagram time). It is **content-agnostic** on prose — it never judges language or casing, only that every occurrence of a name (and now every diagram edge) agrees with its source. A non-zero exit prints the exact entity and the disagreeing locations; fix every reported line and re-run until exit 0 before narrating the close-out. Do not substitute reading for running it.
 
 The drift / JsonLogic block of checks is the analyst's safety net against modeler-time halts. Any failure means the spec would be rejected by the modeler at deploy time anyway, so failing now (in the analyst, where the user has full context) is strictly better than failing later (in the modeler, where the user has lost the conversational thread). Every check above corresponds to a modeler refusal condition documented in `../semantius-modeler/SKILL.md` and `../../docs/architecture.md §6` failure modes.
 
@@ -393,7 +406,9 @@ Lead with the structured output (tables, JSON, plans). Prose between sections st
 
 - [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) - the full writing conventions (Conventions 1-8)
 - [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) - environment preflight (shared by all four skills)
-- [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) - field formats, built-in field shapes, JsonLogic catalog, FK rules, the Golden Rules
+- [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) - field formats, built-in field shapes, FK rules, the Golden Rules
+- [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md) - JsonLogic catalog: `computed_fields`, `validation_rules`, extension operators, cross-entity lookups, `input_type_rule`
+- [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md) - row-level security: `select_rule` REPLACE semantics, oversight disjuncts
 - [`../use-semantius/SKILL.md`](../use-semantius/SKILL.md) - CLI for catalog inspection
 - [`../semantius-architect/SKILL.md`](../semantius-architect/SKILL.md) - produces blueprints (this skill's input)
 - [`../semantius-architect/references/semantic-blueprint-template.md`](../semantius-architect/references/semantic-blueprint-template.md) - the blueprint format

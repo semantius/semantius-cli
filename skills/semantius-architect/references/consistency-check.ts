@@ -404,6 +404,9 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
     }
   }
 
+  // mermaid edges ⟺ §3 relationship_label + §4 cardinality (direction/verb must be DERIVED, never hand-authored)
+  issues.push(...checkSpecMermaidAgainstSource(lines, text, fm));
+
   // --- RACI-mode decision provenance (the governance-mode gate) ---
   // When the spec carries a RACI matrix (§9.1 "RACI realization:"), the governance-mode
   // decision (analyst Stage 9.5 Step 0) was REQUIRED before the spec could be written.
@@ -436,6 +439,179 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
   return issues;
 }
 
+// ---------- SPEC mermaid generation (derive §2 from §3 + §4, never hand-author) ----------
+
+/**
+ * Parse every §3.N field-level relationship annotation into a
+ * "<table> <field>" -> relationship_label map. This is the ONLY place
+ * verb text is allowed to come from; §4 carries structure (From/To/Cardinality/
+ * Kind), never the verb.
+ */
+function parseSpecRelationshipLabels(lines: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  let currentTable: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const h = lines[i].match(/^###\s+3\.\d+\s+`([^`]+)`/);
+    if (h) { currentTable = h[1].trim(); continue; }
+    if (/^##\s/.test(lines[i]) && !/^###/.test(lines[i])) currentTable = null; // left §3 entirely
+    if (!currentTable || !isTableRow(lines[i]) || isSeparatorRow(lines[i])) continue;
+    const row = cells(lines[i]);
+    const field = firstBacktick(row[0] || "");
+    const format = firstBacktick(row[1] || "");
+    if (!field || (format !== "reference" && format !== "parent")) continue;
+    const note = row[5] || "";
+    const vm = note.match(/relationship_label:\s*"([^"]*)"/);
+    if (vm) out.set(`${currentTable} ${field}`, vm[1]);
+  }
+  return out;
+}
+
+/** §4 relationship summary rows as structured records (From/Field/To/Cardinality/Kind). */
+function parseSpecRelationshipRows(lines: string[]): { from: string; field: string; to: string; cardinality: string; kind: string }[] {
+  const out: { from: string; field: string; to: string; cardinality: string; kind: string }[] = [];
+  for (const row of tableRows(topSection(lines, 4))) {
+    const from = firstBacktick(row[0] || "");
+    const field = firstBacktick(row[1] || "") || (row[1] || "").trim();
+    const to = firstBacktick(row[2] || "");
+    const cardinality = (row[3] || "").trim();
+    const kind = (row[4] || "").trim();
+    if (from && to) out.push({ from, field, to, cardinality, kind });
+  }
+  return out;
+}
+
+/** Per-entity `**Reconciliation:**` line under each §3.N heading, for the `master` classDef. */
+function parseSpecReconciliation(lines: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  let currentTable: string | null = null;
+  for (const l of lines) {
+    const h = l.match(/^###\s+3\.\d+\s+`([^`]+)`/);
+    if (h) { currentTable = h[1].trim(); continue; }
+    if (/^##\s/.test(l) && !/^###/.test(l)) currentTable = null;
+    const rm = l.match(/^\*\*Reconciliation:\*\*\s*(.+?)\s*$/);
+    if (rm && currentTable) out.set(currentTable, rm[1].trim());
+  }
+  return out;
+}
+
+/**
+ * Deterministically derive the §2 mermaid block from §3 (relationship_label,
+ * Reconciliation) + §4 (From/Field/To/Cardinality/Kind) + frontmatter entities.
+ * This exists so §2 is never hand-authored / freely re-generated: the model
+ * fills §3 and §4 first (already fully resolved by that point in reconciliation),
+ * then this function's output is pasted into §2 verbatim.
+ *
+ * Direction rule (matches semantic-spec-template.md's cardinality convention:
+ * arrows run parent[one-side] -> child[many-side]):
+ *   Cardinality "N:1"  -> From is the many-side, To is the one-side/parent: emit `To --> From`.
+ *   Cardinality "1:N"  -> From is the one-side/parent: emit `From --> To`.
+ *   Cardinality "1:1"  -> flat connector: emit `From --- To`.
+ * Verb rule: an FK leg carries its §3 `relationship_label` as the edge verb
+ * whenever one is declared, and is drawn as a bare arrow when none is. This is
+ * uniform across Kind: a `reference` leg carries its verb; a junction leg
+ * carries the verb of the M:N relationship it decomposes (Stage 4 stamps that
+ * verb onto the leg pointing back to the M:N source entity, so `A covers B`
+ * survives as `A -->|covers| junction` and is not lost on decomposition). Legs
+ * with no declared `relationship_label` — the non-subject junction leg and plain
+ * master-detail ownership `parent` links — stay bare. This keeps the diagram
+ * byte-for-byte consistent with the §3 `relationship_label` annotations (stage-4
+ * "Set relationship_label for every FK field"), instead of silently dropping a
+ * verb the field actually declares.
+ */
+function emitSpecMermaid(lines: string[], fm: ReturnType<typeof frontmatter>): string {
+  const relLabels = parseSpecRelationshipLabels(lines);
+  const rows = parseSpecRelationshipRows(lines);
+  const reconciliation = parseSpecReconciliation(lines);
+
+  const s2 = topSection(lines, 2);
+  const s2ids: string[] = [];
+  for (const row of tableRows(s2)) {
+    if (!/^\d+$/.test(row[0] || "")) continue;
+    const id = firstBacktick(row[1] || "");
+    if (id) s2ids.push(id);
+  }
+  const orderedEntities = fm.entities.length ? fm.entities : s2ids;
+
+  const edgeLines: string[] = [];
+  const referenced = new Set<string>();
+  for (const row of rows) {
+    referenced.add(row.from);
+    referenced.add(row.to);
+    const verb = relLabels.get(`${row.from} ${row.field}`) ?? null;
+    if (/^1:1$/i.test(row.cardinality)) {
+      edgeLines.push(verb ? `    ${row.from} ---|${verb}| ${row.to}` : `    ${row.from} --- ${row.to}`);
+    } else if (/^1:n$/i.test(row.cardinality)) {
+      edgeLines.push(verb ? `    ${row.from} -->|${verb}| ${row.to}` : `    ${row.from} --> ${row.to}`);
+    } else {
+      // default / "N:1": To is the parent (one-side), From is the child (many-side).
+      edgeLines.push(verb ? `    ${row.to} -->|${verb}| ${row.from}` : `    ${row.to} --> ${row.from}`);
+    }
+  }
+
+  const standaloneLines = orderedEntities
+    .filter((id) => !referenced.has(id))
+    .map((id) => `    ${id};`);
+
+  const builtinIds = orderedEntities.filter((id) => BUILTINS.has(id) && referenced.has(id));
+  const masterIds = orderedEntities.filter((id) => {
+    if (BUILTINS.has(id) || !referenced.has(id)) return false;
+    const r = reconciliation.get(id) || "";
+    return /^reuse-from\b/.test(r) || /^promote-to-master\b/.test(r);
+  });
+
+  const out: string[] = ["```mermaid", "flowchart LR"];
+  if (builtinIds.length) out.push("    classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;");
+  if (masterIds.length) out.push("    classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;");
+  out.push(...edgeLines, ...standaloneLines);
+  for (const id of builtinIds) out.push(`    class ${id} builtin;`);
+  for (const id of masterIds) out.push(`    class ${id} master;`);
+  out.push("```");
+  return out.join("\n");
+}
+
+// ---------- SPEC checks: mermaid ⟺ §3/§4 (the check checkBlueprint has always had) ----------
+
+/**
+ * The gap this closes: checkSpec previously only verified mermaid edge
+ * ENDPOINTS resolve to declared entities — never that an edge's direction or
+ * verb agrees with §3's relationship_label / §4's cardinality. That blind spot
+ * let a spec ship with §3 declaring relationship_label: "owns" while §2 drew
+ * the edge reversed with the verb "owned by" — self-contradictory within one
+ * file, undetected. This regenerates the canonical diagram from §3/§4 and
+ * diffs it edge-for-edge against what's actually in §2.
+ */
+function checkSpecMermaidAgainstSource(lines: string[], text: string, fm: ReturnType<typeof frontmatter>): Issue[] {
+  const issues: Issue[] = [];
+  const rows = parseSpecRelationshipRows(lines);
+  if (rows.length === 0) return issues; // no §4 rows to derive from; nothing to check
+
+  const canonical = emitSpecMermaid(lines, fm);
+  const { edges: wantEdges } = parseMermaid(mermaidBlock(canonical));
+  const { edges: gotEdges } = parseMermaid(mermaidBlock(text));
+
+  const edgeKey = (e: MEdge) => `${e.from} |${(e.verb ?? "").trim()}| ${e.to}`;
+  const wantSet = new Set(wantEdges.map(edgeKey));
+  const gotSet = new Set(gotEdges.map(edgeKey));
+
+  for (const e of gotEdges) {
+    if (!wantSet.has(edgeKey(e))) {
+      issues.push({
+        check: "mermaid ⟺ §3/§4 (derived)",
+        detail: `§2 diagram edge \`${e.from}\` -|${e.verb ?? ""}|-> \`${e.to}\` does not match what §3 (relationship_label) + §4 (cardinality) derive. Direction and/or verb has drifted from source — regenerate §2 from §3/§4, do not hand-edit it.`,
+      });
+    }
+  }
+  for (const e of wantEdges) {
+    if (!gotSet.has(edgeKey(e))) {
+      issues.push({
+        check: "mermaid ⟺ §3/§4 (derived)",
+        detail: `§3/§4 imply the edge \`${e.from}\` -|${e.verb ?? ""}|-> \`${e.to}\` but §2 is missing it or has it drawn differently. Regenerate §2 from §3/§4.`,
+      });
+    }
+  }
+  return issues;
+}
+
 // ---------- driver ----------
 
 function checkFile(path: string): { issues: Issue[]; artifact: string } {
@@ -449,10 +625,41 @@ function checkFile(path: string): { issues: Issue[]; artifact: string } {
   return { issues: [{ check: "artifact", detail: `unrecognized or missing \`artifact:\` (got "${artifact}"); expected semantic-blueprint or semantic-spec` }], artifact };
 }
 
+/**
+ * `--emit-mermaid <file.md>` derives the §2 mermaid block from that file's §3
+ * (relationship_label) + §4 (From/Field/To/Cardinality/Kind) and prints it to
+ * stdout. Specs only (blueprints declare relationships directly in §5, not via
+ * a separate per-field label + summary table, so nothing to derive there).
+ * Analyst usage: write frontmatter + §3 + §4 first (already fully resolved by
+ * that point in reconciliation), run this, paste the output as §2 verbatim.
+ * Never hand-author §2 — that's exactly the drift this whole file exists to
+ * prevent.
+ */
+function emitMermaidMode(path: string) {
+  const text = readFileSync(path, "utf8").replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+  const lines = text.split("\n");
+  const fm = frontmatter(text);
+  const artifact = fm.get("artifact");
+  if (artifact !== "semantic-spec") {
+    console.error(`--emit-mermaid only supports semantic-spec files (got "${artifact ?? "(unknown)"}")`);
+    process.exit(2);
+  }
+  console.log(emitSpecMermaid(lines, fm));
+}
+
 function main() {
-  const files = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  if (args[0] === "--emit-mermaid") {
+    if (!args[1]) {
+      console.error("usage: bun consistency-check.ts --emit-mermaid <file.md>");
+      process.exit(2);
+    }
+    emitMermaidMode(args[1]);
+    return;
+  }
+  const files = args;
   if (files.length === 0) {
-    console.error("usage: bun consistency-check.ts <file.md> [<file2.md> ...]");
+    console.error("usage: bun consistency-check.ts <file.md> [<file2.md> ...]\n       bun consistency-check.ts --emit-mermaid <file.md>");
     process.exit(2);
   }
   let failed = 0;

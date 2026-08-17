@@ -22,9 +22,15 @@
  *     → baseline permissions  (read / manage / [admin], each with module_id)
  *     → baseline hierarchy     (manage→read, [admin→manage])
  *     → baseline roles         (viewer / manager / [admin]: role_name + slug +
- *                               module_id + origin, slug hyphen-normalized)
+ *                               module_id + origin + catalog_role_code, slug
+ *                               hyphen-normalized)
  *     → baseline role_permissions
  *     → the SIX module-record FK wires + access_scope
+ *
+ * Every row kind is written as ONE set (deploy-lib `ensureMany` / `ensurePairs`):
+ * one `in.()` read, ONE `create_*` call carrying every missing row, one re-read
+ * for the ids, and one id-array `update_*` to converge a drifted `module_id`.
+ * Never a loop of single-record creates. Re-running is a pure no-op.
  *
  * It makes NO plan decisions. It takes the already-resolved §8.1 baseline
  * permission descriptions, §9.1 baseline role slugs, and the Stage-2.5 scope as
@@ -44,19 +50,57 @@
  * `runDeploy` so "model is live" can never print over a broken scaffold.
  */
 
-import { read1, write } from "./deploy-lib";
+import { read1, write, ensureMany, ensurePairs } from "./deploy-lib";
 
 /** Bump in lockstep with the modeler `EXPECTED_MAJOR` / analyst major. Schema-coupled. */
 export const SCAFFOLD_LIB_MAJOR = 5;
 
 // ───────────────────────────── live-schema preflight ─────────────────────────
 
+/** Resolve a local `#/...` JSON-pointer `$ref` (zod → JSON Schema can hoist a schema shared by both `anyOf` variants into `$defs`). */
+function deref(node: any, root: any): any {
+  if (node && typeof node.$ref === "string" && node.$ref.startsWith("#/")) {
+    return node.$ref.slice(2).split("/").reduce((o: any, k: string) => o?.[k], root) ?? node;
+  }
+  return node;
+}
+
+/**
+ * The column names a tool accepts under `data`, across every shape the CLI has
+ * printed for the crud tools:
+ *   (a) legacy   `data: { type: "object", properties: {...} }`
+ *   (b) bulk     `data: { anyOf: [ { type: "object", properties }, { type: "array", items: { properties } } ] }`
+ *       (every create_* since the array-inserts release; `data` is one record OR an array of records)
+ *   (c) tools that are not `{data}`-wrapped → their top-level properties.
+ * If a `data` node exists but no object shape can be found under it, THROW: "can't
+ * verify" halts. It must NEVER fall back to the top-level `{data, accept}` keys —
+ * that fallback is what made every preflight false-fail ("create_module has no
+ * field(s) [module_name, ...]. Live schema accepts: [accept, data]") the moment
+ * the crud server started publishing shape (b).
+ */
+function dataKeys(tool: string, schema: any): Set<string> {
+  const data = deref(schema?.properties?.data, schema);
+  if (!data) return new Set(Object.keys(schema?.properties ?? {}));                       // (c)
+  const variants = [data, ...((data.anyOf ?? data.oneOf ?? []) as any[])].map((v) => deref(v, schema));
+  for (const v of variants) {                                                              // (a) / (b) object variant
+    if (v && v.type !== "array" && v.properties) return new Set(Object.keys(v.properties));
+  }
+  for (const v of variants) {                                                              // array-only variant
+    const items = deref(v?.items, schema);
+    if (items?.properties) return new Set(Object.keys(items.properties));
+  }
+  throw new Error(
+    `preflight: ${tool}'s live input schema has a \`data\` node with no object properties ` +
+    `(schema shape changed?) — cannot verify the payload keys, halting`,
+  );
+}
+
 /**
  * Read a crud tool's LIVE input schema via `semantius info crud <tool>` and
- * return the set of accepted `data` field names (falling back to top-level
- * properties for tools that aren't `{data}`-wrapped). Throws loud if the info
- * command fails or its output can't be parsed — "can't verify" halts, per the
- * loud-failure contract.
+ * return the set of accepted `data` field names (see `dataKeys` for the shapes;
+ * top-level properties for tools that aren't `{data}`-wrapped). Throws loud if
+ * the info command fails or its output can't be parsed — "can't verify" halts,
+ * per the loud-failure contract.
  */
 async function toolDataKeys(tool: string): Promise<Set<string>> {
   const proc = Bun.spawn(["semantius", "info", "crud", tool], {
@@ -78,8 +122,7 @@ async function toolDataKeys(tool: string): Promise<Set<string>> {
   } catch (e) {
     throw new Error(`preflight: could not parse ${tool} input schema: ${e}`);
   }
-  const props = schema?.properties?.data?.properties ?? schema?.properties ?? {};
-  return new Set(Object.keys(props));
+  return dataKeys(tool, schema);
 }
 
 /**
@@ -120,6 +163,10 @@ export interface ModulePayload {
   catalog_module_code: string;      // write-once lineage
   domain_code: string;
   icon_name: string;
+  home_page?: string;               // frontmatter home_page: written only when non-empty (default "")
+  logo_color?: string;              // frontmatter logo_color: written verbatim when provided; when
+                                    // omitted, the bespoke script's cosmetic fallback random-fills an
+                                    // empty live value (never overwrites a provided value)
   settings?: Record<string, unknown>;  // module_kind / naming_mode / catalog_snapshot / promotion_decisions
 }
 
@@ -148,56 +195,62 @@ export const roleSlug = (s: string): string => s.toLowerCase().replace(/-/g, "_"
 
 const isEmpty = (v: unknown): boolean => v === "" || v === null || v === undefined;
 
-/** Ensure a permission exists with `module_id`; return its id (resolved by read, never off the create). */
-async function ensurePermission(name: string, description: string, moduleId: number): Promise<number> {
-  const live = await read1("read_permission", `permission_name=eq.${name}`);
-  if (live) {
-    if (isEmpty(live.module_id) || live.module_id !== moduleId) {
-      await write("update_permission", { id: live.id, data: { module_id: moduleId } });
-    }
-    return live.id;
-  }
-  await write("create_permission", { data: { permission_name: name, description, module_id: moduleId } });
-  const created = await read1("read_permission", `permission_name=eq.${name}`);
-  if (!created) throw new Error(`scaffold: create_permission ${name} reported success but did not land`);
-  return created.id;
-}
-
-/** Idempotent hierarchy edge: `including` *includes* `included`. */
-async function ensureHierarchy(includingId: number, includedId: number, origin: Origin): Promise<void> {
-  const live = await read1(
-    "read_permission_hierarchy",
-    `including_permission_id=eq.${includingId}&included_permission_id=eq.${includedId}`,
+/**
+ * Ensure the baseline permissions exist with `module_id` — as ONE set: one
+ * `in.()` read, ONE `create_permission` call for the missing rows, one re-read
+ * (ids come from the read, never off the create), then ONE `update_permission`
+ * with an id ARRAY for any live row whose `module_id` drifted (same `data` for
+ * every id, so it is one call). Returns `permission_name → id`.
+ */
+async function ensurePermissions(
+  rows: ReadonlyArray<{ permission_name: string; description: string }>, moduleId: number,
+): Promise<Map<string, number>> {
+  const live = await ensureMany(
+    "read_permission", "permission_name", (r) => r.permission_name,
+    "create_permission", rows.map((r) => ({ ...r, module_id: moduleId })),
   );
-  if (live) return;
-  await write("create_permission_hierarchy", {
-    data: { including_permission_id: includingId, included_permission_id: includedId, origin },
-  });
+  const drifted = [...live.values()].filter((p) => isEmpty(p.module_id) || p.module_id !== moduleId).map((p) => p.id);
+  if (drifted.length) await write("update_permission", { id: drifted, data: { module_id: moduleId } });
+  return new Map([...live].map(([name, p]) => [name, p.id as number]));
 }
 
-/** Ensure a role exists with `module_id` + `origin`; return its id. Slug is hyphen-normalized. */
-async function ensureRole(role: BaselineRole, moduleId: number, origin: Origin): Promise<number> {
-  const slug = roleSlug(role.slug);
-  const live = await read1("read_role", `slug=eq.${slug}`);
-  if (live) {
-    if (isEmpty(live.module_id) || live.module_id !== moduleId) {
-      await write("update_role", { id: live.id, data: { module_id: moduleId } });
-    }
-    return live.id;
-  }
-  await write("create_role", {
-    data: { role_name: role.role_name, slug, description: role.description, module_id: moduleId, origin },
-  });
-  const created = await read1("read_role", `slug=eq.${slug}`);
-  if (!created) throw new Error(`scaffold: create_role ${slug} reported success but did not land`);
-  return created.id;
+/**
+ * Ensure the baseline roles exist with `module_id` + `origin` (+ `catalog_role_code`
+ * lineage, VALUE-only) — as ONE set, same shape as `ensurePermissions`. Slugs are
+ * hyphen-normalized (`roles.slug` is `^[a-z0-9_]+$`). Returns normalized `slug → id`.
+ */
+async function ensureRoles(
+  roles: ReadonlyArray<BaselineRole>, moduleId: number, origin: Origin,
+): Promise<Map<string, number>> {
+  const live = await ensureMany(
+    "read_role", "slug", (r) => r.slug,
+    "create_role", roles.map((r) => ({
+      role_name: r.role_name, slug: roleSlug(r.slug), description: r.description,
+      module_id: moduleId, origin, catalog_role_code: r.slug,   // §9.1 baseline-role slug, verbatim (write-once lineage)
+    })),
+  );
+  const drifted = [...live.values()].filter((r) => isEmpty(r.module_id) || r.module_id !== moduleId).map((r) => r.id);
+  if (drifted.length) await write("update_role", { id: drifted, data: { module_id: moduleId } });
+  return new Map([...live].map(([slug, r]) => [slug, r.id as number]));
 }
 
-/** Idempotent role↔permission grant. */
-async function ensureRolePermission(roleId: number, permissionId: number): Promise<void> {
-  const live = await read1("read_role_permission", `role_id=eq.${roleId}&permission_id=eq.${permissionId}`);
-  if (live) return;
-  await write("create_role_permission", { data: { role_id: roleId, permission_id: permissionId } });
+/** Idempotent hierarchy edges (`including` *includes* `included`), created as ONE set via `ensurePairs`. */
+async function ensureHierarchy(
+  edges: ReadonlyArray<{ including_permission_id: number; included_permission_id: number }>, origin: Origin,
+): Promise<void> {
+  if (!edges.length) return;
+  await ensurePairs(
+    "read_permission_hierarchy", "including_permission_id", "included_permission_id",
+    "create_permission_hierarchy", edges.map((e) => ({ ...e, origin })),
+  );
+}
+
+/** Idempotent role↔permission grants, created as ONE set via `ensurePairs`. */
+async function ensureRolePermissions(
+  grants: ReadonlyArray<{ role_id: number; permission_id: number }>,
+): Promise<void> {
+  if (!grants.length) return;
+  await ensurePairs("read_role_permission", "role_id", "permission_id", "create_role_permission", grants);
 }
 
 /**
@@ -219,6 +272,11 @@ async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
         catalog_module_code: m.catalog_module_code,
         domain_code: m.domain_code,
         icon_name: m.icon_name,
+        // home_page / logo_color: top-level columns, written only when the frontmatter provided a
+        // non-empty value (omitted otherwise → platform default ""). logo_color's random-fill
+        // fallback for an empty value stays in the bespoke script, per the file header.
+        ...(isEmpty(m.home_page) ? {} : { home_page: m.home_page }),
+        ...(isEmpty(m.logo_color) ? {} : { logo_color: m.logo_color }),
         access_scope: scope,
         settings: m.settings ?? {},
       },
@@ -236,6 +294,11 @@ async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
   if (isEmpty(live.catalog_module_code)) data.catalog_module_code = m.catalog_module_code;  // write-once
   if (isEmpty(live.domain_code)) data.domain_code = m.domain_code;
   if (isEmpty(live.icon_name)) data.icon_name = m.icon_name;
+  // home_page / logo_color: a frontmatter-provided value is authoritative on re-deploy too, so write it
+  // whenever the spec carries a non-empty value (not fill-only-empty). When the frontmatter omits it,
+  // leave the live value alone; logo_color's empty-live case is handled by the script's cosmetic fallback.
+  if (!isEmpty(m.home_page)) data.home_page = m.home_page;
+  if (!isEmpty(m.logo_color)) data.logo_color = m.logo_color;
   await write("update_module", { id: live.id, data });
   return live.id;
 }
@@ -261,32 +324,44 @@ export async function scaffoldModule(cfg: ScaffoldConfig): Promise<ScaffoldResul
   // Preflight: fail loud on any stale field name BEFORE the first write.
   await preflightSchemas({
     create_module: ["module_name", "module_slug", "description", "module_type",
-                    "catalog_module_code", "domain_code", "icon_name", "access_scope", "settings"],
+                    "catalog_module_code", "domain_code", "icon_name", "home_page", "logo_color",
+                    "access_scope", "settings"],
     create_permission: ["permission_name", "description", "module_id"],
     create_permission_hierarchy: ["including_permission_id", "included_permission_id", "origin"],
-    create_role: ["role_name", "slug", "description", "module_id", "origin"],
+    create_role: ["role_name", "slug", "description", "module_id", "origin", "catalog_role_code"],
     create_role_permission: ["role_id", "permission_id"],
   });
 
-  // 1-2. Module (+ provenance) and baseline permissions.
+  // 1-2. Module (+ provenance), then the baseline permissions as ONE set (one in.() read, one
+  //      create_permission call for the missing rows, one re-read, one id-array converge).
   const moduleId = await ensureModule(cfg.module, cfg.scope);
-  const readId = await ensurePermission(`${slug}:read`, cfg.permissions.read, moduleId);
-  const manageId = await ensurePermission(`${slug}:manage`, cfg.permissions.manage, moduleId);
-  const adminId = hasAdmin
-    ? await ensurePermission(`${slug}:admin`, cfg.permissions.admin!, moduleId)
-    : undefined;
+  const perms = await ensurePermissions([
+    { permission_name: `${slug}:read`, description: cfg.permissions.read },
+    { permission_name: `${slug}:manage`, description: cfg.permissions.manage },
+    ...(hasAdmin ? [{ permission_name: `${slug}:admin`, description: cfg.permissions.admin! }] : []),
+  ], moduleId);
+  const readId = perms.get(`${slug}:read`)!;
+  const manageId = perms.get(`${slug}:manage`)!;
+  const adminId = hasAdmin ? perms.get(`${slug}:admin`)! : undefined;
 
-  // 3. Baseline hierarchy: manage→read, plus admin→manage when the admin tier exists.
-  await ensureHierarchy(manageId, readId, origin);
-  if (adminId !== undefined) await ensureHierarchy(adminId, manageId, origin);
+  // 3. Baseline hierarchy as ONE set: manage→read, plus admin→manage when the admin tier exists.
+  await ensureHierarchy([
+    { including_permission_id: manageId, included_permission_id: readId },
+    ...(adminId !== undefined ? [{ including_permission_id: adminId, included_permission_id: manageId }] : []),
+  ], origin);
 
-  // 4. Baseline roles + their baseline grants.
-  const viewerId = await ensureRole(cfg.roles.viewer, moduleId, origin);
-  const managerId = await ensureRole(cfg.roles.manager, moduleId, origin);
-  const adminRoleId = hasAdmin ? await ensureRole(cfg.roles.admin!, moduleId, origin) : undefined;
-  await ensureRolePermission(viewerId, readId);
-  await ensureRolePermission(managerId, manageId);
-  if (adminRoleId !== undefined && adminId !== undefined) await ensureRolePermission(adminRoleId, adminId);
+  // 4. Baseline roles as ONE set, then their baseline grants as ONE set.
+  const roles = await ensureRoles([
+    cfg.roles.viewer, cfg.roles.manager, ...(hasAdmin ? [cfg.roles.admin!] : []),
+  ], moduleId, origin);
+  const viewerId = roles.get(roleSlug(cfg.roles.viewer.slug))!;
+  const managerId = roles.get(roleSlug(cfg.roles.manager.slug))!;
+  const adminRoleId = hasAdmin ? roles.get(roleSlug(cfg.roles.admin!.slug))! : undefined;
+  await ensureRolePermissions([
+    { role_id: viewerId, permission_id: readId },
+    { role_id: managerId, permission_id: manageId },
+    ...(adminRoleId !== undefined && adminId !== undefined ? [{ role_id: adminRoleId, permission_id: adminId }] : []),
+  ]);
 
   // 5. Wire the six module-record FK columns + access_scope (the step most often dropped).
   const wire: Record<string, unknown> = {
@@ -435,4 +510,100 @@ export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
 
   throwIfFailed(f);
   return f;
+}
+
+// ──────────────────────────── deploy-version stamp (Stage 5b) ─────────────────
+
+export interface DeployVersionStamp {
+  specPath: string;              // the *-semantic-spec.md that was just deployed (the file to stamp)
+  moduleSlug: string;            // this module's slug
+  relatedModuleSlugs?: string[]; // reuse-from / promote-to-master SOURCE modules → deployed_related_versions
+}
+
+/**
+ * Stage 5b, MECHANIZED — the un-skippable version stamp, run as the last step inside
+ * `runDeploy` right after `verifyScaffold`. Reads the platform-maintained
+ * `modules.version` / `version_date` (the platform bumps them on every schema write,
+ * so they are stable only AFTER all Stage 4 writes settle — call this LAST), then
+ * upserts `deployed_version` / `deployed_version_date` / `deployed_related_versions`
+ * into the spec file's YAML frontmatter (an in-place upsert — no other byte changes).
+ * Finally it RE-READS the file and asserts the stamp landed and equals live; it THROWS
+ * on mismatch, exactly like `verifyScaffold`, so a missing / failed stamp HALTS the
+ * deploy instead of letting "model is live" print. This is why the stamp can't be
+ * silently skipped the way a prose instruction can.
+ *
+ * The analyst's Stage 2a.1 gate reads `deployed_version` next run to decide, in one
+ * read, whether prod drifted since deploy. This is the ONLY write the modeler makes
+ * to the spec file.
+ *
+ * Graceful degradation: if the live module has no `version` (platform predates the
+ * column), it logs and returns null WITHOUT touching the spec — an un-stamped spec is
+ * safe (the analyst gate falls back to full inspection).
+ */
+export async function stampDeployedVersion(
+  stamp: DeployVersionStamp,
+): Promise<{ version: number; versionDate: string | null; related: Record<string, number> } | null> {
+  const mod = await read1("read_module", `module_slug=eq.${stamp.moduleSlug}`);
+  if (!mod) throw new Error(`stampDeployedVersion: module ${stamp.moduleSlug} not found (deploy incomplete?)`);
+  if (mod.version === undefined || mod.version === null) {
+    console.warn("🟡 deployed_version: live module has no `version` column (platform too old) — spec left un-stamped.");
+    return null;
+  }
+  const version = Number(mod.version);
+  const versionDate: string | null = mod.version_date ?? null;
+
+  // Related (reused / promoted) module versions — lets the analyst detect drift in a REUSED entity too.
+  const related: Record<string, number> = {};
+  for (const s of stamp.relatedModuleSlugs ?? []) {
+    if (s === stamp.moduleSlug) continue;
+    const rm = await read1("read_module", `module_slug=eq.${s}`);
+    if (rm && rm.version !== undefined && rm.version !== null) related[s] = Number(rm.version);
+  }
+
+  // In-place frontmatter upsert (EOL-preserving, CRLF-tolerant).
+  const text = await Bun.file(stamp.specPath).text();
+  const eol = /\r\n/.test(text) ? "\r\n" : "\n";
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
+  if (!fm) throw new Error(`stampDeployedVersion: no YAML frontmatter found in ${stamp.specPath}`);
+  const start = fm.index ?? 0;
+  const before = text.slice(0, start);
+  const after = text.slice(start + fm[0].length);
+
+  const kept: string[] = [];
+  const lines = fm[1].split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (/^deployed_version\s*:/.test(lines[i]) || /^deployed_version_date\s*:/.test(lines[i])) continue;
+    if (/^deployed_related_versions\s*:/.test(lines[i])) {
+      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1])) i++;  // drop the nested map lines too
+      continue;
+    }
+    kept.push(lines[i]);
+  }
+
+  const block: string[] = [`deployed_version: ${version}`];
+  if (versionDate) block.push(`deployed_version_date: "${versionDate}"`);
+  const relKeys = Object.keys(related).sort();
+  if (relKeys.length) {
+    block.push("deployed_related_versions:");
+    for (const k of relKeys) block.push(`  ${k}: ${related[k]}`);
+  }
+
+  const entIdx = kept.findIndex((l) => /^entities\s*:/.test(l));   // place before entities:, matching the template
+  if (entIdx >= 0) kept.splice(entIdx, 0, ...block);
+  else kept.push(...block);
+
+  await Bun.write(stamp.specPath, `${before}---${eol}${kept.join(eol)}${eol}---${eol}${after}`);
+
+  // Re-read + assert the stamp landed and matches live — the verifyScaffold-style hard gate.
+  const check = await Bun.file(stamp.specPath).text();
+  const cfm = check.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const got = cfm && cfm[1].match(/^deployed_version\s*:\s*(\d+)\s*$/m);
+  if (!got || Number(got[1]) !== version) {
+    throw new Error(
+      `stampDeployedVersion: assertion FAILED — spec ${stamp.specPath} deployed_version=${got?.[1] ?? "<absent>"} ` +
+      `does not match live modules.version=${version}. The stamp did not land; the deploy is not finalized.`,
+    );
+  }
+  console.log(`✓ deployed_version ${version} stamped into ${stamp.specPath}${relKeys.length ? ` (+${relKeys.length} related)` : ""}`);
+  return { version, versionDate, related };
 }
