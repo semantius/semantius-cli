@@ -283,7 +283,10 @@ describe('local-tools', () => {
       const result = await callUtils('get_csvschema', { path: relPath });
 
       expect((result as ToolResult).isError).toBeFalsy();
-      expect(resultJson(result).outputPath).toBe(`${csvPath}.csvschema.json`);
+      // Compare via relative() so a drive-letter case difference between
+      // process.cwd() and tmpdir (e.g. "c:\" vs "C:\") doesn't fail the test.
+      const outputPath = resultJson(result).outputPath as string;
+      expect(relative(outputPath, `${csvPath}.csvschema.json`)).toBe('');
     });
 
     test('rejects an out-of-range maxRecords at schema validation', async () => {
