@@ -78,6 +78,7 @@ interface ParsedArgs {
   configPath?: string;
   diag: boolean;
   single: boolean;
+  stream: boolean;
   envPrefix: string;
   host?: string;
   crudMcp: boolean;
@@ -189,6 +190,7 @@ function parseArgs(args: string[]): ParsedArgs {
     withMarkdown: false,
     diag: false,
     single: false,
+    stream: false,
     envPrefix: 'SEMANTIUS',
     crudMcp: false,
     disableJwtCache: false,
@@ -227,6 +229,10 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--single':
         result.single = true;
+        break;
+
+      case '--stream':
+        result.stream = true;
         break;
 
       case '--disable-jwt-cache':
@@ -540,6 +546,10 @@ Options:
                            (whoami) Also show the bearer token used for the request
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows.
                            Rejected (exit 1) for bulk calls: an array in data/body/id/table_name
+  --stream                 (call crud postgrestRequest only) Pipe the PostgREST response body to stdout
+                           unchanged: compact JSON, or CSV with "accept":"text/csv". Fastest for large
+                           reads. Not with --single, --diag or --crud-mcp. Also: SEMANTIUS_STREAM=1
+                           (applies only where --stream is valid)
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
   --host <url|hostname>    Semantius host: <org>.semantius.cloud is the managed cloud; any other host
@@ -553,6 +563,7 @@ Options:
 Output:
   semantius/info/grep      Human-readable text to stdout
   call                     response.data JSON to stdout (use --diag for full response)
+  call ... --stream        The PostgREST body as-is: compact JSON (jq works) or CSV
   Errors                   Always to stderr
 
 Exit codes:
@@ -770,6 +781,7 @@ async function main(): Promise<void> {
         configPath: args.configPath,
         diag: args.diag,
         single: args.single,
+        stream: args.stream,
       });
       break;
 

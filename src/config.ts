@@ -246,6 +246,15 @@ export function isCrudMcp(): boolean {
 }
 
 /**
+ * ${PREFIX}_STREAM=1: --stream for every call where it is valid (`call crud
+ * postgrestRequest` without --single / --diag / --crud-mcp); ignored elsewhere.
+ */
+export function isStreamEnv(): boolean {
+  const env = getPrefixedEnv('STREAM')?.toLowerCase();
+  return env === '1' || env === 'true';
+}
+
+/**
  * The env vars that can name the host — either one satisfies the startup
  * check (as does --host). Credentials are not checked at startup; they are
  * required when a command authenticates.

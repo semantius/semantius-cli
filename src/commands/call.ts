@@ -19,6 +19,9 @@ import {
   type ServerConfig,
   getServerConfig,
   getStdinGraceMs,
+  isCrudMcp,
+  isPostgrestServer,
+  isStreamEnv,
   loadConfig,
 } from '../config.js';
 import {
@@ -44,6 +47,27 @@ export interface CallOptions {
   // 0 rows, exit 2 on 2+ rows. Rejected (exit 1) when a bulk argument
   // (array in data/body/id/table_name) is present — see BULK_ARG_KEYS.
   single?: boolean;
+  // --stream: pipe the PostgREST body of `call crud postgrestRequest` to
+  // stdout unchanged (see local-tools/crud/stream.ts).
+  stream?: boolean;
+}
+
+/** The one tool --stream supports. */
+const STREAM_TOOL = 'postgrestRequest';
+
+/**
+ * Why --stream cannot apply to this call, or null. Checked before any config
+ * load or network I/O.
+ */
+function streamProblem(options: CallOptions): string | null {
+  if (options.single) return '--stream cannot be combined with --single';
+  if (options.diag) return '--stream cannot be combined with --diag';
+  if (isCrudMcp()) return '--stream cannot be combined with --crud-mcp';
+  const tool = options.target.slice(options.target.indexOf('/') + 1);
+  if (tool !== STREAM_TOOL) {
+    return `--stream only works with ${STREAM_TOOL}, not "${tool}"`;
+  }
+  return null;
 }
 
 /**
@@ -304,6 +328,14 @@ async function runCall(options: CallOptions): Promise<void> {
     return exit(ErrorCode.CLIENT_ERROR);
   }
 
+  if (options.stream) {
+    const problem = streamProblem(options);
+    if (problem) {
+      console.error(`Error [STREAM_UNSUPPORTED]: ${problem}`);
+      return exit(ErrorCode.CLIENT_ERROR);
+    }
+  }
+
   if (options.single) {
     // Bulk input (array data/body/id/table_name) can never satisfy the
     // exactly-one-row contract; fail here, before config load and any
@@ -347,6 +379,43 @@ async function runCall(options: CallOptions): Promise<void> {
   } catch (error) {
     console.error((error as Error).message);
     return exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // ${PREFIX}_STREAM=1 turns --stream on wherever it is valid and is ignored
+  // elsewhere; an explicit --stream that cannot apply was rejected above.
+  const stream =
+    options.stream ||
+    (isStreamEnv() &&
+      !streamProblem(options) &&
+      isPostgrestServer(serverConfig));
+  if (stream) {
+    if (!isPostgrestServer(serverConfig)) {
+      console.error(
+        `Error [STREAM_UNSUPPORTED]: --stream needs the local PostgREST layer; server "${serverName}" is not one`,
+      );
+      return exit(ErrorCode.CLIENT_ERROR);
+    }
+    let code: number;
+    try {
+      const { streamPostgrestRequest } = await import(
+        '../local-tools/crud/stream.js'
+      );
+      code = await streamPostgrestRequest(serverConfig, args);
+    } catch (error) {
+      if (error instanceof NoCredentialsError) {
+        console.error(error.message);
+        return exit(ErrorCode.AUTH_ERROR);
+      }
+      const message = (error as Error).message;
+      console.error(formatCliError(serverConnectionError(serverName, message)));
+      return exit(
+        isAuthErrorMessage(message)
+          ? ErrorCode.AUTH_ERROR
+          : ErrorCode.NETWORK_ERROR,
+      );
+    }
+    if (code !== 0) return exit(code);
+    return;
   }
 
   let connection: McpConnection;

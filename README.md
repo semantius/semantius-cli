@@ -106,6 +106,7 @@ semantius [options] whoami                      Show current user (email, org, r
 | `--env <prefix>` | Env var prefix (default `SEMANTIUS`), e.g. `--env PROD` reads `PROD_API_KEY` / `PROD_ORG` |
 | `--host <url\|hostname>` | Semantius host to talk to (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST` |
 | `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
+| `--stream` | (`call crud postgrestRequest` only) Pipe the PostgREST response body to stdout unchanged — see [Streaming large reads](#streaming-large-reads---stream). Also `SEMANTIUS_STREAM=1` |
 | `--disable-jwt-cache` | Skip the token cache and re-authenticate on every request (see [Token cache](#token-cache)) |
 | `--reset-cache` | Delete the cached token for the current API key and the cached host lookup before running (alias: `--reset-jwt-cache`) |
 
@@ -232,6 +233,30 @@ jq -n '{query: "mcp", filters: ["active", "starred"]}' | semantius call github s
 
 **Why stdin?** Shell interpretation of `{}`, quotes, and special characters requires careful escaping. Stdin bypasses shell parsing entirely.
 
+#### Streaming large reads (`--stream`)
+
+`call crud postgrestRequest --stream` sends the same request as without the
+flag but pipes PostgREST's response body straight to stdout — no JSON
+parsing, no MCP envelope, no pretty-printing — which is the fastest way to
+pull large result sets:
+
+```bash
+semantius call crud postgrestRequest --stream '{"method":"GET","path":"/orders?limit=10000"}' | jq length
+
+# CSV export (only possible with --stream)
+semantius call crud postgrestRequest --stream '{"method":"GET","path":"/orders","accept":"text/csv"}' > orders.csv
+```
+
+- The output is exactly what PostgREST returns: **compact** JSON, or CSV with
+  `"accept": "text/csv"`. Consumers that parse JSON (`jq`) keep working;
+  anything that diffs the pretty-printed output of a normal call does not.
+- Errors print `Error: (<code>) <message>` to stderr. Exit codes: 401/403 → 5,
+  5xx or network failure → 3, any other non-2xx → 4.
+- Not combinable with `--single`, `--diag` or `--crud-mcp`, and only for
+  `postgrestRequest` (exit 1 otherwise). JSON arguments from stdin work as usual.
+- `SEMANTIUS_STREAM=1` turns it on for every call where it is valid and is
+  ignored for all others.
+
 #### Advanced Chaining Examples
 
 Chain multiple MCP calls together using pipes and shell tools:
@@ -301,6 +326,7 @@ configurations side by side in the same `.env`.
 | `SEMANTIUS_API_KEY` | API key for Semantius (needed to call tools unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
 | `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
 | `SEMANTIUS_CRUD_MCP` | `1` = same as `--crud-mcp` | `false` |
+| `SEMANTIUS_STREAM` | `1` = `--stream` for every `call crud postgrestRequest` where it is valid (no `--single`/`--diag`/`--crud-mcp`); ignored for other calls | `false` |
 | `SEMANTIUS_SIDE_EFFECT_TIMEOUT` | On the managed cloud, creating/updating/deleting entities or fields asks the cloud MCP server to refresh the PostgREST schema cache; the CLI waits up to this many seconds for that before exiting | `10` |
 | `SEMANTIUS_CONFIG_PATH` | Path to config file | (none) |
 | `SEMANTIUS_DEBUG` | Enable debug output | `false` |

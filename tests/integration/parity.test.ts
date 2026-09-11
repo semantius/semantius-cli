@@ -94,6 +94,7 @@ describe.skipIf(!ENABLED)('local layer vs --crud-mcp parity', () => {
     norm?: (data: unknown) => unknown;
   }
   let scenarios: Scenario[] = [];
+  let ids: Record<string, string> = {};
 
   beforeAll(async () => {
     // Id columns and the first product id, as bench.ts derives them.
@@ -104,7 +105,7 @@ describe.skipIf(!ENABLED)('local layer vs --crud-mcp parity', () => {
       JSON.stringify({ select: 'table_name,id_column', filters: 'module_id=eq.1001' }),
     ]);
     expect(entities.exitCode).toBe(0);
-    const ids = Object.fromEntries(
+    ids = Object.fromEntries(
       (JSON.parse(entities.stdout) as Array<{ table_name: string; id_column: string }>).map(
         (e) => [e.table_name, e.id_column],
       ),
@@ -235,6 +236,82 @@ describe.skipIf(!ENABLED)('local layer vs --crud-mcp parity', () => {
     };
     const md = await both(['-md']);
     expect(dropMcpOnlySections(md.local.stdout)).toBe(dropMcpOnlySections(md.mcp.stdout));
+  });
+
+  describe('--stream', () => {
+    /** A token and the PostgREST URL straight from the platform, as bench.ts gets them. */
+    async function direct(path: string, accept?: string): Promise<Uint8Array> {
+      const org = process.env.SEMANTIUS_ORG as string;
+      const raw = process.env.SEMANTIUS_API_KEY as string;
+      const apiKey = raw.includes(':') ? raw.slice(raw.indexOf(':') + 1) : raw;
+      const tokenResponse = await fetch(`https://${org}.semantius.cloud/token`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          'x-api-key': apiKey,
+        },
+        body: 'grant_type=client_credentials',
+      });
+      const { access_token } = (await tokenResponse.json()) as { access_token: string };
+      const tenant = (await (
+        await fetch(`https://api.semantius.cloud/organization/${org}`)
+      ).json()) as { postgrest_url: string };
+      const response = await fetch(`${tenant.postgrest_url}${path}`, {
+        headers: {
+          authorization: `Bearer ${access_token}`,
+          ...(accept ? { accept } : {}),
+        },
+      });
+      expect(response.status).toBe(200);
+      return new Uint8Array(await response.arrayBuffer());
+    }
+
+    async function streamed(path: string, accept?: string): Promise<Uint8Array> {
+      const proc = Bun.spawn(
+        [
+          'bun',
+          'run',
+          CLI,
+          'call',
+          'crud',
+          'postgrestRequest',
+          '--stream',
+          JSON.stringify({ method: 'GET', path, ...(accept ? { accept } : {}) }),
+        ],
+        {
+          cwd: REPO,
+          env: { ...process.env, SEMANTIUS_NO_DAEMON: '1' },
+          stdin: null,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        },
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).arrayBuffer(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(stderr).toBe('');
+      expect(exitCode).toBe(0);
+      return new Uint8Array(stdout);
+    }
+
+    test('order_details x10000: stdout is the PostgREST body, byte for byte', async () => {
+      const path = `/order_details?order=${ids.order_details}.asc&limit=10000`;
+      const [cli, body] = await Promise.all([streamed(path), direct(path)]);
+      expect(cli.byteLength).toBe(body.byteLength);
+      expect(Buffer.from(cli).equals(Buffer.from(body))).toBe(true);
+    });
+
+    test('accept: text/csv passes the CSV through', async () => {
+      const path = `/products?order=${ids.products}.asc&limit=3`;
+      const [cli, body] = await Promise.all([
+        streamed(path, 'text/csv'),
+        direct(path, 'text/csv'),
+      ]);
+      expect(new TextDecoder().decode(cli)).toBe(new TextDecoder().decode(body));
+      expect(new TextDecoder().decode(cli).split('\n')[0]).toContain(ids.products);
+    });
   });
 
   describe('writes through the local layer', () => {
