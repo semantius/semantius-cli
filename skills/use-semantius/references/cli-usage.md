@@ -316,17 +316,17 @@ fi
 
 ## Connection Pooling (Daemon)
 
-By default the CLI uses a lazy-spawn background daemon to avoid MCP server startup latency on every call.
+On Linux and macOS the CLI keeps each server's MCP connection open in a lazily spawned background daemon, so repeated calls skip the connect handshake. On Windows there is no daemon; every call opens a fresh connection.
 
-- Each MCP server gets its own daemon process
-- 60-second idle timeout, auto-terminates when idle
+- Each MCP server gets its own daemon process (a second instance of the `semantius` binary)
+- 300-second idle timeout, auto-terminates when idle
 - Stale-detection: config changes trigger re-spawn
 
 **Control via environment:**
 ```bash
-MCP_NO_DAEMON=1 semantius info      # Force fresh connection every time
-MCP_DAEMON_TIMEOUT=120 semantius    # 2-minute idle timeout
-MCP_DEBUG=1 semantius info          # Show daemon debug output
+SEMANTIUS_NO_DAEMON=1 semantius info        # Force a fresh connection every time (Linux/macOS)
+SEMANTIUS_DAEMON_TIMEOUT=120 semantius      # 2-minute idle timeout
+SEMANTIUS_DEBUG=1 semantius info            # Show daemon spawn/reuse decisions on stderr
 ```
 
 ### Other Environment Variables

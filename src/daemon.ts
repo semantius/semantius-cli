@@ -149,6 +149,80 @@ export function killProcess(pid: number): boolean {
 }
 
 // ============================================================================
+// Socket framing
+// ============================================================================
+
+/**
+ * The daemon socket carries newline-delimited JSON: one document per frame,
+ * terminated by '\n'. JSON.stringify never emits a raw newline (it escapes
+ * them), so byte 0x0A is an unambiguous terminator, and scanning bytes rather
+ * than decoded text keeps multi-byte UTF-8 sequences intact when a frame
+ * spans several socket reads. Without this, any request or response larger
+ * than a single read (~64 KB) was parsed chunk-by-chunk and failed.
+ */
+export interface LineReader {
+  /** Feed one socket chunk; returns every complete frame it finished. */
+  push(chunk: Uint8Array): string[];
+}
+
+export function createLineReader(): LineReader {
+  let pending: Uint8Array[] = [];
+  return {
+    push(chunk) {
+      const lines: string[] = [];
+      let start = 0;
+      for (let i = 0; i < chunk.length; i++) {
+        if (chunk[i] !== 0x0a) continue;
+        pending.push(chunk.subarray(start, i));
+        lines.push(Buffer.concat(pending).toString('utf8'));
+        pending = [];
+        start = i + 1;
+      }
+      if (start < chunk.length) pending.push(chunk.subarray(start));
+      return lines;
+    },
+  };
+}
+
+interface WritableSocket {
+  write(data: Uint8Array): number;
+}
+
+// Bytes the kernel buffer did not accept yet, per socket; flushed on drain.
+const outbound = new WeakMap<WritableSocket, Uint8Array[]>();
+
+/**
+ * Write a frame honoring backpressure. Bun's socket.write returns how many
+ * bytes were accepted; a large frame (hundreds of KB) is routinely accepted
+ * only partially, and the remainder must go out from the drain handler.
+ */
+export function writeAll(socket: WritableSocket, text: string): void {
+  const buf = Buffer.from(text, 'utf8');
+  const queue = outbound.get(socket);
+  if (queue && queue.length > 0) {
+    queue.push(buf);
+    return;
+  }
+  const written = socket.write(buf);
+  if (written < buf.length) outbound.set(socket, [buf.subarray(written)]);
+}
+
+/** Drain handler: continue writing whatever writeAll could not send yet. */
+export function flushPending(socket: WritableSocket): void {
+  const queue = outbound.get(socket);
+  if (!queue) return;
+  while (queue.length > 0) {
+    const written = socket.write(queue[0]);
+    if (written < queue[0].length) {
+      queue[0] = queue[0].subarray(written);
+      return;
+    }
+    queue.shift();
+  }
+  outbound.delete(socket);
+}
+
+// ============================================================================
 // Daemon Worker
 // ============================================================================
 
@@ -282,13 +356,13 @@ export async function runDaemon(
     process.exit(1);
   }
 
-  // Handle incoming request
-  const handleRequest = async (data: Buffer): Promise<DaemonResponse> => {
+  // Handle one complete request frame (see createLineReader)
+  const handleRequest = async (line: string): Promise<DaemonResponse> => {
     resetIdleTimer();
 
     let request: DaemonRequest;
     try {
-      request = JSON.parse(data.toString());
+      request = JSON.parse(line);
     } catch {
       return {
         id: 'unknown',
@@ -368,24 +442,36 @@ export async function runDaemon(
 
   // Start Unix socket server
   try {
+    // Per-connection frame reassembly: a request may span several reads.
+    const inbound = new Map<unknown, LineReader>();
     server = Bun.listen({
       unix: socketPath,
       socket: {
         open(socket) {
           activeConnections.add(socket);
+          inbound.set(socket, createLineReader());
           debug(`[daemon:${serverName}] Client connected`);
         },
         async data(socket, data) {
-          const response = await handleRequest(data);
-          socket.write(`${JSON.stringify(response)}\n`);
+          const reader = inbound.get(socket);
+          if (!reader) return;
+          for (const line of reader.push(data)) {
+            const response = await handleRequest(line);
+            writeAll(socket, `${JSON.stringify(response)}\n`);
+          }
+        },
+        drain(socket) {
+          flushPending(socket);
         },
         close(socket) {
           activeConnections.delete(socket);
+          inbound.delete(socket);
           debug(`[daemon:${serverName}] Client disconnected`);
         },
         error(socket, error) {
           debug(`[daemon:${serverName}] Socket error: ${error.message}`);
           activeConnections.delete(socket);
+          inbound.delete(socket);
         },
       },
     });
@@ -409,16 +495,24 @@ export async function runDaemon(
 }
 
 // ============================================================================
-// Entry point when run directly
+// Entry point
 // ============================================================================
 
-// Check if running as daemon process
-if (process.argv[2] === '--daemon') {
-  const serverName = process.argv[3];
-  const configJson = process.argv[4];
+/**
+ * Handle `--daemon <serverName> <configJson>` when this program is launched
+ * as a daemon (see getSelfCommand in daemon-client.ts). Called by index.ts
+ * before normal argument parsing — which would otherwise reject `--daemon`
+ * as an unknown option and exit, killing the daemon. Returns false when the
+ * arguments are not a daemon launch; never returns on a daemon launch.
+ */
+export function runDaemonFromArgv(argv: string[]): boolean {
+  if (argv[0] !== '--daemon') return false;
+
+  const serverName = argv[1];
+  const configJson = argv[2];
 
   if (!serverName || !configJson) {
-    console.error('Usage: daemon.ts --daemon <serverName> <configJson>');
+    console.error('Usage: semantius --daemon <serverName> <configJson>');
     process.exit(1);
   }
 
@@ -434,4 +528,5 @@ if (process.argv[2] === '--daemon') {
     console.error('Daemon failed:', error);
     process.exit(1);
   });
+  return true;
 }

@@ -32,6 +32,7 @@ import {
   prefixedEnvName,
   setEnvPrefix,
 } from './config.js';
+import { runDaemonFromArgv } from './daemon.js';
 import {
   ErrorCode,
   ambiguousCommandError,
@@ -703,23 +704,30 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
   }
 }
 
-// Handle graceful shutdown on SIGINT/SIGTERM
-process.on('SIGINT', () => {
-  process.exit(130); // 128 + SIGINT(2)
-});
-process.on('SIGTERM', () => {
-  process.exit(143); // 128 + SIGTERM(15)
-});
-
-// Run
-main()
-  .then(() => {
-    // Use setImmediate to let stdout flush before exiting
-    setImmediate(() => process.exit(0));
-  })
-  .catch((error) => {
-    // Error message already formatted by command handlers
-    console.error(error.message);
-    recordError(error.message);
-    setImmediate(() => process.exit(ErrorCode.CLIENT_ERROR));
+// Daemon launch (`semantius --daemon <server> <configJson>`, spawned by
+// daemon-client.ts) must be handled before parseArgs, which rejects --daemon
+// as an unknown option, and without the CLI's own signal handlers, which
+// would exit before the daemon's cleanup (socket/pid removal, daemon_stop
+// log) can run.
+if (!runDaemonFromArgv(process.argv.slice(2))) {
+  // Handle graceful shutdown on SIGINT/SIGTERM
+  process.on('SIGINT', () => {
+    process.exit(130); // 128 + SIGINT(2)
   });
+  process.on('SIGTERM', () => {
+    process.exit(143); // 128 + SIGTERM(15)
+  });
+
+  // Run
+  main()
+    .then(() => {
+      // Use setImmediate to let stdout flush before exiting
+      setImmediate(() => process.exit(0));
+    })
+    .catch((error) => {
+      // Error message already formatted by command handlers
+      console.error(error.message);
+      recordError(error.message);
+      setImmediate(() => process.exit(ErrorCode.CLIENT_ERROR));
+    });
+}

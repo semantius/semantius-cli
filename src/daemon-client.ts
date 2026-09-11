@@ -5,22 +5,26 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename } from 'node:path';
 import {
   type ServerConfig,
   debug,
   getConfigHash,
   getSocketDir,
   getSocketPath,
+  getTimeoutMs,
 } from './config.js';
 import {
   type DaemonRequest,
   type DaemonResponse,
+  createLineReader,
+  flushPending,
   isProcessRunning,
   killProcess,
   readPidFile,
   removePidFile,
   removeSocketFile,
+  writeAll,
 } from './daemon.js';
 import { getResolvedLogFilePath, logDaemonEvent } from './logger.js';
 
@@ -50,47 +54,72 @@ function generateRequestId(): string {
 }
 
 /**
- * Send a request to the daemon and wait for response
+ * Send one request frame to the daemon and wait for its response frame.
+ * Frames are newline-delimited JSON (see createLineReader in daemon.ts);
+ * both directions may span several socket reads/writes for large payloads.
+ *
+ * The timeout defaults to the request timeout (<PREFIX>_TIMEOUT) so a long
+ * tool call through the daemon gets the same budget as a direct one; the
+ * liveness ping passes a short one for a fast fallback to direct connection.
  */
 async function sendRequest(
   socketPath: string,
   request: DaemonRequest,
+  timeoutMs: number = getTimeoutMs(),
 ): Promise<DaemonResponse> {
   return new Promise((resolve, reject) => {
-    const socket = Bun.connect({
+    const reader = createLineReader();
+    let settled = false;
+    const settle = (fn: (v: never) => void, value: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value as never);
+    };
+    const timer = setTimeout(() => {
+      settle(reject, new Error(`Daemon request timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    Bun.connect({
       unix: socketPath,
       socket: {
         open(socket) {
-          socket.write(JSON.stringify(request));
+          writeAll(socket, `${JSON.stringify(request)}\n`);
+        },
+        drain(socket) {
+          flushPending(socket);
         },
         data(socket, data) {
+          const [line] = reader.push(data);
+          if (line === undefined) return; // frame not complete yet
+          // Settle BEFORE end(): Bun runs the close handler synchronously
+          // inside end(), and its rejection must not win over the response.
           try {
-            const response = JSON.parse(data.toString().trim());
-            socket.end();
-            resolve(response);
-          } catch (err) {
-            socket.end();
-            reject(new Error('Invalid response from daemon'));
+            settle(resolve, JSON.parse(line));
+          } catch {
+            settle(reject, new Error('Invalid response from daemon'));
           }
+          socket.end();
         },
-        error(socket, error) {
-          reject(error);
+        error(_socket, error) {
+          settle(reject, error);
         },
         close() {
-          // Connection closed
+          settle(
+            reject,
+            new Error('Daemon closed the connection before responding'),
+          );
         },
-        connectError(socket, error) {
-          reject(error);
+        connectError(_socket, error) {
+          settle(reject, error);
         },
       },
-    });
-
-    // Timeout after 5 seconds (fast fallback to direct connection)
-    setTimeout(() => {
-      reject(new Error('Daemon request timeout'));
-    }, 5000);
+    }).catch((error) => settle(reject, error));
   });
 }
+
+/** Liveness check budget: a stale or wedged daemon must fail fast so the CLI falls back to a direct connection. */
+const DAEMON_PING_TIMEOUT_MS = 5000;
 
 /**
  * Check if daemon is running and has matching config
@@ -137,6 +166,18 @@ function isDaemonValid(serverName: string, config: ServerConfig): boolean {
 }
 
 /**
+ * Command prefix that re-launches this program. Inside a `bun build
+ * --compile` binary, Bun.main is the virtual path of the binary itself
+ * (its basename equals the executable's), so the binary alone is the
+ * command. Under `bun run src/index.ts`, Bun.main is the entry script and
+ * must be passed to bun explicitly. Exported for tests.
+ */
+export function getSelfCommand(): string[] {
+  const isCompiled = basename(Bun.main) === basename(process.execPath);
+  return isCompiled ? [process.execPath] : [process.execPath, Bun.main];
+}
+
+/**
  * Spawn a new daemon process for a server
  */
 async function spawnDaemon(
@@ -145,9 +186,6 @@ async function spawnDaemon(
 ): Promise<boolean> {
   debug(`[daemon-client] Spawning daemon for ${serverName}`);
 
-  // Find the daemon script path
-  const daemonScript = join(import.meta.dir, 'daemon.ts');
-
   const configJson = JSON.stringify(config);
 
   // Hand the daemon the exact resolved log destination so its stop events
@@ -155,9 +193,14 @@ async function spawnDaemon(
   // re-derive the path itself).
   const logPath = getResolvedLogFilePath();
 
-  // Spawn detached process
+  // Spawn the daemon as a second instance of THIS program. In a compiled
+  // binary the sources live in Bun's virtual bundle (/$bunfs/root), not on
+  // disk, so `bun run <import.meta.dir>/daemon.ts` can never work there —
+  // and `bun` itself need not be installed. process.execPath is the binary
+  // (compiled) or bun (dev mode, where Bun.main is the entry script).
+  // index.ts routes `--daemon` to runDaemon before normal arg parsing.
   const proc = Bun.spawn({
-    cmd: ['bun', 'run', daemonScript, '--daemon', serverName, configJson],
+    cmd: [...getSelfCommand(), '--daemon', serverName, configJson],
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
@@ -261,10 +304,11 @@ export async function getDaemonConnection(
 
   // Test connection with ping
   try {
-    const pingResponse = await sendRequest(socketPath, {
-      id: generateRequestId(),
-      type: 'ping',
-    });
+    const pingResponse = await sendRequest(
+      socketPath,
+      { id: generateRequestId(), type: 'ping' },
+      DAEMON_PING_TIMEOUT_MS,
+    );
 
     if (!pingResponse.success) {
       debug(`[daemon-client] Ping failed for ${serverName}`);

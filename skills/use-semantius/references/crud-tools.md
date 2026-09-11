@@ -133,12 +133,12 @@ Translates a SQL query into a PostgREST path. Useful when you think in SQL and n
 semantius call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
 ```
 
-### `refresh_schema_cache` *(deno server only)*
-Forces PostgREST to reload its schema cache after structural changes.
+### `refresh_schema_cache`
+Forces PostgREST to reload its schema cache. Takes no parameters.
 ```bash
-semantius call deno refresh_schema_cache '{}'
+semantius call crud refresh_schema_cache '{}'
 ```
-> Call this if PostgREST returns errors about unknown columns or tables after you've just added/modified fields.
+> The cache refreshes automatically after structural changes, so do **not** call this routinely after every `create_entity` / `create_field`. Reach for it only when the cache is visibly stale — a just-created entity or field is missing from `postgrestRequest` responses, or PostgREST reports an unknown table/column that you know exists.
 
 ### `sendEmail`
 
