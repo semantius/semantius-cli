@@ -7,6 +7,7 @@
  * - Errors always go to stderr
  */
 
+import { NoCredentialsError } from '../auth/token.js';
 import {
   type McpConnection,
   getConnection,
@@ -333,6 +334,10 @@ export async function callCommand(options: CallOptions): Promise<void> {
   try {
     connection = await getConnection(serverName, serverConfig);
   } catch (error) {
+    if (error instanceof NoCredentialsError) {
+      console.error(error.message);
+      process.exit(ErrorCode.AUTH_ERROR);
+    }
     const message = (error as Error).message;
     console.error(formatCliError(serverConnectionError(serverName, message)));
     process.exit(
