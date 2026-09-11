@@ -560,8 +560,9 @@ Options:
                            (applies only where --stream is valid)
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
-  --host <url|hostname>    Semantius host: <org>.semantius.cloud is the managed cloud; any other host
-                           (https://host[:port]) is self-hosted. Also: ${hostVar}
+  --host <hostname>        Semantius host, hostname[:port] (a leading https:// is ignored):
+                           <org>.semantius.cloud is the managed cloud, any other host is self-hosted.
+                           Always HTTPS, except localhost / 127.x.x.x (plain HTTP). Also: ${hostVar}
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
                            local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
@@ -595,11 +596,12 @@ Examples:
 
 Environment Variables (all respect --env <prefix>; default prefix shown):
   ${orgVar.padEnd(28)} Organization on the managed cloud; the host defaults to
-                               https://<org>.semantius.cloud. Required unless ${hostVar}
+                               <org>.semantius.cloud. Required unless ${hostVar}
                                or --host is set (an "org:" prefix on the API key or JWT
                                also supplies it)
-  ${hostVar.padEnd(28)} Host URL or hostname, same as --host. Precedence: --host, then
-                               ${hostVar} (shell, project .env, global .env), then ${orgVar}
+  ${hostVar.padEnd(28)} Hostname, same as --host. Precedence: --host, then
+                               ${hostVar} (shell, project .env, global .env), then ${orgVar}.
+                               <org>.semantius.app / .ai / .io map to <org>.semantius.cloud
   ${apiKeyVar.padEnd(28)} API key for Semantius (needed to call tools unless ${jwtVar} is set).
                                Value may be "org:key" — the org prefix overrides ${orgVar}
   ${jwtVar.padEnd(28)} Static JWT sent as "Authorization: Bearer" directly; skips
@@ -740,12 +742,16 @@ async function main(): Promise<void> {
   if (args.resetCache) {
     const apiKey = process.env[`${args.envPrefix}_API_KEY`];
     const parsed = parseApiKey(apiKey);
-    if (parsed) {
-      const path = getCachePath(parsed.id);
-      deleteCachedToken(apiKey ?? '');
-      console.error(`JWT cache reset: ${path}`);
-    }
     const host = getHost();
+    if (parsed) {
+      // The MCP path's entry (per API key) and the local layer's (per host).
+      deleteCachedToken(apiKey ?? '');
+      console.error(`JWT cache reset: ${getCachePath(parsed.id)}`);
+      if (host) {
+        deleteCachedToken(apiKey ?? '', host);
+        console.error(`JWT cache reset: ${getCachePath(parsed.id, host)}`);
+      }
+    }
     if (host && isCloudHost(host)) {
       console.error(`Host cache reset: ${deleteHostCache(host)}`);
     }

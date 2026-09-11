@@ -20,9 +20,10 @@ The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semanti
 
 The CLI needs a **host** and a **credential**:
 
-- Host, first match wins: `--host <host>` → `SEMANTIUS_HOST` → `SEMANTIUS_ORG` (the managed-cloud
-  host `https://<org>.semantius.cloud`). A host under `.semantius.cloud` is the managed cloud; any
-  other `https://host[:port]` is a self-hosted instance.
+- Host, first match wins: `--host <hostname>` → `SEMANTIUS_HOST` → `SEMANTIUS_ORG` (the managed-cloud
+  host `<org>.semantius.cloud`). A host under `.semantius.cloud` is the managed cloud; any other
+  `hostname[:port]` is a self-hosted instance. `<org>.semantius.app` (the web app) is mapped to
+  `<org>.semantius.cloud`.
 - Credential, first match wins: `SEMANTIUS_JWT` (a token sent as-is) → `SEMANTIUS_API_KEY`
   (exchanged for a short-lived token, cached). Without one, commands that talk to the platform
   exit `5` with "Authentication required".

@@ -435,14 +435,35 @@ async function loadEnvFile(envPath: string): Promise<boolean> {
 
   let loaded = 0;
   for (const [key, value] of Object.entries(vars)) {
-    if (process.env[key] === undefined) {
+    const current = process.env[key];
+    if (current === undefined) {
       process.env[key] = value;
+      _envSources.set(key, envPath);
       loaded++;
+    } else if (
+      !_envSources.has(key) &&
+      (current === value || current === splitOrgPrefix(value).value)
+    ) {
+      // Bun itself loads the working directory's .env before the CLI runs,
+      // so a value that matches this file most likely came from it.
+      _envSources.set(key, envPath);
     }
   }
 
   debug(`Loaded ${loaded} variable(s) from ${envPath}`);
   return true;
+}
+
+// The .env file each variable was loaded from (absent: shell environment).
+const _envSources = new Map<string, string>();
+
+/**
+ * "NAME" or "NAME (from <path>)" — where a variable's value came from, for
+ * errors about it (e.g. an API key from a forgotten project .env).
+ */
+export function describeEnvVar(name: string): string {
+  const file = _envSources.get(name);
+  return file ? `${name} (from ${file})` : name;
 }
 
 // Directory of the first .env file that was actually loaded. Used by the

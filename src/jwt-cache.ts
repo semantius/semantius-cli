@@ -87,8 +87,9 @@ export function parseApiKey(
  * permissions — for confidentiality across users. File mode 600 is set on
  * POSIX as defense-in-depth.
  */
-export function getCachePath(keyId: string): string {
-  const safe = keyId.replace(/[^a-zA-Z0-9._-]/g, '_');
+export function getCachePath(keyId: string, scope?: string): string {
+  const name = scope ? `${keyId}@${scope}` : keyId;
+  const safe = name.replace(/[^a-zA-Z0-9._-]/g, '_');
   return join(tmpdir(), `semantius-jwt-${safe}.bin`);
 }
 
@@ -101,14 +102,19 @@ function deriveKey(secret: string): Buffer {
 /**
  * Read and decrypt the cached token for this API key. Returns null on any
  * failure (missing file, corrupt ciphertext, wrong key, expired token).
+ *
+ * `scope` (the host a token was issued by) keeps tokens of one host from
+ * being sent to another; without it the entry is the MCP path's, keyed by the
+ * API key alone.
  */
 export async function readCachedToken(
   apiKey: string,
+  scope?: string,
 ): Promise<CachedToken | null> {
   const parsed = parseApiKey(apiKey);
   if (!parsed) return null;
 
-  const path = getCachePath(parsed.id);
+  const path = getCachePath(parsed.id, scope);
   if (!existsSync(path)) return null;
 
   try {
@@ -158,11 +164,12 @@ export async function readCachedToken(
 export async function writeCachedToken(
   apiKey: string,
   token: CachedToken,
+  scope?: string,
 ): Promise<void> {
   const parsed = parseApiKey(apiKey);
   if (!parsed) return;
 
-  const path = getCachePath(parsed.id);
+  const path = getCachePath(parsed.id, scope);
   const tmpPath = `${path}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
 
   try {
@@ -196,11 +203,11 @@ export async function writeCachedToken(
   }
 }
 
-export function deleteCachedToken(apiKey: string): void {
+export function deleteCachedToken(apiKey: string, scope?: string): void {
   const parsed = parseApiKey(apiKey);
   if (!parsed) return;
   try {
-    unlinkSync(getCachePath(parsed.id));
+    unlinkSync(getCachePath(parsed.id, scope));
   } catch {
     // not present; ignore
   }

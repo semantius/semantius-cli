@@ -9,7 +9,7 @@
  * A static ${PREFIX}_JWT cannot be refreshed, so a JWT error fails at once.
  */
 
-import { NoCredentialsError } from '../../auth/token.js';
+import { isCredentialError } from '../../auth/token.js';
 import {
   JWT_RETRY_DELAYS_MS,
   type RetryKind,
@@ -27,7 +27,7 @@ function sleep(ms: number): Promise<void> {
 
 /** The retry kind for an error, or null when it must propagate as-is. */
 function retryKind(err: unknown): RetryKind | null {
-  if (err instanceof NoCredentialsError) return null;
+  if (isCredentialError(err)) return null;
   const kind = classifyRetry(err);
   if (kind === 'jwt' && getEnvJwt()) return null;
   return kind;

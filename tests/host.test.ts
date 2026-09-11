@@ -27,6 +27,7 @@ import {
   getHost,
   getHostCachePath,
   getHostMode,
+  hostBaseUrl,
   normalizeHost,
   propagateOrg,
   resolveHost,
@@ -103,30 +104,40 @@ describe('host resolution', () => {
   });
 
   describe('normalizeHost', () => {
-    test('bare hostname gets https://', () => {
-      expect(normalizeHost('acme.semantius.cloud')).toBe(
-        'https://acme.semantius.cloud',
-      );
+    test('a host is a bare hostname: https:// / http:// and trailing slashes are stripped', () => {
+      expect(normalizeHost('acme.semantius.cloud')).toBe('acme.semantius.cloud');
+      expect(normalizeHost('https://acme.semantius.cloud/')).toBe('acme.semantius.cloud');
+      expect(normalizeHost('http://acme.semantius.cloud')).toBe('acme.semantius.cloud');
     });
 
-    test('keeps a port, drops trailing slashes and default ports, lowercases', () => {
+    test('keeps a non-default port, drops the default one, lowercases', () => {
       expect(normalizeHost('https://Semantius.Example.com:8443/')).toBe(
-        'https://semantius.example.com:8443',
+        'semantius.example.com:8443',
       );
-      expect(normalizeHost('https://x.example.com:443//')).toBe(
-        'https://x.example.com',
-      );
-      expect(normalizeHost('localhost:3000')).toBe('https://localhost:3000');
+      expect(normalizeHost('https://x.example.com:443//')).toBe('x.example.com');
+      expect(normalizeHost('localhost:3000')).toBe('localhost:3000');
     });
 
-    test('rejects other schemes, queries and credentials', () => {
+    test('maps the web-app / MCP / analytics names of a cloud org to <org>.semantius.cloud', () => {
+      expect(normalizeHost('cli1-bb82.semantius.app')).toBe('cli1-bb82.semantius.cloud');
+      expect(normalizeHost('https://acme.semantius.app/')).toBe('acme.semantius.cloud');
+      expect(normalizeHost('acme.semantius.ai')).toBe('acme.semantius.cloud');
+      expect(normalizeHost('acme.semantius.io')).toBe('acme.semantius.cloud');
+    });
+
+    test('rejects other schemes, paths, queries and credentials', () => {
       expect(() => normalizeHost('ftp://x.example.com')).toThrow('INVALID_HOST');
-      expect(() => normalizeHost('https://x.example.com/?a=1')).toThrow(
-        'INVALID_HOST',
-      );
-      expect(() => normalizeHost('https://u:p@x.example.com')).toThrow(
-        'INVALID_HOST',
-      );
+      expect(() => normalizeHost('https://x.example.com/api')).toThrow('INVALID_HOST');
+      expect(() => normalizeHost('https://x.example.com/?a=1')).toThrow('INVALID_HOST');
+      expect(() => normalizeHost('https://u:p@x.example.com')).toThrow('INVALID_HOST');
+    });
+
+    test('HTTPS everywhere, plain HTTP only for loopback hosts', () => {
+      expect(hostBaseUrl('x.example.com')).toBe('https://x.example.com');
+      expect(hostBaseUrl('x.example.com:8443')).toBe('https://x.example.com:8443');
+      expect(hostBaseUrl('localhost:3000')).toBe('http://localhost:3000');
+      expect(hostBaseUrl('127.0.0.1:8080')).toBe('http://127.0.0.1:8080');
+      expect(hostBaseUrl('[::1]:8080')).toBe('http://[::1]:8080');
     });
   });
 
@@ -135,13 +146,13 @@ describe('host resolution', () => {
       process.env.SEMANTIUS_ORG = 'org-default';
       process.env.SEMANTIUS_HOST = 'env.example.com';
       setHostFlag('flag.example.com');
-      expect(getHost()).toBe('https://flag.example.com');
+      expect(getHost()).toBe('flag.example.com');
 
       setHostFlag(undefined);
-      expect(getHost()).toBe('https://env.example.com');
+      expect(getHost()).toBe('env.example.com');
 
       delete process.env.SEMANTIUS_HOST;
-      expect(getHost()).toBe('https://org-default.semantius.cloud');
+      expect(getHost()).toBe('org-default.semantius.cloud');
     });
 
     test('no host at all → null', () => {
@@ -170,19 +181,19 @@ describe('host resolution', () => {
 
       test('a project .env HOST beats the org default', async () => {
         await loadDotEnv();
-        expect(getHost()).toBe('https://dotenv.example.com');
+        expect(getHost()).toBe('dotenv.example.com');
       });
 
       test('shell SEMANTIUS_HOST beats the project .env', async () => {
         process.env.SEMANTIUS_HOST = 'shell.example.com';
         await loadDotEnv();
-        expect(getHost()).toBe('https://shell.example.com');
+        expect(getHost()).toBe('shell.example.com');
       });
 
       test('--host beats the project .env', async () => {
         setHostFlag('https://flag.example.com');
         await loadDotEnv();
-        expect(getHost()).toBe('https://flag.example.com');
+        expect(getHost()).toBe('flag.example.com');
       });
     });
   });
@@ -197,7 +208,7 @@ describe('host resolution', () => {
       expect(calls).toEqual(['https://api.semantius.cloud/organization/acme']);
       expect(facts).toEqual({
         mode: 'cloud',
-        host: 'https://acme.semantius.cloud',
+        host: 'acme.semantius.cloud',
         org: 'acme',
         tenantId: RECORD.id,
         postgrestUrl: 'https://ep-test.apirest.example.neon.tech/neondb/rest/v1',
@@ -228,8 +239,8 @@ describe('host resolution', () => {
       stubFetch(() => json(RECORD));
       const first = await resolveHost();
 
-      const path = getHostCachePath('https://acme.semantius.cloud');
-      expect(path).toBe(join(cacheDir, 'https___acme.semantius.cloud.json'));
+      const path = getHostCachePath('acme.semantius.cloud');
+      expect(path).toBe(join(cacheDir, 'acme.semantius.cloud.json'));
       const cached = JSON.parse(await readFile(path, 'utf8'));
       expect(Object.keys(cached.record).sort()).toEqual([
         'client_id_cli',
@@ -251,7 +262,7 @@ describe('host resolution', () => {
 
     test('an expired cache entry (older than 24 h) is refetched', async () => {
       process.env.SEMANTIUS_ORG = 'acme';
-      const path = getHostCachePath('https://acme.semantius.cloud');
+      const path = getHostCachePath('acme.semantius.cloud');
       await writeFile(
         path,
         JSON.stringify({
@@ -273,7 +284,7 @@ describe('host resolution', () => {
       process.env.SEMANTIUS_ORG = 'acme';
       stubFetch(() => json(RECORD));
       await resolveHost();
-      const path = deleteHostCache('https://acme.semantius.cloud');
+      const path = deleteHostCache('acme.semantius.cloud');
       expect(existsSync(path)).toBe(false);
 
       const calls = stubFetch(() => json(RECORD));
@@ -336,7 +347,7 @@ describe('host resolution', () => {
       expect(calls).toEqual([]);
       expect(facts).toEqual({
         mode: 'selfhosted',
-        host: 'https://x.example.com',
+        host: 'x.example.com',
         org: null,
         tenantId: null,
         postgrestUrl: 'https://x.example.com/rest',
@@ -349,14 +360,18 @@ describe('host resolution', () => {
         apiBaseUrl: 'https://x.example.com/api',
         uiBaseUrl: 'https://x.example.com',
       });
-      expect(existsSync(getHostCachePath('https://x.example.com'))).toBe(false);
+      expect(existsSync(getHostCachePath('x.example.com'))).toBe(false);
     });
 
-    test('a host outside *.semantius.cloud is self-hosted, even semantius.ai', () => {
-      setHostFlag('acme.semantius.ai');
+    test('any host outside the Semantius cloud domains is self-hosted', () => {
+      setHostFlag('x.example.com');
       expect(getHostMode()).toBe('selfhosted');
       setHostFlag('acme.semantius.cloud');
       expect(getHostMode()).toBe('cloud');
+      // The web-app name of a cloud org is mapped, not treated as self-hosted.
+      setHostFlag('acme.semantius.app');
+      expect(getHostMode()).toBe('cloud');
+      expect(getHost()).toBe('acme.semantius.cloud');
     });
 
     test('the default config has no cube server', () => {
@@ -579,7 +594,7 @@ describe('host CLI surface', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toContain('Host cache reset:');
       expect(result.stderr).toContain(
-        'https___semantius-cli-test-org.semantius.cloud.json',
+        'semantius-cli-test-org.semantius.cloud.json',
       );
     }
   });
@@ -588,7 +603,7 @@ describe('host CLI surface', () => {
     const result = await runCli(['--help']);
     expect(result.exitCode).toBe(0);
     for (const text of [
-      '--host <url|hostname>',
+      '--host <hostname>',
       '--crud-mcp',
       '--reset-cache',
       'SEMANTIUS_HOST',

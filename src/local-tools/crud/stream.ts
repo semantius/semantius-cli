@@ -18,6 +18,7 @@ import { ErrorCode } from '../../errors.js';
 import { resolveHost } from '../../host.js';
 import { recordJwt, recordUrl, timeMcp } from '../../logger.js';
 import { postgrestRequestTool } from '../../vendor/postgrest-mcp/src/tools/postgrestRequest.js';
+import { describeFailure, isPostgrestErrorBody } from './http-errors.js';
 import { isolateVendoredCall } from './isolate.js';
 import { withLocalRetries } from './retry.js';
 
@@ -112,14 +113,32 @@ export async function streamPostgrestRequest(
   const attempt = async () => {
     lastStatus = undefined;
     const request = buildStreamRequest(host.postgrestUrl, token, args);
-    const response = await fetch(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-    });
+    const { method, url } = request;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: request.headers,
+        body: request.body,
+      });
+    } catch (error) {
+      const failure = { method, url, error: (error as Error).message };
+      throw new Error(describeFailure(failure, host));
+    }
     if (response.ok) return { ok: true as const, response };
     lastStatus = response.status;
-    const text = postgrestErrorText(await response.text());
+    const body = await response.text();
+    const text = isPostgrestErrorBody(body)
+      ? postgrestErrorText(body)
+      : describeFailure(
+          {
+            method,
+            url,
+            status: response.status,
+            statusText: response.statusText,
+          },
+          host,
+        );
     // Also the shape retryableErrorFromResult classifies, like a tool error.
     return {
       ok: false as const,
@@ -132,23 +151,33 @@ export async function streamPostgrestRequest(
     recordJwt(token);
   };
 
-  return isolateVendoredCall(async () => {
-    try {
-      const outcome = await timeMcp(() =>
-        withLocalRetries(attempt, { refresh }),
-      );
-      if (outcome.ok) {
-        await Bun.write(Bun.stdout, outcome.response);
-        return 0;
+  // console.error is redirected inside the window, so report after it.
+  const outcome = await isolateVendoredCall(
+    async (): Promise<{ code: number; error?: string }> => {
+      try {
+        const result = await timeMcp(() =>
+          withLocalRetries(attempt, { refresh }),
+        );
+        if (result.ok) {
+          await Bun.write(Bun.stdout, result.response);
+          return { code: 0 };
+        }
+        return {
+          code: streamExitCode(lastStatus ?? 0),
+          error: result.content[0].text,
+        };
+      } catch (error) {
+        const message = (error as Error).message;
+        return {
+          code:
+            lastStatus === undefined
+              ? ErrorCode.NETWORK_ERROR
+              : streamExitCode(lastStatus),
+          error: /^error\b/i.test(message) ? message : `Error: ${message}`,
+        };
       }
-      console.error(outcome.content[0].text);
-      return streamExitCode(lastStatus ?? 0);
-    } catch (error) {
-      const message = (error as Error).message;
-      console.error(/^error\b/i.test(message) ? message : `Error: ${message}`);
-      return lastStatus === undefined
-        ? ErrorCode.NETWORK_ERROR
-        : streamExitCode(lastStatus);
-    }
-  });
+    },
+  );
+  if (outcome.error) console.error(outcome.error);
+  return outcome.code;
 }

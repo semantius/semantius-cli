@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { randomBytes } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { NoCredentialsError } from '../src/auth/token';
+import { ApiKeyRejectedError, NoCredentialsError } from '../src/auth/token';
 import { type ServerConfig, setEnvPrefix } from '../src/config';
 import type { HostFacts } from '../src/host';
 import { deleteCachedToken } from '../src/jwt-cache';
@@ -39,7 +39,7 @@ import {
 
 const CLOUD: HostFacts = {
   mode: 'cloud',
-  host: 'https://acme.semantius.cloud',
+  host: 'acme.semantius.cloud',
   org: 'acme',
   tenantId: 'tenant-1',
   postgrestUrl: 'https://pg.example.com/rest/v1',
@@ -52,7 +52,7 @@ const CLOUD: HostFacts = {
 
 const SELF_HOSTED: HostFacts = {
   mode: 'selfhosted',
-  host: 'https://x.example.com',
+  host: 'x.example.com',
   org: null,
   tenantId: null,
   postgrestUrl: 'https://x.example.com/rest',
@@ -394,6 +394,49 @@ describe('local crud layer', () => {
       expect(process.env.SUPABASE_URL).toBe('https://supabase.example.com');
     });
 
+    test('vendored console.error (failure logs with request body and stack) never reaches stderr', async () => {
+      route('pg.example.com', () => json({ code: 'PGRST205', message: 'no table' }, 404));
+      const conn = await connect(CLOUD);
+      const originalError = console.error;
+      const errorSpy = mock((..._args: unknown[]) => {});
+      console.error = errorSpy;
+      try {
+        const result = await conn.callTool('getCurrentUser', {});
+        expect(textOf(result)).toBe('Error: (PGRST205) no table');
+        expect(errorSpy).not.toHaveBeenCalled();
+        expect(console.error).toBe(errorSpy);
+      } finally {
+        console.error = originalError;
+      }
+    });
+
+    test('an error without a PostgREST body names the status, the request and the host', async () => {
+      // e.g. a web app or proxy at the host: 405, empty body
+      route('x.example.com', () => new Response(null, { status: 405 }));
+      const conn = await connect(SELF_HOSTED, { postgrest: true });
+      const result = await conn.callTool('getCurrentUser', {});
+      expect(result).toEqual({
+        content: [
+          {
+            type: 'text',
+            text: 'Error: (HTTP 405) Method Not Allowed from POST https://x.example.com/rest/rpc/get_userinfo — is x.example.com a Semantius instance? Its PostgREST is expected at https://x.example.com/rest',
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test('an unreachable PostgREST is named in the error', async () => {
+      route('x.example.com', () => {
+        throw new Error('Unable to connect. Is the computer able to access the url?');
+      });
+      const conn = await connect(SELF_HOSTED, { postgrest: true });
+      const result = await conn.callTool('read_entity', {});
+      expect(textOf(result)).toStartWith(
+        'Error: GET https://x.example.com/rest/entities failed: Unable to connect.',
+      );
+    });
+
     test('client.callTool gets the SEMANTIUS_TIMEOUT budget, not the SDK 60 s default', async () => {
       process.env.SEMANTIUS_TIMEOUT = '77';
       route('pg.example.com', () => json({ email: 'a@b.test' }));
@@ -585,6 +628,21 @@ describe('local crud layer', () => {
       expect(refresh).not.toHaveBeenCalled();
     });
 
+    test('a rejected API key is never retried', async () => {
+      delete process.env.SEMANTIUS_JWT;
+      const op = mock<() => Promise<unknown>>().mockResolvedValue(
+        errorResult('Error: (PGRST301) JWT expired'),
+      );
+      const refresh = mock(async () => {
+        throw new ApiKeyRejectedError(CLOUD, 401, 'Invalid API key');
+      });
+      await expect(withLocalRetries(op, { refresh })).rejects.toBeInstanceOf(
+        ApiKeyRejectedError,
+      );
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(op).toHaveBeenCalledTimes(1);
+    });
+
     test('end to end: an expired token is re-exchanged and the call retried', async () => {
       delete process.env.SEMANTIUS_JWT;
       const apiKey = `sk-crudlocal${randomBytes(4).toString('hex')}-${randomBytes(16).toString('hex')}`;
@@ -611,7 +669,7 @@ describe('local crud layer', () => {
           `Bearer ${second}`,
         ]);
       } finally {
-        deleteCachedToken(apiKey);
+        deleteCachedToken(apiKey, CLOUD.host);
       }
     });
   });

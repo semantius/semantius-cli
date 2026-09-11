@@ -3,7 +3,7 @@
  * either a connectivity check or basic identity info.
  */
 
-import { NoCredentialsError } from '../auth/token.js';
+import { isCredentialError } from '../auth/token.js';
 import { type McpConnection, getConnection, safeClose } from '../client.js';
 import {
   type McpServersConfig,
@@ -90,8 +90,8 @@ async function fetchCurrentUser(
   try {
     connection = await getConnection(SERVER, serverConfig);
   } catch (error) {
-    if (error instanceof NoCredentialsError) {
-      const err = new Error(error.message);
+    if (isCredentialError(error)) {
+      const err = new Error((error as Error).message);
       (err as Error & { exitCode?: number }).exitCode = ErrorCode.AUTH_ERROR;
       throw err;
     }

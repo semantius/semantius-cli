@@ -30,6 +30,12 @@ import {
   getCurrentContext,
   setCurrentContext,
 } from './context.js';
+import {
+  type HttpFailure,
+  describeFailure,
+  recordFetchFailures,
+  unexplainedFailure,
+} from './http-errors.js';
 import { isolateVendoredCall } from './isolate.js';
 import { createCrudServer } from './registry.js';
 import { withLocalRetries } from './retry.js';
@@ -118,13 +124,19 @@ export async function createCrudConnection(
   );
   await client.connect(clientTransport);
 
-  const callOnce = (toolName: string, args: Record<string, unknown>) => {
+  const callOnce = (
+    toolName: string,
+    args: Record<string, unknown>,
+    failures: HttpFailure[],
+  ) => {
     setCurrentContext(host, context);
     return isolateVendoredCall(() =>
-      // The SDK's default request timeout (60 s) is too short for bulk calls.
-      client.callTool({ name: toolName, arguments: args }, undefined, {
-        timeout: getTimeoutMs(),
-      }),
+      recordFetchFailures(failures, () =>
+        // The SDK's default request timeout (60 s) is too short for bulk calls.
+        client.callTool({ name: toolName, arguments: args }, undefined, {
+          timeout: getTimeoutMs(),
+        }),
+      ),
     );
   };
 
@@ -151,10 +163,34 @@ export async function createCrudConnection(
       if (!isToolAllowed(toolName, config)) {
         throw new Error(`Tool "${toolName}" is disabled by configuration`);
       }
-      const result = await timeMcp(() =>
-        withLocalRetries(() => callOnce(toolName, args), { refresh }),
-      );
-      return postProcessResult(toolName, result, host);
+      const failures: HttpFailure[] = [];
+      let result: unknown;
+      try {
+        result = await timeMcp(() =>
+          withLocalRetries(() => callOnce(toolName, args, failures), {
+            refresh,
+          }),
+        );
+      } catch (error) {
+        // Retries exhausted: name the request if PostgREST did not.
+        const failure = unexplainedFailure(failures, host);
+        if (failure)
+          throw new Error(`Error: ${describeFailure(failure, host)}`);
+        throw error;
+      }
+      return postProcessResult(toolName, explainFailure(result), host);
+
+      /** Replace the text of an error result PostgREST did not explain. */
+      function explainFailure(r: unknown): unknown {
+        const failure = unexplainedFailure(failures, host);
+        if (!failure || !(r as ToolResult)?.isError) return r;
+        return {
+          ...(r as ToolResult),
+          content: [
+            { type: 'text', text: `Error: ${describeFailure(failure, host)}` },
+          ],
+        };
+      }
     },
     async getInstructions(): Promise<string | undefined> {
       return client.getInstructions();

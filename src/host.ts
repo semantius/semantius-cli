@@ -3,8 +3,9 @@
  *
  * One host value decides where the CLI talks to. Precedence: --host →
  * ${PREFIX}_HOST (shell env, then project .env, then the global .env —
- * loadDotEnv never overrides a set variable) → https://<${PREFIX}_ORG>.semantius.cloud.
+ * loadDotEnv never overrides a set variable) → <${PREFIX}_ORG>.semantius.cloud.
  *
+ * A host is a bare hostname[:port]; the CLI picks the protocol (hostBaseUrl).
  * A host matching *.semantius.cloud is the managed cloud: the org is its first
  * label and the control plane supplies the tenant's PostgREST URL, tenant id
  * and CLI OAuth client id (cached on disk for 24 h). Any other host is
@@ -33,7 +34,7 @@ import { ErrorCode, formatCliError } from './errors.js';
 
 export interface HostFacts {
   mode: 'cloud' | 'selfhosted';
-  /** Normalized host URL, e.g. https://acme.semantius.cloud */
+  /** Bare hostname[:port], e.g. acme.semantius.cloud */
   host: string;
   org: string | null;
   tenantId: string | null;
@@ -68,12 +69,15 @@ export class HostResolutionError extends Error {
 // ============================================================================
 
 /**
- * Normalize a --host / ${PREFIX}_HOST value: a bare hostname gets https://,
- * scheme and hostname are lowercased, a default port and trailing slashes are
- * dropped. Throws a formatted INVALID_HOST error for anything else.
+ * Normalize a --host / ${PREFIX}_HOST value to a bare, lowercase
+ * hostname[:port]: a leading https:// or http:// and trailing slashes are
+ * stripped, as is a port that is the default for the given scheme; the
+ * web-app / MCP / analytics names of a cloud org map to <org>.semantius.cloud.
+ * Throws a formatted INVALID_HOST error for anything else (other schemes,
+ * paths, credentials, queries).
  */
 export function normalizeHost(value: string): string {
-  const raw = value.trim();
+  const raw = value.trim().replace(/\/+$/, '');
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
     ? raw
     : `https://${raw}`;
@@ -82,19 +86,44 @@ export function normalizeHost(value: string): string {
   try {
     url = new URL(withScheme);
   } catch {
-    throw invalidHostError(value, 'not a valid URL or hostname');
+    throw invalidHostError(value, 'not a valid hostname');
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') {
     throw invalidHostError(value, `unsupported scheme "${url.protocol}"`);
   }
-  if (url.search || url.hash || url.username || url.password) {
+  if (
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash ||
+    url.username ||
+    url.password
+  ) {
     throw invalidHostError(
       value,
-      'must not contain credentials, a query or a fragment',
+      'must be a hostname with an optional port, without a path, credentials, a query or a fragment',
     );
   }
-  return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+  for (const [suffix, what] of OTHER_CLOUD_HOSTS) {
+    if (url.hostname.endsWith(suffix) && url.hostname.length > suffix.length) {
+      const host = `${url.hostname.split('.')[0]}${CLOUD_SUFFIX}`;
+      debug(
+        `${url.hostname} is ${what}; using the organization's host ${host}`,
+      );
+      return host;
+    }
+  }
+  return url.host;
 }
+
+/**
+ * The other per-org Semantius cloud domains. They are never self-hosted
+ * instances, so the org is taken from them and mapped to <org>.semantius.cloud.
+ */
+const OTHER_CLOUD_HOSTS: ReadonlyArray<[suffix: string, what: string]> = [
+  ['.semantius.app', 'the Semantius web app'],
+  ['.semantius.ai', 'the Semantius cloud MCP server'],
+  ['.semantius.io', 'the Semantius analytics (cube) server'],
+];
 
 function invalidHostError(value: string, reason: string): Error {
   return new Error(
@@ -103,9 +132,25 @@ function invalidHostError(value: string, reason: string): Error {
       type: 'INVALID_HOST',
       message: `Invalid host "${value}": ${reason}`,
       suggestion:
-        'Use a hostname (acme.semantius.cloud) or https://host[:port] (self-hosted)',
+        'Use a hostname: acme.semantius.cloud (managed cloud) or semantius.example.com[:port] (self-hosted)',
     }),
   );
+}
+
+/** Hostnames reached over plain HTTP: local dev and test servers. */
+function isLoopback(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname === '[::1]' ||
+    /^127(\.\d{1,3}){3}$/.test(hostname)
+  );
+}
+
+/** The URL a host is reached at: https://<host>, or http:// for loopback hosts. */
+export function hostBaseUrl(host: string): string {
+  const { hostname } = new URL(`https://${host}`);
+  return `${isLoopback(hostname) ? 'http' : 'https'}://${host}`;
 }
 
 /**
@@ -118,13 +163,13 @@ export function getHost(): string | null {
   const env = getPrefixedEnv('HOST');
   if (env) return normalizeHost(env);
   const org = getPrefixedEnv('ORG');
-  if (org) return `https://${org}${CLOUD_SUFFIX}`;
+  if (org) return `${org}${CLOUD_SUFFIX}`;
   return null;
 }
 
 /** Cloud-host rule: *.semantius.cloud is the managed cloud, anything else is self-hosted. */
 export function isCloudHost(host: string): boolean {
-  const { hostname } = new URL(host);
+  const { hostname } = new URL(`https://${host}`);
   return (
     hostname.endsWith(CLOUD_SUFFIX) && hostname.length > CLOUD_SUFFIX.length
   );
@@ -132,7 +177,7 @@ export function isCloudHost(host: string): boolean {
 
 /** First label of a cloud host's hostname: acme.semantius.cloud → acme. */
 export function orgFromHost(host: string): string {
-  return new URL(host).hostname.split('.')[0];
+  return new URL(`https://${host}`).hostname.split('.')[0];
 }
 
 /** Mode of the configured host, or null when no host is configured. */
@@ -195,17 +240,18 @@ export function resolveHost(): Promise<HostFacts> {
 }
 
 function selfHostedFacts(host: string): HostFacts {
+  const base = hostBaseUrl(host);
   return {
     mode: 'selfhosted',
     host,
     org: null,
     tenantId: null,
-    postgrestUrl: `${host}/rest`,
-    discoveryUrl: `${host}/.well-known/openid-configuration`,
-    tokenExchange: { method: 'GET', url: `${host}/api/auth/token` },
+    postgrestUrl: `${base}/rest`,
+    discoveryUrl: `${base}/.well-known/openid-configuration`,
+    tokenExchange: { method: 'GET', url: `${base}/api/auth/token` },
     clientId: SELF_HOSTED_CLIENT_ID,
-    apiBaseUrl: `${host}/api`,
-    uiBaseUrl: host,
+    apiBaseUrl: `${base}/api`,
+    uiBaseUrl: base,
   };
 }
 

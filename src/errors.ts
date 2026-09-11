@@ -151,7 +151,12 @@ export function serverConnectionError(
   let suggestion =
     'Check server configuration and ensure the server process can start';
 
-  if (cause.includes('ENOENT') || cause.includes('not found')) {
+  // The local crud layer's API-key exchange (auth/token.ts); a rejected key
+  // is reported separately (ApiKeyRejectedError).
+  if (cause.includes('Token exchange failed')) {
+    suggestion =
+      'Check the host (--host, SEMANTIUS_HOST or SEMANTIUS_ORG): it did not answer like a Semantius instance';
+  } else if (cause.includes('ENOENT') || cause.includes('not found')) {
     suggestion =
       'Command not found. Install the MCP server: npx -y @modelcontextprotocol/server-<name>';
   } else if (cause.includes('ECONNREFUSED')) {

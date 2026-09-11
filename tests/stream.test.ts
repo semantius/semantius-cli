@@ -243,6 +243,19 @@ describe('call crud postgrestRequest --stream (end to end)', () => {
     }
   });
 
+  test('a non-PostgREST error page names the status, the request and the host', async () => {
+    reply = () =>
+      new Response('<html><body>Bad Gateway</body></html>', {
+        status: 502,
+        headers: { 'content-type': 'text/html' },
+      });
+    const result = await runCli(stream({ method: 'GET', path: '/t' }));
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.trim()).toBe(
+      `Error: (HTTP 502) Bad Gateway from GET ${host}/rest/t — is 127.0.0.1:${server.port} a Semantius instance? Its PostgREST is expected at ${host}/rest`,
+    );
+  });
+
   test('network failure → exit 3', async () => {
     const closed = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response() });
     const port = closed.port;

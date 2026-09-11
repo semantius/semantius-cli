@@ -668,7 +668,10 @@ describe('CLI errors through the local crud layer', () => {
       SEMANTIUS_DISABLE_JWT_CACHE: '1',
     });
     expect(result.exitCode).toBe(5);
-    expect(result.stderr).toContain('Token exchange failed (401)');
+    expect(result.stderr).toContain(
+      `Error [API_KEY_REJECTED]: 127.0.0.1:${server.port} rejected the API key in SEMANTIUS_API_KEY (401: invalid_api_key)`,
+    );
+    expect(result.stderr).not.toContain('SERVER_CONNECTION_FAILED');
     expect(result.stderr).not.toContain('sk-bad-0123456789abcdef');
   });
 
@@ -688,7 +691,7 @@ describe('CLI errors through the local crud layer', () => {
     const result = await runLocal(pg({ method: 'GET', path: '/t' }), { SEMANTIUS_JWT: '' });
     expect(result.exitCode).toBe(5);
     expect(result.stderr.trim()).toBe(
-      `Authentication required: no credentials for http://127.0.0.1:${server.port}. Set SEMANTIUS_API_KEY or run "semantius login".`,
+      `Authentication required: no credentials for 127.0.0.1:${server.port}. Set SEMANTIUS_API_KEY or run "semantius login".`,
     );
   });
 

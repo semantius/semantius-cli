@@ -7,7 +7,7 @@
  * - Errors always go to stderr
  */
 
-import { NoCredentialsError } from '../auth/token.js';
+import { isCredentialError } from '../auth/token.js';
 import {
   type McpConnection,
   getConnection,
@@ -402,8 +402,8 @@ async function runCall(options: CallOptions): Promise<void> {
       );
       code = await streamPostgrestRequest(serverConfig, args);
     } catch (error) {
-      if (error instanceof NoCredentialsError) {
-        console.error(error.message);
+      if (isCredentialError(error)) {
+        console.error((error as Error).message);
         return exit(ErrorCode.AUTH_ERROR);
       }
       const message = (error as Error).message;
@@ -423,8 +423,8 @@ async function runCall(options: CallOptions): Promise<void> {
   try {
     connection = await getConnection(serverName, serverConfig);
   } catch (error) {
-    if (error instanceof NoCredentialsError) {
-      console.error(error.message);
+    if (isCredentialError(error)) {
+      console.error((error as Error).message);
       return exit(ErrorCode.AUTH_ERROR);
     }
     const message = (error as Error).message;

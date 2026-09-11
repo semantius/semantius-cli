@@ -10,9 +10,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
 import {
+  ApiKeyRejectedError,
   NoCredentialsError,
   getAccessToken,
   getCredentialSource,
+  isCredentialError,
 } from '../src/auth/token';
 import { setEnvPrefix } from '../src/config';
 import { isAuthErrorMessage } from '../src/errors';
@@ -26,7 +28,7 @@ import {
 
 const CLOUD: HostFacts = {
   mode: 'cloud',
-  host: 'https://acme.semantius.cloud',
+  host: 'acme.semantius.cloud',
   org: 'acme',
   tenantId: 'tenant-1',
   postgrestUrl: 'https://pg.example.com/rest/v1',
@@ -39,7 +41,7 @@ const CLOUD: HostFacts = {
 
 const SELF_HOSTED: HostFacts = {
   mode: 'selfhosted',
-  host: 'https://x.example.com',
+  host: 'x.example.com',
   org: null,
   tenantId: null,
   postgrestUrl: 'https://x.example.com/rest',
@@ -105,7 +107,8 @@ describe('getAccessToken', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    deleteCachedToken(apiKey);
+    deleteCachedToken(apiKey, CLOUD.host);
+    deleteCachedToken(apiKey, SELF_HOSTED.host);
     setJwtCacheDisabled(false);
     for (const v of VARS) {
       if (saved[v] !== undefined) process.env[v] = saved[v];
@@ -135,10 +138,11 @@ describe('getAccessToken', () => {
   test('cache hit → no fetch', async () => {
     process.env.SEMANTIUS_API_KEY = apiKey;
     const cachedJwt = makeJwt(inOneHour(), 'cached');
-    await writeCachedToken(apiKey, {
-      jwt: cachedJwt,
-      expires: new Date(Date.now() + 3_000_000).toISOString(),
-    });
+    await writeCachedToken(
+      apiKey,
+      { jwt: cachedJwt, expires: new Date(Date.now() + 3_000_000).toISOString() },
+      CLOUD.host,
+    );
     stubFetch(tokenReply(makeJwt(inOneHour(), 'fresh')));
 
     expect(await getAccessToken(CLOUD)).toBe(cachedJwt);
@@ -166,7 +170,7 @@ describe('getAccessToken', () => {
     ]);
 
     // Persisted with expires = exp − 10 s, and reused without another fetch.
-    const cached = await readCachedToken(apiKey);
+    const cached = await readCachedToken(apiKey, CLOUD.host);
     expect(cached).toEqual({
       jwt,
       expires: new Date((exp - 10) * 1000).toISOString(),
@@ -196,7 +200,7 @@ describe('getAccessToken', () => {
     stubFetch(tokenReply(second));
     expect(await getAccessToken(CLOUD, { forceRefresh: true })).toBe(second);
     expect(calls.length).toBe(2);
-    expect((await readCachedToken(apiKey))?.jwt).toBe(second);
+    expect((await readCachedToken(apiKey, CLOUD.host))?.jwt).toBe(second);
   });
 
   test('self-hosted: GET <host>/api/auth/token with x-api-key', async () => {
@@ -220,16 +224,17 @@ describe('getAccessToken', () => {
     stubFetch(tokenReply('opaque-token'));
     const before = Date.now();
     expect(await getAccessToken(CLOUD)).toBe('opaque-token');
-    const expires = Date.parse((await readCachedToken(apiKey))?.expires ?? '');
+    const expires = Date.parse((await readCachedToken(apiKey, CLOUD.host))?.expires ?? '');
     expect(expires).toBeGreaterThan(before + 3_500_000);
   });
 
   test('--disable-jwt-cache: exchanges without reading or writing the cache', async () => {
     process.env.SEMANTIUS_API_KEY = apiKey;
-    await writeCachedToken(apiKey, {
-      jwt: 'cached.jwt.token',
-      expires: new Date(Date.now() + 3_000_000).toISOString(),
-    });
+    await writeCachedToken(
+      apiKey,
+      { jwt: 'cached.jwt.token', expires: new Date(Date.now() + 3_000_000).toISOString() },
+      CLOUD.host,
+    );
     setJwtCacheDisabled(true);
     const jwt = makeJwt(inOneHour());
     stubFetch(tokenReply(jwt));
@@ -237,21 +242,48 @@ describe('getAccessToken', () => {
     expect(await getAccessToken(CLOUD)).toBe(jwt);
     expect(calls.length).toBe(1);
     setJwtCacheDisabled(false);
-    expect((await readCachedToken(apiKey))?.jwt).toBe('cached.jwt.token');
+    expect((await readCachedToken(apiKey, CLOUD.host))?.jwt).toBe('cached.jwt.token');
   });
 
-  test('a rejected API key surfaces as an auth error (exit 5)', async () => {
+  test('a rejected API key → ApiKeyRejectedError naming host and key (exit 5)', async () => {
     process.env.SEMANTIUS_API_KEY = apiKey;
     stubFetch(
       () => new Response('{"error":"invalid_client"}', { status: 401 }),
     );
     const error = await getAccessToken(CLOUD).catch((e: Error) => e);
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe(
-      'Token exchange failed (401): {"error":"invalid_client"}',
+    expect(error).toBeInstanceOf(ApiKeyRejectedError);
+    // "SEMANTIUS_API_KEY (from <file>)" when another test loaded a .env with it.
+    expect((error as Error).message).toMatch(
+      /^Error \[API_KEY_REJECTED\]: acme\.semantius\.cloud rejected the API key in SEMANTIUS_API_KEY( \(from [^)]+\))? \(401: invalid_client\)\n {2}Suggestion: The key belongs to another organization or was revoked\. Use an API key of acme\.$/,
     );
+    expect(isCredentialError(error)).toBe(true);
     expect(isAuthErrorMessage((error as Error).message)).toBe(true);
     expect((error as Error).message).not.toContain(apiKey);
+  });
+
+  test('a token cached for one host is never sent to another', async () => {
+    process.env.SEMANTIUS_API_KEY = apiKey;
+    await writeCachedToken(
+      apiKey,
+      { jwt: 'cloud.tenant.token', expires: new Date(Date.now() + 3_000_000).toISOString() },
+      CLOUD.host,
+    );
+    const selfHostedJwt = makeJwt(inOneHour(), 'self-hosted');
+    stubFetch(tokenReply(selfHostedJwt));
+
+    expect(await getAccessToken(SELF_HOSTED)).toBe(selfHostedJwt);
+    expect(calls.map((c) => c.url)).toEqual(['https://x.example.com/api/auth/token']);
+    // ...and each host keeps its own entry.
+    expect((await readCachedToken(apiKey, CLOUD.host))?.jwt).toBe('cloud.tenant.token');
+    expect((await readCachedToken(apiKey, SELF_HOSTED.host))?.jwt).toBe(selfHostedJwt);
+  });
+
+  test('a non-JSON answer from the token endpoint names the status and the host', async () => {
+    process.env.SEMANTIUS_API_KEY = apiKey;
+    stubFetch(() => new Response('<html>Not here</html>', { status: 404 }));
+    await expect(getAccessToken(SELF_HOSTED)).rejects.toThrow(
+      'Token exchange failed (404): Not Found from GET https://x.example.com/api/auth/token — is x.example.com a Semantius instance?',
+    );
   });
 
   test('no credentials → NoCredentialsError (exit 5 via isAuthErrorMessage)', async () => {
@@ -259,7 +291,7 @@ describe('getAccessToken', () => {
     const error = await getAccessToken(CLOUD).catch((e: Error) => e);
     expect(error).toBeInstanceOf(NoCredentialsError);
     expect((error as Error).message).toBe(
-      'Authentication required: no credentials for https://acme.semantius.cloud. Set SEMANTIUS_API_KEY or run "semantius login".',
+      'Authentication required: no credentials for acme.semantius.cloud. Set SEMANTIUS_API_KEY or run "semantius login".',
     );
     expect(isAuthErrorMessage((error as Error).message)).toBe(true);
     expect(getCredentialSource()).toBeNull();

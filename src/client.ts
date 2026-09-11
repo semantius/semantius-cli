@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { version as VERSION } from '../package.json' with { type: 'json' };
-import { NoCredentialsError } from './auth/token.js';
+import { isCredentialError } from './auth/token.js';
 import {
   type HttpServerConfig,
   type PostgrestServerConfig,
@@ -867,7 +867,7 @@ async function connectLocalCrud(
   } catch (error) {
     if (
       error instanceof Error &&
-      !(error instanceof NoCredentialsError) &&
+      !isCredentialError(error) &&
       !isAuthErrorMessage(error.message) &&
       getHostMode() === 'cloud'
     ) {

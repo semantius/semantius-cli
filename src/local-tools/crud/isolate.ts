@@ -5,7 +5,7 @@
  */
 
 import { format } from 'node:util';
-import { debug } from '../../config.js';
+import { getPrefixedEnv } from '../../config.js';
 
 /**
  * Env vars the vendored getHeaders / makePostgrestRequest / getCurrentUser
@@ -20,13 +20,27 @@ export const GUARDED_ENV_VARS = [
 ] as const;
 
 /**
- * Run `fn` with (1) console.log forwarded to debug() — upstream logs every
- * request to stdout, a server log on Deno but output corruption here — and
- * (2) the GUARDED_ENV_VARS hidden. Both are restored afterwards.
+ * Run `fn` with (1) console.log and console.error forwarded to debug() —
+ * upstream logs every request, and every failure with its request body and
+ * stack, which is a server log on Deno but output corruption and noise here;
+ * the CLI reports failures itself — and (2) the GUARDED_ENV_VARS hidden.
+ * Everything is restored afterwards.
  */
 export async function isolateVendoredCall<T>(fn: () => Promise<T>): Promise<T> {
   const originalLog = console.log;
-  console.log = (...args: unknown[]) => debug(format(...args));
+  const originalError = console.error;
+  // What debug() does, but through the saved console.error: debug() itself
+  // writes via console.error, which is redirected here (hence no second prefix
+  // for a CLI debug() line that runs inside the window).
+  const toDebug = (...args: unknown[]) => {
+    if (!getPrefixedEnv('DEBUG')) return;
+    const text = format(...args);
+    originalError(
+      text.startsWith('[semantius] ') ? text : `[semantius] ${text}`,
+    );
+  };
+  console.log = toDebug;
+  console.error = toDebug;
   const saved = GUARDED_ENV_VARS.map(
     (name) => [name, process.env[name]] as const,
   );
@@ -35,6 +49,7 @@ export async function isolateVendoredCall<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } finally {
     console.log = originalLog;
+    console.error = originalError;
     for (const [name, value] of saved) {
       if (value !== undefined) process.env[name] = value;
     }

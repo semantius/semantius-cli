@@ -115,7 +115,7 @@ semantius [options] whoami                      Show current user (email, org, r
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
 | `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
 | `--env <prefix>` | Env var prefix (default `SEMANTIUS`), e.g. `--env PROD` reads `PROD_API_KEY` / `PROD_ORG` |
-| `--host <url\|hostname>` | Semantius host to talk to (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST` |
+| `--host <hostname>` | Semantius host to talk to, `hostname[:port]` (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST` |
 | `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
 | `--stream` | (`call crud postgrestRequest` only) Pipe the PostgREST response body to stdout unchanged — see [Streaming large reads](#streaming-large-reads---stream). Also `SEMANTIUS_STREAM=1` |
 | `--disable-jwt-cache` | Skip the token cache and re-authenticate on every request (see [Token cache](#token-cache)) |
@@ -333,7 +333,7 @@ configurations side by side in the same `.env`.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SEMANTIUS_ORG` | Organization on the managed cloud; the host defaults to `https://<org>.semantius.cloud`. **Required** unless `SEMANTIUS_HOST` or `--host` names the host (an `org:` prefix on the API key or JWT also supplies it) | (none) |
-| `SEMANTIUS_HOST` | Host URL or hostname, same as `--host` (see [Hosts](#hosts-managed-cloud-and-self-hosted)) | `https://${SEMANTIUS_ORG}.semantius.cloud` |
+| `SEMANTIUS_HOST` | Hostname, same as `--host` (see [Hosts](#hosts-managed-cloud-and-self-hosted)) | `${SEMANTIUS_ORG}.semantius.cloud` |
 | `SEMANTIUS_API_KEY` | API key for Semantius (needed to call tools unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
 | `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
 | `SEMANTIUS_CRUD_MCP` | `1` = same as `--crud-mcp` | `false` |
@@ -356,18 +356,26 @@ configurations side by side in the same `.env`.
 
 The CLI talks to one Semantius host per invocation, taken from the first of:
 
-1. `--host <url|hostname>`
+1. `--host <hostname>`
 2. `SEMANTIUS_HOST` — from the shell, then a project `.env`, then the global `.env` in the user config dir
-3. `SEMANTIUS_ORG` — the managed-cloud host `https://<org>.semantius.cloud`
+3. `SEMANTIUS_ORG` — the managed-cloud host `<org>.semantius.cloud`
+
+A host is a hostname with an optional port (`acme.semantius.cloud`,
+`semantius.example.com:8443`); a leading `https://` or `http://` is ignored.
+The CLI always connects over HTTPS, except to `localhost` / `127.x.x.x`, which
+use plain HTTP (local development servers).
 
 A host under `.semantius.cloud` (e.g. `--host acme.semantius.cloud`) is the
 **managed cloud**: its first label is the organization (and overrides
 `SEMANTIUS_ORG`), and the tenant's PostgREST URL is looked up once on the
 Semantius control plane and cached for 24 hours in
-`<user config dir>/hosts/`. Any other host (`--host https://semantius.example.com[:port]`)
-is **self-hosted**: PostgREST is expected at `<host>/rest`, the token exchange
-at `<host>/api/auth/token`, and there is no `cube` (analytics) server and no
-cloud MCP server, so `--crud-mcp` is not available.
+`<user config dir>/hosts/`. The other per-org cloud names —
+`<org>.semantius.app` (web app), `<org>.semantius.ai` (MCP server),
+`<org>.semantius.io` (analytics) — are mapped to `<org>.semantius.cloud`, so
+pasting the web app's address works. Any other host (`--host semantius.example.com`)
+is **self-hosted**: PostgREST is expected at `https://<host>/rest`, the token
+exchange at `https://<host>/api/auth/token`, and there is no `cube` (analytics)
+server and no cloud MCP server, so `--crud-mcp` is not available.
 
 Note: an `org:` prefix on `SEMANTIUS_API_KEY` that names a different org than
 `--host` makes the token exchange fail with 401.
