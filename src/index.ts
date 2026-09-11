@@ -24,13 +24,13 @@ import {
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_SECONDS,
   getMissingRequiredEnvVars,
-  getRequiredEnvVarNames,
   getUserConfigDir,
-  listServerNames,
-  loadConfig,
+  isCrudMcp,
   loadDotEnv,
   prefixedEnvName,
+  setCrudMcpFlag,
   setEnvPrefix,
+  setHostFlag,
 } from './config.js';
 import { runDaemonFromArgv } from './daemon.js';
 import {
@@ -42,6 +42,14 @@ import {
   unknownOptionError,
   unknownSubcommandError,
 } from './errors.js';
+import {
+  deleteHostCache,
+  getHost,
+  getHostMode,
+  isCloudHost,
+  normalizeHost,
+  propagateOrg,
+} from './host.js';
 import {
   deleteCachedToken,
   getCachePath,
@@ -71,9 +79,11 @@ interface ParsedArgs {
   diag: boolean;
   single: boolean;
   envPrefix: string;
+  host?: string;
+  crudMcp: boolean;
   pingCount?: number;
   disableJwtCache: boolean;
-  resetJwtCache: boolean;
+  resetCache: boolean;
 }
 
 /**
@@ -155,6 +165,21 @@ function findEnvPrefix(args: string[]): string {
 }
 
 /**
+ * Lightweight scan for --host <value>, same pattern as findEnvPrefix, so the
+ * host is known even on paths where parseArgs returns early (-h, -v) and for
+ * the startup host check. The full parser validates the value.
+ */
+function findHostFlag(args: string[]): string | undefined {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--host') {
+      const value = args[i + 1];
+      if (value && !value.startsWith('-')) return value;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Parse command line arguments
  */
 function parseArgs(args: string[]): ParsedArgs {
@@ -165,8 +190,9 @@ function parseArgs(args: string[]): ParsedArgs {
     diag: false,
     single: false,
     envPrefix: 'SEMANTIUS',
+    crudMcp: false,
     disableJwtCache: false,
-    resetJwtCache: false,
+    resetCache: false,
   };
 
   const positional: string[] = [];
@@ -207,9 +233,32 @@ function parseArgs(args: string[]): ParsedArgs {
         result.disableJwtCache = true;
         break;
 
+      case '--reset-cache':
       case '--reset-jwt-cache':
-        result.resetJwtCache = true;
+        result.resetCache = true;
         break;
+
+      case '--crud-mcp':
+        result.crudMcp = true;
+        break;
+
+      case '--host': {
+        const host = args[++i];
+        if (!host) {
+          console.error(
+            formatCliError(missingArgumentError('--host', 'url or hostname')),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        try {
+          normalizeHost(host);
+        } catch (error) {
+          console.error((error as Error).message);
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        result.host = host;
+        break;
+      }
 
       case '-c':
       case '--config':
@@ -441,10 +490,22 @@ function parseArgs(args: string[]): ParsedArgs {
 /**
  * Print help message
  */
+/**
+ * Warning block for help/version when no host is configured (empty otherwise).
+ */
+function missingHostWarning(): string {
+  if (getMissingRequiredEnvVars().length === 0) return '';
+  return `
+⚠  No host configured: set ${prefixedEnvName('ORG')} or --host (or ${prefixedEnvName('HOST')}).
+   Set it in ${getUserConfigDir()}/.env or export it in your shell.
+   Generate an API key at https://app.semantius.com/dashboard`;
+}
+
 function printHelp(): void {
-  const requiredVars = getRequiredEnvVarNames();
+  const orgVar = prefixedEnvName('ORG');
+  const hostVar = prefixedEnvName('HOST');
+  const apiKeyVar = prefixedEnvName('API_KEY');
   const jwtVar = prefixedEnvName('JWT');
-  const missingVars = getMissingRequiredEnvVars();
   const configDir = getUserConfigDir();
 
   console.log(`
@@ -481,8 +542,13 @@ Options:
                            Rejected (exit 1) for bulk calls: an array in data/body/id/table_name
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
+  --host <url|hostname>    Semantius host: <org>.semantius.cloud is the managed cloud; any other host
+                           (https://host[:port]) is self-hosted. Also: ${hostVar}
+  --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
+                           local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
-  --reset-jwt-cache        Delete the cached JWT for the current API key before running. Next call fetches a fresh token.
+  --reset-cache            Delete the cached JWT for the current API key and the cached host lookup
+                           before running; the next call fetches fresh ones. Alias: --reset-jwt-cache
 
 Output:
   semantius/info/grep      Human-readable text to stdout
@@ -506,14 +572,20 @@ Examples:
   semantius call crud create_record '{}'           # Call tool
   cat input.json | semantius call crud create_record  # Read from stdin (no '-' needed)
   semantius --env PROD info crud                   # Use PROD_API_KEY / PROD_ORG
+  semantius --host semantius.example.com whoami    # Self-hosted instance
 
 Environment Variables (all respect --env <prefix>; default prefix shown):
-  ${requiredVars[0].padEnd(28)} API key for Semantius (required unless ${jwtVar} is set).
-                               Value may be "org:key" — the org prefix overrides ${requiredVars[1]}
-  ${requiredVars[1].padEnd(28)} Organization name for Semantius (required unless supplied
-                               via an "org:" prefix on the API key or JWT)
+  ${orgVar.padEnd(28)} Organization on the managed cloud; the host defaults to
+                               https://<org>.semantius.cloud. Required unless ${hostVar}
+                               or --host is set (an "org:" prefix on the API key or JWT
+                               also supplies it)
+  ${hostVar.padEnd(28)} Host URL or hostname, same as --host. Precedence: --host, then
+                               ${hostVar} (shell, project .env, global .env), then ${orgVar}
+  ${apiKeyVar.padEnd(28)} API key for Semantius (needed to call tools unless ${jwtVar} is set).
+                               Value may be "org:key" — the org prefix overrides ${orgVar}
   ${jwtVar.padEnd(28)} Static JWT sent as "Authorization: Bearer" directly; skips
-                               get_cli_token and the token cache. Value may be "org:jwt"
+                               the token exchange and the token cache. Value may be "org:jwt"
+  SEMANTIUS_CRUD_MCP=1         Same as --crud-mcp
   SEMANTIUS_DEBUG=1            Verbose debug logging to stderr
   SEMANTIUS_TIMEOUT=N          Request timeout in seconds (default: 1800)
   SEMANTIUS_CONCURRENCY=N      Max parallel server connections (default: 5)
@@ -542,35 +614,26 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
 
 Config file location:
   ${configDir}${configDir.endsWith('\\') || configDir.endsWith('/') ? '' : '/'}  (.env or mcp_servers.json)
-${
-  missingVars.length > 0
-    ? `
-⚠  Missing required environment variables:
-${missingVars.map((v) => `   ${v}`).join('\n')}
-   Set these in ${configDir}/.env or export them in your shell.
-   Generate an API key at https://app.semantius.com/dashboard`
-    : ''
-}`);
+${missingHostWarning()}`);
 }
 
 /**
- * Check that required environment variables are set at startup.
- * Exits with an error listing each missing variable by name.
+ * Check at startup that a host is resolvable (${PREFIX}_ORG, --host or
+ * ${PREFIX}_HOST). Credentials are not checked here: a command that needs
+ * them fails with exit 5 when it authenticates.
  */
 function checkRequiredEnvVars(): void {
   const missing = getMissingRequiredEnvVars();
 
   if (missing.length > 0) {
+    const orgVar = prefixedEnvName('ORG');
     for (const v of missing) {
       console.error(
-        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v}`,
+        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host)`,
       );
     }
     console.error('Generate an API key at https://app.semantius.com/dashboard');
-    // A missing API key is an auth failure (permanent); a missing ORG is a
-    // configuration issue. Exit AUTH_ERROR only when API_KEY itself is missing.
-    const missingApiKey = missing.some((v) => v.endsWith('_API_KEY'));
-    process.exit(missingApiKey ? ErrorCode.AUTH_ERROR : ErrorCode.CLIENT_ERROR);
+    process.exit(ErrorCode.CLIENT_ERROR);
   }
 }
 
@@ -592,6 +655,7 @@ async function main(): Promise<void> {
   // Resolve --env first so the logger and every env lookup below uses the
   // right prefix — including for early-exit paths like parse errors.
   setEnvPrefix(findEnvPrefix(argv));
+  setHostFlag(findHostFlag(argv));
 
   // Install the exit-time logger immediately so even early-exit code paths
   // (parse errors, missing env vars) get a log entry when <PREFIX>_LOG_FILE
@@ -603,6 +667,8 @@ async function main(): Promise<void> {
   // parseArgs's value wins (it's the canonical parser) — re-apply in case
   // findEnvPrefix's lightweight scan disagrees on edge cases.
   setEnvPrefix(args.envPrefix);
+  if (args.host !== undefined) setHostFlag(args.host);
+  setCrudMcpFlag(args.crudMcp);
 
   if (args.disableJwtCache) {
     setJwtCacheDisabled(true);
@@ -618,14 +684,8 @@ async function main(): Promise<void> {
   if (args.command === 'version') {
     await loadDotEnv();
     console.log(`semantius v${VERSION}`);
-    const missingVars = getMissingRequiredEnvVars();
-    if (missingVars.length > 0) {
-      console.log(`
-⚠  Missing required environment variables:
-${missingVars.map((v) => `   ${v}`).join('\n')}
-   Set these in ${getUserConfigDir()}/.env or export them in your shell.
-   Generate an API key at https://app.semantius.com/dashboard`);
-    }
+    const warning = missingHostWarning();
+    if (warning) console.log(warning);
     return;
   }
 
@@ -637,16 +697,36 @@ ${missingVars.map((v) => `   ${v}`).join('\n')}
   // `<envDir>/semantius.log` (or stderr when no .env was loaded).
   enableFromEnv(true);
 
-  // Validate required environment variables before running any data command
+  // On a cloud host the host's org becomes ${PREFIX}_ORG (the host wins over
+  // an ORG from .env). Also surfaces an invalid ${PREFIX}_HOST early.
+  try {
+    propagateOrg();
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // Validate that a host is configured before running any data command
   checkRequiredEnvVars();
 
-  if (args.resetJwtCache) {
+  if (isCrudMcp() && getHostMode() === 'selfhosted') {
+    console.error(
+      'Error [NOT_AVAILABLE]: --crud-mcp needs the Semantius cloud MCP server; self-hosted instances have none',
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  if (args.resetCache) {
     const apiKey = process.env[`${args.envPrefix}_API_KEY`];
     const parsed = parseApiKey(apiKey);
     if (parsed) {
       const path = getCachePath(parsed.id);
       deleteCachedToken(apiKey ?? '');
       console.error(`JWT cache reset: ${path}`);
+    }
+    const host = getHost();
+    if (host && isCloudHost(host)) {
+      console.error(`Host cache reset: ${deleteHostCache(host)}`);
     }
   }
 

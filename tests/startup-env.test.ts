@@ -1,9 +1,10 @@
 /**
  * Tests for startup environment variable validation.
  *
- * SEMANTIUS_API_KEY and SEMANTIUS_ORG are required at startup (API key is
- * optional when SEMANTIUS_JWT is set; ORG may come from an "org:" prefix on
- * either credential). The CLI must report each missing variable by name.
+ * At startup the CLI only requires a resolvable host: SEMANTIUS_ORG (which may
+ * come from an "org:" prefix on either credential), SEMANTIUS_HOST or --host.
+ * Credentials are not checked at startup — a command that needs them fails
+ * with exit 5 when it authenticates.
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -13,9 +14,9 @@ describe('Startup env variable validation', () => {
   const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
 
   /**
-   * Run the CLI with explicit control over SEMANTIUS_API_KEY, SEMANTIUS_ORG
-   * and SEMANTIUS_JWT. Omit a variable from the overrides map to simulate it
-   * being unset.
+   * Run the CLI with explicit control over SEMANTIUS_API_KEY, SEMANTIUS_ORG,
+   * SEMANTIUS_JWT and SEMANTIUS_HOST. Omit a variable from the overrides map
+   * to simulate it being unset.
    */
   async function runCliWithEnv(
     args: string[],
@@ -23,15 +24,22 @@ describe('Startup env variable validation', () => {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     // Build env: start from process.env but strip the vars we want to control,
     // then apply the caller's overrides.
-    const { SEMANTIUS_API_KEY: _k, SEMANTIUS_ORG: _o, SEMANTIUS_JWT: _j, ...baseEnv } = process.env as Record<string, string | undefined>;
+    const {
+      SEMANTIUS_API_KEY: _k,
+      SEMANTIUS_ORG: _o,
+      SEMANTIUS_JWT: _j,
+      SEMANTIUS_HOST: _h,
+      ...baseEnv
+    } = process.env as Record<string, string | undefined>;
     // Explicitly set controlled vars to empty string so that Bun's .env auto-loading
     // and the CLI's own loadDotEnv cannot fill them in when they should be "missing".
     // Bun respects OS env over .env file values, and an empty string is treated as
-    // "not set" by the checkRequiredEnvVars check (!process.env[v]).
+    // "not set" by the startup check (!process.env[v]).
     const env: Record<string, string> = {
       SEMANTIUS_API_KEY: '',
       SEMANTIUS_ORG: '',
       SEMANTIUS_JWT: '',
+      SEMANTIUS_HOST: '',
     };
     for (const [key, value] of Object.entries({ ...baseEnv, ...envOverrides })) {
       if (value !== undefined) {
@@ -51,34 +59,48 @@ describe('Startup env variable validation', () => {
     return { stdout, stderr, exitCode };
   }
 
-  test('errors when SEMANTIUS_API_KEY is missing', async () => {
-    const result = await runCliWithEnv(['grep', '*'], {
+  test('passes the startup check without credentials (checked when a command authenticates)', async () => {
+    const result = await runCliWithEnv(['grep', 'nonexistent-tool-xyz'], {
       SEMANTIUS_ORG: 'test-org',
-      // SEMANTIUS_API_KEY intentionally omitted
+      // SEMANTIUS_API_KEY / SEMANTIUS_JWT intentionally omitted
     });
-    expect(result.exitCode).toBe(5); // AUTH_ERROR
-    expect(result.stderr).toContain('MISSING_ENV_VAR');
-    expect(result.stderr).toContain('SEMANTIUS_API_KEY');
+    expect(result.stderr).not.toContain('MISSING_ENV_VAR');
   });
 
-  test('errors when SEMANTIUS_ORG is missing', async () => {
+  test('errors when no host is configured', async () => {
     const result = await runCliWithEnv(['grep', '*'], {
       SEMANTIUS_API_KEY: 'test-api-key',
-      // SEMANTIUS_ORG intentionally omitted
+      // SEMANTIUS_ORG / SEMANTIUS_HOST intentionally omitted
     });
-    expect(result.exitCode).toBe(1); // CLIENT_ERROR — ORG is config, not auth
+    expect(result.exitCode).toBe(1); // CLIENT_ERROR — the host is config, not auth
     expect(result.stderr).toContain('MISSING_ENV_VAR');
     expect(result.stderr).toContain('SEMANTIUS_ORG');
+    expect(result.stderr).toContain('set SEMANTIUS_ORG or --host');
   });
 
-  test('errors when both SEMANTIUS_API_KEY and SEMANTIUS_ORG are missing', async () => {
+  test('errors when nothing is set, naming only the host', async () => {
     const result = await runCliWithEnv(['grep', '*'], {
-      // Both intentionally omitted
+      // Everything intentionally omitted
     });
-    expect(result.exitCode).toBe(5); // AUTH_ERROR wins when API key is missing
+    expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('MISSING_ENV_VAR');
-    expect(result.stderr).toContain('SEMANTIUS_API_KEY');
     expect(result.stderr).toContain('SEMANTIUS_ORG');
+    expect(result.stderr).not.toContain('SEMANTIUS_API_KEY');
+  });
+
+  test('SEMANTIUS_HOST satisfies the host requirement', async () => {
+    const result = await runCliWithEnv(['grep', 'nonexistent-tool-xyz'], {
+      SEMANTIUS_HOST: 'https://x.example.com',
+    });
+    expect(result.stderr).not.toContain('MISSING_ENV_VAR');
+  });
+
+  test('--host satisfies the host requirement', async () => {
+    const result = await runCliWithEnv(
+      ['--host', 'x.example.com', 'grep', 'nonexistent-tool-xyz'],
+      {},
+    );
+    expect(result.stderr).not.toContain('MISSING_ENV_VAR');
   });
 
   test('succeeds past env check when both variables are set', async () => {
@@ -143,23 +165,14 @@ describe('Startup env variable validation', () => {
       expect(result.stderr).not.toContain('MISSING_ENV_VAR');
     });
 
-    test('JWT without any org still requires SEMANTIUS_ORG', async () => {
+    test('JWT without any org still requires a host', async () => {
       const result = await runCliWithEnv(['grep', '*'], {
         SEMANTIUS_JWT: 'test-jwt',
       });
-      expect(result.exitCode).toBe(1); // CLIENT_ERROR — only ORG is missing
+      expect(result.exitCode).toBe(1); // CLIENT_ERROR — only the host is missing
       expect(result.stderr).toContain('MISSING_ENV_VAR');
       expect(result.stderr).toContain('SEMANTIUS_ORG');
       expect(result.stderr).not.toContain('SEMANTIUS_API_KEY');
-    });
-
-    test('empty JWT is treated as unset — API key still required', async () => {
-      const result = await runCliWithEnv(['grep', '*'], {
-        SEMANTIUS_JWT: '',
-        SEMANTIUS_ORG: 'test-org',
-      });
-      expect(result.exitCode).toBe(5); // AUTH_ERROR — API key missing
-      expect(result.stderr).toContain('SEMANTIUS_API_KEY');
     });
 
     test('SEMANTIUS_JWT does not satisfy --env PROD check', async () => {
@@ -167,8 +180,8 @@ describe('Startup env variable validation', () => {
         SEMANTIUS_JWT: 'test-org:test-jwt',
         // PROD_* intentionally not set
       });
-      expect(result.exitCode).toBe(5); // AUTH_ERROR — PROD_API_KEY is missing
-      expect(result.stderr).toContain('PROD_API_KEY');
+      expect(result.exitCode).toBe(1); // PROD_ORG is missing
+      expect(result.stderr).toContain('PROD_ORG');
     });
 
     test('org-prefixed PROD_JWT satisfies --env PROD check', async () => {
@@ -180,17 +193,6 @@ describe('Startup env variable validation', () => {
   });
 
   describe('--env prefix flag', () => {
-    test('--env PROD requires PROD_API_KEY instead of SEMANTIUS_API_KEY', async () => {
-      const result = await runCliWithEnv(['--env', 'PROD', 'grep', '*'], {
-        PROD_ORG: 'test-org',
-        // PROD_API_KEY intentionally omitted
-      });
-      expect(result.exitCode).toBe(5); // AUTH_ERROR — missing API key
-      expect(result.stderr).toContain('MISSING_ENV_VAR');
-      expect(result.stderr).toContain('PROD_API_KEY');
-      expect(result.stderr).not.toContain('SEMANTIUS_API_KEY');
-    });
-
     test('--env PROD requires PROD_ORG instead of SEMANTIUS_ORG', async () => {
       const result = await runCliWithEnv(['--env', 'PROD', 'grep', '*'], {
         PROD_API_KEY: 'test-key',
@@ -225,7 +227,7 @@ describe('Startup env variable validation', () => {
         SEMANTIUS_ORG: 'test-org',
         // PROD_* intentionally not set
       });
-      expect(result.exitCode).toBe(5); // AUTH_ERROR — PROD_API_KEY is missing
+      expect(result.exitCode).toBe(1); // PROD_ORG is missing
       expect(result.stderr).toContain('MISSING_ENV_VAR');
     });
   });

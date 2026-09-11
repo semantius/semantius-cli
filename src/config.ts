@@ -14,6 +14,7 @@ import {
   formatCliError,
   serverNotFoundError,
 } from './errors.js';
+import { getHostMode } from './host.js';
 
 /**
  * Base server configuration with tool filtering
@@ -59,10 +60,21 @@ export interface BuiltinServerConfig extends BaseServerConfig {
   builtin: true;
 }
 
+/**
+ * Local PostgREST crud layer (in-process MCP server over the vendored
+ * postgrest-mcp tools). `true` resolves the PostgREST URL from the host;
+ * a string is an explicit PostgREST base URL. Once resolved (getConnection)
+ * the entry carries the URL, so `info` can print it.
+ */
+export interface PostgrestServerConfig extends BaseServerConfig {
+  postgrest: true | string;
+}
+
 export type ServerConfig =
   | StdioServerConfig
   | HttpServerConfig
-  | BuiltinServerConfig;
+  | BuiltinServerConfig
+  | PostgrestServerConfig;
 
 /** Names reserved for built-in in-process servers */
 export const BUILTIN_SERVER_NAMES = ['utils'] as const;
@@ -183,6 +195,15 @@ export function isBuiltinServer(
   return 'builtin' in config && config.builtin === true;
 }
 
+/**
+ * Check if a server config is the local PostgREST crud layer
+ */
+export function isPostgrestServer(
+  config: ServerConfig,
+): config is PostgrestServerConfig {
+  return 'postgrest' in config;
+}
+
 // ============================================================================
 // Env Prefix State
 // ============================================================================
@@ -197,8 +218,40 @@ export function getEnvPrefix(): string {
   return _envPrefix;
 }
 
+// --host / --crud-mcp values for this invocation (set by index.ts). Their env
+// twins are read via getPrefixedEnv, so the flag wins over shell env and .env.
+let _hostFlag: string | undefined;
+let _crudMcpFlag = false;
+
+export function setHostFlag(value: string | undefined): void {
+  _hostFlag = value || undefined;
+}
+
+export function getHostFlag(): string | undefined {
+  return _hostFlag;
+}
+
+export function setCrudMcpFlag(enabled: boolean): void {
+  _crudMcpFlag = enabled;
+}
+
+/**
+ * Route `crud` through the remote crud MCP server for this invocation:
+ * --crud-mcp, or ${PREFIX}_CRUD_MCP=1.
+ */
+export function isCrudMcp(): boolean {
+  if (_crudMcpFlag) return true;
+  const env = getPrefixedEnv('CRUD_MCP')?.toLowerCase();
+  return env === '1' || env === 'true';
+}
+
+/**
+ * The env vars that can name the host — either one satisfies the startup
+ * check (as does --host). Credentials are not checked at startup; they are
+ * required when a command authenticates.
+ */
 export function getRequiredEnvVarNames(): string[] {
-  return [`${_envPrefix}_API_KEY`, `${_envPrefix}_ORG`];
+  return [`${_envPrefix}_ORG`, `${_envPrefix}_HOST`];
 }
 
 /**
@@ -242,19 +295,20 @@ export function getEnvJwt(): string | undefined {
 }
 
 /**
- * Required env vars that are actually missing: ORG is always required
- * (normalizeCredentialEnv may have filled it from an "org:" prefix), and
- * API_KEY only when no static JWT is provided.
+ * Required env vars that are actually missing: a host must be resolvable —
+ * from --host, ${PREFIX}_HOST or ${PREFIX}_ORG (normalizeCredentialEnv may
+ * have filled ORG from an "org:" prefix). Returns [${PREFIX}_ORG] when none
+ * is set. Credentials are checked later, when a command authenticates.
  */
 export function getMissingRequiredEnvVars(): string[] {
-  const missing: string[] = [];
-  if (!getEnvJwt() && !process.env[`${_envPrefix}_API_KEY`]) {
-    missing.push(`${_envPrefix}_API_KEY`);
+  if (
+    _hostFlag ||
+    process.env[`${_envPrefix}_HOST`] ||
+    process.env[`${_envPrefix}_ORG`]
+  ) {
+    return [];
   }
-  if (!process.env[`${_envPrefix}_ORG`]) {
-    missing.push(`${_envPrefix}_ORG`);
-  }
-  return missing;
+  return [`${_envPrefix}_ORG`];
 }
 
 /**
@@ -262,9 +316,10 @@ export function getMissingRequiredEnvVars(): string[] {
  *   - Hoist an "org:" prefix from ${PREFIX}_API_KEY / ${PREFIX}_JWT into
  *     ${PREFIX}_ORG (deliberately overwriting an existing ORG — the prefix
  *     wins). JWT is processed second so its org beats the API key's.
- *   - In JWT-only mode, backfill ${PREFIX}_API_KEY='' so the default
- *     config's ${PREFIX}_API_KEY reference substitutes cleanly under strict
- *     mode (undefined would throw; empty string is fine).
+ *   - Backfill ${PREFIX}_API_KEY='' whenever it is undefined (JWT-only and
+ *     credential-less sessions alike) so the default config's
+ *     ${PREFIX}_API_KEY reference substitutes cleanly under strict mode
+ *     (undefined would throw; empty string is fine).
  * Idempotent: hoisted values contain no colon and the backfill only fires
  * while API_KEY is undefined, so repeated calls are no-ops.
  */
@@ -285,7 +340,7 @@ export function normalizeCredentialEnv(): void {
   hoist(apiKeyName);
   hoist(jwtName);
 
-  if (process.env[jwtName] && process.env[apiKeyName] === undefined) {
+  if (process.env[apiKeyName] === undefined) {
     process.env[apiKeyName] = '';
   }
 }
@@ -707,26 +762,51 @@ function substituteEnvVarsInObject<T>(obj: T): T {
 
 /**
  * Built-in default configuration used when no mcp_servers.json is found.
+ * `crud` is the local PostgREST layer; `cube` (analytics) exists on the
+ * managed cloud only — self-hosted instances have no analytics server.
  * References env vars based on the current env prefix (default: SEMANTIUS).
  */
 export function getDefaultConfig(): McpServersConfig {
   const prefix = _envPrefix;
-  return {
-    mcpServers: {
-      crud: {
-        url: `https://\${${prefix}_ORG}.semantius.ai/mcp`,
-        headers: {
-          'x-api-key': `\${${prefix}_API_KEY}`,
-        },
-      } as HttpServerConfig,
-      cube: {
-        url: `https://\${${prefix}_ORG}.semantius.io/mcp`,
-        headers: {
-          'x-api-key': `\${${prefix}_API_KEY}`,
-        },
-      } as HttpServerConfig,
-    },
+  const mcpServers: Record<string, ServerConfig> = {
+    crud: { postgrest: true },
   };
+  if (getHostMode() !== 'selfhosted') {
+    mcpServers.cube = {
+      url: `https://\${${prefix}_ORG}.semantius.io/mcp`,
+      headers: {
+        'x-api-key': `\${${prefix}_API_KEY}`,
+      },
+    } as HttpServerConfig;
+  }
+  return { mcpServers };
+}
+
+/**
+ * The remote crud MCP server (Deno), built internally — never a user-visible
+ * server entry — for --crud-mcp and the cloud schema-cache reset. A function
+ * because its ${PREFIX}_ORG / ${PREFIX}_API_KEY references follow the active
+ * --env prefix; returned with env vars substituted.
+ */
+export const REMOTE_CRUD_MCP = (): HttpServerConfig =>
+  substituteEnvVarsInObject<HttpServerConfig>({
+    url: `https://\${${_envPrefix}_ORG}.semantius.ai/mcp`,
+    headers: {
+      'x-api-key': `\${${_envPrefix}_API_KEY}`,
+    },
+  });
+
+/**
+ * --crud-mcp: a local-layer `crud` entry becomes the remote crud MCP server
+ * for this invocation, keeping its tool filters. Entries with url/command
+ * are already MCP and stay as configured.
+ */
+function applyCrudMcp(config: McpServersConfig): McpServersConfig {
+  const crud = config.mcpServers.crud;
+  if (!isCrudMcp() || !crud || !isPostgrestServer(crud)) return config;
+  const { postgrest: _postgrest, ...filters } = crud;
+  config.mcpServers.crud = { ...REMOTE_CRUD_MCP(), ...filters };
+  return config;
 }
 
 /**
@@ -813,8 +893,8 @@ export async function loadConfig(
       // No config file found — use built-in default config
       debug('No config file found; using built-in default config');
       await loadDotEnv();
-      const defaults = injectBuiltinServers(
-        substituteEnvVarsInObject(getDefaultConfig()),
+      const defaults = applyCrudMcp(
+        injectBuiltinServers(substituteEnvVarsInObject(getDefaultConfig())),
       );
       _lastLoadedConfig = defaults;
       return defaults;
@@ -866,6 +946,38 @@ export async function loadConfig(
     const hasCommand = 'command' in serverConfig;
     const hasUrl = 'url' in serverConfig;
 
+    if ('postgrest' in serverConfig) {
+      const value = (serverConfig as { postgrest: unknown }).postgrest;
+      if (hasCommand || hasUrl) {
+        throw new Error(
+          formatCliError({
+            code: ErrorCode.CLIENT_ERROR,
+            type: 'CONFIG_INVALID_SERVER',
+            message: `Server "${serverName}" combines "postgrest" with "${hasUrl ? 'url' : 'command'}"`,
+            details:
+              'A server is either the local PostgREST layer (postgrest), HTTP (url) or stdio (command)',
+            suggestion: `Remove "${hasUrl ? 'url' : 'command'}", or remove "postgrest"`,
+          }),
+        );
+      }
+      if (
+        value !== true &&
+        !(typeof value === 'string' && /^https?:\/\/\S+$/.test(value))
+      ) {
+        throw new Error(
+          formatCliError({
+            code: ErrorCode.CLIENT_ERROR,
+            type: 'CONFIG_INVALID_SERVER',
+            message: `Invalid "postgrest" value for server "${serverName}"`,
+            details: `Got ${JSON.stringify(value)}`,
+            suggestion:
+              'Use true (resolve the PostgREST URL from the host) or an explicit "https://…/rest" URL',
+          }),
+        );
+      }
+      continue;
+    }
+
     if (!hasCommand && !hasUrl) {
       // A bare entry under a built-in server's name carries only filter
       // overrides (allowedTools/disabledTools) for that built-in server.
@@ -877,7 +989,7 @@ export async function loadConfig(
           code: ErrorCode.CLIENT_ERROR,
           type: 'CONFIG_INVALID_SERVER',
           message: `Server "${serverName}" missing required field`,
-          details: `Must have either "command" (for stdio) or "url" (for HTTP)`,
+          details: `Must have "command" (for stdio), "url" (for HTTP) or "postgrest" (local PostgREST layer)`,
           suggestion: `Add "command": "npx ..." for local servers or "url": "https://..." for remote servers`,
         }),
       );
@@ -898,7 +1010,9 @@ export async function loadConfig(
   }
 
   // Substitute environment variables
-  config = injectBuiltinServers(substituteEnvVarsInObject(config));
+  config = applyCrudMcp(
+    injectBuiltinServers(substituteEnvVarsInObject(config)),
+  );
 
   _lastLoadedConfig = config;
   return config;
@@ -913,6 +1027,11 @@ export function getServerConfig(
 ): ServerConfig {
   const server = config.mcpServers[serverName];
   if (!server) {
+    if (serverName === 'cube' && getHostMode() === 'selfhosted') {
+      throw new Error(
+        'Error [NOT_AVAILABLE]: the cube (analytics) server is not available on self-hosted instances',
+      );
+    }
     const available = Object.keys(config.mcpServers);
     throw new Error(formatCliError(serverNotFoundError(serverName, available)));
   }

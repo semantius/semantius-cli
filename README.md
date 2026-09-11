@@ -103,7 +103,11 @@ semantius [options] whoami                      Show current user (email, org, r
 | `-d, --with-descriptions` | Include tool descriptions |
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
 | `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
+| `--env <prefix>` | Env var prefix (default `SEMANTIUS`), e.g. `--env PROD` reads `PROD_API_KEY` / `PROD_ORG` |
+| `--host <url\|hostname>` | Semantius host to talk to (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST` |
+| `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
 | `--disable-jwt-cache` | Skip the token cache and re-authenticate on every request (see [Token cache](#token-cache)) |
+| `--reset-cache` | Delete the cached token for the current API key and the cached host lookup before running (alias: `--reset-jwt-cache`) |
 
 
 ### Output
@@ -292,9 +296,11 @@ configurations side by side in the same `.env`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SEMANTIUS_API_KEY` | API key for Semantius (**required** unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
-| `SEMANTIUS_ORG` | Organization name for Semantius (**required** unless supplied via an `org:` prefix on the API key or JWT) | (none) |
+| `SEMANTIUS_ORG` | Organization on the managed cloud; the host defaults to `https://<org>.semantius.cloud`. **Required** unless `SEMANTIUS_HOST` or `--host` names the host (an `org:` prefix on the API key or JWT also supplies it) | (none) |
+| `SEMANTIUS_HOST` | Host URL or hostname, same as `--host` (see [Hosts](#hosts-managed-cloud-and-self-hosted)) | `https://${SEMANTIUS_ORG}.semantius.cloud` |
+| `SEMANTIUS_API_KEY` | API key for Semantius (needed to call tools unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
 | `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
+| `SEMANTIUS_CRUD_MCP` | `1` = same as `--crud-mcp` | `false` |
 | `SEMANTIUS_CONFIG_PATH` | Path to config file | (none) |
 | `SEMANTIUS_DEBUG` | Enable debug output | `false` |
 | `SEMANTIUS_TIMEOUT` | Request timeout (seconds) | `1800` (30 min) |
@@ -307,6 +313,26 @@ configurations side by side in the same `.env`.
 | `SEMANTIUS_DISABLE_JWT_CACHE` | Disable the encrypted token cache; re-authenticate on every request | `false` |
 | `SEMANTIUS_LOG_FILE` | Append one JSONL line per invocation to this path. Bare filename is written next to the loaded `.env` (or in the user config dir); absolute/relative paths are used as-is. Daemon lifecycle transitions are also logged (at any level) as `log_type: "event"` lines: `daemon_start` when a CLI invocation spawns a daemon, and `daemon_stop` (with `reason` — `idle_timeout`, `sigterm`, `sigint`, or `close_request` — and `uptime_ms`) when it shuts down. | (none) |
 | `SEMANTIUS_LOG_LEVELS` | Comma-separated subset of `{all, error, slow, jwt}` that filters which invocations are logged. `error` = exit code != 0; `slow` = wall time > 1000 ms; `jwt` = error mentions "JWT" (also adds a structured `jwt` field with the token value and appends one JSONL line per JWT-retry attempt). Multiple values OR-combine (e.g. `error,slow`). Unknown/empty falls back to `all`. | `all` |
+
+### Hosts: managed cloud and self-hosted
+
+The CLI talks to one Semantius host per invocation, taken from the first of:
+
+1. `--host <url|hostname>`
+2. `SEMANTIUS_HOST` — from the shell, then a project `.env`, then the global `.env` in the user config dir
+3. `SEMANTIUS_ORG` — the managed-cloud host `https://<org>.semantius.cloud`
+
+A host under `.semantius.cloud` (e.g. `--host acme.semantius.cloud`) is the
+**managed cloud**: its first label is the organization (and overrides
+`SEMANTIUS_ORG`), and the tenant's PostgREST URL is looked up once on the
+Semantius control plane and cached for 24 hours in
+`<user config dir>/hosts/`. Any other host (`--host https://semantius.example.com[:port]`)
+is **self-hosted**: PostgREST is expected at `<host>/rest`, the token exchange
+at `<host>/api/auth/token`, and there is no `cube` (analytics) server and no
+cloud MCP server, so `--crud-mcp` is not available.
+
+Note: an `org:` prefix on `SEMANTIUS_API_KEY` that names a different org than
+`--host` makes the token exchange fail with 401.
 
 ### Token cache
 

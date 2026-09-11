@@ -4,7 +4,7 @@
 
 import type { ToolInfo } from './client.js';
 import type { ServerConfig } from './config.js';
-import { isBuiltinServer, isHttpServer } from './config.js';
+import { isBuiltinServer, isHttpServer, isPostgrestServer } from './config.js';
 
 // ANSI color codes
 const colors = {
@@ -167,6 +167,11 @@ export function formatServerDetails(
 
   if (isBuiltinServer(config)) {
     lines.push(`${color('Transport:', colors.bold)} built-in`);
+  } else if (isPostgrestServer(config)) {
+    lines.push(`${color('Transport:', colors.bold)} postgrest`);
+    if (typeof config.postgrest === 'string') {
+      lines.push(`${color('URL:', colors.bold)} ${config.postgrest}`);
+    }
   } else if (isHttpServer(config)) {
     lines.push(`${color('Transport:', colors.bold)} HTTP`);
     lines.push(`${color('URL:', colors.bold)} ${config.url}`);

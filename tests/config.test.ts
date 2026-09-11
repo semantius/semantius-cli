@@ -75,11 +75,11 @@ describe('config', () => {
 
         const config = await loadConfig();
 
-        expect(config.mcpServers.crud).toBeDefined();
+        expect(config.mcpServers.crud).toEqual({ postgrest: true });
         expect(config.mcpServers.cube).toBeDefined();
         expect((config.mcpServers.utils as any).builtin).toBe(true);
-        expect((config.mcpServers.crud as any).url).toBe('https://test-org.semantius.ai/mcp');
-        expect((config.mcpServers.crud as any).headers['x-api-key']).toBe('test-key');
+        expect((config.mcpServers.cube as any).url).toBe('https://test-org.semantius.io/mcp');
+        expect((config.mcpServers.cube as any).headers['x-api-key']).toBe('test-key');
 
         // Restore
         if (savedConfigPath !== undefined) {
@@ -365,10 +365,8 @@ describe('config', () => {
       expect(config.mcpServers.cube).toBeDefined();
     });
 
-    test('crud server is HTTP with correct URL template', () => {
-      const crud = getDefaultConfig().mcpServers.crud as any;
-      expect(crud.url).toContain('${SEMANTIUS_ORG}');
-      expect(crud.url).toContain('semantius.ai');
+    test('crud server is the local PostgREST layer resolved from the host', () => {
+      expect(getDefaultConfig().mcpServers.crud).toEqual({ postgrest: true });
     });
 
     test('cube server is HTTP with correct URL template', () => {
@@ -377,20 +375,15 @@ describe('config', () => {
       expect(cube.url).toContain('semantius.io');
     });
 
-    test('both servers use SEMANTIUS_API_KEY in headers', () => {
-      const crud = getDefaultConfig().mcpServers.crud as any;
+    test('cube server uses SEMANTIUS_API_KEY in headers', () => {
       const cube = getDefaultConfig().mcpServers.cube as any;
-      expect(crud.headers['x-api-key']).toBe('${SEMANTIUS_API_KEY}');
       expect(cube.headers['x-api-key']).toBe('${SEMANTIUS_API_KEY}');
     });
 
     test('respects custom env prefix', () => {
       setEnvPrefix('PROD');
       const config = getDefaultConfig();
-      const crud = config.mcpServers.crud as any;
       const cube = config.mcpServers.cube as any;
-      expect(crud.url).toContain('${PROD_ORG}');
-      expect(crud.headers['x-api-key']).toBe('${PROD_API_KEY}');
       expect(cube.url).toContain('${PROD_ORG}');
       expect(cube.headers['x-api-key']).toBe('${PROD_API_KEY}');
     });
@@ -409,14 +402,14 @@ describe('config', () => {
       expect(getEnvPrefix()).toBe('PROD');
     });
 
-    test('getRequiredEnvVarNames returns vars with default prefix', () => {
+    test('getRequiredEnvVarNames returns the host vars with default prefix', () => {
       setEnvPrefix('SEMANTIUS');
-      expect(getRequiredEnvVarNames()).toEqual(['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG']);
+      expect(getRequiredEnvVarNames()).toEqual(['SEMANTIUS_ORG', 'SEMANTIUS_HOST']);
     });
 
     test('getRequiredEnvVarNames reflects custom prefix', () => {
       setEnvPrefix('STAGING');
-      expect(getRequiredEnvVarNames()).toEqual(['STAGING_API_KEY', 'STAGING_ORG']);
+      expect(getRequiredEnvVarNames()).toEqual(['STAGING_ORG', 'STAGING_HOST']);
     });
   });
 
@@ -450,6 +443,7 @@ describe('config', () => {
       'SEMANTIUS_API_KEY',
       'SEMANTIUS_ORG',
       'SEMANTIUS_JWT',
+      'SEMANTIUS_HOST',
       'PROD_API_KEY',
       'PROD_ORG',
       'PROD_JWT',
@@ -522,10 +516,16 @@ describe('config', () => {
       expect(process.env.SEMANTIUS_API_KEY).toBe('');
     });
 
-    test('does not backfill API key when JWT is empty', () => {
+    test('backfills empty API key without any credential (OAuth-only sessions)', () => {
       process.env.SEMANTIUS_JWT = '';
       normalizeCredentialEnv();
-      expect(process.env.SEMANTIUS_API_KEY).toBeUndefined();
+      expect(process.env.SEMANTIUS_API_KEY).toBe('');
+    });
+
+    test('does not overwrite a set API key', () => {
+      process.env.SEMANTIUS_API_KEY = 'sk-abc-secret';
+      normalizeCredentialEnv();
+      expect(process.env.SEMANTIUS_API_KEY).toBe('sk-abc-secret');
     });
 
     test('is idempotent', () => {
@@ -571,23 +571,21 @@ describe('config', () => {
       expect(getEnvJwt()).toBe('eyJ.e30.sig');
     });
 
-    test('getMissingRequiredEnvVars: nothing set → both missing', () => {
-      expect(getMissingRequiredEnvVars()).toEqual(['SEMANTIUS_API_KEY', 'SEMANTIUS_ORG']);
+    test('getMissingRequiredEnvVars: nothing set → the host is missing', () => {
+      expect(getMissingRequiredEnvVars()).toEqual(['SEMANTIUS_ORG']);
     });
 
-    test('getMissingRequiredEnvVars: API key + ORG set → none missing', () => {
-      process.env.SEMANTIUS_API_KEY = 'sk-abc-secret';
+    test('getMissingRequiredEnvVars: ORG alone suffices (credentials are checked later)', () => {
       process.env.SEMANTIUS_ORG = 'test-org';
       expect(getMissingRequiredEnvVars()).toEqual([]);
     });
 
-    test('getMissingRequiredEnvVars: JWT makes the API key optional', () => {
-      process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
-      process.env.SEMANTIUS_ORG = 'test-org';
+    test('getMissingRequiredEnvVars: HOST alone suffices', () => {
+      process.env.SEMANTIUS_HOST = 'https://x.example.com';
       expect(getMissingRequiredEnvVars()).toEqual([]);
     });
 
-    test('getMissingRequiredEnvVars: JWT alone still requires ORG', () => {
+    test('getMissingRequiredEnvVars: JWT alone still requires a host', () => {
       process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
       expect(getMissingRequiredEnvVars()).toEqual(['SEMANTIUS_ORG']);
     });
@@ -602,10 +600,10 @@ describe('config', () => {
         process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
 
         const config = await loadConfig();
-        const crud = config.mcpServers.crud as any;
-        expect(crud.url).toBe('https://jwt-org.semantius.ai/mcp');
+        const cube = config.mcpServers.cube as any;
+        expect(cube.url).toBe('https://jwt-org.semantius.io/mcp');
         // API key was backfilled to '' so strict substitution succeeds
-        expect(crud.headers['x-api-key']).toBe('');
+        expect(cube.headers['x-api-key']).toBe('');
 
         if (savedConfigPath !== undefined) {
           process.env.SEMANTIUS_CONFIG_PATH = savedConfigPath;

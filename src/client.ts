@@ -23,6 +23,7 @@ import {
   isBuiltinServer,
   isDaemonEnabled,
   isHttpServer,
+  isPostgrestServer,
   isToolAllowed,
 } from './config.js';
 import {
@@ -285,11 +286,11 @@ export async function connectToServer(
   serverName: string,
   config: ServerConfig,
 ): Promise<ConnectedClient> {
-  // Built-in servers run in-process (see local-tools/connection.ts) and are
+  // Built-in servers and the local PostgREST layer run in-process and are
   // short-circuited in getConnection before this point is ever reached.
-  if (isBuiltinServer(config)) {
+  if (isBuiltinServer(config) || isPostgrestServer(config)) {
     throw new Error(
-      `Built-in server "${serverName}" does not use a transport connection`,
+      `In-process server "${serverName}" does not use a transport connection`,
     );
   }
 
@@ -861,6 +862,13 @@ export async function getConnection(
       './local-tools/connection.js'
     );
     return createBuiltinConnection(serverName, config);
+  }
+
+  // The local PostgREST layer never goes through the daemon/JWT/MCP layers.
+  if (isPostgrestServer(config)) {
+    throw new Error(
+      `The local PostgREST layer for "${serverName}" is not implemented yet (try --crud-mcp)`,
+    );
   }
 
   // Clean up any orphaned daemons on first call
