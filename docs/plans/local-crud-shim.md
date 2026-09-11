@@ -812,6 +812,24 @@ exit-code table, `login`/`logout` as real subcommands, a non-TTY rule for `--log
 `transformConfigWithJwt` gate on header-key presence, and two explicit implementer stop points with
 Martin's manual command lists (implementation plan §10).
 
+
+### 13.13 After A1 (2026-09-11): decisions made during the implementation
+
+Phase A1 is implemented on the branch `local-crud-layer`; the implementation plan's "Status and
+hand-over" section is the record (commits, deviations, open findings). Decisions taken there by
+Martin, in short:
+
+- **Credentials belong to their host.** Without `--host` the environment is the profile; with
+  `--host` only credentials stored for that host are used (OAuth session, tokens cached per host) and
+  the environment's API key / JWT / org are ignored. Consequence for A2: the session lookup is the
+  only credential source under `--host`.
+- **Host format.** A host is a bare `hostname[:port]` (scheme stripped, HTTPS except loopback);
+  `<org>.semantius.app` / `.ai` / `.io` map to `<org>.semantius.cloud`.
+- **Readable errors.** The vendored code's `console.error` output is a server log and goes to
+  `SEMANTIUS_DEBUG`; failures without a PostgREST error body name status, request and host.
+- `sqlToRest` stays MCP-only (`--crud-mcp`): its WASM parser does not survive `bun build --compile`
+  without build changes (recipe in the implementation plan).
+
 ---
 
 ## 14. Question registry (single place for every question; consolidated 2026-09-11, all answers applied)

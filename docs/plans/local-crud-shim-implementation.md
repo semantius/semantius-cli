@@ -4,6 +4,87 @@ Compact, ordered checklist. Rationale, measurements and decision history are in
 `local-crud-shim.md` (referenced as *R §n*). Every step ends with a "done when" line; do not start a
 step whose inputs are still open. Rewritten 2026-09-11 after the second review (all findings folded in).
 
+## Status and hand-over (2026-09-11, end of the A1 session)
+
+**Where things are.** Phase A1 (Steps 2, 3, 3b, 4, 4b, 6) is implemented and committed on the branch
+**`local-crud-layer`** (not on `main`, so the daemon fix `9ac9574` can still be released alone
+first; not pushed). Gates at the last commit: `bun run lint`, `bunx tsc --noEmit`,
+`bun test --timeout 60000` → 455 pass / 15 skip / 0 fail (the skips: 6 pre-existing + the gated
+parity suite); `SEMANTIUS_PARITY=1 bun test --timeout 120000 tests/integration/parity.test.ts` →
+7/7 against `tests`. Plain `bun test` (5 s default timeout) times out the npx-based
+`tests/integration/cli.test.ts` on Windows — pre-existing, CI uses `--timeout 60000`.
+
+| Commit | Content |
+|---|---|
+| `7fb433e` | Step 2 — sync script, vendored tree |
+| `2f38c8a` | Step 3 — host resolution, default config, `--crud-mcp` |
+| `929d071` | Step 3b — token source |
+| `8ac5703` | Step 4 — local crud layer, parity test |
+| `5dc6288` | Step 4b — `--stream` |
+| `3e16fd7` | Step 6 — docs, `cli-errors` extension |
+| `64ea99b` | After A1 (Martin's requests): bare hosts, cloud-name mapping, per-host token cache (security fix), readable errors |
+| `619fb77` | After A1 (Martin's decision): with `--host` only credentials stored for that host |
+
+**Next.** Martin reviews A1 and runs the manual list in §10 (A1 part); then Phase A2 (Step 5 — read
+its "A2 notes" first). The A1 stop point has been reached; do not start A2 without Martin's go.
+
+**Built differently from the text below, and why** (the steps are marked accordingly):
+- `sqlToRest` spike failed: in a `bun build --compile` binary the parser's WASM is missing
+  (`ENOENT $bunfs/root/pg-parser.wasm`). It works only if every compile command adds
+  `node_modules/@supabase/pg-parser/wasm/17/pg-parser.wasm` as an extra entrypoint plus
+  `--asset-naming="[name].[ext]"` (7 build scripts + 6 release steps) — not done; the tool is
+  excluded (53 local tools) and documented as `--crud-mcp` only.
+- The sync script reads the upstream files from `git HEAD` (LF), not the working tree (CRLF on
+  Windows with autocrlf), and orders `registry.ts` like upstream `src/mcp.ts` (listTools order =
+  parity for `info` / `grep` / `-md`).
+- Host format (Martin): a host is a bare `hostname[:port]`; `https://` / `http://` are stripped,
+  paths rejected; always HTTPS except loopback (`localhost`, `127.x.x.x`, `[::1]`) = HTTP (local
+  dev servers and the test stubs). `<org>.semantius.app` / `.ai` / `.io` map to
+  `<org>.semantius.cloud`.
+- Credentials belong to their host — see §0.
+- The API-key token cache is keyed by host (`jwt-cache.ts` got an optional `scope`); before, a token
+  minted by one host was sent to another after `--host` (security fix). The MCP path's cache entry
+  (per API key) is unchanged; `--reset-cache` deletes both.
+- The local layer fetches its token when the crud connection is created (the plan's connect-error
+  path), so `info crud` needs credentials; with a static JWT / warm caches it needs no network.
+- Error shape additions: `Error [API_KEY_REJECTED]` (401/403 at the token exchange; names host,
+  variable and the `.env` it came from; exit 5; never retried). `NoCredentialsError` has a second
+  text for `--host` ("no credentials stored for <host>. Run \"semantius login --host <host>\" …").
+  Failed PostgREST requests without a PostgREST error body (empty, HTML, unreachable) are reported
+  as `(HTTP <status>) <reason> from <METHOD> <url>` (+ "is <host> a Semantius instance?" on
+  self-hosted) — `src/local-tools/crud/http-errors.ts`; token exchange and `--stream` likewise.
+- Shims (Martin asked for meaningful errors instead of stack traces): besides `console.log`, the vendored `console.error` goes to
+  `debug()` for the lifetime of a call (it printed request bodies and a stack trace); the shims live
+  in `src/local-tools/crud/isolate.ts` (so `--stream` does not load all 53 tools, ~90 ms). A fetch
+  wrapper records failed requests for the readable errors above.
+- Post-processing: the `authorization` header is dropped from the `getCurrentUser` envelope too, not
+  only `postgrestRequest`'s; on self-hosted `getCurrentUser` also gets `api_baseurl = <host>/api`
+  (the vendored code derives the bare origin, not `{host}/api` as Step 4 assumed).
+- `${PREFIX}_STREAM=1` applies only where `--stream` is valid and is ignored elsewhere (a global
+  setting must not break every other call); an explicit `--stream` in an invalid combination is
+  rejected as specified.
+- Step 6's `login` / `logout` / OAuth documentation is deferred to A2 (the commands do not exist yet).
+
+**Open findings for Martin's review** (none blocks A2):
+1. `--single` on the Neon Data API: `application/vnd.pgrst.object+json` returns the first row for
+   2+ rows (exit 0, not 2) and `null` for 0 rows (exit 1) — identical on both routes. A standard
+   PostgREST (self-hosted) answers 406 instead, and the vendored error text drops `details`
+   ("0 rows"), so that becomes exit 4. Relevant for Phase B.
+2. `cube` on a cold JWT cache: `findJwtIssuer` now finds `cube` (crud is no longer an HTTP entry), so
+   `transformConfigWithJwt` calls `get_cli_token` on `cube`, fails, and falls back to `x-api-key` —
+   one wasted round trip per cube call until the A2 change to the MCP path (bearer from
+   `getAccessToken`) lands.
+3. Deno Deploy cold starts (≈ 2–3 s) were seen after only a few minutes idle, not just the 20 min
+   R §10.3 measured — the old route pays them far more often than recorded.
+4. Optional speed-up (Martin liked it): generate a static tool manifest (name, description, JSON
+   Schema — produced by the SDK at sync time) plus lazy per-tool imports, served by the SDK's
+   low-level `Server`. Measured gain ≈ 20–30 ms per call and 30–50 ms for `info`/`list`/`-md`; the
+   dominant per-call cost is the ~220 ms TCP+TLS setup to Neon, which only a long-lived process
+   avoids.
+5. Upstream suggestion: `makePostgrestRequest` could include the HTTP status when the error body is
+   empty (the CLI compensates in `http-errors.ts`).
+6. Wrong-host failures exit 3 (connect path) or 4 (tool path); a config error (1) might fit better.
+
 ## 0. Fixed decisions (do not re-open)
 
 - PostgREST is the CLI's primary crud transport; the Deno MCP server stays for remote MCP clients and
@@ -30,8 +111,10 @@ step whose inputs are still open. Rewritten 2026-09-11 after the second review (
   Deno MCP server again; cloud only. *(D11)*
 - Cloud-host rule: host matches `*.semantius.cloud` → cloud (org = first label, control plane used);
   anything else → self-hosted (host + fixed paths `/rest`, root `.well-known`, `/api/auth/token`). *(Q39, Q41)*
-- All tools go local; no automatic fallback to MCP; the `postgrestRequest` envelope no longer echoes
-  the `authorization` header. *(Q1, Q14, Q15)*
+  A host is a bare `hostname[:port]` (scheme stripped); `<org>.semantius.app` / `.ai` / `.io` map to
+  `<org>.semantius.cloud`; HTTPS except loopback hosts. *(Martin, 2026-09-11)*
+- All tools go local (except `sqlToRest`, see hand-over); no automatic fallback to MCP; the
+  `postgrestRequest` (and `getCurrentUser`) envelope no longer echoes the `authorization` header. *(Q1, Q14, Q15)*
 - Architecture: A (in-process MCP server) plus an additive `--stream` for `postgrestRequest`. *(D15)*
 - Cloud first; a review gate precedes any self-hosted testing. *(D14)*
 - Backup/restore postponed. *(D13)* — All other answers: R §14.2. No open questions (R §14.1).
@@ -59,9 +142,11 @@ raw path.
 1. Never edit files under `src/vendor/postgrest-mcp/` except the one documented replacement
    (`src/utils/resetSchemaCache.ts`). If a vendored file seems to need a change, stop and report —
    the change belongs upstream. Shims *around* unchanged code are allowed only where a step names
-   them (Step 4: `console.log` redirect, env guard, context holder, result post-processing).
-2. The MCP path must behave exactly as today: after every step run `bun test` (all existing tests
-   green) and `bun run dev --crud-mcp call crud getCurrentUser '{}'` must still work.
+   them (Step 4: `console.log` / `console.error` redirect, env guard, context holder, fetch-failure
+   recording, result post-processing — all in `src/local-tools/crud/`).
+2. The MCP path must behave exactly as today: after every step run `bun test --timeout 60000` (all
+   existing tests green; the 5 s default times out the npx integration tests on Windows) and
+   `bun run dev --crud-mcp call crud getCurrentUser '{}'` must still work.
 3. Do not refactor beyond what a step names. Leave `withRetries` untouched (Step 4 uses a separate
    helper). Leave `src/daemon.ts` and `src/daemon-client.ts` untouched (host-keyed socket names are
    Phase B).
@@ -73,7 +158,7 @@ raw path.
 8. Names in this plan are binding (files, functions, flags, env vars, error texts). Where the plan
    says "implementer default", take it without asking.
 
-## 2. Vendoring script — `scripts/sync-postgrest-mcp.ts`
+## 2. Vendoring script — `scripts/sync-postgrest-mcp.ts` — ✅ done (`7fb433e`)
 
 Prerequisite (Martin, upstream, before Step 2 starts): in `postgrest-mcp/src/utils/apiKeyAuth.ts`
 type the token response (`const data = (await response.json()) as { access_token?: string }`) and
@@ -82,65 +167,66 @@ file fails with two `TS18046` errors; the copy may not be edited. **If this is n
 Step 2 starts, exclude `src/utils/apiKeyAuth.ts` and `src/tools/get_cli_token.ts` from the copy set
 instead** (the CLI does the exchange itself in Step 3b; `get_cli_token` is then MCP-only).
 
-- [ ] `package.json` scripts: `"sync": "bun run scripts/sync-postgrest-mcp.ts"`,
+- [x] `package.json` scripts: `"sync": "bun run scripts/sync-postgrest-mcp.ts"`,
       `"sync:check": "bun run scripts/sync-postgrest-mcp.ts --check"`.
-- [ ] Source root: `POSTGREST_MCP_DIR` env, default `<repo root>/../postgrest-mcp` (repo root =
+- [x] Source root: `POSTGREST_MCP_DIR` env, default `<repo root>/../postgrest-mcp` (repo root =
       `dirname(import.meta.dir)`), not cwd. Require a clean upstream `git status`; record the
       upstream commit in `src/vendor/postgrest-mcp/UPSTREAM` (sync mode writes it, `--check` only reads).
-- [ ] Copy unchanged into `src/vendor/postgrest-mcp/`, preserving relative layout:
+- [x] Copy unchanged into `src/vendor/postgrest-mcp/`, preserving relative layout:
       `types.ts`; `src/tools/**` (incl. `schemas/`) except `echo.ts` (upstream comments it out) and,
       depending on the `sqlToRest` spike below, `sqlToRest.ts`; `src/utils/{postgrest,bulk,formatResponse,errorHandler,apiKeyAuth,semantiusOrg,env}.ts`;
       `src/SKILL.md`.
-- [ ] Generate `src/vendor/postgrest-mcp/src/generated/instructions.ts` from the copied `SKILL.md`
+- [x] Generate `src/vendor/postgrest-mcp/src/generated/instructions.ts` from the copied `SKILL.md`
       with the same escaping as upstream `scripts/generate-instructions.js` (`\` → `\\`, `` ` `` →
       `` \` ``, `$` → `\$`; output `export const instructions = \`…\`;`). Note: `SKILL.md` currently
       contains no `${slug}` placeholder, so the substitution in Step 4 is a no-op today.
-- [ ] Exclude `src/utils/resetSchemaCache.ts`, `src/utils/controlPlane.ts`, `src/utils/webhook.ts`,
+- [x] Exclude `src/utils/resetSchemaCache.ts`, `src/utils/controlPlane.ts`, `src/utils/webhook.ts`,
       `src/db/**`, `src/index*.ts`, `src/mcp.ts`, `src/plugin/**`, `src/generated/**`. The CLI
       provides `src/vendor/postgrest-mcp/src/utils/resetSchemaCache.ts` itself (Step 4), same
       relative path, same export `resetSchemaCache(host: string, token?: string): Promise<unknown>`;
       the script never overwrites it (header comment "LOCAL REPLACEMENT — not synced").
-- [ ] Generate `src/vendor/postgrest-mcp/registry.ts`: `export const tools = [ … ]` importing every
+- [x] Generate `src/vendor/postgrest-mcp/registry.ts`: `export const tools = [ … ]` importing every
       `*Tool` export from the copied `src/tools/*.ts` (upstream `mcp.ts` does not export its array).
-- [ ] Build gates: add `"src/vendor/**"` to `biome.json` → `files.ignore` (upstream has no
+- [x] Build gates: add `"src/vendor/**"` to `biome.json` → `files.ignore` (upstream has no
       semicolons); add `"allowImportingTsExtensions": true` to `tsconfig.json` (upstream imports
       `./x.ts`; `noEmit` is already set; `bun build --compile` ignores the flag). Add any upstream
       bare dependency missing from `package.json` (`zod` and `@modelcontextprotocol/sdk` are present).
-- [ ] Copy `tests/crud-bulk.test.ts` to `tests/vendor/crud-bulk.test.ts` applying exactly three
+- [x] Copy `tests/crud-bulk.test.ts` to `tests/vendor/crud-bulk.test.ts` applying exactly three
       rewrites (and `--check` applies the same before comparing): (1) the URL import
       `https://deno.land/std@0.224.0/assert/mod.ts` → `./deno-assert.ts` (a local shim exporting
       `assert`, `assertEquals`, `assertStringIncludes` over `bun:test`'s `expect`); (2) `Deno.test(`
       → `test(` with `import { test } from 'bun:test';` prepended; (3) relative imports
       `"../types.ts"` → `"../../src/vendor/postgrest-mcp/types.ts"` and `"../src/` →
       `"../../src/vendor/postgrest-mcp/src/`.
-- [ ] `--check` mode: byte-compare the copy set against upstream (test file after the three
+- [x] `--check` mode: byte-compare the copy set against upstream (test file after the three
       rewrites); generated files, `UPSTREAM` and the replacement are excluded; exit 1 on drift with
       the differing paths listed. Decided: `--check` is a **release-only gate** (add it to
       `scripts/release.sh` before its test run); CI does not check out upstream. Also add
       `tests/vendor/` and every new `tests/*.test.ts` of this plan to the fixed list in
       `.github/workflows/release.yml:33` and to `scripts/release.sh:72` (which globs only
       `tests/*.test.ts`).
-- [ ] `sqlToRest` spike, **capped at one hour**: add `@supabase/sql-to-rest`, run
+- [x] `sqlToRest` spike, **capped at one hour**: add `@supabase/sql-to-rest`, run
       `bun build --compile src/index.ts --outfile /tmp/x` and `semantius call crud sqlToRest
       '{"sql":"select 1"}'` on the binary. Works → keep; otherwise remove the dependency, exclude
       `sqlToRest.ts` from the copy set, document the tool as MCP-only (`--crud-mcp`). The registry
       test's tool count is 54 with it, 53 without (55 files − echo − sqlToRest).
+      **Outcome: failed → excluded, 53 tools (recipe for later: hand-over section).**
 - Done when: `bun run sync && bun run sync:check && bun run lint && bunx tsc --noEmit && bun test`
   all pass with the vendored tree included.
 
-## 3. Host / server resolution — `src/host.ts` (new), `src/config.ts`, `src/index.ts`
+## 3. Host / server resolution — `src/host.ts` (new), `src/config.ts`, `src/index.ts` — ✅ done (`2f38c8a`, host format changed in `64ea99b`, credentials rule `619fb77`)
 
 Precedence (D10): `--host` flag → `${PREFIX}_HOST` env → project `.env` (cwd → config dir → exe dir)
 → global `.env` in the user config dir → managed-cloud default from `${PREFIX}_ORG`. Shell env keeps
 beating `.env` files; `loadDotEnv()` already implements layers 2–4, so only the flag, the default
 and the resolution are new code.
 
-- [ ] `--host <url|hostname>`: parsed early in `src/index.ts` next to `findEnvPrefix` (same
+- [x] `--host <hostname>` (as built: bare `hostname[:port]`, see §0): parsed early in `src/index.ts` next to `findEnvPrefix` (same
       pre-scan pattern) and added to `parseArgs` (its default branch rejects unknown `--` options);
       accept `https://host[:port]` and bare hostnames (assume `https://`); strip trailing slashes.
       `${PREFIX}_HOST` read via `getPrefixedEnv('HOST')` after `loadDotEnv()`. `getHost()` in
       `src/host.ts` returns the winner or, when only `${PREFIX}_ORG` is set, `https://<org>.semantius.cloud`.
-- [ ] `resolveHost(): Promise<HostFacts>` in `src/host.ts`, `HostFacts = { mode: 'cloud' | 'selfhosted',
+- [x] `resolveHost(): Promise<HostFacts>` in `src/host.ts`, `HostFacts = { mode: 'cloud' | 'selfhosted',
       host, org: string | null, tenantId: string | null, postgrestUrl, discoveryUrl, tokenExchange:
       { method: 'POST' | 'GET', url }, clientId: string | null, apiBaseUrl, uiBaseUrl }`.
       **Cloud** (host matches `*.semantius.cloud`): `org` = first label; unauthenticated
@@ -152,16 +238,16 @@ and the resolution are new code.
       `tokenExchange = GET {host}/api/auth/token`, `clientId` = the fixed self-hosted constant
       (`SELF_HOSTED_CLIENT_ID` in `src/host.ts`, value supplied in Phase B; until then `null` and
       `login` refuses on self-hosted), `apiBaseUrl = {host}/api`, `uiBaseUrl = {host}`, `org = null`.
-- [ ] Cloud only: cache the control-plane record as JSON at `<user config dir>/hosts/<host>.json`
+- [x] Cloud only: cache the control-plane record as JSON at `<user config dir>/hosts/<host>.json`
       with `:` and `/` in `<host>` replaced by `_` (Windows), mode 0600, 24 h TTL, no secrets.
       Extend `--reset-jwt-cache` to also delete it and add `--reset-cache` as the preferred spelling
       (both in `--help`). Self-hosted needs no cache.
-- [ ] Org propagation: after resolution in cloud mode set `process.env[`${PREFIX}_ORG`] = org`
+- [x] Org propagation: after resolution in cloud mode set `process.env[`${PREFIX}_ORG`] = org`
       (flag wins over `.env`), because `getDefaultConfig()` still interpolates `${PREFIX}_ORG` into
       the `cube` URL and the internal remote-crud URL. Note: an `org:`-prefixed API key hoisted by
       `normalizeCredentialEnv` that disagrees with `--host` yields a 401 from the token endpoint;
       document, do not special-case.
-- [ ] Relaxed startup gate: `checkRequiredEnvVars` (in `src/index.ts`) and
+- [x] Relaxed startup gate: `checkRequiredEnvVars` (in `src/index.ts`) and
       `getMissingRequiredEnvVars` (`src/config.ts`) currently require `${PREFIX}_ORG` and (`_API_KEY`
       or `_JWT`) and exit 5. New rule: a host must be resolvable (org, `--host`, `${PREFIX}_HOST`);
       credentials are checked later by Step 3b (`NoCredentialsError`). Also extend
@@ -169,23 +255,23 @@ and the resolution are new code.
       in JWT-only mode), otherwise strict `${VAR}` substitution in the default config throws
       `MISSING_ENV_VAR` for OAuth-only sessions. Update `getRequiredEnvVarNames`, the `--help` env
       list and the missing-var message (which now says "set SEMANTIUS_ORG or --host").
-- [ ] Config shape for the local layer in `mcp_servers.json` (implementer default): `{ "postgrest":
+- [x] Config shape for the local layer in `mcp_servers.json` (implementer default): `{ "postgrest":
       true }` (resolve from host) or `{ "postgrest": "https://…/rest" }` (explicit PostgREST base
       URL); `isPostgrestServer()` guard in `config.ts`; validation: `postgrest` must be `true` or an
       `https?://` URL, not combinable with `url`/`command`. After resolution the config object
       carries the resolved URL (`{ postgrest: 'https://…' }`) so `formatServerDetails` can print it.
-- [ ] `getDefaultConfig()`: `crud: { postgrest: true }`, `cube` unchanged (cloud) / absent
+- [x] `getDefaultConfig()`: `crud: { postgrest: true }`, `cube` unchanged (cloud) / absent
       (self-hosted). The remote crud MCP config (`https://<org>.semantius.ai/mcp`, headers
       `x-api-key: ${PREFIX}_API_KEY`) is still built internally under the constant name
       `REMOTE_CRUD_MCP` (not user-visible) for the cache-reset call and `--crud-mcp`.
-- [ ] Explicit `mcp_servers.json` `crud` entry with `url`/`command` keeps today's behaviour; the
+- [x] Explicit `mcp_servers.json` `crud` entry with `url`/`command` keeps today's behaviour; the
       local layer applies only to `{ postgrest: … }` entries and the default config (Q34).
-- [ ] `--crud-mcp` flag + `${PREFIX}_CRUD_MCP=1` (same precedence as `--host`): `crud` resolves to
+- [x] `--crud-mcp` flag + `${PREFIX}_CRUD_MCP=1` (same precedence as `--host`): `crud` resolves to
       `REMOTE_CRUD_MCP` for this invocation. Self-hosted → exit 1, text
       `Error [NOT_AVAILABLE]: --crud-mcp needs the Semantius cloud MCP server; self-hosted instances have none`.
       `info crud` prints `Transport: postgrest` / `Transport: HTTP` accordingly (existing label for
       HTTP). Daemon applies to the MCP route as before.
-- [ ] Self-hosted: `semantius call cube …` / `info cube` → exit 1
+- [x] Self-hosted: `semantius call cube …` / `info cube` → exit 1
       `Error [NOT_AVAILABLE]: the cube (analytics) server is not available on self-hosted instances`.
 - Done when: `tests/host.test.ts` (fetch stubbed) covers: `--host` beats `${PREFIX}_HOST` beats
   `.env` beats org default; cloud record parsed (`postgrest_url`, `id`, `client_id_cli`); cache hit
@@ -194,43 +280,43 @@ and the resolution are new code.
   propagation; relaxed gate (no credentials → passes the gate, fails later in 3b); `--crud-mcp` and
   `cube` self-hosted errors.
 
-## 3b. Token source for the local layer — `src/auth/token.ts` (API key and static JWT; OAuth in Step 5)
+## 3b. Token source for the local layer — `src/auth/token.ts` (API key and static JWT; OAuth in Step 5) — ✅ done (`929d071`, per-host cache + `API_KEY_REJECTED` in `64ea99b`)
 
 Step 4 needs a bearer without the MCP server; today that exists only inside `transformConfigWithJwt`
 for HTTP configs.
 
-- [ ] `getAccessToken(host: HostFacts, opts?: { forceRefresh?: boolean }): Promise<string>`, order
+- [x] `getAccessToken(host: HostFacts, opts?: { forceRefresh?: boolean }): Promise<string>`, order
       (P12 minus OAuth for now): `${PREFIX}_JWT` → `${PREFIX}_API_KEY` → (Step 5 inserts the OAuth
       session here) → throw `NoCredentialsError` with message
       `Authentication required: no credentials for <host>. Set SEMANTIUS_API_KEY or run "semantius login".`
       (the phrase "Authentication required" is what `isAuthErrorMessage()` matches, so the existing
       connect-error path exits 5; additionally add an `instanceof NoCredentialsError` branch in
       `call.ts` and `identity.ts` that exits `ErrorCode.AUTH_ERROR` without the connection-failed wrapper).
-- [ ] API-key exchange without Deno, two shapes behind one function: cloud `POST <tokenExchange.url>`
+- [x] API-key exchange without Deno, two shapes behind one function: cloud `POST <tokenExchange.url>`
       (body `grant_type=client_credentials`, header `x-api-key`, form-encoded) — the request the Deno
       server's `apiKeyAuth.ts` makes; self-hosted `GET <tokenExchange.url>` (header `x-api-key`).
       Parse `access_token`; `expires` = JWT `exp − 10 s` (as upstream `get_cli_token`); persist with
       the existing `writeCachedToken`/`readCachedToken`/`deleteCachedToken` (`src/jwt-cache.ts`,
       unchanged); own in-process dedupe map in `token.ts` (the one in `client.ts` is private).
-- [ ] `forceRefresh`: `deleteCachedToken` then exchange again. With a static `${PREFIX}_JWT` there is
+- [x] `forceRefresh`: `deleteCachedToken` then exchange again. With a static `${PREFIX}_JWT` there is
       nothing to refresh: `forceRefresh` is a no-op and callers must not retry (`withRetries` has the
       same rule).
-- [ ] The MCP path (`transformConfigWithJwt`/`resolveJwt`) is **not** changed in A1.
+- [x] The MCP path (`transformConfigWithJwt`/`resolveJwt`) is **not** changed in A1.
 - Done when: `tests/token.test.ts` (fetch stubbed): JWT wins over API key; cache hit → no fetch;
   cache miss → one fetch then cached; `forceRefresh` → delete + fetch; self-hosted GET shape; no
   credentials → `NoCredentialsError`; and `bun run dev call crud getCurrentUser '{}'` works with
   only `SEMANTIUS_API_KEY`/`SEMANTIUS_ORG` set (that call goes through Step 4, so run it after Step 4).
 
-## 4. Local crud server — `src/local-tools/crud/`
+## 4. Local crud server — `src/local-tools/crud/` — ✅ done (`8ac5703`, readable errors in `64ea99b`)
 
-- [ ] `registry.ts`: `createCrudServer(getContext: () => ToolContext): McpServer` — name `crud`,
+- [x] `registry.ts`: `createCrudServer(getContext: () => ToolContext): McpServer` — name `crud`,
       `instructions` = vendored `instructions` with `${slug}` → `org` (no-op today); for each entry
       of the vendored `registry.ts` call `server.registerTool(tool.name, tool.options, (input) =>
       tool.handler(input, getContext()))`. The SDK's `ToolCallback` is `(args, extra)`; `extra` is
       ignored (over `InMemoryTransport` it carries no auth/request info) — upstream ignores it too.
       Exclude `sendEmail`, `get_cli_token`, `get_cli_config` on self-hosted (they assume the cloud
       token endpoint/org); on cloud register all.
-- [ ] `context.ts`: `ToolContext = { authInfo: { token, apiBaseUrl }, request: { method: 'POST',
+- [x] `context.ts`: `ToolContext = { authInfo: { token, apiBaseUrl }, request: { method: 'POST',
       url, headers, query: {} } }` (upstream `RequestContext.request` requires `method` and `query`).
       Cloud: `url = https://<org>.semantius.ai/mcp`, `headers = { host: '<org>.semantius.ai', 'x-api-key':
       <only when the API-key path is active> }` (lowercase keys — that is how `getCurrentUser`,
@@ -240,18 +326,18 @@ for HTTP configs.
       `semantius_org = null` and `ui_baseurl = <uiBaseUrl>` (Q29) in `connection.ts`, not in the
       vendored code. A **context holder** (`let current: ToolContext`) is set by `connection.ts`
       before each call and updated by `retry.ts` after a token refresh; the wrapper reads it per call.
-- [ ] `stdout hygiene` (sanctioned shim): vendored `src/utils/postgrest.ts` line 67 and
+- [x] `stdout hygiene` (sanctioned shim): vendored `src/utils/postgrest.ts` line 67 and
       `refreshSchemaCache.ts` line 16 `console.log(...)` on every request — on Deno that is a server
       log, in-process it would corrupt stdout. For the lifetime of a crud call (and in `--stream`),
       `connection.ts` swaps `globalThis.console.log` for a function that forwards to `debug()`
       (stderr, only under `SEMANTIUS_DEBUG`) and restores it in `finally`. Test: stdout of a call
       contains only the tool result.
-- [ ] `env guard` (sanctioned shim): vendored `getHeaders`/`makePostgrestRequest`/`getCurrentUser`
+- [x] `env guard` (sanctioned shim): vendored `getHeaders`/`makePostgrestRequest`/`getCurrentUser`
       read `API_KEY`, `SUPABASE_ANON_KEY`, `API_BASE_URL`, `SUPABASE_URL` from the environment; an
       unrelated `API_KEY` in a developer's shell would be sent to PostgREST as `apikey`. For the
       lifetime of a crud call `connection.ts` deletes those four names from `process.env` and
       restores them in `finally`. Test: with `API_KEY=leak` set, the captured request has no `apikey`.
-- [ ] `resetSchemaCache.ts` replacement (path in Step 2), signature
+- [x] `resetSchemaCache.ts` replacement (path in Step 2), signature
       `resetSchemaCache(host, token)`: cloud → `connectToServer('crud-mcp', REMOTE_CRUD_MCP with
       headers { Authorization: 'Bearer ' + token })` (import `../../../../client.js`; no daemon, no
       `transformConfigWithJwt`), `callTool('refresh_schema_cache', {})`, close; self-hosted → return
@@ -261,7 +347,7 @@ for HTTP configs.
       `${PREFIX}_SIDE_EFFECT_TIMEOUT` in seconds). `call.ts` awaits it before **every** `process.exit`
       it performs, including the ones inside `handleSingleResult` (wrap the command body in
       `try/finally`). Under `SEMANTIUS_DEBUG` log `[semantius] resetSchemaCache: refresh_schema_cache ok|failed: <msg>`.
-- [ ] `connection.ts`: `createCrudConnection(serverName, config, hostFacts): Promise<McpConnection>`
+- [x] `connection.ts`: `createCrudConnection(serverName, config, hostFacts): Promise<McpConnection>`
       — copy of `local-tools/connection.ts` plus: token via `getAccessToken(hostFacts)`, context
       holder, stdout hygiene, env guard, `client.callTool({ name, arguments }, undefined,
       { timeout: getTimeoutMs() })` (the utils copy uses the SDK default of 60 s — too short for bulk
@@ -269,14 +355,14 @@ for HTTP configs.
       post-processing (self-hosted `getCurrentUser` fields; strip `request.headers.authorization`
       from the `postgrestRequest` envelope, Q15). No automatic fallback to MCP (Q14); on cloud the
       connection-failed message ends with `(try --crud-mcp)`.
-- [ ] `retry.ts`: export `classifyRetry`, `retryableErrorFromResult`, `jitter`,
+- [x] `retry.ts`: export `classifyRetry`, `retryableErrorFromResult`, `jitter`,
       `TRANSIENT_RETRY_DELAYS_MS`, `JWT_RETRY_DELAYS_MS` from `src/client.ts` (pure, no behaviour
       change) and implement `withLocalRetries(op, { refresh })` with the same schedule and
       `logRetryEvent` calls; `'jwt'` → `getAccessToken(host, { forceRefresh: true })`, update the
       context holder, re-run; `'transient'` → re-run; static `${PREFIX}_JWT` → never retry `'jwt'`.
       Test with a handler failing once with a JWT-looking error, once with a 429-looking error, once
       non-retryable.
-- [ ] `client.ts::getConnection`: short-circuit `isPostgrestServer(config)` right after the
+- [x] `client.ts::getConnection`: short-circuit `isPostgrestServer(config)` right after the
       `isBuiltinServer` short-circuit; tool filtering reused.
 - Parity (the A1 acceptance): `tests/integration/parity.test.ts`, skipped unless
   `SEMANTIUS_PARITY=1` and `SEMANTIUS_API_KEY`/`SEMANTIUS_ORG` are set (the repo `.env` has them
@@ -300,9 +386,9 @@ for HTTP configs.
   (waits, times out, no-op, self-hosted registers nothing), timeout option passed, retry cases; and
   the parity test passes against `tests`.
 
-## 4b. `--stream` raw path — `src/local-tools/crud/stream.ts` (D15)
+## 4b. `--stream` raw path — `src/local-tools/crud/stream.ts` (D15) — ✅ done (`5dc6288`)
 
-- [ ] `--stream` flag (+ `${PREFIX}_STREAM=1`) valid only for `call crud postgrestRequest`. There is
+- [x] `--stream` flag (+ `${PREFIX}_STREAM=1`) valid only for `call crud postgrestRequest`. There is
       nothing reusable in the vendored code (`getHeaders` is private, `makePostgrestRequest` parses
       the body): duplicate the request construction — `URL = postgrestUrl + path`, method, body
       (`JSON.stringify` unless string), headers `content-type: application/json`,
@@ -310,19 +396,47 @@ for HTTP configs.
       `apikey` — and prove equality in `tests/stream.test.ts` by stubbing `fetch`, running the
       vendored `postgrestRequestTool.handler` and the stream builder with the same args, and
       comparing captured method/URL/headers/body.
-- [ ] Pipe `response.body` to stdout unchanged (compact JSON, or CSV when `accept: text/csv`).
-- [ ] Errors: non-2xx → read the body and print `Error: (<code>) <message>` (same text shape as
+- [x] Pipe `response.body` to stdout unchanged (compact JSON, or CSV when `accept: text/csv`).
+- [x] Errors: non-2xx → read the body and print `Error: (<code>) <message>` (same text shape as
       `makePostgrestRequest`) to stderr; exit codes: 401/403 → 5, 5xx or network → 3, other non-2xx
       → 4. Retry via `withLocalRetries`.
-- [ ] Reject with exit 1 and a one-line message: `--stream` with `--single`, `--diag`, `--crud-mcp`,
+- [x] Reject with exit 1 and a one-line message: `--stream` with `--single`, `--diag`, `--crud-mcp`,
       or any tool other than `postgrestRequest`. Stdin JSON args work as usual.
-- [ ] Docs: output is compact, may be CSV; `jq` consumers keep working, pretty-diff consumers do not.
+- [x] Docs: output is compact, may be CSV; `jq` consumers keep working, pretty-diff consumers do not.
 - Done when: `bun run dev call crud postgrestRequest --stream '{"method":"GET","path":"/order_details?limit=10000"}' | wc -c`
   equals the PostgREST body size (compare with a direct `fetch` in the test); CSV passthrough;
   equality test; rejected combinations; exit-code table. Bench re-run with a `stream` path is
   Martin's (needs `semantius-bench.exe` built from the branch).
 
-## 5. OAuth login — `src/auth/` (Phase A2)
+## 5. OAuth login — `src/auth/` (Phase A2) — ⏭ next, after Martin's A1 review
+
+**A2 notes — what A1 left for this step (read before the checklist):**
+- **Storage key:** the host is now a bare `hostname[:port]` (`getHost()`, `HostFacts.host`), so the
+  `Bun.secrets` name is `<env prefix>:<host>`, e.g. `SEMANTIUS:tests.semantius.cloud`.
+- **Credential order** is split by §0 "Credentials belong to their host":
+  - without `--host`: `--auth` → `${PREFIX}_JWT` → `${PREFIX}_API_KEY` → stored session for
+    (prefix, host) → `NoCredentialsError`;
+  - with `--host`: `--auth` → stored session for (prefix, `--host`) → `NoCredentialsError`
+    (the environment's JWT / API key / org are already blanked by `ignoreEnvCredentials()` in
+    `index.ts`, and `getCredentialSource()` returns null for them).
+  Insert the session lookup where `getAccessToken` says "Step 5 (OAuth) looks up the session stored
+  for this host here", and add `'oauth'` to `CredentialSource` (the `whoami` `auth_method` reads it).
+  Decide with Martin whether `--auth apikey|jwt` may override the `--host` rule (it would reopen it).
+- **Messages that already point at login:** both `NoCredentialsError` texts (`src/auth/token.ts`)
+  name `semantius login` / `semantius login --host <host>`; keep them in sync with the real commands.
+  `login` / `logout` take `--host`; without it they act on the environment's host.
+- **MCP route** (`cube`, `--crud-mcp`): with `--host`, the config templates' `x-api-key` is `''`
+  (blanked), so the planned gate change ("header key present" + bearer from `getAccessToken`) is
+  what makes `cube` work with a stored session — and it also fixes open finding 2 (cube on a cold
+  JWT cache).
+- **Credential errors** go through `isCredentialError()` (`src/auth/token.ts`): printed as-is, exit 5,
+  never retried by `withLocalRetries`. A refresh-token failure should become one of them.
+- **Tests:** the pattern for hermetic end-to-end tests is a local `Bun.serve` stub on `127.0.0.1`
+  configured as the *environment's* host (`SEMANTIUS_HOST=127.0.0.1:<port>` + a credential), see
+  `tests/stream.test.ts` / the local block of `tests/cli-errors.test.ts`; the mock OAuth provider
+  of the done-when fits the same pattern. `--host` in such tests now means "stored credentials only".
+- **Docs deferred from Step 6:** `login` / `logout`, `--auth`, `--login`, and the third credential
+  method in `--help`, README and `skills/use-semantius/references/cli-usage.md`.
 
 - [ ] Add `cli-auth` **pinned exactly** (`"cli-auth": "0.1.0-beta.0"`, no caret; do not vendor —
       vendor only if upstream is abandoned or unfixable; MIT, zero runtime deps). Raise
@@ -388,17 +502,17 @@ for HTTP configs.
   `--login`; non-TTY `--login`; the `transformConfigWithJwt` gate. Then **stop** (§10): the real
   `semantius login` against `tests` is Martin's.
 
-## 6. Commands, docs, skills
+## 6. Commands, docs, skills — ✅ done (`3e16fd7`) except the `login`/`logout` docs (→ Step 5)
 
-- [ ] `--help` and README: three credential methods and their precedence; `--host` / `SEMANTIUS_HOST`;
-      `--crud-mcp`; `--stream`; `--reset-cache`; `login`/`logout`; `ping` now measures PostgREST,
+- [x] `--help` and README: three credential methods and their precedence; `--host` / `SEMANTIUS_HOST`;
+      `--crud-mcp`; `--stream`; `--reset-cache`; `login`/`logout` (**→ Step 5**, commands do not exist yet); `ping` now measures PostgREST,
       not Deno. `skills/use-semantius/references/cli-usage.md` likewise (env var names must match
       `--help`). `CLAUDE.md`: add "vendored tree under `src/vendor/` is synced, never edited".
-- [ ] `semantius info crud` shows `Transport: postgrest` and the resolved URL (no token).
-- [ ] `tests/cli-errors.test.ts` extended for the local path: RLS denial → 4; `--single` 0 rows → 1;
+- [x] `semantius info crud` shows `Transport: postgrest` and the resolved URL (no token).
+- [x] `tests/cli-errors.test.ts` extended for the local path: RLS denial → 4; `--single` 0 rows → 1;
       2+ rows → 2; invalid API key at exchange → 5; expired static `${PREFIX}_JWT` → 4 (unchanged
       today: the tool returns an `isError` result). Error text shape `Error: (CODE) message` preserved.
-- [ ] `info crud` / `-md` work offline through the local layer (instructions are vendored; keep the
+- [x] `info crud` / `-md` work offline through the local layer (instructions are vendored; keep the
       `-md` behaviour of `80810b3`).
 - Done when: the extended `cli-errors` tests pass and `bun run dev -md` output is reviewed by the
   implementer for stray lines. Skill evals (need model runs) are Martin's, §10.
@@ -425,13 +539,13 @@ for HTTP configs.
 |---|---|---|
 | `tests/daemon-framing.test.ts`, `tests/integration/daemon.test.ts` | all / `skipIf(win32)` | daemon (done) |
 | `tests/vendor/crud-bulk.test.ts` (copied, three rewrites) | all | copied tool handlers, fetch stubbed |
-| `tests/host.test.ts` (new) | all | Step 3 done-when list |
-| `tests/token.test.ts` (new) | all | Step 3b done-when list |
-| `tests/crud-local.test.ts` (new) | all | Step 4 done-when list |
-| `tests/stream.test.ts` (new) | all | Step 4b done-when list |
-| `tests/cli-errors.test.ts` (extended) | all | exit codes 1/2/4/5 and error shape through the local layer and `--stream` |
+| `tests/host.test.ts` (new) | all | Step 3 done-when list; bare host format, cloud-name mapping, loopback HTTP |
+| `tests/token.test.ts` (new) | all | Step 3b done-when list; per-host cache, `API_KEY_REJECTED`, the `--host` credential rule |
+| `tests/crud-local.test.ts` (new) | all | Step 4 done-when list; `console.error` shim, readable HTTP errors, no retry of rejected keys |
+| `tests/stream.test.ts` (new) | all | Step 4b done-when list (real CLI against a local `Bun.serve` stub) |
+| `tests/cli-errors.test.ts` (extended) | all | exit codes 1/2/4/5 and error shape through the local layer (local stub); `--host` never sends the environment's credentials |
 | `tests/auth.test.ts` (new, A2) | all | Step 5 done-when list; fake `secrets` only |
-| `tests/integration/parity.test.ts` (new) | gated: `SEMANTIUS_PARITY=1` + creds | local vs `--crud-mcp`, five bench scenarios + scratch-entity write with cleanup (Step 4) |
+| `tests/integration/parity.test.ts` (new) | gated: `SEMANTIUS_PARITY=1` + creds | local vs `--crud-mcp`, five bench scenarios + scratch-entity write with cleanup (Step 4); `--stream` byte-identical to a direct fetch, CSV (Step 4b) |
 | `bun run sync:check` | `scripts/release.sh` only | vendored copy is current |
 | `bun run lint`, `bunx tsc --noEmit`, `bun test`; `release.yml` / `release.sh` test lists updated | all | gates |
 
@@ -456,6 +570,16 @@ bun run dev call crud postgrestRequest --stream '{"method":"GET","path":"/produc
 SEMANTIUS_DEBUG=1 bun run dev call crud create_field '{"data":{"table_name":"<scratch>","field_name":"x","title":"X","format":"string"}}'
 ```
 
+*Status: A1 stop reached 2026-09-11 (see the hand-over section); the list above is still open for
+Martin.* Added after A1 for the post-A1 changes:
+
+```
+bun run dev whoami --host tests.semantius.app        # maps to tests.semantius.cloud; until A2: "no credentials stored for …", exit 5
+bun run dev --env CLI1 whoami                        # second profile: CLI1_HOST + CLI1_API_KEY in .env
+bun run dev call crud postgrestRequest '{"method":"GET","path":"/no_such_table"}'   # one error line, no vendored log noise
+bun run dev --reset-cache info utils                 # lists the per-key and the per-host token entry + host cache
+```
+
 **A2 implementer stop.** Step 5 committed; `tests/auth.test.ts` green against the mock provider;
 do NOT run `semantius login` (needs Martin's browser); STOP. Martin then runs:
 
@@ -466,6 +590,9 @@ bun run dev call crud getCurrentUser '{}'
 bun run dev call cube discover '{}'
 bun run dev --auth apikey whoami
 bun run dev logout
+bun run dev login --host <second org>.semantius.cloud   # a second host keeps its own session
+bun run dev whoami --host <second org>.semantius.cloud
+bun run dev whoami                                      # still the environment's host and credential
 ```
 
 Never in A1/A2: releasing, version bumps, running `scripts/release.sh`, contacting a self-hosted host.
