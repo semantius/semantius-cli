@@ -10,7 +10,8 @@
     "ignore": [
       "node_modules",
       "dist",
-      "src/local-tools/csv-schema.js"
+      "src/local-tools/csv-schema.js",
+      "src/vendor/**"
     ]
   },
   "formatter": {

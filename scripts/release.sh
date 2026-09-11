@@ -52,6 +52,12 @@ if git tag -l "v$VERSION" | grep -q "v$VERSION"; then
     exit 1
 fi
 
+# The vendored postgrest-mcp tool code must match upstream (needs the upstream
+# checkout at ../postgrest-mcp or $POSTGREST_MCP_DIR). Runs before the version
+# bump so a drift failure leaves the working tree untouched.
+echo "Checking vendored postgrest-mcp copy..."
+bun run sync:check
+
 echo -e "${GREEN}Preparing release v$VERSION${NC}"
 
 # Update version in package.json
@@ -69,7 +75,7 @@ bun run typecheck
 bun run lint
 # --timeout is explicit: bun ignores [test].timeout in bunfig.toml, so the
 # default is 5 s — too tight for the tests that spawn a CLI subprocess.
-bun test --timeout 30000 tests/*.test.ts
+bun test --timeout 30000 tests/*.test.ts tests/vendor/*.test.ts
 
 echo -e "${GREEN}Tests passed!${NC}"
 
