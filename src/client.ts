@@ -7,8 +7,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { version as VERSION } from '../package.json' with { type: 'json' };
+import { NoCredentialsError } from './auth/token.js';
 import {
   type HttpServerConfig,
+  type PostgrestServerConfig,
   type ServerConfig,
   type StdioServerConfig,
   debug,
@@ -32,6 +34,7 @@ import {
   getDaemonConnection,
 } from './daemon-client.js';
 import { isAuthErrorMessage } from './errors.js';
+import { getHostMode, resolveHost } from './host.js';
 import {
   type CachedToken,
   deleteCachedToken,
@@ -668,14 +671,14 @@ function isTransientErrorMessage(m: string): boolean {
   return false;
 }
 
-type RetryKind = 'jwt' | 'transient';
+export type RetryKind = 'jwt' | 'transient';
 
 /**
  * Decide the retry strategy an error warrants, or null to fail immediately.
  * JWT/auth errors take precedence — they need a freshly-fetched token and a new
  * connection. Transient capacity errors retry against the same connection.
  */
-function classifyRetry(err: unknown): RetryKind | null {
+export function classifyRetry(err: unknown): RetryKind | null {
   if (!(err instanceof Error)) return null;
   if (messageLooksLikeJwtError(err.message)) return 'jwt';
   if (isTransientErrorMessage(err.message)) return 'transient';
@@ -690,7 +693,7 @@ function classifyRetry(err: unknown): RetryKind | null {
  * carrying an error string, and the retry path never fires. Non-retryable
  * error results (RLS, dup key, 0-row) are left untouched and pass through.
  */
-function retryableErrorFromResult(result: unknown): Error | null {
+export function retryableErrorFromResult(result: unknown): Error | null {
   if (!result || typeof result !== 'object') return null;
   const r = result as {
     content?: Array<{ type: string; text?: string }>;
@@ -712,15 +715,15 @@ function retryableErrorFromResult(result: unknown): Error | null {
  * retries; JWT errors get one extra step (3200ms) to ride out the brief window
  * where a freshly-fetched token is still propagating across the cluster.
  */
-const TRANSIENT_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600];
-const JWT_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600, 3200];
+export const TRANSIENT_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600];
+export const JWT_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600, 3200];
 
 /**
  * Equal jitter: keep half the base delay as a floor and randomize the other
  * half. Preserves a guaranteed minimum backoff while desynchronizing many
  * clients that would otherwise retry in lockstep (thundering herd).
  */
-function jitter(baseMs: number): number {
+export function jitter(baseMs: number): number {
   return Math.round(baseMs / 2 + Math.random() * (baseMs / 2));
 }
 
@@ -837,6 +840,44 @@ async function withRetries<T>(args: {
 }
 
 // ============================================================================
+// Local PostgREST layer
+// ============================================================================
+
+/**
+ * Resolve the host and open the in-process crud connection. The resolved
+ * PostgREST URL is written back onto the config entry so `info` can print
+ * it. No automatic fallback to the MCP route: on cloud, a failure to connect
+ * points at --crud-mcp instead (not for credential problems it cannot fix).
+ */
+async function connectLocalCrud(
+  serverName: string,
+  config: PostgrestServerConfig,
+): Promise<McpConnection> {
+  const { createCrudConnection } = await import(
+    './local-tools/crud/connection.js'
+  );
+  try {
+    const resolved = await resolveHost();
+    const host =
+      typeof config.postgrest === 'string'
+        ? { ...resolved, postgrestUrl: config.postgrest.replace(/\/+$/, '') }
+        : resolved;
+    config.postgrest = host.postgrestUrl;
+    return await createCrudConnection(serverName, config, host);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      !(error instanceof NoCredentialsError) &&
+      !isAuthErrorMessage(error.message) &&
+      getHostMode() === 'cloud'
+    ) {
+      error.message = `${error.message} (try --crud-mcp)`;
+    }
+    throw error;
+  }
+}
+
+// ============================================================================
 // Unified Connection Interface (Daemon + Direct)
 // ============================================================================
 
@@ -864,11 +905,11 @@ export async function getConnection(
     return createBuiltinConnection(serverName, config);
   }
 
-  // The local PostgREST layer never goes through the daemon/JWT/MCP layers.
+  // The local PostgREST layer runs in-process too: no daemon, and it gets
+  // its token and retries from the local layer, not the MCP JWT layer.
   if (isPostgrestServer(config)) {
-    throw new Error(
-      `The local PostgREST layer for "${serverName}" is not implemented yet (try --crud-mcp)`,
-    );
+    debug(`Using the local PostgREST layer for ${serverName}`);
+    return connectLocalCrud(serverName, config);
   }
 
   // Clean up any orphaned daemons on first call

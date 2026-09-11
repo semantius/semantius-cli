@@ -33,6 +33,7 @@ import {
   toolNotFoundError,
 } from '../errors.js';
 import { McpToolError, formatToolResult } from '../output.js';
+import { drainPendingSideEffects } from '../vendor/postgrest-mcp/src/utils/resetSchemaCache.js';
 
 export interface CallOptions {
   target: string; // "server/tool"
@@ -171,6 +172,16 @@ const SINGLE_NO_ROWS = 1;
 const SINGLE_MULTIPLE_ROWS = 2;
 
 /**
+ * Exit once in-flight crud side effects — the schema-cache refresh the local
+ * layer fires after entity/field writes — have finished or timed out;
+ * process.exit would otherwise cut them off.
+ */
+async function exit(code: number): Promise<never> {
+  await drainPendingSideEffects();
+  process.exit(code);
+}
+
+/**
  * Handle --single response: unwrap the postgrestRequest envelope when present,
  * extract the single row, and detect 0-row / multi-row / error cases. Exits the
  * process directly with the appropriate code.
@@ -209,11 +220,11 @@ async function handleSingleResult(
         `Error [SINGLE_NO_ROWS]: ${text || 'Query returned 0 rows'}`,
       );
       await safeClose(connection.close);
-      process.exit(SINGLE_NO_ROWS);
+      return exit(SINGLE_NO_ROWS);
     }
     console.error(/^error\b/i.test(text) ? text : `Error: ${text}`);
     await safeClose(connection.close);
-    process.exit(ErrorCode.SERVER_ERROR);
+    return exit(ErrorCode.SERVER_ERROR);
   }
 
   // Try to JSON-parse the text so we can unwrap envelopes and detect empty results.
@@ -245,20 +256,20 @@ async function handleSingleResult(
   if (data === null) {
     console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
     await safeClose(connection.close);
-    process.exit(SINGLE_NO_ROWS);
+    return exit(SINGLE_NO_ROWS);
   }
   if (Array.isArray(data)) {
     if (data.length === 0) {
       console.error('Error [SINGLE_NO_ROWS]: Query returned 0 rows');
       await safeClose(connection.close);
-      process.exit(SINGLE_NO_ROWS);
+      return exit(SINGLE_NO_ROWS);
     }
     if (data.length > 1) {
       console.error(
         'Error [SINGLE_MULTIPLE_ROWS]: Query returned multiple rows',
       );
       await safeClose(connection.close);
-      process.exit(SINGLE_MULTIPLE_ROWS);
+      return exit(SINGLE_MULTIPLE_ROWS);
     }
     data = data[0];
   }
@@ -274,6 +285,15 @@ async function handleSingleResult(
  * Execute the call command
  */
 export async function callCommand(options: CallOptions): Promise<void> {
+  try {
+    await runCall(options);
+  } finally {
+    // The success path returns to main(), which exits right after.
+    await drainPendingSideEffects();
+  }
+}
+
+async function runCall(options: CallOptions): Promise<void> {
   // Parse and validate JSON args early (before loading config/connecting)
   // so that bad arguments are reported immediately without network I/O.
   let args: Record<string, unknown>;
@@ -281,7 +301,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
     args = await parseArgs(options.args);
   } catch (error) {
     console.error((error as Error).message);
-    process.exit(ErrorCode.CLIENT_ERROR);
+    return exit(ErrorCode.CLIENT_ERROR);
   }
 
   if (options.single) {
@@ -295,7 +315,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
         : undefined;
     if (bulkKey) {
       console.error(formatCliError(singleWithArrayInputError(bulkKey)));
-      process.exit(ErrorCode.CLIENT_ERROR);
+      return exit(ErrorCode.CLIENT_ERROR);
     }
     args = { ...args, accept: 'application/vnd.pgrst.object+json' };
   }
@@ -306,7 +326,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
     config = await loadConfig(options.configPath);
   } catch (error) {
     console.error((error as Error).message);
-    process.exit(ErrorCode.CLIENT_ERROR);
+    return exit(ErrorCode.CLIENT_ERROR);
   }
 
   let serverName: string;
@@ -318,7 +338,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
     toolName = parsed.tool;
   } catch (error) {
     console.error((error as Error).message);
-    process.exit(ErrorCode.CLIENT_ERROR);
+    return exit(ErrorCode.CLIENT_ERROR);
   }
 
   let serverConfig: ServerConfig;
@@ -326,7 +346,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
     serverConfig = getServerConfig(config, serverName);
   } catch (error) {
     console.error((error as Error).message);
-    process.exit(ErrorCode.CLIENT_ERROR);
+    return exit(ErrorCode.CLIENT_ERROR);
   }
 
   let connection: McpConnection;
@@ -336,11 +356,11 @@ export async function callCommand(options: CallOptions): Promise<void> {
   } catch (error) {
     if (error instanceof NoCredentialsError) {
       console.error(error.message);
-      process.exit(ErrorCode.AUTH_ERROR);
+      return exit(ErrorCode.AUTH_ERROR);
     }
     const message = (error as Error).message;
     console.error(formatCliError(serverConnectionError(serverName, message)));
-    process.exit(
+    return exit(
       isAuthErrorMessage(message)
         ? ErrorCode.AUTH_ERROR
         : ErrorCode.NETWORK_ERROR,
@@ -370,7 +390,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
       );
     }
     await safeClose(connection.close);
-    process.exit(ErrorCode.SERVER_ERROR);
+    return exit(ErrorCode.SERVER_ERROR);
   }
 
   if (options.single) {
@@ -387,7 +407,7 @@ export async function callCommand(options: CallOptions): Promise<void> {
     }
     console.error((error as Error).message);
     await safeClose(connection.close);
-    process.exit(ErrorCode.SERVER_ERROR);
+    return exit(ErrorCode.SERVER_ERROR);
   }
 
   await safeClose(connection.close);

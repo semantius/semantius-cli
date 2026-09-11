@@ -301,6 +301,7 @@ configurations side by side in the same `.env`.
 | `SEMANTIUS_API_KEY` | API key for Semantius (needed to call tools unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
 | `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
 | `SEMANTIUS_CRUD_MCP` | `1` = same as `--crud-mcp` | `false` |
+| `SEMANTIUS_SIDE_EFFECT_TIMEOUT` | On the managed cloud, creating/updating/deleting entities or fields asks the cloud MCP server to refresh the PostgREST schema cache; the CLI waits up to this many seconds for that before exiting | `10` |
 | `SEMANTIUS_CONFIG_PATH` | Path to config file | (none) |
 | `SEMANTIUS_DEBUG` | Enable debug output | `false` |
 | `SEMANTIUS_TIMEOUT` | Request timeout (seconds) | `1800` (30 min) |

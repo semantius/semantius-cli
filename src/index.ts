@@ -586,6 +586,8 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
   ${jwtVar.padEnd(28)} Static JWT sent as "Authorization: Bearer" directly; skips
                                the token exchange and the token cache. Value may be "org:jwt"
   SEMANTIUS_CRUD_MCP=1         Same as --crud-mcp
+  SEMANTIUS_SIDE_EFFECT_TIMEOUT=N  Max seconds to wait before exiting for the schema-cache
+                               refresh that follows entity/field changes (default: 10)
   SEMANTIUS_DEBUG=1            Verbose debug logging to stderr
   SEMANTIUS_TIMEOUT=N          Request timeout in seconds (default: 1800)
   SEMANTIUS_CONCURRENCY=N      Max parallel server connections (default: 5)
