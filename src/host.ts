@@ -39,6 +39,7 @@ export interface HostFacts {
   org: string | null;
   tenantId: string | null;
   postgrestUrl: string;
+  /** Where OAuth discovery starts: the RFC 9728 protected-resource document. */
   discoveryUrl: string;
   tokenExchange: { method: 'POST' | 'GET'; url: string };
   clientId: string | null;
@@ -47,10 +48,25 @@ export interface HostFacts {
 }
 
 /**
- * OAuth client id of the CLI on self-hosted instances. Supplied in Phase B;
- * until then it is null and `login` refuses on self-hosted hosts.
+ * OAuth client id of the CLI on self-hosted instances. A placeholder until
+ * the self-hosted login phase supplies it; until then it is null and `login`
+ * refuses on self-hosted hosts.
  */
 export const SELF_HOSTED_CLIENT_ID: string | null = null;
+
+/**
+ * The OAuth endpoints of a host, discovered from its .well-known documents:
+ * the issuer and resource scopes come from the RFC 9728 protected-resource
+ * document, the endpoints from that issuer's RFC 8414 metadata.
+ */
+export interface OAuthMetadata {
+  issuer: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  revocationEndpoint?: string;
+  /** Scopes the protected resource declares, e.g. tenant:<tenant id>:user. */
+  resourceScopes: string[];
+}
 
 const CLOUD_SUFFIX = '.semantius.cloud';
 const CONTROL_PLANE_URL = 'https://api.semantius.cloud';
@@ -247,7 +263,7 @@ function selfHostedFacts(host: string): HostFacts {
     org: null,
     tenantId: null,
     postgrestUrl: `${base}/rest`,
-    discoveryUrl: `${base}/.well-known/openid-configuration`,
+    discoveryUrl: `${base}/.well-known/oauth-protected-resource`,
     tokenExchange: { method: 'GET', url: `${base}/api/auth/token` },
     clientId: SELF_HOSTED_CLIENT_ID,
     apiBaseUrl: `${base}/api`,
@@ -265,7 +281,7 @@ async function resolveCloudHost(host: string): Promise<HostFacts> {
     org,
     tenantId: record.id,
     postgrestUrl: record.postgrest_url.replace(/\/+$/, ''),
-    discoveryUrl: `https://${org}${CLOUD_SUFFIX}/.well-known/openid-configuration`,
+    discoveryUrl: `https://${org}${CLOUD_SUFFIX}/.well-known/oauth-protected-resource`,
     tokenExchange: {
       method: 'POST',
       url: `https://${org}${CLOUD_SUFFIX}/token`,
@@ -365,6 +381,49 @@ export function getHostCachePath(host: string): string {
 interface HostCacheEntry {
   fetched_at: string;
   record: ControlPlaneRecord;
+  /** Discovered OAuth endpoints; absent until a login or a session refresh. */
+  oauth?: OAuthMetadata;
+}
+
+/** The cache entry if it exists and is still within the TTL. */
+function readHostCacheEntry(host: string): HostCacheEntry | null {
+  const path = getHostCachePath(host);
+  if (!existsSync(path)) return null;
+  try {
+    const entry = JSON.parse(readFileSync(path, 'utf8')) as HostCacheEntry;
+    if (Date.now() - Date.parse(entry.fetched_at) >= HOST_CACHE_TTL_MS) {
+      debug(`Host cache expired: ${path}`);
+      return null;
+    }
+    return entry;
+  } catch (error) {
+    debug(`Host cache read failed (${path}): ${(error as Error).message}`);
+    return null;
+  }
+}
+
+/** Discovered OAuth endpoints for a host, or null when not cached (yet). */
+export function readCachedOAuthMetadata(host: string): OAuthMetadata | null {
+  const oauth = readHostCacheEntry(host)?.oauth;
+  if (!oauth?.issuer || !oauth.authorizationEndpoint || !oauth.tokenEndpoint) {
+    return null;
+  }
+  return { ...oauth, resourceScopes: oauth.resourceScopes ?? [] };
+}
+
+/**
+ * Store discovered OAuth endpoints alongside the host's control-plane record,
+ * sharing its 24 h TTL and --reset-cache. Never called for a host without a
+ * cache entry (self-hosted), where discovery simply runs per invocation.
+ */
+export function writeCachedOAuthMetadata(
+  host: string,
+  oauth: OAuthMetadata,
+): void {
+  const entry = readHostCacheEntry(host);
+  if (!entry) return;
+  // Keep fetched_at: caching endpoints must not extend the record's TTL.
+  writeHostCacheEntry(host, { ...entry, oauth });
 }
 
 function readHostCache(host: string): ControlPlaneRecord | null {
@@ -397,14 +456,17 @@ function readHostCache(host: string): ControlPlaneRecord | null {
   }
 }
 
-/** Atomic write (temp file + rename), mode 0600. Failures only cost a refetch. */
 function writeHostCache(host: string, record: ControlPlaneRecord): void {
-  const path = getHostCachePath(host);
-  const tmpPath = `${path}.${process.pid}.tmp`;
-  const entry: HostCacheEntry = {
+  writeHostCacheEntry(host, {
     fetched_at: new Date().toISOString(),
     record,
-  };
+  });
+}
+
+/** Atomic write (temp file + rename), mode 0600. Failures only cost a refetch. */
+function writeHostCacheEntry(host: string, entry: HostCacheEntry): void {
+  const path = getHostCachePath(host);
+  const tmpPath = `${path}.${process.pid}.tmp`;
   try {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(tmpPath, `${JSON.stringify(entry, null, 2)}\n`, {

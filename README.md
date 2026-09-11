@@ -54,21 +54,29 @@ export SEMANTIUS_API_KEY=your-org-name:your-api-key
 export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
 ```
 
+```bash
+# Option 5: no keys at all — sign in with the browser (managed cloud)
+semantius login                              # the environment's host
+semantius login --host acme.semantius.app    # a specific organization
+```
+
 Credentials are tried in this order, first match wins:
 
 1. `SEMANTIUS_JWT` — a static token, sent as-is (no exchange, no cache)
 2. `SEMANTIUS_API_KEY` — exchanged for a short-lived token at your host's token endpoint and cached (see [Token cache](#token-cache))
+3. The session stored by `semantius login` for this host (see [Browser login](#browser-login))
 
-Without either, commands that call the platform exit `5` with "Authentication required".
+Without any of them, commands that call the platform exit `5` with "Authentication required".
+`--auth jwt|apikey|oauth` picks one source explicitly.
 Which host the CLI talks to is covered in [Hosts](#hosts-managed-cloud-and-self-hosted).
 
-These environment credentials belong to the environment's host (`SEMANTIUS_HOST` /
+The environment's credentials belong to the environment's host (`SEMANTIUS_HOST` /
 `SEMANTIUS_ORG`). **With `--host`, only the host name counts:** the CLI uses the
 credentials stored for that host — one set per host, stored by
-`semantius login --host <host>` (arriving with OAuth login) — and ignores the
-API key, JWT and org from the environment, so they are never sent to another
-host. To pair a host with an API key, set `SEMANTIUS_HOST` next to it, or keep
-several pairs side by side with `--env <prefix>` (`<PREFIX>_HOST`, `<PREFIX>_API_KEY`).
+`semantius login --host <host>` — and ignores the API key, JWT and org from the
+environment, so they are never sent to another host. To pair a host with an API
+key, set `SEMANTIUS_HOST` next to it, or keep several pairs side by side with
+`--env <prefix>` (`<PREFIX>_HOST`, `<PREFIX>_API_KEY`).
 
 No config file is needed: the `crud` tools run inside the CLI against your
 organization's PostgREST API, and `cube` (analytics) is reached as a Semantius
@@ -106,6 +114,8 @@ semantius [options] call <server> <tool>        Call tool (reads JSON from stdin
 semantius [options] call <server> <tool> <json> Call tool with JSON arguments
 semantius [options] ping [-n [count]]           Check connectivity & latency: crud/getCurrentUser (one PostgREST round trip; the cloud MCP server with --crud-mcp)
 semantius [options] whoami                      Show current user (email, org, roles)
+semantius [options] login                       Sign in with the browser; stores the session for the host
+semantius [options] logout                      Revoke and delete the stored session for the host
 ```
 
 **Both formats work:** `info <server> <tool>` or `info <server>/<tool>`
@@ -124,6 +134,8 @@ semantius [options] whoami                      Show current user (email, org, r
 | `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
 | `--env <prefix>` | Env var prefix (default `SEMANTIUS`), e.g. `--env PROD` reads `PROD_API_KEY` / `PROD_ORG` |
 | `--host <hostname>` | Semantius host to talk to, `hostname[:port]` (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST` |
+| `--auth <source>` | Use exactly one credential source: `jwt`, `apikey` or `oauth` (the stored browser session). Not combinable with `--host` for `jwt`/`apikey` |
+| `--login` | Sign in with the browser first, then run the command with that session (needs an interactive terminal) |
 | `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
 | `--stream` | (`call crud postgrestRequest` only) Pipe the PostgREST response body to stdout unchanged — see [Streaming large reads](#streaming-large-reads---stream). Also `SEMANTIUS_STREAM=1` |
 | `--disable-jwt-cache` | Skip the token cache and re-authenticate on every request (see [Token cache](#token-cache)) |
@@ -387,6 +399,35 @@ server and no cloud MCP server, so `--crud-mcp` is not available.
 
 With `--host`, only credentials stored for that host are used — see
 [Set up credentials](#2-set-up-credentials).
+
+### Browser login
+
+On the managed cloud you can sign in instead of managing keys:
+
+```bash
+semantius login                              # the environment's host
+semantius login --host acme.semantius.app    # a specific organization
+semantius whoami                             # auth_method: oauth
+semantius logout                             # revokes and deletes the session
+```
+
+`login` opens your browser (OAuth 2.0 authorization code with PKCE), receives
+the response on `127.0.0.1`, and stores the session in your OS keyring
+(Keychain, Windows Credential Manager, libsecret) under the host's name. Where
+there is no keyring — a headless Linux box, for example — it falls back to a
+`0600` file in `<user config dir>/sessions/` and says so.
+
+One session per host: `semantius login --host b.semantius.cloud` leaves the
+session for `a.semantius.cloud` untouched, and each command uses the session of
+the host it talks to. The access token is refreshed automatically, about
+hourly, for as long as the login stays valid.
+
+`--login` signs in first and then runs the command with that session, even when
+an API key or JWT is configured; it needs an interactive terminal. Nothing else
+ever opens a browser on its own: without credentials a command exits `5`.
+
+Self-hosted instances cannot use browser login yet — use an API key or a static
+JWT there.
 
 ### Token cache
 

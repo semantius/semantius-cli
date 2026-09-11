@@ -12,6 +12,7 @@
  */
 
 import { version as VERSION } from '../package.json' with { type: 'json' };
+import { loginCommand, logoutCommand } from './commands/auth.js';
 import { callCommand } from './commands/call.js';
 import { grepCommand } from './commands/grep.js';
 import { pingCommand, whoamiCommand } from './commands/identity.js';
@@ -19,6 +20,7 @@ import { infoCommand } from './commands/info.js';
 import { listCommand } from './commands/list.js';
 import { markdownCommand } from './commands/markdown.js';
 import {
+  type AuthFlag,
   DEFAULT_CONCURRENCY,
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_DELAY_MS,
@@ -29,6 +31,7 @@ import {
   isCrudMcp,
   loadDotEnv,
   prefixedEnvName,
+  setAuthFlag,
   setCrudMcpFlag,
   setEnvPrefix,
   setHostFlag,
@@ -69,7 +72,9 @@ interface ParsedArgs {
     | 'version'
     | 'markdown'
     | 'ping'
-    | 'whoami';
+    | 'whoami'
+    | 'login'
+    | 'logout';
   server?: string;
   tool?: string;
   pattern?: string;
@@ -86,12 +91,22 @@ interface ParsedArgs {
   pingCount?: number;
   disableJwtCache: boolean;
   resetCache: boolean;
+  auth?: AuthFlag;
+  login: boolean;
 }
 
 /**
  * Known subcommands
  */
-const SUBCOMMANDS = ['info', 'grep', 'call', 'ping', 'whoami'] as const;
+const SUBCOMMANDS = [
+  'info',
+  'grep',
+  'call',
+  'ping',
+  'whoami',
+  'login',
+  'logout',
+] as const;
 
 /**
  * Check if a string looks like a subcommand (not a server name)
@@ -196,6 +211,7 @@ function parseArgs(args: string[]): ParsedArgs {
     crudMcp: false,
     disableJwtCache: false,
     resetCache: false,
+    login: false,
   };
 
   const positional: string[] = [];
@@ -248,6 +264,33 @@ function parseArgs(args: string[]): ParsedArgs {
       case '--crud-mcp':
         result.crudMcp = true;
         break;
+
+      case '--login':
+        result.login = true;
+        break;
+
+      case '--auth': {
+        const source = args[++i];
+        if (!source) {
+          console.error(
+            formatCliError(missingArgumentError('--auth', 'jwt|apikey|oauth')),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        if (source !== 'jwt' && source !== 'apikey' && source !== 'oauth') {
+          console.error(
+            formatCliError({
+              code: ErrorCode.CLIENT_ERROR,
+              type: 'INVALID_OPTION',
+              message: `Invalid --auth value "${source}"`,
+              suggestion: 'Use --auth jwt, --auth apikey or --auth oauth',
+            }),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        result.auth = source;
+        break;
+      }
 
       case '--host': {
         const host = args[++i];
@@ -384,6 +427,19 @@ function parseArgs(args: string[]): ParsedArgs {
       process.exit(ErrorCode.CLIENT_ERROR);
     }
     result.command = 'whoami';
+    return result;
+  }
+
+  if (firstArg === 'login' || firstArg === 'logout') {
+    if (positional.length > 1) {
+      console.error(
+        formatCliError(
+          tooManyArgumentsError(firstArg, positional.length - 1, 0),
+        ),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    result.command = firstArg;
     return result;
   }
 
@@ -528,6 +584,8 @@ Usage:
   semantius [options] ping [-n [count]]            Check connectivity & latency: crud/getCurrentUser, one PostgREST
                                                    round trip (the cloud MCP server with --crud-mcp)
   semantius [options] whoami                       Show current user (email, org, roles)
+  semantius [options] login                        Sign in with the browser and store the session for the host
+  semantius [options] logout                       Revoke and delete the stored session for the host
 
 Formats (both work):
   semantius info server tool                       Space-separated
@@ -544,11 +602,14 @@ Built-in servers:
 Credentials (first match wins):
   1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
   2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached per host
-  Without either, commands that call the platform exit 5 ("Authentication required").
+  3. ${'browser login'.padEnd(22)} The session stored by "semantius login" for this host (cloud only;
+                         kept in the OS keyring, refreshed automatically)
+  Without any of them, commands that call the platform exit 5 ("Authentication required").
+  --auth jwt|apikey|oauth picks one source explicitly.
   With --host, only credentials stored for that host are used, one set per host (stored
-  by "semantius login --host <host>", arriving with OAuth login); the API key, JWT and
-  org from the environment are ignored. To pair a host with an API key, set
-  ${hostVar} (or use --env <prefix> with <PREFIX>_HOST and <PREFIX>_API_KEY).
+  by "semantius login --host <host>"); the API key, JWT and org from the environment are
+  ignored. To pair a host with an API key, set ${hostVar} (or use
+  --env <prefix> with <PREFIX>_HOST and <PREFIX>_API_KEY).
 
 Options:
   -h, --help               Show this help message
@@ -569,6 +630,10 @@ Options:
                            <org>.semantius.cloud is the managed cloud, any other host is self-hosted.
                            Always HTTPS, except localhost / 127.x.x.x (plain HTTP). Uses only the
                            credentials stored for that host (see Credentials)
+  --auth <source>          Use exactly one credential source: jwt, apikey or oauth (the stored
+                           browser session). Not with --host for jwt/apikey — see Credentials
+  --login                  Sign in with the browser first, then run the command with that session
+                           (needs an interactive terminal)
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
                            local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
@@ -599,6 +664,8 @@ Examples:
   cat input.json | semantius call crud create_record  # Read from stdin (no '-' needed)
   semantius --env PROD info crud                   # Use PROD_API_KEY / PROD_ORG
   semantius --host semantius.example.com whoami    # Self-hosted instance
+  semantius login --host acme.semantius.app        # Browser login, stored for acme.semantius.cloud
+  semantius --host acme.semantius.app whoami       # Uses that stored session
 
 Environment Variables (all respect --env <prefix>; default prefix shown):
   ${orgVar.padEnd(28)} Organization on the managed cloud; the host defaults to
@@ -699,6 +766,39 @@ async function main(): Promise<void> {
   if (args.host !== undefined) setHostFlag(args.host);
   setCrudMcpFlag(args.crudMcp);
 
+  // --login runs the browser flow now and uses that session for this
+  // invocation, even when a JWT / API key is configured.
+  if (args.login && args.auth && args.auth !== 'oauth') {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: `--login cannot be combined with --auth ${args.auth}`,
+        suggestion: '--login always uses the session it just obtained',
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // With --host only credentials stored for that host apply, so --auth can
+  // only pick among those — never the environment's key or token.
+  if (
+    args.host !== undefined &&
+    (args.auth === 'jwt' || args.auth === 'apikey')
+  ) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: `--auth ${args.auth} cannot be combined with --host`,
+        suggestion: `With --host only the credentials stored for that host are used. Run "semantius login --host ${args.host}", or set ${prefixedEnvName('HOST')} to pair a host with ${prefixedEnvName('API_KEY')}.`,
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  setAuthFlag(args.login ? 'oauth' : args.auth);
+
   if (args.disableJwtCache) {
     setJwtCacheDisabled(true);
   }
@@ -767,6 +867,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // A browser login before the actual command: never implicit, always an
+  // interactive terminal (there is nobody to complete the flow otherwise).
+  if (args.login && args.command !== 'login') {
+    if (!process.stdin.isTTY) {
+      console.error(
+        'Error [LOGIN_FAILED]: --login needs an interactive terminal',
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    await loginCommand();
+  }
+
   switch (args.command) {
     case 'list':
       await listCommand({
@@ -818,6 +930,14 @@ async function main(): Promise<void> {
 
     case 'whoami':
       await whoamiCommand({ configPath: args.configPath, diag: args.diag });
+      break;
+
+    case 'login':
+      await loginCommand();
+      break;
+
+    case 'logout':
+      await logoutCommand();
       break;
   }
 }

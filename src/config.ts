@@ -235,6 +235,19 @@ export function setCrudMcpFlag(enabled: boolean): void {
   _crudMcpFlag = enabled;
 }
 
+/** --auth <source>: use exactly this credential source for the invocation. */
+export type AuthFlag = 'jwt' | 'apikey' | 'oauth';
+
+let _authFlag: AuthFlag | undefined;
+
+export function setAuthFlag(value: AuthFlag | undefined): void {
+  _authFlag = value;
+}
+
+export function getAuthFlag(): AuthFlag | undefined {
+  return _authFlag;
+}
+
 /**
  * --host names a host explicitly: credentials belong to the host they were
  * stored for, so the API key, static JWT and org configured in the

@@ -3,9 +3,11 @@
  *
  * Without --host, the environment is the profile; sources, first match wins:
  * ${PREFIX}_JWT (static, sent as-is) → ${PREFIX}_API_KEY (exchanged at the
- * host's token endpoint, cached per host) → NoCredentialsError.
+ * host's token endpoint, cached per host) → the OAuth session stored for the
+ * host → NoCredentialsError.
  * With --host, only credentials stored for that host apply (the OAuth
- * session, Step 5); the environment's API key and JWT are never used.
+ * session); the environment's API key and JWT are never used.
+ * --auth jwt|apikey|oauth forces one source for the invocation.
  * The MCP path (client.ts transformConfigWithJwt / resolveJwt) is separate.
  */
 
@@ -13,6 +15,7 @@ import { STATUS_CODES } from 'node:http';
 import {
   debug,
   describeEnvVar,
+  getAuthFlag,
   getEnvJwt,
   getHostFlag,
   getPrefixedEnv,
@@ -33,13 +36,37 @@ import {
  * "Authentication required", which isAuthErrorMessage() maps to exit 5.
  */
 export class NoCredentialsError extends Error {
-  constructor(host: string) {
+  constructor(host: string, forced?: CredentialSource) {
     super(
-      getHostFlag()
-        ? `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`
-        : `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`,
+      forced
+        ? `Authentication required: --auth ${forced} was given but ${forcedSourceHint(forced, host)}`
+        : getHostFlag()
+          ? `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`
+          : `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`,
     );
     this.name = 'NoCredentialsError';
+  }
+}
+
+/** What --auth <source> asked for and did not find. */
+function forcedSourceHint(forced: CredentialSource, host: string): string {
+  if (forced === 'oauth') {
+    return `no session is stored for ${host}. Run "semantius login${getHostFlag() ? ` --host ${host}` : ''}".`;
+  }
+  return `${prefixedEnvName(forced === 'jwt' ? 'JWT' : 'API_KEY')} is not set.`;
+}
+
+/**
+ * The stored session could not be turned into a token: the refresh token is
+ * expired or was revoked. Exit 5 like any other credential problem; a retry
+ * with the same session cannot help, only a new login.
+ */
+export class SessionExpiredError extends Error {
+  constructor(host: string, detail: string) {
+    super(
+      `Authentication required: the session stored for ${host} could not be refreshed (${detail}). Run "semantius login${getHostFlag() ? ` --host ${host}` : ''}" again.`,
+    );
+    this.name = 'SessionExpiredError';
   }
 }
 
@@ -65,16 +92,18 @@ export class ApiKeyRejectedError extends Error {
 /** Credential problems: reported as-is (no connection-failed wrapper), exit 5. */
 export function isCredentialError(error: unknown): boolean {
   return (
-    error instanceof NoCredentialsError || error instanceof ApiKeyRejectedError
+    error instanceof NoCredentialsError ||
+    error instanceof ApiKeyRejectedError ||
+    error instanceof SessionExpiredError
   );
 }
 
-export type CredentialSource = 'jwt' | 'apikey';
+export type CredentialSource = 'jwt' | 'apikey' | 'oauth';
 
 /**
- * The credential source getAccessToken would use, or null if none is set.
- * With --host the environment's credentials never apply (they belong to the
- * environment's host); only credentials stored for that host do.
+ * The environment's credential source, or null when it has none (then the
+ * stored session applies). With --host the environment's credentials never
+ * apply: they belong to the environment's host.
  */
 export function getCredentialSource(): CredentialSource | null {
   if (getHostFlag()) return null;
@@ -83,26 +112,56 @@ export function getCredentialSource(): CredentialSource | null {
   return null;
 }
 
+let _usedSource: CredentialSource | undefined;
+
+/** Which source produced the bearer of this invocation (for whoami). */
+export function getUsedCredentialSource(): CredentialSource | undefined {
+  return _usedSource;
+}
+
 /**
  * A bearer token for the host. `forceRefresh` discards the cached exchange
- * result and exchanges again; with a static ${PREFIX}_JWT there is nothing to
- * refresh, so it is a no-op and callers must not retry on JWT errors.
+ * result and gets a new token; with a static ${PREFIX}_JWT there is nothing
+ * to refresh, so it is a no-op and callers must not retry on JWT errors.
  */
 export async function getAccessToken(
   host: HostFacts,
   opts: { forceRefresh?: boolean } = {},
 ): Promise<string> {
-  const source = getCredentialSource();
-  if (source === 'jwt') return getEnvJwt() as string;
+  const forced = getAuthFlag();
+  // No environment credential (or --host) means the stored session is next.
+  const source = forced ?? getCredentialSource() ?? 'oauth';
+
+  if (source === 'jwt') {
+    const jwt = getEnvJwt();
+    if (!jwt) throw new NoCredentialsError(host.host, forced);
+    _usedSource = 'jwt';
+    return jwt;
+  }
 
   if (source === 'apikey') {
-    const apiKey = getPrefixedEnv('API_KEY') as string;
+    const apiKey = getPrefixedEnv('API_KEY');
+    if (!apiKey) throw new NoCredentialsError(host.host, forced);
     const token = await tokenFromApiKey(host, apiKey, !!opts.forceRefresh);
+    _usedSource = 'apikey';
     return token.jwt;
   }
 
-  // Step 5 (OAuth) looks up the session stored for this host here.
-  throw new NoCredentialsError(host.host);
+  // Imported lazily: API-key and JWT invocations never load the OAuth client.
+  const { getSessionToken } = await import('./session.js');
+  let token: string | null;
+  try {
+    token = await getSessionToken(host, opts);
+  } catch (error) {
+    // cli-auth could not refresh: the session is spent, not merely stale.
+    if ((error as Error).name === 'CliAuthError') {
+      throw new SessionExpiredError(host.host, (error as Error).message);
+    }
+    throw error;
+  }
+  if (!token) throw new NoCredentialsError(host.host, forced);
+  _usedSource = 'oauth';
+  return token;
 }
 
 // In-process dedupe: parallel connections (list, -md) share one exchange.

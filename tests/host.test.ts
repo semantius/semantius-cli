@@ -213,7 +213,7 @@ describe('host resolution', () => {
         tenantId: RECORD.id,
         postgrestUrl: 'https://ep-test.apirest.example.neon.tech/neondb/rest/v1',
         discoveryUrl:
-          'https://acme.semantius.cloud/.well-known/openid-configuration',
+          'https://acme.semantius.cloud/.well-known/oauth-protected-resource',
         tokenExchange: {
           method: 'POST',
           url: 'https://acme.semantius.cloud/token',
@@ -351,7 +351,7 @@ describe('host resolution', () => {
         org: null,
         tenantId: null,
         postgrestUrl: 'https://x.example.com/rest',
-        discoveryUrl: 'https://x.example.com/.well-known/openid-configuration',
+        discoveryUrl: 'https://x.example.com/.well-known/oauth-protected-resource',
         tokenExchange: {
           method: 'GET',
           url: 'https://x.example.com/api/auth/token',

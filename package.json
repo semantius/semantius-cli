@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.2",
+    "cli-auth": "0.1.0-beta.0",
     "csv-parse": "^7.0.2",
     "zod": "^4.3.5"
   },
@@ -54,6 +55,6 @@
   },
   "homepage": "https://github.com/semantius/semantius-cli#readme",
   "engines": {
-    "bun": ">=1.0.0"
+    "bun": ">=1.3.0"
   }
 }

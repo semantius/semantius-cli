@@ -25,8 +25,11 @@ parity suite); `SEMANTIUS_PARITY=1 bun test --timeout 120000 tests/integration/p
 | `64ea99b` | After A1 (Martin's requests): bare hosts, cloud-name mapping, per-host token cache (security fix), readable errors |
 | `619fb77` | After A1 (Martin's decision): with `--host` only credentials stored for that host |
 
-**Next.** Martin reviews A1 and runs the manual list in §10 (A1 part); then Phase A2 (Step 5 — read
-its "A2 notes" first). The A1 stop point has been reached; do not start A2 without Martin's go.
+**Next.** Martin reviews A1 and runs the manual list in §10 (A1 part); then Phase A2 = OAuth login
+for **cloud hosts only** (Step 5 — read its "A2 notes" first). Self-hosted login is a separate later
+phase, A3 (Step 5c), specified by Martin once cloud login works; between them A2b (Step 5b) fixes
+the callback `iss` server-side and adds the issuer checks. The A1 stop point has been reached;
+Martin gave the go for A2 on 2026-09-11 ("continue with a2 without iss check").
 
 **Built differently from the text below, and why** (the steps are marked accordingly):
 - `sqlToRest` spike failed: in a `bun build --compile` binary the parser's WASM is missing
@@ -97,6 +100,22 @@ its "A2 notes" first). The A1 stop point has been reached; do not start A2 witho
 - PKCE against cloud is **verified end to end** (R §9.1, 2026-09-11): scope
   `openid profile email offline_access tenant:<tenant id>:user`, client `client_id_cli` from the
   control plane, redirect `http://127.0.0.1:{53682,53683,53684}/callback`; PostgREST accepts the token.
+  Endpoints and tenant scope come from the host's `.well-known` documents, RFC 9728 → RFC 8414
+  (Martin, 2026-09-11; Step 5); the client id only from the control plane.
+- **Login is split by host type (Martin, 2026-09-11).** A2 = OAuth login against the managed cloud,
+  where the control plane and the tenant's discovery documents already supply everything (client id,
+  tenant id, endpoints). A3 = self-hosted login: Martin supplies its spec after cloud login works
+  (client id and URLs are obtained differently there). Until A3, `login` refuses on self-hosted hosts
+  and the self-hosted `clientId` / `discoveryUrl` in `selfHostedFacts()` are placeholders.
+- **Issuer checks are A2b, not A2 (Martin, 2026-09-11).** The server advertises
+  `authorization_response_iss_parameter_supported: true` and issuer
+  `https://<org>.semantius.cloud/api/auth`, but the login callback carries
+  `iss = https://app.semantius.com/api/auth`, so an RFC 9207-compliant client would reject every
+  login. A2 therefore verifies no issuer at all (neither the metadata's nor the callback's). A2b
+  fixes the callback server-side, adds both checks, and specifies what A3 must do — where the risk
+  is real, because there an arbitrary host serves the metadata (mix-up attack: a malicious host can
+  point `authorization_endpoint` at a cloud org and its own `token_endpoint`, and PKCE does not
+  prevent it because the verifier goes to the same endpoint).
 - The daemon fix (R §11) is committed on `main` as `9ac9574`, unreleased. Releasing it is Martin's.
 - Self-hosted: server URL configurable; no control plane, no Deno, no `cube`. *(D1, D12)*
 - Host resolution order: `--host` → `${PREFIX}_HOST` → project `.env` → global `.env` → cloud default. *(D10)*
@@ -123,10 +142,12 @@ its "A2 notes" first). The A1 stop point has been reached; do not start A2 witho
 
 | Phase | Steps | Exit gate |
 |---|---|---|
-| **A1 — local layer with the existing API key** | 2, 3, 3b, 4, 4b, 6 | §10 "A1 implementer stop" |
-| **A2 — OAuth login (cloud)** | 5 | §10 "A2 implementer stop" |
+| **A1 — local layer with the existing API key** (no login: API key or static JWT only) | 2, 3, 3b, 4, 4b, 6 | §10 "A1 implementer stop" |
+| **A2 — OAuth login, cloud hosts only** (no issuer checks) | 5 | §10 "A2 implementer stop" |
 | **review** | — | Martin reviews A1+A2 and runs the manual list in §10 |
-| **B — self-hosted** | self-hosted items of 3, 3b, 4, 5 against a real instance | Martin tests on a self-hosted host |
+| **A2b — issuer checks** (server sends the right callback `iss`, CLI verifies) | 5b (spec after the A2 review) | §10 "A2b implementer stop" |
+| **A3 — OAuth login, self-hosted** | 5c (spec from Martin, incl. its issuer rules, written in A2b) | §10 "A3 implementer stop" |
+| **B — self-hosted** | self-hosted items of 3, 3b, 4, 5c against a real instance | Martin tests on a self-hosted host |
 | **rollout** | 7 | Martin releases via the script |
 
 Self-hosted branches are written in A1 behind the mode flag and covered by unit tests with stubbed
@@ -231,13 +252,14 @@ and the resolution are new code.
       { method: 'POST' | 'GET', url }, clientId: string | null, apiBaseUrl, uiBaseUrl }`.
       **Cloud** (host matches `*.semantius.cloud`): `org` = first label; unauthenticated
       `GET https://api.semantius.cloud/organization/<org>` → `postgrest_url`, `id` (tenantId),
-      `client_id_cli`; `discoveryUrl = https://<org>.semantius.cloud/.well-known/openid-configuration`;
+      `client_id_cli`; `discoveryUrl = https://<org>.semantius.cloud/.well-known/openid-configuration`
+      (A2 repoints it at `/.well-known/oauth-protected-resource`, Step 5);
       `tokenExchange = POST https://<org>.semantius.cloud/token`; `apiBaseUrl = https://<org>.semantius.ai`;
       `uiBaseUrl = https://<org>.semantius.app`. **Self-hosted** (any other host): no network:
       `postgrestUrl = {host}/rest`, `discoveryUrl = {host}/.well-known/openid-configuration`,
       `tokenExchange = GET {host}/api/auth/token`, `clientId` = the fixed self-hosted constant
-      (`SELF_HOSTED_CLIENT_ID` in `src/host.ts`, value supplied in Phase B; until then `null` and
-      `login` refuses on self-hosted), `apiBaseUrl = {host}/api`, `uiBaseUrl = {host}`, `org = null`.
+      (`SELF_HOSTED_CLIENT_ID` in `src/host.ts`, a placeholder: `null`, `login` refuses on
+      self-hosted; A3 / Step 5c replaces it and the discovery URL per Martin's spec), `apiBaseUrl = {host}/api`, `uiBaseUrl = {host}`, `org = null`.
 - [x] Cloud only: cache the control-plane record as JSON at `<user config dir>/hosts/<host>.json`
       with `:` and `/` in `<host>` replaced by `_` (Windows), mode 0600, 24 h TTL, no secrets.
       Extend `--reset-jwt-cache` to also delete it and add `--reset-cache` as the preferred spelling
@@ -408,7 +430,60 @@ for HTTP configs.
   equality test; rejected combinations; exit-code table. Bench re-run with a `stream` path is
   Martin's (needs `semantius-bench.exe` built from the branch).
 
-## 5. OAuth login — `src/auth/` (Phase A2) — ⏭ next, after Martin's A1 review
+## 5. OAuth login, cloud hosts — `src/auth/` (Phase A2) — ✅ done (uncommitted at the time of writing)
+
+**As built (2026-09-11), deviations and decisions taken:**
+- `--auth apikey|jwt` **with `--host` is rejected** (exit 1, `INVALID_OPTION`), and so is
+  `--login --auth jwt|apikey`. Implementer default, Martin's call still open: it keeps §0's rule
+  intact (with `--host` only stored credentials count), and `--auth oauth` remains valid there.
+- `HostFacts.discoveryUrl` is now the RFC 9728 URL; the discovered endpoints live in the host cache
+  entry under `oauth`, keeping the entry's original `fetched_at` (caching endpoints must not extend
+  the control-plane record's TTL).
+- cli-auth has no `forceRefresh`: `getSessionToken({ forceRefresh })` expires the stored access
+  tokens (`expireStoredAccessTokens`) and lets cli-auth spend the refresh token; `clear()` would
+  have dropped the refresh token too.
+- New errors: `LoginUnavailableError` / `LoginFailedError` (exit 1) in `session.ts`;
+  `SessionExpiredError` in `token.ts` (a cli-auth refresh failure → "Authentication required", exit 5,
+  never retried). `getUsedCredentialSource()` records which source produced the bearer (whoami).
+- Test seams (no monkey-patching): `setSecretsForTests()` in `storage.ts`, and `login(host, { openUrl })`
+  so the mock-provider test drives the browser step itself.
+- The file fallback is per host: `<user config dir>/sessions/<prefix>_<host>/credentials.json`
+  (cli-auth's `fileStorage` writes a fixed `credentials.json`, so one dir per session is required);
+  the lock file sits next to it and its directory is created lazily.
+- `transformConfigWithJwt`'s env-JWT branch already gated on header-key presence (A1); A2 added the
+  session branch for an empty `x-api-key` and falls through to the unchanged config when there is no
+  session, so a 401 still reads as before.
+- **Not done:** the daemon-interplay test below (no A2 code touches the daemon; its config hash
+  already includes the bearer). `tests/auth.test.ts` was added to `.github/workflows/release.yml`.
+
+**Scope: cloud hosts only.** Every input of the flow comes from what Step 3 already resolves; no new
+configuration. Worked example, `semantius login --host cli1-bb82.semantius.app`:
+
+1. `normalizeHost` maps `.app` → `cli1-bb82.semantius.cloud`: cloud mode, org `cli1-bb82`.
+2. **Client id:** `resolveHost()` → `GET https://api.semantius.cloud/organization/cli1-bb82`
+   (unauthenticated, cached 24 h in `<config dir>/hosts/cli1-bb82.semantius.cloud.json`) →
+   `client_id_cli` (`HostFacts.clientId`), plus `id` and `postgrest_url`. The client id is in no
+   discovery document; the control plane is its only source.
+3. **Resource metadata (RFC 9728):** `GET https://cli1-bb82.semantius.cloud/.well-known/oauth-protected-resource`
+   → `authorization_servers[0]` = issuer `https://cli1-bb82.semantius.cloud/api/auth`,
+   `scopes_supported` = `["tenant:<id>:user"]`.
+4. **Authorization-server metadata (RFC 8414, path-suffix form of that issuer):**
+   `GET https://cli1-bb82.semantius.cloud/.well-known/oauth-authorization-server/api/auth` →
+   authorize `…/api/auth/oauth2/authorize`, token `…/token`, revoke `…/api/auth/oauth2/revoke`.
+5. cli-auth PKCE (S256), scope `openid profile email offline_access` + step 3's `scopes_supported`,
+   redirect `http://127.0.0.1:<first free of 53682–53684>/callback`: browser → callback → code →
+   token set, stored under `SEMANTIUS:cli1-bb82.semantius.cloud`.
+
+This is the chain MCP clients use against the same server (Martin, 2026-09-11). Checked the same day
+for `tests` and `cli1-bb82`, public endpoints only: all six documents answer 200 —
+`oauth-protected-resource` (and `/mcp`, identical), `oauth-authorization-server` (and `/api/auth`,
+identical), `openid-configuration`, `jwks.json` (one Ed25519 key); the RFC 8414 and OIDC documents
+have identical keys and values; issuer = `authorization_servers[0]`; the resource's
+`scopes_supported` equals `tenant:<control-plane id>:user`; `S256`, `refresh_token` grant,
+`none` client auth; `client_id_cli` present on the control plane, absent from all discovery
+documents. Only a browser login proves the server grants the tenant scope to this org's CLI client
+— on `tests` the first runs failed with `invalid_scope` / `Client has no tenant scope` until the
+server was fixed.
 
 **A2 notes — what A1 left for this step (read before the checklist):**
 - **Storage key:** the host is now a bare `hostname[:port]` (`getHost()`, `HostFacts.host`), so the
@@ -433,16 +508,19 @@ for HTTP configs.
   never retried by `withLocalRetries`. A refresh-token failure should become one of them.
 - **Tests:** the pattern for hermetic end-to-end tests is a local `Bun.serve` stub on `127.0.0.1`
   configured as the *environment's* host (`SEMANTIUS_HOST=127.0.0.1:<port>` + a credential), see
-  `tests/stream.test.ts` / the local block of `tests/cli-errors.test.ts`; the mock OAuth provider
-  of the done-when fits the same pattern. `--host` in such tests now means "stored credentials only".
+  `tests/stream.test.ts` / the local block of `tests/cli-errors.test.ts`. `--host` in such tests
+  now means "stored credentials only". But a `127.0.0.1` host is self-hosted, where A2's `login`
+  refuses: test the cloud login in-process with hand-built cloud `HostFacts` (`clientId` set,
+  `discoveryUrl` on the mock provider's `Bun.serve` stub, whose documents name stub endpoints); the
+  `clientId === null` refetch case stubs `fetch` for the control plane.
 - **Docs deferred from Step 6:** `login` / `logout`, `--auth`, `--login`, and the third credential
   method in `--help`, README and `skills/use-semantius/references/cli-usage.md`.
 
-- [ ] Add `cli-auth` **pinned exactly** (`"cli-auth": "0.1.0-beta.0"`, no caret; do not vendor —
+- [x] Add `cli-auth` **pinned exactly** (`"cli-auth": "0.1.0-beta.0"`, no caret; do not vendor —
       vendor only if upstream is abandoned or unfixable; MIT, zero runtime deps). Raise
       `engines.bun` to `>=1.3` (`Bun.secrets` and cli-auth's README requirement). `@types/bun`
       1.3.5 already declares `Bun.secrets`.
-- [ ] `src/auth/storage.ts`: `createSecretStorage(name: string, secrets = Bun.secrets): Storage<TokenSet>`
+- [x] `src/auth/storage.ts`: `createSecretStorage(name: string, secrets = Bun.secrets): Storage<TokenSet>`
       implementing cli-auth's contract exactly (`load(): Promise<TokenSet | undefined>`,
       `save(credential)`, `clear()`, optional `lock()`), over `secrets.get/set/delete({ service:
       'semantius', name })`, JSON-serialising the `TokenSet`. `name = <env prefix>:<host>`. Probe
@@ -452,55 +530,94 @@ for HTTP configs.
       `fileLock({ lockPath: join(getUserConfigDir(), name + '.lock') })` (check the exact `fileLock`
       signature in the pinned package). Never `/tmp`; never swallow save errors. Tests inject a fake
       `secrets` object — never monkey-patch the `Bun` global (the Windows CI runner has a real store).
-- [ ] `src/auth/provider.ts`: fetch `discoveryUrl` (cached with the host facts) and pass explicit
-      `provider.metadata = { authorizationEndpoint, tokenEndpoint, revocationEndpoint }` to cli-auth
-      (it has no built-in discovery). Verified cloud values: authorize
-      `https://<org>.semantius.cloud/api/auth/oauth2/authorize`, token `https://<org>.semantius.cloud/token`,
-      revoke `…/api/auth/oauth2/revoke`.
-- [ ] Scope and claims (verified 2026-09-11): request
-      `openid profile email offline_access tenant:<tenantId>:user`. The access token carries
+- [x] `src/auth/provider.ts`: discovery as in steps 3–4 of the worked example (cli-auth has none;
+      pass explicit `provider.metadata = { authorizationEndpoint, tokenEndpoint, revocationEndpoint }`).
+      `HostFacts.discoveryUrl` (cloud) becomes the RFC 9728 URL
+      `https://<org>.semantius.cloud/.well-known/oauth-protected-resource`, the start of the chain;
+      the RFC 8414 URL is derived from `authorization_servers[0]` (`<origin>/.well-known/oauth-authorization-server<path>`).
+      Cache the result (issuer, three endpoints, resource scopes) in the host cache entry — same file,
+      same 24 h TTL, cleared by `--reset-cache` — fetched lazily, only when the OAuth source is used:
+      every call with a session may refresh and needs `tokenEndpoint`; API-key / JWT calls fetch
+      nothing new. Non-200, non-JSON or a missing field → `HostResolutionError` naming the URL. No
+      fallbacks to the root or OIDC variants, and no issuer checks in A2 — neither the metadata's
+      `issuer` against `authorization_servers[0]` nor the callback's (Step 5b adds both).
+- [x] Scope and claims (verified 2026-09-11): request `openid profile email offline_access` plus the
+      resource's `scopes_supported` (today exactly `tenant:<tenantId>:user`) — taken from the server,
+      not assembled from `tenantId`. No `resource` parameter (RFC 8707): the verified login sent none
+      and the token's `aud` already contains `…/mcp`. The access token carries
       `tid = <tenantId>`, `role = authenticated`, `aud = ["https://<org>.semantius.cloud/mcp",
       "…/api/auth/oauth2/userinfo"]` (not `tenant://…` like the API-key JWT) and PostgREST accepts
       it. The callback's `iss` is `https://app.semantius.com/api/auth` while discovery says
       `https://<org>.semantius.cloud/api/auth`: cli-auth does not validate `iss`; **do not add an
-      `iss` check** (reported upstream).
-- [ ] Callback: cli-auth builds `redirect_uri = http://127.0.0.1:<port>/callback` (path default
+      `iss` check in A2** (reported upstream; Step 5b / A2b adds it after the server fix).
+- [x] Callback: cli-auth builds `redirect_uri = http://127.0.0.1:<port>/callback` (path default
       `/callback`, host hard-coded). Registered for `client_id_cli`: ports 53682, 53683, 53684. Pick
       the first free one (probe with `Bun.listen` on `127.0.0.1`, close, pass as `callbackPort`); all
       busy → exit 1 `Error [LOGIN_FAILED]: ports 53682-53684 are in use`. Login timeout 5 min.
-- [ ] Commands: add `login` and `logout` to `SUBCOMMANDS` and to the `ParsedArgs.command` union in
+- [x] Commands: add `login` and `logout` to `SUBCOMMANDS` and to the `ParsedArgs.command` union in
       `src/index.ts` (today `semantius login` parses as `info login`). `semantius login [--host]
       [--env]`: `createCliAuth({ strategy: 'authorization-code', provider, clientId:
       hostFacts.clientId, storage, scope, callbackPort })`, `login({ onAuthorization(url) })` → print
       the URL and open the browser (`cmd /c start ""` / `open` / `xdg-open`, ignore failures);
-      `semantius logout` → `auth.logout()` (best-effort revoke + `clear`). Self-hosted with
-      `clientId === null` → exit 1 `Error [NOT_AVAILABLE]: OAuth login is not configured for
-      self-hosted instances yet`.
-- [ ] Flags: `--auth jwt|apikey|oauth` forces one source for this invocation; `--login` runs the
+      `semantius logout` → `auth.logout()` (best-effort revoke + `clear`). Self-hosted (any
+      `clientId`) → exit 1 `Error [NOT_AVAILABLE]: OAuth login is not configured for self-hosted
+      instances yet` (A3 lifts this). Cloud with `clientId === null` → refetch the control-plane
+      record once, bypassing the 24 h cache (it may predate `client_id_cli`); still null → exit 1
+      `Error [NOT_AVAILABLE]: OAuth login is not enabled for <org> (no CLI client on the control plane)`.
+- [x] Flags: `--auth jwt|apikey|oauth` forces one source for this invocation; `--login` runs the
       browser flow first, then uses that session for this invocation even if a JWT/API key is set;
       `--login` with `!process.stdin.isTTY` → exit 1 `Error [LOGIN_FAILED]: --login needs an
       interactive terminal`. Never open a browser implicitly: no credentials → `NoCredentialsError`
       (Step 3b), exit 5.
-- [ ] `getAccessToken` gains the OAuth source: `--auth` → `${PREFIX}_JWT` → `${PREFIX}_API_KEY` →
+- [x] `getAccessToken` gains the OAuth source: `--auth` → `${PREFIX}_JWT` → `${PREFIX}_API_KEY` →
       stored session for (prefix, host) via `auth.getToken()` (auto-refresh 300 s before expiry;
       `forceRefresh` → `getToken({ forceRefresh })` or clear+refresh per cli-auth's API) → error.
       **With `--host` (see §0 "Credentials belong to their host"):** the environment's JWT and API
       key are skipped (`getCredentialSource()` already returns null), so the order is `--auth` →
       stored session for (prefix, `--host`) → `NoCredentialsError` ("Run semantius login --host …").
-- [ ] MCP route with an OAuth-only session (`cube`, `--crud-mcp`): `transformConfigWithJwt` currently
+- [x] MCP route with an OAuth-only session (`cube`, `--crud-mcp`): `transformConfigWithJwt` currently
       returns early when `config.headers['x-api-key']` is falsy (`''`). Change the gate to "the
       `x-api-key` header **key** is present" and obtain the bearer from `getAccessToken` (this is
       the one A2 change to the MCP path; the API-key behaviour stays identical).
-- [ ] `whoami` shows `auth_method: jwt|apikey|oauth` and, for oauth, the session expiry; `--diag`
+- [x] `whoami` shows `auth_method: jwt|apikey|oauth` and, for oauth, the session expiry; `--diag`
       still shows the bearer in use.
-- [ ] Daemon interplay: the daemon config hash includes the bearer, so a refreshed token restarts
+- [ ] Daemon interplay (NOT done, see "As built"): the daemon config hash includes the bearer, so a refreshed token restarts
       the daemon (about hourly). Test: two calls with the same token → one `daemon_start`; a call
       after a forced refresh → exactly one more.
 - Done when: `tests/auth.test.ts` green — storage adapter with a fake `secrets` and forced file
   fallback; PKCE `login` against a mock provider on a local `Bun.serve` (authorize redirect →
   loopback callback → token), refresh before expiry, `logout` clears; precedence incl. `--auth` and
-  `--login`; non-TTY `--login`; the `transformConfigWithJwt` gate. Then **stop** (§10): the real
-  `semantius login` against `tests` is Martin's.
+  `--login`; non-TTY `--login`; the `transformConfigWithJwt` gate; self-hosted refusal; cloud
+  `clientId === null` refetch + refusal. Then **stop** (§10): the real `semantius login` against
+  `tests` / `cli1-bb82` is Martin's.
+
+## 5b. Issuer checks (Phase A2b) — ⏸ after the A2 review
+
+Server first, CLI second; the detailed checklist is written after the A2 review.
+- Server (Martin / the server team): the login callback must carry the tenant's own issuer
+  (`iss = https://<org>.semantius.cloud/api/auth`), not `https://app.semantius.com/api/auth`. The
+  discovery documents already promise it (`authorization_response_iss_parameter_supported: true`).
+- CLI, once that is deployed: (1) metadata check — the AS document's `issuer` must equal
+  `authorization_servers[0]` from the resource document, else `HostResolutionError`; (2) callback
+  check (RFC 9207) — the `iss` on the loopback callback must equal that issuer, and because the
+  server advertises support, a **missing** `iss` is a failure too; both → exit 1
+  `Error [LOGIN_FAILED]: …`. Open: whether the pinned cli-auth exposes the callback's query
+  parameters at all (it does not validate `iss` itself) — if not, an upstream PR or the CLI's own
+  callback handler; decide when A2 has the package installed.
+- Also here: **specify the issuer rules A3 must follow** (a self-hosted host serves its own metadata,
+  so the checks matter more there than on the cloud) and the A3 stop point.
+- Done when: defined with the spec; `tests/auth.test.ts` gains a mismatching-`iss` and a
+  missing-`iss` case against the mock provider.
+
+## 5c. OAuth login, self-hosted (Phase A3) — ⏸ spec from Martin, written in A2b
+
+Martin supplies the spec once cloud login works: how a self-hosted instance provides the CLI's client
+id and the OAuth URLs (different from the cloud's control plane + discovery). Do not design or
+implement anything here before that. What A2/A2b leave for it: `selfHostedFacts()`'s `clientId`
+(`SELF_HOSTED_CLIENT_ID = null`) and `discoveryUrl` are placeholders to replace; the self-hosted
+refusal in `login` is lifted; storage, the session lookup in `getAccessToken`, `--auth` / `--login`,
+`logout` and the issuer checks are host-type independent and are reused unchanged. Done when:
+defined with the spec.
 
 ## 6. Commands, docs, skills — ✅ done (`3e16fd7`) except the `login`/`logout` docs (→ Step 5)
 
@@ -520,7 +637,8 @@ for HTTP configs.
 ## 7. Rollout (Martin)
 
 - [ ] Martin: release the daemon fix (`9ac9574`) as its own release first.
-- [ ] Martin: review A1+A2 (§10), then Phase B, then release via `./scripts/release.sh` only.
+- [ ] Martin: review A1+A2 (§10), then A2b (issuer checks, server fix first), then A3 (self-hosted
+      login, his spec), then Phase B, then release via `./scripts/release.sh` only.
 - [ ] Martin: after release re-run `docs/plans/bench/bench.ts` (Windows) and
       `docs/plans/bench/linux-daemon-ab.sh` (WSL), append to R §10.
 - Done when: both releases are tagged, the parity test passes on the released binary, R §10 updated.
@@ -544,7 +662,7 @@ for HTTP configs.
 | `tests/crud-local.test.ts` (new) | all | Step 4 done-when list; `console.error` shim, readable HTTP errors, no retry of rejected keys |
 | `tests/stream.test.ts` (new) | all | Step 4b done-when list (real CLI against a local `Bun.serve` stub) |
 | `tests/cli-errors.test.ts` (extended) | all | exit codes 1/2/4/5 and error shape through the local layer (local stub); `--host` never sends the environment's credentials |
-| `tests/auth.test.ts` (new, A2) | all | Step 5 done-when list; fake `secrets` only |
+| `tests/auth.test.ts` (new, A2; A2b and A3 extend) | all | Step 5 done-when list (cloud host facts); fake `secrets` only |
 | `tests/integration/parity.test.ts` (new) | gated: `SEMANTIUS_PARITY=1` + creds | local vs `--crud-mcp`, five bench scenarios + scratch-entity write with cleanup (Step 4); `--stream` byte-identical to a direct fetch, CSV (Step 4b) |
 | `bun run sync:check` | `scripts/release.sh` only | vendored copy is current |
 | `bun run lint`, `bunx tsc --noEmit`, `bun test`; `release.yml` / `release.sh` test lists updated | all | gates |
@@ -580,8 +698,9 @@ bun run dev call crud postgrestRequest '{"method":"GET","path":"/no_such_table"}
 bun run dev --reset-cache info utils                 # lists the per-key and the per-host token entry + host cache
 ```
 
-**A2 implementer stop.** Step 5 committed; `tests/auth.test.ts` green against the mock provider;
-do NOT run `semantius login` (needs Martin's browser); STOP. Martin then runs:
+**A2 implementer stop.** *Reached 2026-09-11:* Step 5 implemented, `tests/auth.test.ts` green (20
+tests against the mock provider), full suite 475 pass / 15 skip / 0 fail, `bun run lint` and
+`bunx tsc --noEmit` clean; `semantius login` was NOT run (needs Martin's browser). Martin then runs:
 
 ```
 bun run dev login
@@ -590,9 +709,16 @@ bun run dev call crud getCurrentUser '{}'
 bun run dev call cube discover '{}'
 bun run dev --auth apikey whoami
 bun run dev logout
-bun run dev login --host <second org>.semantius.cloud   # a second host keeps its own session
-bun run dev whoami --host <second org>.semantius.cloud
+bun run dev login --host cli1-bb82.semantius.app        # a second host keeps its own session
+bun run dev whoami --host cli1-bb82.semantius.app
+bun run dev --host cli1-bb82.semantius.app call crud getCurrentUser '{}'
 bun run dev whoami                                      # still the environment's host and credential
+bun run dev logout --host cli1-bb82.semantius.app
+bun run dev login --host semantius.example.com          # self-hosted: NOT_AVAILABLE until A3, exit 1
 ```
 
-Never in A1/A2: releasing, version bumps, running `scripts/release.sh`, contacting a self-hosted host.
+**A2b implementer stop.** Defined after the A2 review (Step 5b), once the server sends the tenant's
+`iss`. **A3 implementer stop.** Defined with Martin's self-hosted login spec (Step 5c), written in A2b.
+
+Never in A1/A2/A2b/A3: releasing, version bumps, running `scripts/release.sh`, contacting a
+self-hosted host.

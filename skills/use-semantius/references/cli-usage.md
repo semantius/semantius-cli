@@ -25,10 +25,14 @@ The CLI needs a **host** and a **credential**:
   `hostname[:port]` is a self-hosted instance. `<org>.semantius.app` (the web app) is mapped to
   `<org>.semantius.cloud`.
 - Credential, first match wins: `SEMANTIUS_JWT` (a token sent as-is) → `SEMANTIUS_API_KEY`
-  (exchanged for a short-lived token, cached). Without one, commands that talk to the platform
-  exit `5` with "Authentication required".
+  (exchanged for a short-lived token, cached) → the session stored by `semantius login` for this
+  host (managed cloud only). Without one, commands that talk to the platform exit `5` with
+  "Authentication required". `--auth jwt|apikey|oauth` picks one source explicitly.
 - With `--host`, only credentials stored for that host are used (one set per host); the API key,
   JWT and org from the environment are ignored. Pair a host with an API key via `SEMANTIUS_HOST`.
+- `semantius login` opens a browser (PKCE) and stores the session in the OS keyring under the host's
+  name; `semantius logout` revokes and deletes it. Agents should not run `login` themselves: it needs
+  a human at an interactive terminal. Self-hosted instances have no browser login yet.
 
 ```bash
 # Option 1: Export in shell
@@ -70,6 +74,8 @@ Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably.
 | `--diag` | (`call`) Print the full `{request, response}` envelope instead of just `response.data` |
 | `--stream` | (`call crud postgrestRequest` only) Print PostgREST's response body unchanged — compact JSON, or CSV with `"accept":"text/csv"`; fastest for large reads. Errors: `Error: (<code>) <message>`, exit 5 for 401/403, 3 for 5xx/network, 4 otherwise. Not with `--single`, `--diag`, `--crud-mcp` (exit 1) |
 | `--host <host>` | Semantius host (see Credentials Setup) |
+| `--auth <source>` | Force one credential source: `jwt`, `apikey` or `oauth`. Not with `--host` for `jwt`/`apikey` (exit 1) |
+| `--login` | Sign in with the browser first, then run the command with that session (interactive terminal only) |
 | `--env <prefix>` | Read `<PREFIX>_API_KEY`, `<PREFIX>_ORG`, … instead of `SEMANTIUS_*` |
 | `--crud-mcp` | Run the `crud` tools on the Semantius cloud MCP server instead of inside the CLI (cloud only). Needed for `sqlToRest` |
 | `--reset-cache` | Drop the cached token and host lookup before running |
@@ -354,6 +360,7 @@ SEMANTIUS_DEBUG=1 semantius info            # Show daemon spawn/reuse decisions 
 | `SEMANTIUS_ORG` | (required unless `SEMANTIUS_HOST` / `--host`) | Organization name |
 | `SEMANTIUS_HOST` | `https://<org>.semantius.cloud` | Host URL or hostname, same as `--host` |
 | `SEMANTIUS_JWT` | (none) | Static token, used instead of the API key |
+| (browser session) | (none) | Stored by `semantius login`, per host, in the OS keyring |
 | `SEMANTIUS_CRUD_MCP` | `false` | `1` = same as `--crud-mcp` |
 | `SEMANTIUS_STREAM` | `false` | `1` = `--stream` wherever it is valid |
 | `SEMANTIUS_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |

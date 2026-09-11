@@ -3,7 +3,7 @@
  * either a connectivity check or basic identity info.
  */
 
-import { isCredentialError } from '../auth/token.js';
+import { getUsedCredentialSource, isCredentialError } from '../auth/token.js';
 import { type McpConnection, getConnection, safeClose } from '../client.js';
 import {
   type McpServersConfig,
@@ -252,6 +252,23 @@ export async function pingCommand(options: PingOptions): Promise<void> {
 }
 
 /**
+ * When the OAuth session used for this call expires. Imported lazily so
+ * API-key invocations never load the OAuth client; a failure here only costs
+ * one informational row.
+ */
+async function sessionExpiry(): Promise<string | undefined> {
+  try {
+    const [{ resolveHost }, { getSessionExpiry }] = await Promise.all([
+      import('../host.js'),
+      import('../auth/session.js'),
+    ]);
+    return await getSessionExpiry(await resolveHost());
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * whoami — prints the local config source first (so it's visible even when
  * the remote call fails), then calls crud/getCurrentUser and prints the
  * key identity fields.
@@ -292,6 +309,15 @@ export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
     ],
     ['api_baseurl', user.api_baseurl ?? '(unknown)'],
   ];
+
+  const source = getUsedCredentialSource();
+  if (source) {
+    rows.push(['auth_method', source]);
+    if (source === 'oauth') {
+      const expires = await sessionExpiry();
+      if (expires) rows.push(['session_expires', expires]);
+    }
+  }
 
   if (options.diag) {
     rows.push(['bearer_token', getRecordedJwt() ?? '(none)']);

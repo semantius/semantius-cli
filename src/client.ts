@@ -620,8 +620,27 @@ export async function transformConfigWithJwt(
   );
   if (envJwt && hasApiKeyHeader) return withBearer(config, envJwt);
 
-  if (isJwtCacheDisabled()) return config;
   const apiKey = config.headers?.[API_KEY_HEADER];
+
+  // Same gate for a browser session: the header key marks a Semantius server,
+  // and with --host (or no API key at all) its value is ''. The bearer then
+  // comes from the stored session — the only credential that applies.
+  if (hasApiKeyHeader && !apiKey) {
+    try {
+      const [{ getAccessToken }, { resolveHost }] = await Promise.all([
+        import('./auth/token.js'),
+        import('./host.js'),
+      ]);
+      return withBearer(config, await getAccessToken(await resolveHost()));
+    } catch (error) {
+      // No session either: let the server answer 401 with its own message,
+      // exactly as before.
+      debug(`No bearer for ${serverName}: ${(error as Error).message}`);
+      return config;
+    }
+  }
+
+  if (isJwtCacheDisabled()) return config;
   if (!apiKey) return config;
 
   const token = await resolveJwt(apiKey, { name: serverName, config });
