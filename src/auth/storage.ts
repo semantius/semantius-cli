@@ -9,7 +9,7 @@
  * refresh token.
  */
 
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Storage, type TokenSet, fileLock, fileStorage } from 'cli-auth';
 import { debug, getEnvPrefix, getUserConfigDir } from '../config.js';
@@ -59,18 +59,25 @@ export function createSecretStorage(
     (Bun.secrets as unknown as SecretsApi),
 ): Storage<TokenSet> {
   const dir = join(getUserConfigDir(), 'sessions');
+  const sessionDir = join(dir, safeName(name));
   let keyringUsable = true;
   let fallback: Storage<TokenSet> | undefined;
+  let announced = false;
 
-  function fileBackend(): Storage<TokenSet> {
-    if (!fallback) {
-      const sessionDir = join(dir, safeName(name));
+  function fileBackend(announce = false): Storage<TokenSet> {
+    if (!fallback) fallback = fileStorage<TokenSet>({ dir: sessionDir });
+    if (announce && !announced) {
+      announced = true;
       console.error(
         `[semantius] no OS keyring available; storing the session in ${sessionDir}`,
       );
-      fallback = fileStorage<TokenSet>({ dir: sessionDir });
     }
     return fallback;
+  }
+
+  /** Whether a session was ever written to the file fallback. */
+  function hasFile(): boolean {
+    return existsSync(join(sessionDir, 'credentials.json'));
   }
 
   /**
@@ -92,7 +99,7 @@ export function createSecretStorage(
         keyringUsable = false;
       }
     }
-    return viaFile(fileBackend());
+    return viaFile(fileBackend(true));
   }
 
   return {
@@ -100,7 +107,11 @@ export function createSecretStorage(
       run(
         async () => {
           const raw = await secrets.get({ service: SERVICE, name });
-          if (!raw) return undefined;
+          if (!raw) {
+            // An earlier run may have fallen back to a file; that session is
+            // still the user's.
+            return hasFile() ? fileBackend().load() : undefined;
+          }
           try {
             return JSON.parse(raw) as TokenSet;
           } catch {
@@ -119,18 +130,21 @@ export function createSecretStorage(
           secrets.set({
             service: SERVICE,
             name,
-            value: JSON.stringify(credential),
+            value: JSON.stringify(prune(credential)),
           }),
-        (storage) => storage.save(credential),
+        (storage) => storage.save(prune(credential)),
       ),
 
-    clear: () =>
-      run(
+    // Log out means log out: clear both places a session can live.
+    clear: async () => {
+      if (hasFile()) await fileBackend().clear();
+      return run(
         async () => {
           await secrets.delete({ service: SERVICE, name });
         },
-        (storage) => storage.clear(),
-      ),
+        () => Promise.resolve(),
+      );
+    },
 
     // Created lazily: nothing should touch the config dir until a refresh
     // actually needs the lock.
@@ -139,6 +153,26 @@ export function createSecretStorage(
       return fileLock({ lockPath: join(dir, `${safeName(name)}.lock`) })();
     },
   };
+}
+
+/**
+ * What actually goes into the store: the refresh token and the access tokens
+ * still in date. The `id_token` is dropped — nothing reads it (identity comes
+ * from the server) and it is ~600 bytes of a budget that is not generous:
+ * Windows Credential Manager rejects a credential over 2560 bytes, which a
+ * set with an id_token and two access tokens exceeds, and the whole session
+ * would then land in the file fallback.
+ */
+function prune(credential: TokenSet): TokenSet {
+  const now = Date.now();
+  const tokens = Object.fromEntries(
+    Object.entries(credential.tokens ?? {}).filter(
+      ([, token]) => (token.expires_at ?? 0) > now,
+    ),
+  );
+  return credential.refresh_token
+    ? { refresh_token: credential.refresh_token, tokens }
+    : { tokens };
 }
 
 /**

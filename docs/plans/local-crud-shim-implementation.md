@@ -456,6 +456,25 @@ for HTTP configs.
 - **Not done:** the daemon-interplay test below (no A2 code touches the daemon; its config hash
   already includes the bearer). `tests/auth.test.ts` was added to `.github/workflows/release.yml`.
 
+**Found in Martin's first real login against `cli1-bb82` (2026-09-11) and fixed:**
+- **The token needs an RFC 8707 resource indicator.** Without one the tenant mints
+  `aud = [<host>/mcp, …/oauth2/userinfo]` and its PostgREST answers HTTP 400 "required audience not
+  found". Measured on `cli1-bb82`: baseline → 400; `resource=tenant://<tenant id>` →
+  `aud = [tenant://<tenant id>, …/userinfo]` → **200**; `resource=<postgrest url>` → `invalid_request`.
+  So `tenant://<tenantId>` (the audience the API-key JWTs already carry) is passed as cli-auth's
+  `resource` **and on every `getToken()`**: cli-auth keys its token cache by the per-call options, not
+  by the config default, so a config-only indicator kept serving the cached wrong-audience token.
+  `tests` accepts both audiences, which is why R §9.1 saw no failure there.
+- **Windows Credential Manager rejects credentials over 2560 bytes** ("The stub received bad data",
+  1783) and the whole session then lands in the file fallback. The stored set was 2859 bytes: an
+  unused 617-byte `id_token` plus two access tokens. `storage.ts` now prunes the `id_token` and
+  expired entries before saving (~1.1 kB), `clear()` empties the keyring *and* the file, and `load()`
+  falls back to a file written by an earlier run.
+- **The browser opened a truncated URL on Windows:** `cmd /c start` splits its command line at the
+  first unquoted `&`, so only `…/authorize?response_type=code` was opened (`VALIDATION_ERROR`,
+  client_id missing). Now `rundll32 url.dll,FileProtocolHandler <url>`, which takes the URL as one
+  argument.
+
 **Scope: cloud hosts only.** Every input of the flow comes from what Step 3 already resolves; no new
 configuration. Worked example, `semantius login --host cli1-bb82.semantius.app`:
 

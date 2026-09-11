@@ -48,6 +48,8 @@ interface ProviderState {
   origin: string;
   paths: string[];
   tokenGrants: string[];
+  /** The `resource` seen on each authorize / token request ('' when absent). */
+  resources: string[];
   revoked: string[];
   reset: () => void;
   stop: () => void;
@@ -57,6 +59,7 @@ interface ProviderState {
 function startProvider(): ProviderState {
   const paths: string[] = [];
   const tokenGrants: string[] = [];
+  const resources: string[] = [];
   const revoked: string[] = [];
   let issued = 0;
 
@@ -87,6 +90,7 @@ function startProvider(): ProviderState {
       }
 
       if (url.pathname === '/api/auth/oauth2/authorize') {
+        resources.push(url.searchParams.get('resource') ?? '');
         const redirectUri = url.searchParams.get('redirect_uri') as string;
         const back = new URL(redirectUri);
         back.searchParams.set('code', 'auth-code-1');
@@ -100,6 +104,7 @@ function startProvider(): ProviderState {
       if (url.pathname === '/token') {
         const form = new URLSearchParams(await req.text());
         tokenGrants.push(form.get('grant_type') ?? '');
+        resources.push(form.get('resource') ?? '');
         issued += 1;
         return Response.json({
           access_token: `access-${issued}`,
@@ -123,12 +128,14 @@ function startProvider(): ProviderState {
     origin: `http://127.0.0.1:${server.port}`,
     paths,
     tokenGrants,
+    resources,
     revoked,
     // One server for the file, but each test starts from access-1.
     reset: () => {
       issued = 0;
       paths.length = 0;
       tokenGrants.length = 0;
+      resources.length = 0;
       revoked.length = 0;
     },
     stop: () => server.stop(true),
@@ -347,6 +354,16 @@ describe('oauth login', () => {
       expect(provider.tokenGrants).toContain('authorization_code');
       expect(await getSessionToken(host)).toBe('access-1');
       expect(await getSessionExpiry(host)).toMatch(/^\d{4}-/);
+    });
+
+    test('asks for the tenant audience on authorize and token', async () => {
+      await login(loginHost, { openUrl });
+
+      // Without the resource indicator the token's aud is the MCP server and
+      // PostgREST answers "required audience not found". cli-auth sends it on
+      // the token request only (not on the authorize URL), which is what binds
+      // the audience — verified against a real tenant.
+      expect(provider.resources).toEqual(['', 'tenant://t-1']);
     });
 
     test('forceRefresh spends the refresh token', async () => {

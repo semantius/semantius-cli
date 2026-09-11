@@ -109,7 +109,7 @@ export async function getSessionToken(
 
   const auth = await createAuth(host, storage);
   debug(`Using the OAuth session stored for ${host.host}`);
-  return auth.getToken();
+  return auth.getToken(tokenOptions(host));
 }
 
 // ============================================================================
@@ -217,8 +217,32 @@ async function createAuth(
     clientId: host.clientId as string,
     scope: buildScope(metadata),
     storage,
+    ...(resourceIndicator(host) ? { resource: resourceIndicator(host) } : {}),
     ...(callbackPort === undefined ? {} : { callbackPort }),
   });
+}
+
+/**
+ * RFC 8707 resource indicator, sent on the authorize and token requests.
+ *
+ * Without it the tenant's auth server issues a token for the MCP server
+ * (`aud: [<host>/mcp, …/userinfo]`) and PostgREST rejects it with "required
+ * audience not found". `tenant://<tenant id>` is the audience the API-key
+ * tokens carry as well, and the only resource the server accepts.
+ */
+function resourceIndicator(host: HostFacts): string | undefined {
+  return host.tenantId ? `tenant://${host.tenantId}` : undefined;
+}
+
+/**
+ * Every getToken() passes the indicator explicitly: cli-auth keys its token
+ * cache by the per-call options, not by the config's default, so without it a
+ * token cached for another audience (or from an older version) would be
+ * served unchanged until it expires.
+ */
+function tokenOptions(host: HostFacts): { resource?: string } {
+  const resource = resourceIndicator(host);
+  return resource ? { resource } : {};
 }
 
 // ============================================================================
@@ -245,11 +269,17 @@ function pickCallbackPort(): number {
   );
 }
 
-/** Best effort: the URL is printed too, so a failure here is not fatal. */
+/**
+ * Best effort: the URL is printed too, so a failure here is not fatal.
+ *
+ * Windows goes through rundll32, not `cmd /c start`: cmd splits its command
+ * line at the unquoted "&" of the query string, so `start` would open the
+ * authorize URL truncated after the first parameter.
+ */
 function openBrowser(url: string): void {
   const cmd =
     process.platform === 'win32'
-      ? ['cmd', '/c', 'start', '', url]
+      ? ['rundll32', 'url.dll,FileProtocolHandler', url]
       : process.platform === 'darwin'
         ? ['open', url]
         : ['xdg-open', url];
