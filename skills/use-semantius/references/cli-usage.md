@@ -27,6 +27,8 @@ The CLI needs a **host** and a **credential**:
 - Credential, first match wins: `SEMANTIUS_JWT` (a token sent as-is) → `SEMANTIUS_API_KEY`
   (exchanged for a short-lived token, cached). Without one, commands that talk to the platform
   exit `5` with "Authentication required".
+- With `--host`, only credentials stored for that host are used (one set per host); the API key,
+  JWT and org from the environment are ignored. Pair a host with an API key via `SEMANTIUS_HOST`.
 
 ```bash
 # Option 1: Export in shell

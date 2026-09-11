@@ -593,13 +593,14 @@ describe('CLI errors through the local crud layer', () => {
     env: Record<string, string> = {},
     host = `http://127.0.0.1:${server.port}`,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const proc = Bun.spawn(['bun', 'run', cliPath, '--host', host, ...args], {
+    // The stub is the environment's profile: SEMANTIUS_HOST + SEMANTIUS_JWT.
+    const proc = Bun.spawn(['bun', 'run', cliPath, ...args], {
       env: {
         ...process.env,
         SEMANTIUS_NO_DAEMON: '1',
         SEMANTIUS_API_KEY: '',
         SEMANTIUS_ORG: '',
-        SEMANTIUS_HOST: '',
+        SEMANTIUS_HOST: host,
         SEMANTIUS_JWT: JWT,
         SEMANTIUS_CONFIG_PATH: '',
         SEMANTIUS_CRUD_MCP: '',
@@ -693,6 +694,23 @@ describe('CLI errors through the local crud layer', () => {
     expect(result.stderr.trim()).toBe(
       `Authentication required: no credentials for 127.0.0.1:${server.port}. Set SEMANTIUS_API_KEY or run "semantius login".`,
     );
+  });
+
+  test('--host uses only credentials stored for that host, never those of the environment', async () => {
+    let requests = 0;
+    reply = () => {
+      requests++;
+      return Response.json([]);
+    };
+    const result = await runLocal(
+      ['--host', `127.0.0.1:${server.port}`, ...pg({ method: 'GET', path: '/t' })],
+      { SEMANTIUS_API_KEY: 'sk-envkey-0123456789abcdef', SEMANTIUS_JWT: JWT },
+    );
+    expect(result.exitCode).toBe(5);
+    expect(result.stderr.trim()).toBe(
+      `Authentication required: no credentials stored for 127.0.0.1:${server.port}. Run "semantius login --host 127.0.0.1:${server.port}" (with --host, SEMANTIUS_API_KEY and SEMANTIUS_JWT are not used).`,
+    );
+    expect(requests).toBe(0); // neither the key nor the JWT went anywhere
   });
 
   test('info crud and -md work offline through the local layer', async () => {

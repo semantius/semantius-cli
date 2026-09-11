@@ -62,6 +62,14 @@ Credentials are tried in this order, first match wins:
 Without either, commands that call the platform exit `5` with "Authentication required".
 Which host the CLI talks to is covered in [Hosts](#hosts-managed-cloud-and-self-hosted).
 
+These environment credentials belong to the environment's host (`SEMANTIUS_HOST` /
+`SEMANTIUS_ORG`). **With `--host`, only the host name counts:** the CLI uses the
+credentials stored for that host — one set per host, stored by
+`semantius login --host <host>` (arriving with OAuth login) — and ignores the
+API key, JWT and org from the environment, so they are never sent to another
+host. To pair a host with an API key, set `SEMANTIUS_HOST` next to it, or keep
+several pairs side by side with `--env <prefix>` (`<PREFIX>_HOST`, `<PREFIX>_API_KEY`).
+
 No config file is needed: the `crud` tools run inside the CLI against your
 organization's PostgREST API, and `cube` (analytics) is reached as a Semantius
 MCP server. `--crud-mcp` sends the `crud` tools through the Semantius cloud MCP
@@ -377,8 +385,8 @@ is **self-hosted**: PostgREST is expected at `https://<host>/rest`, the token
 exchange at `https://<host>/api/auth/token`, and there is no `cube` (analytics)
 server and no cloud MCP server, so `--crud-mcp` is not available.
 
-Note: an `org:` prefix on `SEMANTIUS_API_KEY` that names a different org than
-`--host` makes the token exchange fail with 401.
+With `--host`, only credentials stored for that host are used — see
+[Set up credentials](#2-set-up-credentials).
 
 ### Token cache
 

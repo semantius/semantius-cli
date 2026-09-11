@@ -139,13 +139,14 @@ describe('call crud postgrestRequest --stream (end to end)', () => {
     args: string[],
     opts: { env?: Record<string, string>; stdin?: string; host?: string | null } = {},
   ): Promise<{ stdout: Uint8Array; stderr: string; exitCode: number }> {
-    const hostArgs = opts.host === null ? [] : ['--host', opts.host ?? host];
-    const proc = Bun.spawn(['bun', 'run', cliPath, ...hostArgs, ...args], {
+    // The stub is the environment's profile: SEMANTIUS_HOST + SEMANTIUS_JWT
+    // (--host would use only credentials stored for that host).
+    const proc = Bun.spawn(['bun', 'run', cliPath, ...args], {
       env: {
         ...process.env,
         SEMANTIUS_API_KEY: '',
         SEMANTIUS_ORG: '',
-        SEMANTIUS_HOST: '',
+        SEMANTIUS_HOST: opts.host === null ? '' : (opts.host ?? host),
         SEMANTIUS_JWT: JWT,
         SEMANTIUS_CONFIG_PATH: '',
         SEMANTIUS_CRUD_MCP: '',

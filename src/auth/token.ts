@@ -1,9 +1,11 @@
 /**
  * Bearer token for the local crud layer, without the MCP server.
  *
- * Sources, first match wins: ${PREFIX}_JWT (static, sent as-is) →
- * ${PREFIX}_API_KEY (exchanged at the host's token endpoint, cached in the
- * encrypted JWT cache shared with the MCP path) → NoCredentialsError.
+ * Without --host, the environment is the profile; sources, first match wins:
+ * ${PREFIX}_JWT (static, sent as-is) → ${PREFIX}_API_KEY (exchanged at the
+ * host's token endpoint, cached per host) → NoCredentialsError.
+ * With --host, only credentials stored for that host apply (the OAuth
+ * session, Step 5); the environment's API key and JWT are never used.
  * The MCP path (client.ts transformConfigWithJwt / resolveJwt) is separate.
  */
 
@@ -12,6 +14,7 @@ import {
   debug,
   describeEnvVar,
   getEnvJwt,
+  getHostFlag,
   getPrefixedEnv,
   prefixedEnvName,
 } from '../config.js';
@@ -32,7 +35,9 @@ import {
 export class NoCredentialsError extends Error {
   constructor(host: string) {
     super(
-      `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`,
+      getHostFlag()
+        ? `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`
+        : `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`,
     );
     this.name = 'NoCredentialsError';
   }
@@ -66,8 +71,13 @@ export function isCredentialError(error: unknown): boolean {
 
 export type CredentialSource = 'jwt' | 'apikey';
 
-/** The credential source getAccessToken would use, or null if none is set. */
+/**
+ * The credential source getAccessToken would use, or null if none is set.
+ * With --host the environment's credentials never apply (they belong to the
+ * environment's host); only credentials stored for that host do.
+ */
 export function getCredentialSource(): CredentialSource | null {
+  if (getHostFlag()) return null;
   if (getEnvJwt()) return 'jwt';
   if (getPrefixedEnv('API_KEY')) return 'apikey';
   return null;
@@ -82,15 +92,16 @@ export async function getAccessToken(
   host: HostFacts,
   opts: { forceRefresh?: boolean } = {},
 ): Promise<string> {
-  const envJwt = getEnvJwt();
-  if (envJwt) return envJwt;
+  const source = getCredentialSource();
+  if (source === 'jwt') return getEnvJwt() as string;
 
-  const apiKey = getPrefixedEnv('API_KEY');
-  if (apiKey) {
+  if (source === 'apikey') {
+    const apiKey = getPrefixedEnv('API_KEY') as string;
     const token = await tokenFromApiKey(host, apiKey, !!opts.forceRefresh);
     return token.jwt;
   }
 
+  // Step 5 (OAuth) looks up the session stored for this host here.
   throw new NoCredentialsError(host.host);
 }
 

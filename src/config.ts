@@ -236,6 +236,19 @@ export function setCrudMcpFlag(enabled: boolean): void {
 }
 
 /**
+ * --host names a host explicitly: credentials belong to the host they were
+ * stored for, so the API key, static JWT and org configured in the
+ * environment / .env are not used. They are set to empty so no code path
+ * (the local layer, or the MCP route's config templates) can pick them up;
+ * on a cloud host the org is re-derived from the host (propagateOrg).
+ */
+export function ignoreEnvCredentials(): void {
+  for (const name of ['API_KEY', 'JWT', 'ORG']) {
+    process.env[`${_envPrefix}_${name}`] = '';
+  }
+}
+
+/**
  * Route `crud` through the remote crud MCP server for this invocation:
  * --crud-mcp, or ${PREFIX}_CRUD_MCP=1.
  */

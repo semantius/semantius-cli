@@ -19,6 +19,13 @@ step whose inputs are still open. Rewritten 2026-09-11 after the second review (
 - The daemon fix (R §11) is committed on `main` as `9ac9574`, unreleased. Releasing it is Martin's.
 - Self-hosted: server URL configurable; no control plane, no Deno, no `cube`. *(D1, D12)*
 - Host resolution order: `--host` → `${PREFIX}_HOST` → project `.env` → global `.env` → cloud default. *(D10)*
+- **Credentials belong to their host (Martin, 2026-09-11; supersedes the "document, do not
+  special-case" note in Step 3).** Without `--host` the environment is the profile
+  (`${PREFIX}_HOST`/`_ORG` + `_JWT`/`_API_KEY`). With `--host`, only the host name counts: only
+  credentials stored for that host are used (one set per host: the OAuth session of Step 5, tokens
+  cached per host); the environment's API key, JWT and org are ignored and never sent to another
+  host. Implemented after A1: `ignoreEnvCredentials()` in `index.ts`, `getCredentialSource()` in
+  `src/auth/token.ts`; the API-key token cache is keyed by host.
 - `crud` defaults to the local layer; `--crud-mcp` (env `${PREFIX}_CRUD_MCP=1`) routes it through the
   Deno MCP server again; cloud only. *(D11)*
 - Cloud-host rule: host matches `*.semantius.cloud` → cloud (org = first label, control plane used);
@@ -363,6 +370,9 @@ for HTTP configs.
 - [ ] `getAccessToken` gains the OAuth source: `--auth` → `${PREFIX}_JWT` → `${PREFIX}_API_KEY` →
       stored session for (prefix, host) via `auth.getToken()` (auto-refresh 300 s before expiry;
       `forceRefresh` → `getToken({ forceRefresh })` or clear+refresh per cli-auth's API) → error.
+      **With `--host` (see §0 "Credentials belong to their host"):** the environment's JWT and API
+      key are skipped (`getCredentialSource()` already returns null), so the order is `--auth` →
+      stored session for (prefix, `--host`) → `NoCredentialsError` ("Run semantius login --host …").
 - [ ] MCP route with an OAuth-only session (`cube`, `--crud-mcp`): `transformConfigWithJwt` currently
       returns early when `config.headers['x-api-key']` is falsy (`''`). Change the gate to "the
       `x-api-key` header **key** is present" and obtain the bearer from `getAccessToken` (this is

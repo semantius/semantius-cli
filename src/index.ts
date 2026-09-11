@@ -25,6 +25,7 @@ import {
   DEFAULT_TIMEOUT_SECONDS,
   getMissingRequiredEnvVars,
   getUserConfigDir,
+  ignoreEnvCredentials,
   isCrudMcp,
   loadDotEnv,
   prefixedEnvName,
@@ -542,8 +543,12 @@ Built-in servers:
 
 Credentials (first match wins):
   1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
-  2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached, encrypted
+  2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached per host
   Without either, commands that call the platform exit 5 ("Authentication required").
+  With --host, only credentials stored for that host are used, one set per host (stored
+  by "semantius login --host <host>", arriving with OAuth login); the API key, JWT and
+  org from the environment are ignored. To pair a host with an API key, set
+  ${hostVar} (or use --env <prefix> with <PREFIX>_HOST and <PREFIX>_API_KEY).
 
 Options:
   -h, --help               Show this help message
@@ -562,7 +567,8 @@ Options:
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
   --host <hostname>        Semantius host, hostname[:port] (a leading https:// is ignored):
                            <org>.semantius.cloud is the managed cloud, any other host is self-hosted.
-                           Always HTTPS, except localhost / 127.x.x.x (plain HTTP). Also: ${hostVar}
+                           Always HTTPS, except localhost / 127.x.x.x (plain HTTP). Uses only the
+                           credentials stored for that host (see Credentials)
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
                            local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
@@ -719,6 +725,10 @@ async function main(): Promise<void> {
   // applyDefaults=true: if LOG_LEVELS is set without LOG_FILE, default to
   // `<envDir>/semantius.log` (or stderr when no .env was loaded).
   enableFromEnv(true);
+
+  // With --host only credentials stored for that host apply, never the API
+  // key / JWT / org from the environment.
+  if (args.host !== undefined) ignoreEnvCredentials();
 
   // On a cloud host the host's org becomes ${PREFIX}_ORG (the host wins over
   // an ORG from .env). Also surfaces an invalid ${PREFIX}_HOST early.

@@ -16,7 +16,7 @@ import {
   getCredentialSource,
   isCredentialError,
 } from '../src/auth/token';
-import { setEnvPrefix } from '../src/config';
+import { setEnvPrefix, setHostFlag } from '../src/config';
 import { isAuthErrorMessage } from '../src/errors';
 import type { HostFacts } from '../src/host';
 import {
@@ -284,6 +284,24 @@ describe('getAccessToken', () => {
     await expect(getAccessToken(SELF_HOSTED)).rejects.toThrow(
       'Token exchange failed (404): Not Found from GET https://x.example.com/api/auth/token — is x.example.com a Semantius instance?',
     );
+  });
+
+  test('with --host the API key and JWT of the environment are never used', async () => {
+    process.env.SEMANTIUS_API_KEY = apiKey;
+    process.env.SEMANTIUS_JWT = 'env.jwt.token';
+    stubFetch(tokenReply(makeJwt(inOneHour())));
+    setHostFlag('acme.semantius.cloud');
+    try {
+      expect(getCredentialSource()).toBeNull();
+      const error = await getAccessToken(CLOUD).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(NoCredentialsError);
+      expect((error as Error).message).toBe(
+        'Authentication required: no credentials stored for acme.semantius.cloud. Run "semantius login --host acme.semantius.cloud" (with --host, SEMANTIUS_API_KEY and SEMANTIUS_JWT are not used).',
+      );
+      expect(calls).toEqual([]);
+    } finally {
+      setHostFlag(undefined);
+    }
   });
 
   test('no credentials → NoCredentialsError (exit 5 via isAuthErrorMessage)', async () => {
