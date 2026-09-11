@@ -7,7 +7,7 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 - 🪶 **Lightweight** - Minimal dependencies, fast startup
 - 🔧 **Shell-Friendly** - JSON output for call, pipes with `jq`, chaining support
 - 🤖 **Agent-Optimized** - Designed for AI coding agents (Gemini CLI, Claude Code, etc.)
-- 🔌 **Semantius Platform** - Connects to your Semantius organization's `crud` and `cube` MCP servers
+- 🔌 **Semantius Platform** - Runs the `crud` tools directly against your organization's PostgREST API and connects to the `cube` (analytics) MCP server
 - ⚡ **Fast** - Connections and tokens are cached between calls, so repeated invocations stay responsive
 - 🔑 **Zero Config** - Works out of the box with `SEMANTIUS_API_KEY` and `SEMANTIUS_ORG` set (or a single `SEMANTIUS_API_KEY=org:key`)
 - 💡 **Actionable Errors** - Structured error messages with available servers and recovery suggestions
@@ -54,7 +54,18 @@ export SEMANTIUS_API_KEY=your-org-name:your-api-key
 export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
 ```
 
-The CLI automatically connects to your Semantius MCP servers (`crud` and `cube`) — no config file needed.
+Credentials are tried in this order, first match wins:
+
+1. `SEMANTIUS_JWT` — a static token, sent as-is (no exchange, no cache)
+2. `SEMANTIUS_API_KEY` — exchanged for a short-lived token at your host's token endpoint and cached (see [Token cache](#token-cache))
+
+Without either, commands that call the platform exit `5` with "Authentication required".
+Which host the CLI talks to is covered in [Hosts](#hosts-managed-cloud-and-self-hosted).
+
+No config file is needed: the `crud` tools run inside the CLI against your
+organization's PostgREST API, and `cube` (analytics) is reached as a Semantius
+MCP server. `--crud-mcp` sends the `crud` tools through the Semantius cloud MCP
+server instead (the only way to use `sqlToRest`).
 
 ### 3. Discover available tools
 
@@ -85,7 +96,7 @@ semantius [options] info <server> <tool>        Show tool schema
 semantius [options] grep <pattern>              Search tools by glob pattern
 semantius [options] call <server> <tool>        Call tool (reads JSON from stdin if no args)
 semantius [options] call <server> <tool> <json> Call tool with JSON arguments
-semantius [options] ping [-n [count]]           Check connectivity & latency to crud/getCurrentUser
+semantius [options] ping [-n [count]]           Check connectivity & latency: crud/getCurrentUser (one PostgREST round trip; the cloud MCP server with --crud-mcp)
 semantius [options] whoami                      Show current user (email, org, roles)
 ```
 

@@ -5,7 +5,7 @@
  * by invoking the actual CLI with wrong/confusing arguments.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, test, expect } from 'bun:test';
 import { join } from 'node:path';
 
 describe('CLI Error Handling Tests', () => {
@@ -558,3 +558,156 @@ describe('CLI Error Handling Tests', () => {
   });
 });
 
+
+/**
+ * Exit codes and error text through the local crud layer. The CLI runs
+ * against a local Bun.serve stub posing as a self-hosted instance at
+ * http://127.0.0.1:<port> (PostgREST at /rest, token exchange at
+ * /api/auth/token), so nothing leaves the machine.
+ */
+describe('CLI errors through the local crud layer', () => {
+  const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
+  const JWT = 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.sig';
+  let reply: (path: string, headers: Headers) => Response = () => Response.json([]);
+  let server: ReturnType<typeof Bun.serve>;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        return reply(`${url.pathname}${url.search}`, req.headers);
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+  afterEach(() => {
+    reply = () => Response.json([]);
+  });
+
+  async function runLocal(
+    args: string[],
+    env: Record<string, string> = {},
+    host = `http://127.0.0.1:${server.port}`,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    const proc = Bun.spawn(['bun', 'run', cliPath, '--host', host, ...args], {
+      env: {
+        ...process.env,
+        SEMANTIUS_NO_DAEMON: '1',
+        SEMANTIUS_API_KEY: '',
+        SEMANTIUS_ORG: '',
+        SEMANTIUS_HOST: '',
+        SEMANTIUS_JWT: JWT,
+        SEMANTIUS_CONFIG_PATH: '',
+        SEMANTIUS_CRUD_MCP: '',
+        SEMANTIUS_STREAM: '',
+        SEMANTIUS_MAX_RETRIES: '0',
+        SEMANTIUS_TIMEOUT: '10',
+        ...env,
+      },
+      stdin: null,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const pg = (args: object) => ['call', 'crud', 'postgrestRequest', JSON.stringify(args)];
+
+  test('RLS denial → exit 4 with "Error: (42501) …"', async () => {
+    reply = () =>
+      Response.json(
+        {
+          code: '42501',
+          message: 'new row violates row-level security policy for table "contacts"',
+        },
+        { status: 403 },
+      );
+    const result = await runLocal(pg({ method: 'POST', path: '/contacts', body: { a: 1 } }));
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain(
+      'Error: (42501) new row violates row-level security policy for table "contacts"',
+    );
+  });
+
+  test('--single with 0 rows → exit 1', async () => {
+    // What the Neon Data API answers for an object request that matches nothing.
+    reply = () => Response.json(null);
+    const result = await runLocal([
+      'call', 'crud', 'postgrestRequest', '--single', '{"method":"GET","path":"/products?id=eq.-1"}',
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('SINGLE_NO_ROWS');
+  });
+
+  test('--single with 2+ rows → exit 2', async () => {
+    reply = () => Response.json([{ id: 1 }, { id: 2 }]);
+    const result = await runLocal([
+      'call', 'crud', 'read_entity', '--single', '{"filters":"module_id=eq.1"}',
+    ]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('SINGLE_MULTIPLE_ROWS');
+  });
+
+  test('invalid API key at the token exchange → exit 5', async () => {
+    reply = (path) =>
+      path === '/api/auth/token'
+        ? Response.json({ error: 'invalid_api_key' }, { status: 401 })
+        : Response.json([]);
+    const result = await runLocal(pg({ method: 'GET', path: '/t' }), {
+      SEMANTIUS_JWT: '',
+      SEMANTIUS_API_KEY: 'sk-bad-0123456789abcdef',
+      SEMANTIUS_DISABLE_JWT_CACHE: '1',
+    });
+    expect(result.exitCode).toBe(5);
+    expect(result.stderr).toContain('Token exchange failed (401)');
+    expect(result.stderr).not.toContain('sk-bad-0123456789abcdef');
+  });
+
+  test('expired static SEMANTIUS_JWT → exit 4 (tool error), no retry', async () => {
+    let calls = 0;
+    reply = () => {
+      calls++;
+      return Response.json({ code: 'PGRST303', message: 'JWT expired' }, { status: 401 });
+    };
+    const result = await runLocal(pg({ method: 'GET', path: '/t' }));
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain('(PGRST303) JWT expired');
+    expect(calls).toBe(1);
+  });
+
+  test('no credentials → exit 5, plain "Authentication required" message', async () => {
+    const result = await runLocal(pg({ method: 'GET', path: '/t' }), { SEMANTIUS_JWT: '' });
+    expect(result.exitCode).toBe(5);
+    expect(result.stderr.trim()).toBe(
+      `Authentication required: no credentials for http://127.0.0.1:${server.port}. Set SEMANTIUS_API_KEY or run "semantius login".`,
+    );
+  });
+
+  test('info crud and -md work offline through the local layer', async () => {
+    // A closed port: nothing is listening, and nothing needs to be.
+    const closed = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response() });
+    const offline = `http://127.0.0.1:${closed.port}`;
+    closed.stop(true);
+
+    const info = await runLocal(['info', 'crud'], {}, offline);
+    expect(info.exitCode).toBe(0);
+    expect(info.stdout).toContain('Transport: postgrest');
+    expect(info.stdout).toContain(`URL: ${offline}/rest`);
+    expect(info.stdout).toContain('Tools (50):'); // self-hosted: no sendEmail / get_cli_*
+
+    const md = await runLocal(['-md'], {}, offline);
+    expect(md.exitCode).toBe(0);
+    expect(md.stdout).toContain('## crud');
+    expect(md.stdout).toContain('#### read_entity');
+    expect(md.stdout).not.toContain('Connection error');
+  });
+});

@@ -524,7 +524,8 @@ Usage:
   semantius [options] grep <pattern>               Search tools by glob pattern
   semantius [options] call <server> <tool>         Call tool (reads JSON from stdin if no args)
   semantius [options] call <server> <tool> <json>  Call tool with JSON arguments
-  semantius [options] ping [-n [count]]            Check connectivity & latency to crud/getCurrentUser
+  semantius [options] ping [-n [count]]            Check connectivity & latency: crud/getCurrentUser, one PostgREST
+                                                   round trip (the cloud MCP server with --crud-mcp)
   semantius [options] whoami                       Show current user (email, org, roles)
 
 Formats (both work):
@@ -533,9 +534,16 @@ Formats (both work):
   semantius call server tool '{}'                  Space-separated
   semantius call server/tool '{}'                  Slash-separated
 
-Built-in server:
+Built-in servers:
+  "crud" runs the Semantius crud tools inside the CLI against your tenant's PostgREST API
+  (--crud-mcp sends them to the Semantius cloud MCP server instead).
   A "utils" server with local tools (get_csvschema) is always
   available alongside configured servers, e.g. semantius call utils/get_csvschema '{"path":"data.csv"}'
+
+Credentials (first match wins):
+  1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
+  2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached, encrypted
+  Without either, commands that call the platform exit 5 ("Authentication required").
 
 Options:
   -h, --help               Show this help message

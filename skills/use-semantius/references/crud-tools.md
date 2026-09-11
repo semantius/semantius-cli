@@ -17,7 +17,7 @@ Use this when: inserting, reading, updating, or deleting actual business data re
 ```
 Layer 1 typed tools  →  managing the schema itself
 postgrestRequest     →  reading and writing business records in any table
-sqlToRest            →  translating a SQL query into PostgREST path syntax
+sqlToRest            →  translating a SQL query into PostgREST path syntax (with --crud-mcp only)
 ```
 
 ---
@@ -125,12 +125,14 @@ If you find yourself building the body in many short steps, chunk into separate 
 ### `sqlToRest`
 Translates a SQL query into a PostgREST path. Useful when you think in SQL and need the equivalent PostgREST syntax.
 
+**Cloud only, and only with `--crud-mcp`:** the CLI's built-in `crud` tools do not include `sqlToRest` (a plain `semantius call crud sqlToRest …` fails with `TOOL_NOT_FOUND`); `--crud-mcp` runs it on the Semantius cloud MCP server.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sql` | string | yes | SQL query to convert, e.g. `SELECT * FROM products WHERE status = 'active' ORDER BY name` |
 
 ```bash
-semantius call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
+semantius --crud-mcp call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
 ```
 
 ### `refresh_schema_cache`

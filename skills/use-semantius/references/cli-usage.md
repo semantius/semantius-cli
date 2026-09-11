@@ -18,6 +18,15 @@ The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semanti
 
 ## Credentials Setup
 
+The CLI needs a **host** and a **credential**:
+
+- Host, first match wins: `--host <host>` → `SEMANTIUS_HOST` → `SEMANTIUS_ORG` (the managed-cloud
+  host `https://<org>.semantius.cloud`). A host under `.semantius.cloud` is the managed cloud; any
+  other `https://host[:port]` is a self-hosted instance.
+- Credential, first match wins: `SEMANTIUS_JWT` (a token sent as-is) → `SEMANTIUS_API_KEY`
+  (exchanged for a short-lived token, cached). Without one, commands that talk to the platform
+  exit `5` with "Authentication required".
+
 ```bash
 # Option 1: Export in shell
 export SEMANTIUS_API_KEY=your-api-key
@@ -56,6 +65,11 @@ Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably.
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
 | `--single` | (`call` only) Expect exactly one row: bare object on stdout, exit 1 on 0 rows, exit 2 on 2+ rows. **Rejected (exit 1, `SINGLE_ARRAY_INPUT`) for bulk calls** — an array in `data` / `body` / `id` / `table_name` always answers with an array of records. |
 | `--diag` | (`call`) Print the full `{request, response}` envelope instead of just `response.data` |
+| `--stream` | (`call crud postgrestRequest` only) Print PostgREST's response body unchanged — compact JSON, or CSV with `"accept":"text/csv"`; fastest for large reads. Errors: `Error: (<code>) <message>`, exit 5 for 401/403, 3 for 5xx/network, 4 otherwise. Not with `--single`, `--diag`, `--crud-mcp` (exit 1) |
+| `--host <host>` | Semantius host (see Credentials Setup) |
+| `--env <prefix>` | Read `<PREFIX>_API_KEY`, `<PREFIX>_ORG`, … instead of `SEMANTIUS_*` |
+| `--crud-mcp` | Run the `crud` tools on the Semantius cloud MCP server instead of inside the CLI (cloud only). Needed for `sqlToRest` |
+| `--reset-cache` | Drop the cached token and host lookup before running |
 
 ---
 
@@ -316,7 +330,7 @@ fi
 
 ## Connection Pooling (Daemon)
 
-On Linux and macOS the CLI keeps each server's MCP connection open in a lazily spawned background daemon, so repeated calls skip the connect handshake. On Windows there is no daemon; every call opens a fresh connection.
+The `crud` tools run inside the CLI and call PostgREST directly, so there is no connection to keep open for them. For the other servers (`cube`, and `crud` under `--crud-mcp`), the CLI on Linux and macOS keeps each server's MCP connection open in a lazily spawned background daemon, so repeated calls skip the connect handshake. On Windows there is no daemon; every call opens a fresh connection.
 
 - Each MCP server gets its own daemon process (a second instance of the `semantius` binary)
 - 300-second idle timeout, auto-terminates when idle
@@ -333,13 +347,17 @@ SEMANTIUS_DEBUG=1 semantius info            # Show daemon spawn/reuse decisions 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SEMANTIUS_API_KEY` | (required) | API key |
-| `SEMANTIUS_ORG` | (required) | Organization name |
-| `MCP_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
-| `MCP_CONCURRENCY` | `5` | Servers processed in parallel |
-| `MCP_MAX_RETRIES` | `3` | Retry attempts for transient errors |
-| `MCP_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
-| `MCP_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
+| `SEMANTIUS_API_KEY` | (required unless `SEMANTIUS_JWT`) | API key |
+| `SEMANTIUS_ORG` | (required unless `SEMANTIUS_HOST` / `--host`) | Organization name |
+| `SEMANTIUS_HOST` | `https://<org>.semantius.cloud` | Host URL or hostname, same as `--host` |
+| `SEMANTIUS_JWT` | (none) | Static token, used instead of the API key |
+| `SEMANTIUS_CRUD_MCP` | `false` | `1` = same as `--crud-mcp` |
+| `SEMANTIUS_STREAM` | `false` | `1` = `--stream` wherever it is valid |
+| `SEMANTIUS_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
+| `SEMANTIUS_CONCURRENCY` | `5` | Servers processed in parallel |
+| `SEMANTIUS_MAX_RETRIES` | `3` | Retry attempts for transient errors |
+| `SEMANTIUS_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
+| `SEMANTIUS_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
 
 ---
 
@@ -385,7 +403,7 @@ The CLI automatically retries transient failures with exponential backoff.
 | `2` | `--single` returned two or more rows (also what an `in.(...)` filter that matches several rows produces under `--single` — use an array read for multi-key sweeps) |
 | `3` | Network / transport failure (transient, retryable: `ECONNREFUSED`, `ETIMEDOUT`, `5xx`, `429` after retry exhaustion) |
 | `4` | Tool execution failed (RLS denial, duplicate key, schema violation, validation rule) |
-| `5` | Auth failure (missing/invalid `SEMANTIUS_API_KEY`, `401`, `403`) |
+| `5` | Auth failure (no credentials, invalid `SEMANTIUS_API_KEY`, `401`, `403`) |
 
 Notes:
 - Exit `1` carries two meanings, but they cannot co-occur: a malformed
