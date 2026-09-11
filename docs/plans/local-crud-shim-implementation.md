@@ -4,15 +4,24 @@ Compact, ordered checklist. Rationale, measurements and decision history are in
 `local-crud-shim.md` (referenced as *R §n*). Every step ends with a "done when" line; do not start a
 step whose inputs are still open. Rewritten 2026-09-11 after the second review (all findings folded in).
 
-## Status and hand-over (2026-09-11, end of the A1 session)
+## Status and hand-over (2026-09-11, end of the A2 session)
 
-**Where things are.** Phase A1 (Steps 2, 3, 3b, 4, 4b, 6) is implemented and committed on the branch
-**`local-crud-layer`** (not on `main`, so the daemon fix `9ac9574` can still be released alone
-first; not pushed). Gates at the last commit: `bun run lint`, `bunx tsc --noEmit`,
-`bun test --timeout 60000` → 455 pass / 15 skip / 0 fail (the skips: 6 pre-existing + the gated
-parity suite); `SEMANTIUS_PARITY=1 bun test --timeout 120000 tests/integration/parity.test.ts` →
-7/7 against `tests`. Plain `bun test` (5 s default timeout) times out the npx-based
+**Where things are.** Phases **A1 (Steps 2, 3, 3b, 4, 4b, 6) and A2 (Step 5) are implemented and
+committed** on the branch **`local-crud-layer`** (not on `main`, so the daemon fix `9ac9574` can
+still be released alone first; **not pushed**). Gates at the last commit: `bun run lint`,
+`bunx tsc --noEmit`, `bun test --timeout 60000` → 476 pass / 15 skip / 0 fail (the skips: 6
+pre-existing + the gated parity suite); `SEMANTIUS_PARITY=1 bun test --timeout 120000
+tests/integration/parity.test.ts` → 7/7 against `tests`, re-run after A2 because A2 changed the MCP
+route's bearer. Plain `bun test` (5 s default timeout) times out the npx-based
 `tests/integration/cli.test.ts` on Windows — pre-existing, CI uses `--timeout 60000`.
+
+**Verified by hand against `cli1-bb82` (Martin's machine, 2026-09-11):** `login` (browser flow),
+`whoami --host` → `auth_method oauth` + session expiry, `logout`, `--auth apikey --host` rejected,
+and the API-key path unchanged on `tests` (`whoami`, `call crud getCurrentUser`). The three bugs
+that first login exposed are fixed (see "Found in Martin's first real login" under Step 5). **Still
+unproven:** a fresh `login` after those fixes — the audience was measured through the refresh grant,
+so the authorization-code exchange carrying the resource indicator is the one step no test and no
+run has exercised.
 
 | Commit | Content |
 |---|---|
@@ -24,12 +33,22 @@ parity suite); `SEMANTIUS_PARITY=1 bun test --timeout 120000 tests/integration/p
 | `3e16fd7` | Step 6 — docs, `cli-errors` extension |
 | `64ea99b` | After A1 (Martin's requests): bare hosts, cloud-name mapping, per-host token cache (security fix), readable errors |
 | `619fb77` | After A1 (Martin's decision): with `--host` only credentials stored for that host |
+| `e655241` | Step 5 (A2) — OAuth browser login for cloud hosts, `login` / `logout`, `--auth`, `--login` |
+| `835d31d` | After A2 (Martin's first login): resource indicator for the audience, keyring size limit, Windows browser open |
 
-**Next.** Martin reviews A1 and runs the manual list in §10 (A1 part); then Phase A2 = OAuth login
-for **cloud hosts only** (Step 5 — read its "A2 notes" first). Self-hosted login is a separate later
-phase, A3 (Step 5c), specified by Martin once cloud login works; between them A2b (Step 5b) fixes
-the callback `iss` server-side and adds the issuer checks. The A1 stop point has been reached;
-Martin gave the go for A2 on 2026-09-11 ("continue with a2 without iss check").
+**Next, in order.**
+1. **Martin:** `bun run dev login --host cli1-bb82.semantius.app` once more (proves the
+   authorization-code exchange with the resource indicator), then the A2 list in §10.
+2. **Martin's decision:** keep or drop the A2 default that `--auth jwt|apikey` is rejected with
+   `--host` (Step 5 "As built"); everything else in A2 follows §0.
+3. **Server, then A2b (Step 5b):** the callback must carry the tenant's `iss`; then the CLI adds the
+   metadata and callback checks. Nothing in the CLI can start before the server change.
+4. **A3 (Step 5c):** self-hosted login, once Martin supplies how a self-hosted instance provides the
+   client id and the OAuth URLs. Its issuer rules are written in A2b.
+5. **Phase B**, then **rollout** (§7): the daemon fix `9ac9574` is released alone first, and the
+   branch is still unpushed and unreleased.
+
+Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touches the daemon.
 
 **Built differently from the text below, and why** (the steps are marked accordingly):
 - `sqlToRest` spike failed: in a `bun build --compile` binary the parser's WASM is missing
