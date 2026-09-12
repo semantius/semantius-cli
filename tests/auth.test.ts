@@ -51,12 +51,28 @@ interface ProviderState {
   /** The `resource` seen on each authorize / token request ('' when absent). */
   resources: string[];
   revoked: string[];
+  /** Mutable knobs for the issuer cases; reset() restores the sound values. */
+  cfg: ProviderConfig;
   reset: () => void;
   stop: () => void;
 }
 
+interface ProviderConfig {
+  /** undefined = the issuer of this server; null = omit iss; string = verbatim. */
+  callbackIss: string | null | undefined;
+  /** Issuer the authorization-server metadata declares (undefined = its own). */
+  metadataIssuer: string | undefined;
+  /** Whether the metadata promises an iss on every authorization response. */
+  advertiseIss: boolean;
+}
+
 /** A tenant-shaped OAuth provider: discovery, authorize, token, revoke. */
 function startProvider(): ProviderState {
+  const cfg: ProviderConfig = {
+    callbackIss: undefined,
+    metadataIssuer: undefined,
+    advertiseIss: true,
+  };
   const paths: string[] = [];
   const tokenGrants: string[] = [];
   const resources: string[] = [];
@@ -81,11 +97,12 @@ function startProvider(): ProviderState {
 
       if (url.pathname === '/.well-known/oauth-authorization-server/api/auth') {
         return Response.json({
-          issuer: `${origin}/api/auth`,
+          issuer: cfg.metadataIssuer ?? `${origin}/api/auth`,
           authorization_endpoint: `${origin}/api/auth/oauth2/authorize`,
           token_endpoint: `${origin}/token`,
           revocation_endpoint: `${origin}/api/auth/oauth2/revoke`,
           code_challenge_methods_supported: ['S256'],
+          authorization_response_iss_parameter_supported: cfg.advertiseIss,
         });
       }
 
@@ -95,9 +112,8 @@ function startProvider(): ProviderState {
         const back = new URL(redirectUri);
         back.searchParams.set('code', 'auth-code-1');
         back.searchParams.set('state', url.searchParams.get('state') as string);
-        // The server sends its global app issuer, not the tenant's — the
-        // reason A2 verifies no issuer (A2b fixes the server, then checks).
-        back.searchParams.set('iss', 'https://app.semantius.com/api/auth');
+        const iss = cfg.callbackIss === undefined ? `${origin}/api/auth` : cfg.callbackIss;
+        if (iss !== null) back.searchParams.set('iss', iss);
         return Response.redirect(back.toString(), 302);
       }
 
@@ -130,8 +146,12 @@ function startProvider(): ProviderState {
     tokenGrants,
     resources,
     revoked,
+    cfg,
     // One server for the file, but each test starts from access-1.
     reset: () => {
+      cfg.callbackIss = undefined;
+      cfg.metadataIssuer = undefined;
+      cfg.advertiseIss = true;
       issued = 0;
       paths.length = 0;
       tokenGrants.length = 0;
@@ -332,6 +352,15 @@ describe('oauth login', () => {
       );
     });
 
+    test('metadata that declares a different issuer is refused', async () => {
+      provider.cfg.metadataIssuer = 'https://elsewhere.example/api/auth';
+      const other = { ...host, host: 'metadata-mismatch.example' };
+
+      expect(getOAuthMetadata(other)).rejects.toThrow(
+        /declares issuer "https:\/\/elsewhere\.example\/api\/auth" but .* names /,
+      );
+    });
+
     test('a host without resource metadata fails with the URL', async () => {
       // A host of its own: discovery is memoized per host name.
       const broken = {
@@ -403,6 +432,39 @@ describe('oauth login', () => {
       expect(login(noClient, { openUrl })).rejects.toThrow(
         /NOT_AVAILABLE.*not enabled for acme.*no CLI client/s,
       );
+    });
+
+    // Each case needs its own host name: discovery is memoized per host for
+    // the life of the process, and these cases change what it would return.
+    test('a callback naming another issuer is rejected, storing nothing', async () => {
+      provider.cfg.callbackIss = 'https://app.semantius.com/api/auth';
+      const target = { ...loginHost, host: 'iss-wrong.example' };
+
+      expect(login(target, { openUrl })).rejects.toThrow(
+        /LOGIN_FAILED.*names issuer "https:\/\/app\.semantius\.com\/api\/auth", expected/s,
+      );
+      // The response may come from another authorization server: keep nothing.
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a missing iss is rejected when the server promises one', async () => {
+      provider.cfg.callbackIss = null;
+      const target = { ...loginHost, host: 'iss-missing.example' };
+
+      expect(login(target, { openUrl })).rejects.toThrow(
+        /LOGIN_FAILED.*carried no "iss"/s,
+      );
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a missing iss is accepted when the server promises none', async () => {
+      provider.cfg.callbackIss = null;
+      provider.cfg.advertiseIss = false;
+      const target = { ...loginHost, host: 'iss-unadvertised.example' };
+
+      await login(target, { openUrl });
+
+      expect(await hasStoredSession(target)).toBe(true);
     });
 
     test('self-hosted hosts refuse to log in', async () => {

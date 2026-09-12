@@ -66,6 +66,11 @@ export interface OAuthMetadata {
   revocationEndpoint?: string;
   /** Scopes the protected resource declares, e.g. tenant:<tenant id>:user. */
   resourceScopes: string[];
+  /**
+   * RFC 9207: the server promises an `iss` on every authorization response,
+   * which makes a missing one a failure rather than an older server.
+   */
+  issParameterSupported: boolean;
 }
 
 const CLOUD_SUFFIX = '.semantius.cloud';
@@ -405,7 +410,13 @@ function readHostCacheEntry(host: string): HostCacheEntry | null {
 /** Discovered OAuth endpoints for a host, or null when not cached (yet). */
 export function readCachedOAuthMetadata(host: string): OAuthMetadata | null {
   const oauth = readHostCacheEntry(host)?.oauth;
-  if (!oauth?.issuer || !oauth.authorizationEndpoint || !oauth.tokenEndpoint) {
+  if (
+    !oauth?.issuer ||
+    !oauth.authorizationEndpoint ||
+    !oauth.tokenEndpoint ||
+    // An entry written before the field existed: refetch rather than assume.
+    typeof oauth.issParameterSupported !== 'boolean'
+  ) {
     return null;
   }
   return { ...oauth, resourceScopes: oauth.resourceScopes ?? [] };

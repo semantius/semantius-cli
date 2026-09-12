@@ -10,7 +10,12 @@
 import { type TokenSet, createCliAuth } from 'cli-auth';
 import { debug, prefixedEnvName } from '../config.js';
 import { ErrorCode, formatCliError } from '../errors.js';
-import { type HostFacts, deleteHostCache, resolveHost } from '../host.js';
+import {
+  type HostFacts,
+  type OAuthMetadata,
+  deleteHostCache,
+  resolveHost,
+} from '../host.js';
 import { buildScope, getOAuthMetadata } from './provider.js';
 import {
   createSecretStorage,
@@ -126,8 +131,20 @@ export async function login(
 ): Promise<void> {
   const facts = await requireLoginableHost(host);
   const storage = storageFor(facts);
-  const auth = await createAuth(facts, storage, pickCallbackPort());
+  const metadata = await getOAuthMetadata(facts);
   const open = opts.openUrl ?? openBrowser;
+
+  // The callback is checked as it arrives (so the browser sees the outcome),
+  // but cli-auth decides success on its own and has exchanged the code by the
+  // time login() resolves — hence the second look, and the clear, below.
+  let issuerError: string | undefined;
+  const auth = await createAuth(facts, storage, {
+    callbackPort: pickCallbackPort(),
+    check: (callbackUrl) => {
+      issuerError = issuerMismatch(metadata, callbackUrl);
+      return issuerError;
+    },
+  });
 
   const flow = auth.login({
     onAuthorization: (url) => {
@@ -154,6 +171,37 @@ export async function login(
   } finally {
     if (timer) clearTimeout(timer);
   }
+
+  if (issuerError) {
+    // The response may come from an authorization server other than the one
+    // this login was started against: keep nothing it produced.
+    await storage.clear();
+    throw new LoginFailedError(issuerError);
+  }
+}
+
+/**
+ * RFC 9207: the `iss` on an authorization response must be the issuer of the
+ * authorization server the request was sent to, compared as a plain string.
+ * Returns what is wrong with it, or undefined when it is sound.
+ *
+ * The check is what stops a mix-up: a host whose metadata sends the browser to
+ * one authorization server and the code to another token endpoint. PKCE does
+ * not cover that, because the verifier goes to the same wrong endpoint.
+ */
+export function issuerMismatch(
+  metadata: OAuthMetadata,
+  callbackUrl: URL,
+): string | undefined {
+  const iss = callbackUrl.searchParams.get('iss');
+  if (iss === null) {
+    return metadata.issParameterSupported
+      ? `the login callback carried no "iss", but ${metadata.issuer} promises one (authorization_response_iss_parameter_supported)`
+      : undefined;
+  }
+  return iss === metadata.issuer
+    ? undefined
+    : `the login callback names issuer "${iss}", expected "${metadata.issuer}"`;
 }
 
 /** Revoke (best effort) and delete the stored session for this host. */
@@ -199,28 +247,40 @@ async function requireLoginableHost(host: HostFacts): Promise<HostFacts> {
   );
 }
 
+/** The loopback leg of a login: which port, and how its callback is verified. */
+interface LoginFlow {
+  callbackPort: number;
+  /** Returns what is wrong with the callback, or undefined when it is sound. */
+  check: (callbackUrl: URL) => string | undefined;
+}
+
 async function createAuth(
   host: HostFacts,
   storage: ReturnType<typeof storageFor>,
-  callbackPort?: number,
+  flow?: LoginFlow,
 ): Promise<Auth> {
   const metadata = await getOAuthMetadata(host);
   return createCliAuth({
-    callbackSource: (res, result) => {
-      // The issuer the server names on the callback: what the A2b check will
-      // compare against metadata.issuer. Logged, not verified, in A2.
-      debug(
-        `Login callback: success=${result.success}${result.verifyError ? `, ${result.verifyError}` : ''}, iss=${result.callbackUrl.searchParams.get('iss') ?? '(none)'}`,
-      );
-      res.writeHead(result.success ? 200 : 400, {
-        'Content-Type': 'text/html; charset=utf-8',
-      });
-      res.end(
-        result.success
-          ? `<h1>Signed in to ${host.host}</h1><p>You can close this tab and return to your terminal.</p>`
-          : '<h1>Login failed</h1><p>You can close this tab and try again in your terminal.</p>',
-      );
-    },
+    ...(flow
+      ? {
+          callbackPort: flow.callbackPort,
+          callbackSource: (res, result) => {
+            const issuerError = flow.check(result.callbackUrl);
+            const ok = result.success && !issuerError;
+            debug(
+              `Login callback: success=${result.success}${result.verifyError ? `, ${result.verifyError}` : ''}, iss=${result.callbackUrl.searchParams.get('iss') ?? '(none)'}${issuerError ? ` — rejected: ${issuerError}` : ''}`,
+            );
+            res.writeHead(ok ? 200 : 400, {
+              'Content-Type': 'text/html; charset=utf-8',
+            });
+            res.end(
+              ok
+                ? `<h1>Signed in to ${host.host}</h1><p>You can close this tab and return to your terminal.</p>`
+                : '<h1>Login failed</h1><p>You can close this tab; your terminal has the details.</p>',
+            );
+          },
+        }
+      : {}),
     strategy: 'authorization-code',
     provider: {
       metadata: {
@@ -233,7 +293,6 @@ async function createAuth(
     scope: buildScope(metadata),
     storage,
     ...(resourceIndicator(host) ? { resource: resourceIndicator(host) } : {}),
-    ...(callbackPort === undefined ? {} : { callbackPort }),
   });
 }
 

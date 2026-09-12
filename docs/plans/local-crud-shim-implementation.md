@@ -37,15 +37,13 @@ indicator, stored in the Credential Manager (no file fallback). A2 has nothing u
 | `835d31d` | After A2 (Martin's first login): resource indicator for the audience, keyring size limit, Windows browser open |
 
 **Next, in order.**
-1. **Martin:** `bun run dev login --host cli1-bb82.semantius.app` once more (proves the
-   authorization-code exchange with the resource indicator), then the A2 list in §10.
+1. **Martin:** the rest of the A2 list in §10 (login, whoami, cube, `--auth apikey`, logout, a second
+   host) — the login itself and the issuer check are already proven against `cli1-bb82`.
 2. **Martin's decision:** keep or drop the A2 default that `--auth jwt|apikey` is rejected with
    `--host` (Step 5 "As built"); everything else in A2 follows §0.
-3. **Server, then A2b (Step 5b):** the callback must carry the tenant's `iss`; then the CLI adds the
-   metadata and callback checks. Nothing in the CLI can start before the server change.
-4. **A3 (Step 5c):** self-hosted login, once Martin supplies how a self-hosted instance provides the
-   client id and the OAuth URLs. Its issuer rules are written in A2b.
-5. **Phase B**, then **rollout** (§7): the daemon fix `9ac9574` is released alone first, and the
+3. **A3 (Step 5c):** self-hosted login, once Martin supplies how a self-hosted instance provides the
+   client id and the OAuth URLs. Its issuer rules are fixed in Step 5b and are not to be relaxed.
+4. **Phase B**, then **rollout** (§7): the daemon fix `9ac9574` is released alone first, and the
    branch is still unpushed and unreleased.
 
 Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touches the daemon.
@@ -126,15 +124,12 @@ Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touc
   tenant id, endpoints). A3 = self-hosted login: Martin supplies its spec after cloud login works
   (client id and URLs are obtained differently there). Until A3, `login` refuses on self-hosted hosts
   and the self-hosted `clientId` / `discoveryUrl` in `selfHostedFacts()` are placeholders.
-- **Issuer checks are A2b, not A2 (Martin, 2026-09-11).** The server advertises
-  `authorization_response_iss_parameter_supported: true` and issuer
-  `https://<org>.semantius.cloud/api/auth`, but the login callback carries
-  `iss = https://app.semantius.com/api/auth`, so an RFC 9207-compliant client would reject every
-  login. A2 therefore verifies no issuer at all (neither the metadata's nor the callback's). A2b
-  fixes the callback server-side, adds both checks, and specifies what A3 must do — where the risk
-  is real, because there an arbitrary host serves the metadata (mix-up attack: a malicious host can
-  point `authorization_endpoint` at a cloud org and its own `token_endpoint`, and PKCE does not
-  prevent it because the verifier goes to the same endpoint).
+- **Issuer checks were A2b, not A2 (Martin, 2026-09-11; both done 2026-09-12).** A2 shipped with no
+  issuer verification because the callback carried `iss = https://app.semantius.com/api/auth` while
+  the metadata promised `https://<org>.semantius.cloud/api/auth` — a compliant client would have
+  rejected every login. The server was fixed, and A2b added both checks (metadata and callback,
+  Step 5b). They are binding for A3: there an arbitrary host serves its own metadata, which is
+  exactly the mix-up case they defend against.
 - The daemon fix (R §11) is committed on `main` as `9ac9574`, unreleased. Releasing it is Martin's.
 - Self-hosted: server URL configurable; no control plane, no Deno, no `cube`. *(D1, D12)*
 - Host resolution order: `--host` → `${PREFIX}_HOST` → project `.env` → global `.env` → cloud default. *(D10)*
@@ -164,7 +159,7 @@ Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touc
 | **A1 — local layer with the existing API key** (no login: API key or static JWT only) | 2, 3, 3b, 4, 4b, 6 | §10 "A1 implementer stop" |
 | **A2 — OAuth login, cloud hosts only** (no issuer checks) | 5 | §10 "A2 implementer stop" |
 | **review** | — | Martin reviews A1+A2 and runs the manual list in §10 |
-| **A2b — issuer checks** (server sends the right callback `iss`, CLI verifies) | 5b (spec after the A2 review) | §10 "A2b implementer stop" |
+| **A2b — issuer checks** (server sends the right callback `iss`, CLI verifies) — ✅ done | 5b | §10 "A2b implementer stop" |
 | **A3 — OAuth login, self-hosted** | 5c (spec from Martin, incl. its issuer rules, written in A2b) | §10 "A3 implementer stop" |
 | **B — self-hosted** | self-hosted items of 3, 3b, 4, 5c against a real instance | Martin tests on a self-hosted host |
 | **rollout** | 7 | Martin releases via the script |
@@ -629,23 +624,40 @@ server was fixed.
   `clientId === null` refetch + refusal. Then **stop** (§10): the real `semantius login` against
   `tests` / `cli1-bb82` is Martin's.
 
-## 5b. Issuer checks (Phase A2b) — ⏸ after the A2 review
+## 5b. Issuer checks (Phase A2b) — ✅ done
 
-Server first, CLI second; the detailed checklist is written after the A2 review.
-- Server (Martin / the server team): the login callback must carry the tenant's own issuer
-  (`iss = https://<org>.semantius.cloud/api/auth`), not `https://app.semantius.com/api/auth`. The
-  discovery documents already promise it (`authorization_response_iss_parameter_supported: true`).
-- CLI, once that is deployed: (1) metadata check — the AS document's `issuer` must equal
-  `authorization_servers[0]` from the resource document, else `HostResolutionError`; (2) callback
-  check (RFC 9207) — the `iss` on the loopback callback must equal that issuer, and because the
-  server advertises support, a **missing** `iss` is a failure too; both → exit 1
-  `Error [LOGIN_FAILED]: …`. Open: whether the pinned cli-auth exposes the callback's query
-  parameters at all (it does not validate `iss` itself) — if not, an upstream PR or the CLI's own
-  callback handler; decide when A2 has the package installed.
-- Also here: **specify the issuer rules A3 must follow** (a self-hosted host serves its own metadata,
-  so the checks matter more there than on the cloud) and the A3 stop point.
-- Done when: defined with the spec; `tests/auth.test.ts` gains a mismatching-`iss` and a
-  missing-`iss` case against the mock provider.
+- [x] Server (Martin's team, deployed 2026-09-12): the login callback now carries the tenant's own
+      issuer. Verified on `cli1-bb82`: callback `iss`, the AS metadata `issuer`,
+      `authorization_servers[0]` and the access token's `iss` claim are all
+      `https://cli1-bb82.semantius.cloud/api/auth` and compare equal as plain strings. Before the
+      fix the callback said `https://app.semantius.com/api/auth`; the tenant host's own error
+      responses already said the tenant issuer, which is how the app leg was identified as the
+      source.
+- [x] Metadata check (`provider.ts`): the RFC 8414 document must declare the issuer it was fetched
+      for (`authorization_servers[0]` of the RFC 9728 document), else `HostResolutionError` naming
+      both values. This is what binds a resource to an authorization server it cannot forge.
+- [x] Callback check (`session.ts`, `issuerMismatch()`): RFC 9207 plain-string comparison of the
+      callback's `iss` against that issuer; a **missing** `iss` fails only when the metadata sets
+      `authorization_response_iss_parameter_supported` (now a field of `OAuthMetadata`, so a cached
+      entry without it is refetched). A failure renders the browser's failure page, clears the
+      session the exchange just stored — cli-auth decides success on its own and has already
+      redeemed the code — and exits 1 with `Error [LOGIN_FAILED]: …`.
+- [x] No upstream patch needed: cli-auth's `callbackSource` hands over the raw callback URL.
+      `SEMANTIUS_DEBUG=1` logs the observed `iss` and the verdict, which is how a deploy is checked.
+- [x] `tests/auth.test.ts`: metadata declaring another issuer, a callback naming another issuer
+      (nothing stored), a missing `iss` while advertised, and a missing `iss` while not advertised
+      (accepted). Each case uses its own host name — discovery is memoized per host.
+- **Issuer rules for A3 (binding, self-hosted login):** the same two checks apply unchanged and must
+  not be relaxed — they matter *more* there, because an arbitrary host serves its own metadata and
+  can point `authorization_endpoint` at a cloud org while keeping its own `token_endpoint` (PKCE
+  does not prevent it: the verifier goes to the same endpoint). Concretely, A3 must (a) keep
+  deriving the RFC 8414 URL from `authorization_servers[0]` rather than from the host, so an issuer
+  can only be claimed by whoever serves its metadata; (b) keep the callback comparison exact — no
+  host-based aliases, no "same registrable domain" shortcuts; (c) treat a self-hosted server that
+  omits `iss` as acceptable only when its metadata does not advertise the parameter, exactly as
+  here. If Martin's self-hosted spec obtains the client id from the host itself, note that a
+  malicious host then supplies both the client id and the metadata, which leaves these checks as
+  the only thing tying the login to the host the user typed.
 
 ## 5c. OAuth login, self-hosted (Phase A3) — ⏸ spec from Martin, written in A2b
 
@@ -755,8 +767,18 @@ bun run dev logout --host cli1-bb82.semantius.app
 bun run dev login --host semantius.example.com          # self-hosted: NOT_AVAILABLE until A3, exit 1
 ```
 
-**A2b implementer stop.** Defined after the A2 review (Step 5b), once the server sends the tenant's
-`iss`. **A3 implementer stop.** Defined with Martin's self-hosted login spec (Step 5c), written in A2b.
+**A2b implementer stop.** *Reached 2026-09-12:* both checks implemented, four cases in
+`tests/auth.test.ts`, full suite 480 pass / 15 skip / 0 fail, and a real login against `cli1-bb82`
+passes with the checks active. Martin's verification of any future auth deploy:
+
+```
+$env:SEMANTIUS_DEBUG=1; bun run dev login --host cli1-bb82.semantius.app
+# expect: Login callback: success=true, iss=https://cli1-bb82.semantius.cloud/api/auth
+# a mismatch prints "— rejected: …" and exits 1 (LOGIN_FAILED), storing nothing
+```
+
+**A3 implementer stop.** Defined with Martin's self-hosted login spec (Step 5c); its issuer rules are
+already fixed in Step 5b.
 
 Never in A1/A2/A2b/A3: releasing, version bumps, running `scripts/release.sh`, contacting a
 self-hosted host.

@@ -417,6 +417,11 @@ the response on `127.0.0.1`, and stores the session in your OS keyring
 there is no keyring — a headless Linux box, for example — it falls back to a
 `0600` file in `<user config dir>/sessions/` and says so.
 
+The login is verified against the host you named: the authorization server's
+metadata must declare the issuer the host's resource metadata points at, and
+the issuer on the browser's response must match it exactly (RFC 9207). A
+mismatch fails the login and stores nothing.
+
 One session per host: `semantius login --host b.semantius.cloud` leaves the
 session for `a.semantius.cloud` untouched, and each command uses the session of
 the host it talks to. The access token is refreshed automatically, about

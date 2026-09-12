@@ -13,10 +13,9 @@
  * record — same file, same 24 h TTL, same --reset-cache — because every call
  * that uses a stored session may need the token endpoint for a refresh.
  *
- * No issuer is verified here (neither the metadata's nor the callback's): the
- * server advertises authorization_response_iss_parameter_supported but sends
- * its global app issuer, so a compliant check would reject every login. Both
- * checks arrive together with the server-side fix.
+ * RFC 8414 §3.3: the metadata must name the issuer it was fetched for, so the
+ * document and the issuer that led to it are bound together. The matching
+ * check on the login callback lives in session.ts.
  */
 
 import { debug, getConnectTimeoutMs } from '../config.js';
@@ -67,6 +66,18 @@ async function discover(host: HostFacts): Promise<OAuthMetadata> {
 
   const metadataUrl = authorizationServerMetadataUrl(issuer, host);
   const server = await fetchJson(metadataUrl);
+
+  // RFC 8414 §3.3: the document must claim the issuer it was fetched for.
+  // Without this a resource could point at a document that belongs to a
+  // different authorization server, and the callback check below would then
+  // compare against the wrong issuer.
+  const declared = asString(server.issuer);
+  if (declared !== issuer) {
+    throw new HostResolutionError(
+      `${metadataUrl} declares issuer "${declared ?? '(none)'}" but ${host.discoveryUrl} names "${issuer}"`,
+    );
+  }
+
   const authorizationEndpoint = asString(server.authorization_endpoint);
   const tokenEndpoint = asString(server.token_endpoint);
   if (!authorizationEndpoint || !tokenEndpoint) {
@@ -81,6 +92,8 @@ async function discover(host: HostFacts): Promise<OAuthMetadata> {
     tokenEndpoint,
     revocationEndpoint: asString(server.revocation_endpoint),
     resourceScopes: asStringArray(resource.scopes_supported),
+    issParameterSupported:
+      server.authorization_response_iss_parameter_supported === true,
   };
   debug(
     `OAuth endpoints for ${host.host}: authorize ${authorizationEndpoint}, token ${tokenEndpoint}`,
