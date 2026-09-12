@@ -38,7 +38,7 @@ indicator, stored in the Credential Manager (no file fallback). A2 has nothing u
 | `8ca0aaf` | `whoami` shows the session expiry in local time |
 | `6146c20` | Log the callback issuer under `SEMANTIUS_DEBUG` (how an auth deploy is verified) |
 | `3257e67` | Step 5b (A2b) — metadata and callback issuer checks |
-| *(this session)* | Step 5c (A3) — self-hosted login: fixed client id, refusal dropped, docs, tests |
+| `cd3e954` | Step 5c (A3) — self-hosted login: fixed client id, refusal dropped, docs, tests |
 
 **Next, in order.**
 1. **Martin's instance must serve `/.well-known/oauth-protected-resource`** (body and rules in §10
