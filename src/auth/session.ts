@@ -206,6 +206,21 @@ async function createAuth(
 ): Promise<Auth> {
   const metadata = await getOAuthMetadata(host);
   return createCliAuth({
+    callbackSource: (res, result) => {
+      // The issuer the server names on the callback: what the A2b check will
+      // compare against metadata.issuer. Logged, not verified, in A2.
+      debug(
+        `Login callback: success=${result.success}${result.verifyError ? `, ${result.verifyError}` : ''}, iss=${result.callbackUrl.searchParams.get('iss') ?? '(none)'}`,
+      );
+      res.writeHead(result.success ? 200 : 400, {
+        'Content-Type': 'text/html; charset=utf-8',
+      });
+      res.end(
+        result.success
+          ? `<h1>Signed in to ${host.host}</h1><p>You can close this tab and return to your terminal.</p>`
+          : '<h1>Login failed</h1><p>You can close this tab and try again in your terminal.</p>',
+      );
+    },
     strategy: 'authorization-code',
     provider: {
       metadata: {
