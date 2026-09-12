@@ -32,9 +32,9 @@ const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 type Auth = ReturnType<typeof createCliAuth<'authorization-code'>>;
 
 /**
- * A login is not possible for this host at all (self-hosted, or a cloud org
- * with no CLI client). Exit 1 — it is a configuration fact, not a credential
- * that could be supplied.
+ * A login is not possible for this host at all (no CLI client registered for
+ * it). Exit 1 — it is a configuration fact, not a credential that could be
+ * supplied.
  */
 export class LoginUnavailableError extends Error {
   readonly exitCode = ErrorCode.CLIENT_ERROR;
@@ -223,18 +223,22 @@ export async function logout(host: HostFacts): Promise<boolean> {
 }
 
 /**
- * The host a login can actually run against: cloud only for now, and only
- * with a CLI client on the control plane. A cached record from before the
- * control plane published client_id_cli is refetched once.
+ * The host a login can actually run against: any host with a CLI client id.
+ * Self-hosted instances carry the fixed SELF_HOSTED_CLIENT_ID; cloud orgs get
+ * theirs from the control plane, and a cached record from before the control
+ * plane published client_id_cli is refetched once.
  */
 async function requireLoginableHost(host: HostFacts): Promise<HostFacts> {
+  if (host.clientId) return host;
+
+  // Self-hosted client ids are fixed, so there is nothing to refetch: only a
+  // build without one lands here.
   if (host.mode === 'selfhosted') {
     throw new LoginUnavailableError(
-      'OAuth login is not configured for self-hosted instances yet',
+      `OAuth login is not configured for ${host.host} (no CLI client id)`,
       `Use ${prefixedEnvName('API_KEY')} or ${prefixedEnvName('JWT')} for ${host.host}.`,
     );
   }
-  if (host.clientId) return host;
 
   debug('No client_id_cli on the cached record; refetching the control plane');
   deleteHostCache(host.host);

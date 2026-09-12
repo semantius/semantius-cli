@@ -4,16 +4,16 @@ Compact, ordered checklist. Rationale, measurements and decision history are in
 `local-crud-shim.md` (referenced as *R §n*). Every step ends with a "done when" line; do not start a
 step whose inputs are still open. Rewritten 2026-09-11 after the second review (all findings folded in).
 
-## Status and hand-over (2026-09-12, end of the A2 / A2b session)
+## Status and hand-over (2026-09-12, end of the A3 session)
 
-**Where things are.** Phases **A1 (Steps 2, 3, 3b, 4, 4b, 6), A2 (Step 5) and A2b (Step 5b) are
-implemented and committed** on the branch **`local-crud-layer`** (not on `main`, so the daemon fix
-`9ac9574` can still be released alone first; **not pushed**). Gates at the last commit:
-`bun run lint`, `bunx tsc --noEmit`, `bun test --timeout 60000` → 480 pass / 15 skip / 0 fail (the
-skips: 6 pre-existing + the gated parity suite); `SEMANTIUS_PARITY=1 bun test --timeout 120000
-tests/integration/parity.test.ts` → 7/7 against `tests`, re-run after A2 because A2 changed the MCP
-route's bearer. Plain `bun test` (5 s default timeout) times out the npx-based
-`tests/integration/cli.test.ts` on Windows — pre-existing, CI uses `--timeout 60000`.
+**Where things are.** Phases **A1 (Steps 2, 3, 3b, 4, 4b, 6), A2 (Step 5), A2b (Step 5b) and A3
+(Step 5c) are implemented and committed** on the branch **`local-crud-layer`** (not on `main`, so
+the daemon fix `9ac9574` can still be released alone first; **not pushed**). Gates at the last
+commit: `bun run lint`, `bunx tsc --noEmit`, `bun test --timeout 60000` → 482 pass / 15 skip / 0
+fail (the skips: 6 pre-existing + the gated parity suite); `SEMANTIUS_PARITY=1 bun test --timeout
+120000 tests/integration/parity.test.ts` → 7/7 against `tests`, last run after A2 because A2 changed
+the MCP route's bearer (A3 touches no crud path). Plain `bun test` (5 s default timeout) times out
+the npx-based `tests/integration/cli.test.ts` on Windows — pre-existing, CI uses `--timeout 60000`.
 
 **Verified by hand against `cli1-bb82` (Martin's machine, 2026-09-11):** `login` (browser flow),
 `whoami --host` → `auth_method oauth` + session expiry, `logout`, `--auth apikey --host` rejected,
@@ -38,17 +38,20 @@ indicator, stored in the Credential Manager (no file fallback). A2 has nothing u
 | `8ca0aaf` | `whoami` shows the session expiry in local time |
 | `6146c20` | Log the callback issuer under `SEMANTIUS_DEBUG` (how an auth deploy is verified) |
 | `3257e67` | Step 5b (A2b) — metadata and callback issuer checks |
+| *(this session)* | Step 5c (A3) — self-hosted login: fixed client id, refusal dropped, docs, tests |
 
 **Next, in order.**
-1. **A3 (Step 5c) — start here in a new session.** The spec is written from measurements against
-   Martin's `http://localhost:3000`: two small CLI changes, no discovery branch, one server-side
-   document (`/.well-known/oauth-protected-resource`) that must exist first — check it with
-   `curl http://localhost:3000/.well-known/oauth-protected-resource` before starting.
-2. **Martin:** the rest of the A2 list in §10 (login, whoami, cube, `--auth apikey`, logout, a second
+1. **Martin's instance must serve `/.well-known/oauth-protected-resource`** (body and rules in §10
+   "A3 implementer stop"). It is still 404 — re-probed this session in every variant. The CLI side
+   of A3 is done and waiting: `login --host localhost:3000` gets as far as that 404 and stops
+   there. Nothing else about A3 is open in the code.
+2. **Martin:** once it is served, the A3 list in §10 — in particular the `call crud` read, which
+   answers the one open question (the `aud` the IdP mints, and whether `/rest` accepts it).
+3. **Martin:** the rest of the A2 list in §10 (login, whoami, cube, `--auth apikey`, logout, a second
    host) — the login itself and the issuer check are already proven against `cli1-bb82`.
-3. **Martin's decision:** keep or drop the A2 default that `--auth jwt|apikey` is rejected with
+4. **Martin's decision:** keep or drop the A2 default that `--auth jwt|apikey` is rejected with
    `--host` (Step 5 "As built"); everything else in A2 follows §0.
-4. **Phase B**, then **rollout** (§7): the daemon fix `9ac9574` is released alone first, and the
+5. **Phase B**, then **rollout** (§7): the daemon fix `9ac9574` is released alone first, and the
    branch is still unpushed and unreleased.
 
 Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touches the daemon.
@@ -126,9 +129,10 @@ Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touc
   (Martin, 2026-09-11; Step 5); the client id only from the control plane.
 - **Login is split by host type (Martin, 2026-09-11).** A2 = OAuth login against the managed cloud,
   where the control plane and the tenant's discovery documents already supply everything (client id,
-  tenant id, endpoints). A3 = self-hosted login: Martin supplies its spec after cloud login works
-  (client id and URLs are obtained differently there). Until A3, `login` refuses on self-hosted hosts
-  and the self-hosted `clientId` / `discoveryUrl` in `selfHostedFacts()` are placeholders.
+  tenant id, endpoints). A3 = self-hosted login: Martin supplied its spec after cloud login worked
+  (Step 5c). Since A3 the self-hosted `clientId` is the fixed `semantius-cli` and `login` takes the
+  same path as cloud; what differs is that the instance itself must serve the RFC 9728 document and
+  have that client registered.
 - **Issuer checks were A2b, not A2 (Martin, 2026-09-11; both done 2026-09-12).** A2 shipped with no
   issuer verification because the callback carried `iss = https://app.semantius.com/api/auth` while
   the metadata promised `https://<org>.semantius.cloud/api/auth` — a compliant client would have
@@ -165,7 +169,7 @@ Not done in A2: the daemon-interplay test (Step 5, last box) — no A2 code touc
 | **A2 — OAuth login, cloud hosts only** (no issuer checks) | 5 | §10 "A2 implementer stop" |
 | **review** | — | Martin reviews A1+A2 and runs the manual list in §10 |
 | **A2b — issuer checks** (server sends the right callback `iss`, CLI verifies) — ✅ done | 5b | §10 "A2b implementer stop" |
-| **A3 — OAuth login, self-hosted** | 5c (spec written 2026-09-12, ready to implement) | §10 "A3 implementer stop" |
+| **A3 — OAuth login, self-hosted** — ✅ code done; the login itself waits on the server document | 5c | §10 "A3 implementer stop" |
 | **B — self-hosted** | self-hosted items of 3, 3b, 4, 5c against a real instance | Martin tests on a self-hosted host |
 | **rollout** | 7 | Martin releases via the script |
 
@@ -664,7 +668,7 @@ server was fixed.
   malicious host then supplies both the client id and the metadata, which leaves these checks as
   the only thing tying the login to the host the user typed.
 
-## 5c. OAuth login, self-hosted (Phase A3) — ⏭ next; spec below, ready to implement
+## 5c. OAuth login, self-hosted (Phase A3) — ✅ implemented; the real login waits on the server
 
 **Measured against Martin's instance `http://localhost:3000` on 2026-09-12** (read-only probes; the
 CLI was not changed). Its layout: the common documents live at the host root, the IdP's own URLs
@@ -703,26 +707,39 @@ GET /.well-known/oauth-protected-resource
 appended to the base scopes (empty while `/rest` needs none). The `/rest` path-suffix variant is
 optional (cloud serves root + `/mcp`).
 
-- [ ] `SELF_HOSTED_CLIENT_ID = 'semantius-cli'` in `src/host.ts` (replaces `null`).
-- [ ] Drop the self-hosted refusal in `requireLoginableHost()` (`src/auth/session.ts`, the
+- [x] `SELF_HOSTED_CLIENT_ID = 'semantius-cli'` in `src/host.ts` (replaces `null`). Kept typed
+      `string | null` so the no-client-id branch below stays reachable.
+- [x] Drop the self-hosted refusal in `requireLoginableHost()` (`src/auth/session.ts`, the
       `host.mode === 'selfhosted'` branch) so self-hosted takes the same path as cloud, and make the
       `clientId === null` fallback below it mode-aware: the control-plane refetch and its "no CLI
-      client on the control plane" text are cloud-only.
-- [ ] Nothing else in the flow changes: storage, `getAccessToken`'s session lookup, `--auth` /
+      client on the control plane" text are cloud-only. The `clientId` test now comes first, and a
+      self-hosted host without one exits 1 with `Error [NOT_AVAILABLE]: OAuth login is not
+      configured for <host> (no CLI client id)` (implementer's wording — the plan fixes no text for
+      this case); no refetch, since a self-hosted client id is fixed and there is no control plane.
+- [x] Nothing else in the flow changes: storage, `getAccessToken`'s session lookup, `--auth` /
       `--login`, `logout`, the callback port probe and the issuer checks are host-agnostic.
       `resourceIndicator()` already returns undefined when `tenantId` is null, which is right here
       (the server advertises no resource indicators).
-- [ ] **Do not relax the issuer checks** (Step 5b's "Issuer rules for A3" is binding): derive the
+- [x] **Do not relax the issuer checks** (Step 5b's "Issuer rules for A3" is binding): derive the
       RFC 8414 URL from `authorization_servers[0]`, compare the callback `iss` exactly, and treat a
       missing `iss` as a failure whenever the metadata advertises the parameter — this one does.
-- [ ] Docs that still say cloud-only: the `--help` credentials block, the README "Browser login"
-      section's last line, and `skills/use-semantius/references/cli-usage.md`.
-- [ ] `tests/auth.test.ts`: a self-hosted case (hand-built `HostFacts` with `mode: 'selfhosted'` and
+      Untouched; a new self-hosted case pins that they still fire.
+- [x] Docs that still say cloud-only: the `--help` credentials block, the README "Browser login"
+      section's last line, and `skills/use-semantius/references/cli-usage.md`. The README's last
+      line now names the two server prerequisites (the RFC 9728 document and a registered
+      `semantius-cli` client) instead of refusing self-hosted.
+- [x] `tests/auth.test.ts`: a self-hosted case (hand-built `HostFacts` with `mode: 'selfhosted'` and
       a client id) proving `login` is allowed, that no `resource` is sent, and that the issuer checks
-      still apply; keep a case for a self-hosted host whose `clientId` is null.
-- **Open, answerable only with a real login against the instance** (do this first in A3, it may turn
-  into a server change like the cloud's audience did): which `aud` the IdP mints and whether `/rest`
-  validates it. There are no resource indicators here, so the CLI cannot ask for an audience.
+      still apply; keep a case for a self-hosted host whose `clientId` is null. Three cases replace
+      "self-hosted hosts refuse to log in"; `tests/host.test.ts` expects the fixed client id on
+      self-hosted facts. The cloud "no CLI client" case had to change as well: its refetch calls
+      `resolveHost()`, which in that suite resolves the loopback provider — now a self-hosted host
+      *with* a client id — so the test puts the invocation on `acme.semantius.cloud` and stubs only
+      the control-plane URL, asserting it is called exactly once.
+- **Open, answerable only with a real login against the instance** (Martin; still open, it needs the
+  server document below): which `aud` the IdP mints and whether `/rest` validates it. There are no
+  resource indicators here, so the CLI cannot ask for an audience. This may turn into a server
+  change like the cloud's audience did.
 - **Unrelated finding, for Phase B:** the self-hosted API-key exchange assumed in Step 3
   (`GET {host}/api/auth/token`) returns the SPA HTML on this build — that path is unverified and
   probably wrong.
@@ -730,6 +747,21 @@ optional (cloud serves root + `/mcp`).
   localhost:3000` prints `auth_method oauth`, a `call crud` read works against `/rest`, `logout`
   clears it, `cube` / `--crud-mcp` still exit 1 `NOT_AVAILABLE`, and the gates
   (`bun run lint`, `bunx tsc --noEmit`, `bun test --timeout 60000`) are green. Then STOP.
+- **Reached 2026-09-12 as far as the server allows.** Gates green (482 pass / 15 skip / 0 fail).
+  `cube` and `--crud-mcp` on `--host localhost:3000` still exit 1 `NOT_AVAILABLE`, and `whoami
+  --host localhost:3000` still exits 5 naming `semantius login --host localhost:3000`. The four
+  login boxes are **blocked on the server prerequisite**: `/.well-known/oauth-protected-resource`
+  is still 404 on `http://localhost:3000`, re-probed at the start of this session in every variant
+  (root, `/rest`, `/mcp`, under `/idp` — all serve the SPA HTML). `login --host localhost:3000`
+  now gets past the refusal and stops at `Error [HOST_RESOLUTION_FAILED]:
+  http://localhost:3000/.well-known/oauth-protected-resource returned 404`, before any browser
+  opens. The rest of the chain is ready, re-verified the same way as when the spec was written:
+  serving only that document from a local stub (with `authorization_servers[0]` =
+  `http://localhost:3000/idp`) and calling `getOAuthMetadata()` resolves the issuer, the three real
+  endpoints, `issParameterSupported: true` and `resourceScopes: []` → scope `openid profile email
+  offline_access`, with the A2b metadata check passing against the instance's own
+  `/.well-known/oauth-authorization-server/idp`. That document is unchanged from the spec's
+  measurements.
 
 ## 6. Commands, docs, skills — ✅ done (`3e16fd7`) except the `login`/`logout` docs (→ Step 5)
 
@@ -839,8 +871,40 @@ $env:SEMANTIUS_DEBUG=1; bun run dev login --host cli1-bb82.semantius.app
 # a mismatch prints "— rejected: …" and exits 1 (LOGIN_FAILED), storing nothing
 ```
 
-**A3 implementer stop.** Defined with Martin's self-hosted login spec (Step 5c); its issuer rules are
-already fixed in Step 5b.
+**A3 implementer stop.** *Reached 2026-09-12, as far as the server allows:* Step 5c implemented
+(fixed client id, refusal dropped, docs, tests), `bun run lint` and `bunx tsc --noEmit` clean, full
+suite 482 pass / 15 skip / 0 fail. The browser login itself was NOT run — it cannot be: the
+instance still 404s `/.well-known/oauth-protected-resource`, where the CLI's chain starts.
+
+**Server first, then Martin's list.** Serve on `http://localhost:3000`:
+
+```json
+GET /.well-known/oauth-protected-resource
+{
+  "resource": "http://localhost:3000/rest",
+  "authorization_servers": ["http://localhost:3000/idp"],
+  "scopes_supported": [],
+  "bearer_methods_supported": ["header"]
+}
+```
+
+`authorization_servers[0]` must equal the IdP's `issuer` byte-for-byte (`http://localhost:3000/idp`);
+anything else fails the A2b metadata check by design. Check it with
+`curl http://localhost:3000/.well-known/oauth-protected-resource`, then:
+
+```
+bun run dev login --host localhost:3000                 # was NOT_AVAILABLE before A3
+bun run dev whoami --host localhost:3000                # auth_method oauth + session expiry
+bun run dev --host localhost:3000 call crud postgrestRequest '{"method":"GET","path":"/<a table>?limit=1"}'
+bun run dev --host localhost:3000 call cube discover '{}'        # exit 1 NOT_AVAILABLE
+bun run dev --host localhost:3000 --crud-mcp call crud getCurrentUser '{}'   # exit 1 NOT_AVAILABLE
+bun run dev logout --host localhost:3000
+$env:SEMANTIUS_DEBUG=1; bun run dev login --host localhost:3000  # prints the observed iss + verdict
+```
+
+The `call crud` line is the one that answers the open question: if the IdP mints an `aud` that
+`/rest` rejects, it fails with "required audience not found" and the fix is server-side (the cloud
+needed the same), because the instance advertises no resource indicators for the CLI to ask with.
 
 Never in A1/A2/A2b/A3: releasing, version bumps, running `scripts/release.sh`, contacting a
 self-hosted host.

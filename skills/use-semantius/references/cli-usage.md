@@ -26,13 +26,14 @@ The CLI needs a **host** and a **credential**:
   `<org>.semantius.cloud`.
 - Credential, first match wins: `SEMANTIUS_JWT` (a token sent as-is) → `SEMANTIUS_API_KEY`
   (exchanged for a short-lived token, cached) → the session stored by `semantius login` for this
-  host (managed cloud only). Without one, commands that talk to the platform exit `5` with
-  "Authentication required". `--auth jwt|apikey|oauth` picks one source explicitly.
+  host. Without one, commands that talk to the platform exit `5` with "Authentication required".
+  `--auth jwt|apikey|oauth` picks one source explicitly.
 - With `--host`, only credentials stored for that host are used (one set per host); the API key,
   JWT and org from the environment are ignored. Pair a host with an API key via `SEMANTIUS_HOST`.
 - `semantius login` opens a browser (PKCE) and stores the session in the OS keyring under the host's
   name; `semantius logout` revokes and deletes it. Agents should not run `login` themselves: it needs
-  a human at an interactive terminal. Self-hosted instances have no browser login yet.
+  a human at an interactive terminal. Self-hosted instances can use it too, if they serve
+  `/.well-known/oauth-protected-resource` and have registered the `semantius-cli` OAuth client.
 
 ```bash
 # Option 1: Export in shell

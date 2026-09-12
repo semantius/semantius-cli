@@ -602,8 +602,8 @@ Built-in servers:
 Credentials (first match wins):
   1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
   2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached per host
-  3. ${'browser login'.padEnd(22)} The session stored by "semantius login" for this host (cloud only;
-                         kept in the OS keyring, refreshed automatically)
+  3. ${'browser login'.padEnd(22)} The session stored by "semantius login" for this host (kept in
+                            the OS keyring, refreshed automatically)
   Without any of them, commands that call the platform exit 5 ("Authentication required").
   --auth jwt|apikey|oauth picks one source explicitly.
   With --host, only credentials stored for that host are used, one set per host (stored

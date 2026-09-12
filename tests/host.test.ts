@@ -356,7 +356,7 @@ describe('host resolution', () => {
           method: 'GET',
           url: 'https://x.example.com/api/auth/token',
         },
-        clientId: null,
+        clientId: 'semantius-cli',
         apiBaseUrl: 'https://x.example.com/api',
         uiBaseUrl: 'https://x.example.com',
       });

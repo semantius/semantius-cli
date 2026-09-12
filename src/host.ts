@@ -48,11 +48,12 @@ export interface HostFacts {
 }
 
 /**
- * OAuth client id of the CLI on self-hosted instances. A placeholder until
- * the self-hosted login phase supplies it; until then it is null and `login`
- * refuses on self-hosted hosts.
+ * OAuth client id of the CLI on self-hosted instances. Unlike the cloud, where
+ * the control plane publishes a per-org client id, every instance registers the
+ * CLI under this same fixed id (a public native client with the loopback
+ * redirect URIs). A host that has not registered it cannot be logged in to.
  */
-export const SELF_HOSTED_CLIENT_ID: string | null = null;
+export const SELF_HOSTED_CLIENT_ID: string | null = 'semantius-cli';
 
 /**
  * The OAuth endpoints of a host, discovered from its .well-known documents:

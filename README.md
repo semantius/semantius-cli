@@ -55,9 +55,10 @@ export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
 ```
 
 ```bash
-# Option 5: no keys at all — sign in with the browser (managed cloud)
+# Option 5: no keys at all — sign in with the browser
 semantius login                              # the environment's host
 semantius login --host acme.semantius.app    # a specific organization
+semantius login --host semantius.example.com # a self-hosted instance
 ```
 
 Credentials are tried in this order, first match wins:
@@ -402,11 +403,12 @@ With `--host`, only credentials stored for that host are used — see
 
 ### Browser login
 
-On the managed cloud you can sign in instead of managing keys:
+You can sign in instead of managing keys:
 
 ```bash
 semantius login                              # the environment's host
 semantius login --host acme.semantius.app    # a specific organization
+semantius login --host semantius.example.com # a self-hosted instance
 semantius whoami                             # auth_method: oauth
 semantius logout                             # revokes and deletes the session
 ```
@@ -431,8 +433,13 @@ hourly, for as long as the login stays valid.
 an API key or JWT is configured; it needs an interactive terminal. Nothing else
 ever opens a browser on its own: without credentials a command exits `5`.
 
-Self-hosted instances cannot use browser login yet — use an API key or a static
-JWT there.
+A self-hosted instance needs two things for this to work: it must serve
+`https://<host>/.well-known/oauth-protected-resource` (naming its authorization
+server, whose own `/.well-known/oauth-authorization-server` metadata the CLI
+reads next), and it must have the CLI registered as the public native client
+`semantius-cli` with the redirect URIs `http://127.0.0.1:{53682,53683,53684}/callback`.
+Without either, `login` fails naming the document or the client; an API key or a
+static JWT still works.
 
 ### Token cache
 

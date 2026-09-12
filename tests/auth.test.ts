@@ -36,6 +36,7 @@ import { transformConfigWithJwt } from '../src/client';
 import { setAuthFlag, setEnvPrefix, setHostFlag } from '../src/config';
 import {
   type HostFacts,
+  SELF_HOSTED_CLIENT_ID,
   resolveHost,
   setHostCacheDirForTests,
 } from '../src/host';
@@ -426,12 +427,43 @@ describe('oauth login', () => {
     });
 
     test('a cloud org without a CLI client refuses, naming the org', async () => {
-      const noClient = { ...loginHost, clientId: null };
-      // Refetches the control-plane record once (the cached one may predate
-      // client_id_cli) before giving up.
-      expect(login(noClient, { openUrl })).rejects.toThrow(
-        /NOT_AVAILABLE.*not enabled for acme.*no CLI client/s,
-      );
+      // The refetch re-resolves the configured host, so the invocation has to
+      // be on the cloud host; only the control plane is stubbed.
+      process.env.SEMANTIUS_HOST = 'acme.semantius.cloud';
+      const realFetch = globalThis.fetch;
+      const controlPlaneCalls: string[] = [];
+      globalThis.fetch = (async (
+        input: URL | Request | string,
+        init?: RequestInit,
+      ) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.startsWith('https://api.semantius.cloud/')) {
+          controlPlaneCalls.push(url);
+          return Response.json({
+            id: 't-1',
+            postgrest_url: 'https://acme.example/rest',
+          });
+        }
+        return realFetch(input as Parameters<typeof fetch>[0], init);
+      }) as typeof fetch;
+
+      const noClient = {
+        ...loginHost,
+        host: 'acme.semantius.cloud',
+        clientId: null,
+      };
+      try {
+        // Refetches the control-plane record once (the cached one may predate
+        // client_id_cli) before giving up.
+        await expect(login(noClient, { openUrl })).rejects.toThrow(
+          /NOT_AVAILABLE.*not enabled for acme.*no CLI client/s,
+        );
+        expect(controlPlaneCalls).toEqual([
+          'https://api.semantius.cloud/organization/acme',
+        ]);
+      } finally {
+        globalThis.fetch = realFetch;
+      }
     });
 
     // Each case needs its own host name: discovery is memoized per host for
@@ -467,14 +499,49 @@ describe('oauth login', () => {
       expect(await hasStoredSession(target)).toBe(true);
     });
 
-    test('self-hosted hosts refuse to log in', async () => {
+    test('a self-hosted host logs in with the fixed client id', async () => {
+      // resolveHost() gives a self-hosted host the CLI's fixed client id, and
+      // nothing else in the flow depends on the mode.
       expect(host.mode).toBe('selfhosted');
-      expect(login(host, { openUrl })).rejects.toThrow(
-        /NOT_AVAILABLE.*self-hosted/s,
+      expect(host.clientId).toBe(SELF_HOSTED_CLIENT_ID);
+
+      await login(host, { openUrl });
+
+      expect(await hasStoredSession(host)).toBe(true);
+      expect(provider.tokenGrants).toContain('authorization_code');
+      expect(await getSessionToken(host)).toBe('access-1');
+      // No tenant id, so no RFC 8707 resource indicator on either request —
+      // self-hosted instances advertise none.
+      expect(provider.resources).toEqual(['', '']);
+    });
+
+    test('the issuer checks apply to self-hosted hosts too', async () => {
+      // The case they exist for: an arbitrary host serves its own metadata.
+      provider.cfg.callbackIss = 'https://acme.semantius.cloud/api/auth';
+      const target = { ...host, host: 'selfhosted-iss.example' };
+
+      expect(login(target, { openUrl })).rejects.toThrow(
+        /LOGIN_FAILED.*names issuer "https:\/\/acme\.semantius\.cloud\/api\/auth", expected/s,
       );
-      expect(login(host, { openUrl })).rejects.toBeInstanceOf(
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a self-hosted host without a client id refuses, without a refetch', async () => {
+      // Cloud-only recovery: there is no control plane to ask here, so this
+      // must not fall through to the "no CLI client on the control plane" path.
+      const noClient = {
+        ...host,
+        host: 'selfhosted-no-client.example',
+        clientId: null,
+      };
+
+      expect(login(noClient, { openUrl })).rejects.toBeInstanceOf(
         LoginUnavailableError,
       );
+      expect(login(noClient, { openUrl })).rejects.toThrow(
+        /NOT_AVAILABLE.*not configured for selfhosted-no-client\.example \(no CLI client id\)/s,
+      );
+      expect(await hasStoredSession(noClient)).toBe(false);
     });
   });
 
@@ -523,21 +590,18 @@ describe('oauth login', () => {
   describe('--login', () => {
     test('needs an interactive terminal', async () => {
       const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
-      const proc = Bun.spawn(
-        ['bun', 'run', cliPath, '--login', 'whoami'],
-        {
-          env: {
-            ...process.env,
-            SEMANTIUS_HOST: host.host,
-            SEMANTIUS_API_KEY: '',
-            SEMANTIUS_JWT: '',
-            SEMANTIUS_NO_DAEMON: '1',
-          },
-          stdin: null,
-          stdout: 'pipe',
-          stderr: 'pipe',
+      const proc = Bun.spawn(['bun', 'run', cliPath, '--login', 'whoami'], {
+        env: {
+          ...process.env,
+          SEMANTIUS_HOST: host.host,
+          SEMANTIUS_API_KEY: '',
+          SEMANTIUS_JWT: '',
+          SEMANTIUS_NO_DAEMON: '1',
         },
-      );
+        stdin: null,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
       const stderr = await new Response(proc.stderr).text();
 
       expect(await proc.exited).toBe(1);
