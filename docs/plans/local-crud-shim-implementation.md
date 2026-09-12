@@ -18,10 +18,10 @@ route's bearer. Plain `bun test` (5 s default timeout) times out the npx-based
 **Verified by hand against `cli1-bb82` (Martin's machine, 2026-09-11):** `login` (browser flow),
 `whoami --host` → `auth_method oauth` + session expiry, `logout`, `--auth apikey --host` rejected,
 and the API-key path unchanged on `tests` (`whoami`, `call crud getCurrentUser`). The three bugs
-that first login exposed are fixed (see "Found in Martin's first real login" under Step 5). **Still
-unproven:** a fresh `login` after those fixes — the audience was measured through the refresh grant,
-so the authorization-code exchange carrying the resource indicator is the one step no test and no
-run has exercised.
+that first login exposed are fixed (see "Found in Martin's first real login" under Step 5), and a
+**fresh login after the fixes was proven on 2026-09-12**: both stores had been cleared, so the
+session `whoami` now uses came from a full authorization-code exchange carrying the resource
+indicator, stored in the Credential Manager (no file fallback). A2 has nothing unproven left.
 
 | Commit | Content |
 |---|---|
