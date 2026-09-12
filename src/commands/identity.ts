@@ -315,7 +315,11 @@ export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
     rows.push(['auth_method', source]);
     if (source === 'oauth') {
       const expires = await sessionExpiry();
-      if (expires) rows.push(['session_expires', expires]);
+      // Local time, like the config_source line above: a UTC stamp next to a
+      // local one reads as a wrong expiry.
+      if (expires) {
+        rows.push(['session_expires', localTimestamp(new Date(expires))]);
+      }
     }
   }
 
