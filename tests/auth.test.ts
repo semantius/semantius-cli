@@ -39,9 +39,8 @@ import {
   setAuthFlag,
   setEnvPrefix,
   setHostFlag,
-  snapshotEnvHost,
 } from '../src/config';
-import { decideDefaultAfterLogin, loginCommand, logoutCommand } from '../src/commands/auth';
+import { loginCommand, logoutCommand } from '../src/commands/auth';
 import {
   type HostFacts,
   SELF_HOSTED_CLIENT_ID,
@@ -50,11 +49,11 @@ import {
   setHostCacheDirForTests,
 } from '../src/host';
 import {
-  getDefaultHost,
+  getCurrentHost,
   hasHost,
   listHosts,
   recordHost,
-  setDefaultHost,
+  setCurrentHost,
   setHostsIndexDirForTests,
 } from '../src/hosts-index';
 
@@ -793,7 +792,7 @@ describe('oauth login', () => {
   });
 
   // --------------------------------------------------------------------
-  describe('loginCommand: recording and the default host', () => {
+  describe('loginCommand: recording, no current-host side effect', () => {
     /** Capture console.log lines for the duration of `fn`. */
     async function captureLog(fn: () => Promise<void>): Promise<string[]> {
       const lines: string[] = [];
@@ -810,49 +809,35 @@ describe('oauth login', () => {
     }
 
     test('records the host with loggedInAt', async () => {
-      snapshotEnvHost(host.host);
       await loginCommand();
       const entry = listHosts().find((h) => h.host === host.host);
       expect(entry).toMatchObject({ mode: 'selfhosted', org: null });
       expect(entry?.loggedInAt).toMatch(/^\d{4}-/);
     });
 
-    test('set: no default yet, env resolves to the login host', async () => {
-      snapshotEnvHost(host.host);
+    test('prints the login confirmation', async () => {
       const lines = await captureLog(loginCommand);
-      expect(getDefaultHost()).toBe(host.host);
-      expect(lines.some((l) => l.includes('is now the default host'))).toBe(
+      expect(lines.some((l) => l.includes(`Logged in to ${host.host}`))).toBe(
         true,
       );
     });
 
-    test('set: no default yet, env resolves to nothing at all', async () => {
-      snapshotEnvHost(null);
+    // The core invariant this redesign relies on: login only stores a
+    // session, never picks a current host — "semantius use" is the one
+    // command that does that (see commands/hosts.ts's useCommand). Setting
+    // the current host to some OTHER host would itself change what
+    // resolveHost() resolves to (the current host now outranks
+    // SEMANTIUS_HOST — that is the whole point of the redesign), so this
+    // uses host.host itself for the "already set" case to isolate the one
+    // thing being tested: whether loginCommand leaves it alone.
+    test('never sets or changes the current host', async () => {
+      expect(getCurrentHost()).toBeNull();
       await loginCommand();
-      expect(getDefaultHost()).toBe(host.host);
-    });
+      expect(getCurrentHost()).toBeNull();
 
-    test('hint: no default yet, but env resolves to a different host', async () => {
-      snapshotEnvHost('elsewhere.example.com');
-      const lines = await captureLog(loginCommand);
-      expect(getDefaultHost()).toBeNull();
-      expect(hasHost(host.host)).toBe(true);
-      expect(
-        lines.some(
-          (l) =>
-            l.includes('is not the default host') &&
-            l.includes(`semantius use ${host.host}`),
-        ),
-      ).toBe(true);
-    });
-
-    test('keep: an existing default is left alone', async () => {
-      setDefaultHost('already-default.example.com');
-      snapshotEnvHost(host.host);
+      setCurrentHost(host.host);
       await loginCommand();
-      expect(getDefaultHost()).toBe('already-default.example.com');
-      // Still recorded, just not promoted to default.
-      expect(hasHost(host.host)).toBe(true);
+      expect(getCurrentHost()).toBe(host.host);
     });
   });
 
@@ -872,29 +857,33 @@ describe('oauth login', () => {
       return lines;
     }
 
-    test('removes the entry and hints when it was the default', async () => {
+    test('removes the entry and hints when it was the current host', async () => {
       await login(host, { openUrl });
       recordHost(host.host, { mode: 'selfhosted', org: null });
-      setDefaultHost(host.host);
+      setCurrentHost(host.host);
 
       const lines = await captureError(logoutCommand);
 
       expect(hasHost(host.host)).toBe(false);
-      expect(getDefaultHost()).toBeNull();
-      expect(lines.some((l) => l.includes('was the default host'))).toBe(
+      expect(getCurrentHost()).toBeNull();
+      expect(lines.some((l) => l.includes('was the current host'))).toBe(
         true,
       );
     });
 
-    test('removes the entry with no hint when it was not the default', async () => {
+    test('removes the entry with no hint when it was not the current host', async () => {
       await login(host, { openUrl });
       recordHost(host.host, { mode: 'selfhosted', org: null });
-      setDefaultHost('other.example.com');
+      setCurrentHost('other.example.com');
+      // The current host now outranks SEMANTIUS_HOST, so resolveHost() would
+      // otherwise resolve to 'other.example.com' instead of host.host — force
+      // it back to host.host with --host, isolating the one thing under test.
+      setHostFlag(host.host);
 
       const lines = await captureError(logoutCommand);
 
       expect(hasHost(host.host)).toBe(false);
-      expect(getDefaultHost()).toBe('other.example.com');
+      expect(getCurrentHost()).toBe('other.example.com');
       expect(lines.length).toBe(0);
     });
 
@@ -926,45 +915,5 @@ describe('oauth login', () => {
     test('without a session the config is left untouched', async () => {
       expect(await transformConfigWithJwt('cube', config)).toEqual(config);
     });
-  });
-});
-
-describe('decideDefaultAfterLogin', () => {
-  test('no default, env resolves to the login host → set', () => {
-    expect(
-      decideDefaultAfterLogin('a.semantius.cloud', 'a.semantius.cloud', null),
-    ).toBe('set');
-  });
-
-  test('no default, env resolves to nothing → set', () => {
-    expect(decideDefaultAfterLogin('a.semantius.cloud', null, null)).toBe(
-      'set',
-    );
-  });
-
-  test('no default, env resolves elsewhere → hint', () => {
-    expect(
-      decideDefaultAfterLogin('a.semantius.cloud', 'b.semantius.cloud', null),
-    ).toBe('hint');
-  });
-
-  test('an existing default → keep, regardless of the environment', () => {
-    expect(
-      decideDefaultAfterLogin(
-        'a.semantius.cloud',
-        'a.semantius.cloud',
-        'c.semantius.cloud',
-      ),
-    ).toBe('keep');
-    expect(
-      decideDefaultAfterLogin('a.semantius.cloud', null, 'c.semantius.cloud'),
-    ).toBe('keep');
-    expect(
-      decideDefaultAfterLogin(
-        'a.semantius.cloud',
-        'b.semantius.cloud',
-        'c.semantius.cloud',
-      ),
-    ).toBe('keep');
   });
 });

@@ -51,7 +51,7 @@ export class NoCredentialsError extends Error {
 
 /**
  * No credential source at all, and no --auth forcing one: on a session-only
- * host (--host, or the stored default — see isSessionOnlyHost) only a stored
+ * host (--host, or the current host — see isSessionOnlyHost) only a stored
  * session can help, so point at login; everywhere else the environment's
  * credential vars are still live, so mention them too.
  */
@@ -59,8 +59,8 @@ function noCredentialsHint(host: string): string {
   if (!isSessionOnlyHost()) {
     return `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`;
   }
-  if (getHostSource() === 'default') {
-    return `Authentication required: no credentials stored for ${host} (the default host). Run "semantius login" (${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} apply only when they name a host of their own).`;
+  if (getHostSource() === 'current') {
+    return `Authentication required: no credentials stored for ${host} (the current host). Run "semantius login" (${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} apply only when they name a host of their own).`;
   }
   return `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`;
 }
@@ -80,10 +80,10 @@ function forcedSourceHint(forced: CredentialSource, host: string): string {
  */
 export class SessionExpiredError extends Error {
   constructor(host: string, detail: string) {
-    const defaultSuffix =
-      getHostSource() === 'default' ? ' (the default host)' : '';
+    const currentSuffix =
+      getHostSource() === 'current' ? ' (the current host)' : '';
     super(
-      `Authentication required: the session stored for ${host}${defaultSuffix} could not be refreshed (${detail}). Run "semantius login${getHostFlag() ? ` --host ${host}` : ''}" again.`,
+      `Authentication required: the session stored for ${host}${currentSuffix} could not be refreshed (${detail}). Run "semantius login${getHostFlag() ? ` --host ${host}` : ''}" again.`,
     );
     this.name = 'SessionExpiredError';
   }
@@ -123,7 +123,7 @@ export type CredentialSource = 'jwt' | 'apikey' | 'oauth';
  * The environment's credential source, or null when it has none (then the
  * stored session applies). A --token argument always wins (it names its own
  * host, so it is never "the environment's"). On a session-only host
- * (--host, or the stored default — see isSessionOnlyHost) the environment's
+ * (--host, or the current host — see isSessionOnlyHost) the environment's
  * API key / JWT never apply: they belong to whatever host they were set for,
  * not necessarily this one.
  */

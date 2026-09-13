@@ -1,16 +1,18 @@
 /**
  * The host index: `<user config dir>/hosts.json`, recording which hosts this
  * machine has ever logged in to (or been pointed at), and which one — if any
- * — is the default for a given `--env` prefix. Read by `getHost()`'s last
- * rung and by `semantius hosts` / `semantius use`; written by `login`,
- * `logout`, `use` and the self-healing scan in session.ts.
+ * — is the *current* host for a given `--env` prefix: the host `semantius
+ * use <host>` selected, checked right after --host in getHost()'s order.
+ * Read by host.ts and by `semantius hosts` / `semantius use`; written by
+ * `use`, `logout` and the self-healing scan in session.ts. `login` no longer
+ * touches it — see commands/auth.ts.
  *
  * Not `config.json`: "config" already means the MCP servers file (`--config`,
  * `SEMANTIUS_CONFIG_PATH`, `config_source`).
  *
  * Deliberately separate from src/host.ts's on-disk cache (control-plane
  * records, OAuth endpoints, keyed by host and re-fetchable on a miss): this
- * file is local state — the default host and the "have I seen this host"
+ * file is local state — the current host and the "have I seen this host"
  * index — that nothing can re-derive, so a read failure returns empty rather
  * than refetching. Kept dependency-free of host.ts (only config.ts + node:fs)
  * so host.ts can import this module without a cycle.
@@ -31,12 +33,12 @@ import { debug, getEnvPrefix, getUserConfigDir } from './config.js';
 export interface HostsIndexEntry {
   mode: 'cloud' | 'selfhosted';
   org: string | null;
-  /** When `login` last stored a session for this host (absent: self-healed / scanned entry). */
+  /** When a session was last stored for this host (absent: self-healed / scanned entry). */
   loggedInAt?: string;
 }
 
 interface ProfileIndex {
-  defaultHost?: string;
+  currentHost?: string;
   /** ISO timestamp of the one-time sessions-dir scan (see session.ts), or absent. */
   scannedSessionsAt?: string;
   hosts: Record<string, HostsIndexEntry>;
@@ -75,7 +77,7 @@ export function getHostsIndexPath(): string {
 /**
  * Read the index from disk once per process and keep it in a module
  * variable — refreshed on every write — so every lookup below stays
- * synchronous and cheap enough for getHost()'s default rung.
+ * synchronous and cheap enough for getHost()'s current-host rung.
  */
 function loadIndex(): HostsIndexFile {
   if (_cache) return _cache;
@@ -110,7 +112,7 @@ function loadIndex(): HostsIndexFile {
 /** Atomic write (temp file + rename), mode 0600, same pattern as host.ts's cache. */
 function writeIndex(index: HostsIndexFile): void {
   // Update the in-memory view even if the disk write below fails: the
-  // caller's change (e.g. "this is now the default host") still applies for
+  // caller's change (e.g. "this is now the current host") still applies for
   // the rest of this process, and the write failure is logged via debug —
   // matching how the rest of the CLI treats an unwritable config dir.
   _cache = index;
@@ -159,22 +161,22 @@ function updateProfile(mutate: (profile: ProfileIndex) => void): void {
 // API — all synchronous, scoped to the active --env prefix
 // ============================================================================
 
-export function getDefaultHost(): string | null {
-  return currentProfile().defaultHost ?? null;
+export function getCurrentHost(): string | null {
+  return currentProfile().currentHost ?? null;
 }
 
-/** Sets the default host; returns the previous default (null if none). */
-export function setDefaultHost(host: string): string | null {
-  const previous = getDefaultHost();
+/** Sets the current host; returns the previous one (null if none). */
+export function setCurrentHost(host: string): string | null {
+  const previous = getCurrentHost();
   updateProfile((profile) => {
-    profile.defaultHost = host;
+    profile.currentHost = host;
   });
   return previous;
 }
 
-export function clearDefaultHost(): void {
+export function clearCurrentHost(): void {
   updateProfile((profile) => {
-    profile.defaultHost = undefined;
+    profile.currentHost = undefined;
   });
 }
 
@@ -200,21 +202,21 @@ export function hasHost(host: string): boolean {
 }
 
 /**
- * Deletes the entry and, if it was the default, clears that too — checked
- * independently of whether an entry actually existed, so a defaultHost left
- * dangling with no matching entry (hand-edited hosts.json, say) still gets
- * cleared rather than silently kept.
+ * Deletes the entry and, if it was the current host, clears that too —
+ * checked independently of whether an entry actually existed, so a
+ * currentHost left dangling with no matching entry (hand-edited hosts.json,
+ * say) still gets cleared rather than silently kept.
  */
-export function removeHost(host: string): { wasDefault: boolean } {
-  let wasDefault = false;
+export function removeHost(host: string): { wasCurrent: boolean } {
+  let wasCurrent = false;
   updateProfile((profile) => {
     if (host in profile.hosts) delete profile.hosts[host];
-    if (profile.defaultHost === host) {
-      wasDefault = true;
-      profile.defaultHost = undefined;
+    if (profile.currentHost === host) {
+      wasCurrent = true;
+      profile.currentHost = undefined;
     }
   });
-  return { wasDefault };
+  return { wasCurrent };
 }
 
 export interface HostsIndexListing extends HostsIndexEntry {

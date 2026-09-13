@@ -26,7 +26,7 @@ describe('CLI Error Handling Tests', () => {
   const configPath = join(import.meta.dir, 'fixtures', 'no-servers.json');
 
   // A spawned CLI reads the real user config dir (APPDATA / HOME) for the
-  // global .env fallback and the stored default host (hosts.json) unless
+  // global .env fallback and the current host (hosts.json) unless
   // redirected — without this, a developer's own config could leak in.
   let configDir: string;
 

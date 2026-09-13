@@ -1,14 +1,19 @@
 /**
  * hosts / use — the host index (src/hosts-index.ts) as CLI surface: list
  * every host this machine has logged in to (or been pointed at) alongside
- * the stored default, and switch the default explicitly.
+ * the current one, and switch the current host explicitly. `use` is the one
+ * command that changes it — logging in first, via the browser, when the
+ * target host has no stored session yet.
  */
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { getSessionExpiryFor, hasStoredSessionFor } from '../auth/session.js';
+import {
+  getSessionExpiryFor,
+  hasStoredSessionFor,
+  login,
+} from '../auth/session.js';
 import { debug, getEnvPrefix, getUserConfigDir } from '../config.js';
-import { ErrorCode } from '../errors.js';
 import {
   type HostSource,
   getHost,
@@ -16,29 +21,30 @@ import {
   isCloudHost,
   normalizeHost,
   orgFromHost,
+  resolveHostFacts,
 } from '../host.js';
 import {
   type HostsIndexEntry,
-  getDefaultHost,
+  clearCurrentHost,
+  getCurrentHost,
   hasHost,
   listHosts,
   markSessionsScanned,
   recordHost,
   sessionsScannedAt,
-  setDefaultHost,
+  setCurrentHost,
 } from '../hosts-index.js';
 
 export interface HostsOptions {
   json?: boolean;
 }
 
-export interface UseOptions {
-  host: string;
-}
+/** Either a host to make current, or --clear to unset the current host entirely. */
+export type UseOptions = { host: string } | { clear: true };
 
 interface HostRow extends HostsIndexEntry {
   host: string;
-  isDefault: boolean;
+  isCurrent: boolean;
   session: boolean;
   sessionExpires?: string;
 }
@@ -105,7 +111,7 @@ const COLUMNS = ['', 'HOST', 'MODE', 'ORG', 'SESSION', 'EXPIRES'] as const;
 
 function rowCells(row: HostRow): string[] {
   return [
-    row.isDefault ? '*' : '',
+    row.isCurrent ? '*' : '',
     row.host,
     row.mode,
     row.org ?? '(none)',
@@ -129,8 +135,8 @@ function formatTable(rows: HostRow[]): string {
     .join('\n');
 }
 
-/** The effective host in this directory, for the table's trailing "current" line. */
-function currentHost(): { host: string; source: HostSource } | null {
+/** The fully-resolved host in this directory, for the table's trailing "current" line. */
+function resolvedHost(): { host: string; source: HostSource } | null {
   try {
     const host = getHost();
     return host ? { host, source: getHostSource() as HostSource } : null;
@@ -144,52 +150,72 @@ function currentHost(): { host: string; source: HostSource } | null {
 export async function hostsCommand(opts: HostsOptions): Promise<void> {
   await scanSessionsOnce();
 
-  const defaultHost = getDefaultHost();
+  const currentHost = getCurrentHost();
   const entries = listHosts();
   const rows: HostRow[] = await Promise.all(
     entries.map(async (e) => ({
       ...e,
-      isDefault: e.host === defaultHost,
+      isCurrent: e.host === currentHost,
       session: await hasStoredSessionFor(e.host),
       sessionExpires: await getSessionExpiryFor(e.host),
     })),
   );
-  const current = currentHost();
+  const resolved = resolvedHost();
 
   if (opts.json) {
-    console.log(JSON.stringify({ defaultHost, current, hosts: rows }, null, 2));
+    console.log(
+      JSON.stringify({ currentHost, current: resolved, hosts: rows }, null, 2),
+    );
     return;
   }
 
   if (rows.length === 0) {
     console.log(
-      'No hosts yet. Run "semantius login --host <host>" to sign in to one.',
+      'No hosts yet. Run "semantius use <host>" to sign in to one and make it current.',
     );
     return;
   }
 
   console.log(formatTable(rows));
   console.log(
-    current ? `current: ${current.host} (${current.source})` : 'current: none',
+    resolved
+      ? `current: ${resolved.host} (${resolved.source})`
+      : 'current: none',
   );
 }
 
 export async function useCommand(opts: UseOptions): Promise<void> {
-  const host = normalizeHost(opts.host);
-
-  if (!(await hasStoredSessionFor(host))) {
-    console.error(
-      `Error [NO_SESSION]: no session stored for ${host}. Run "semantius login --host ${host}" first`,
+  if ('clear' in opts) {
+    // Only the current-host marker goes away: the hosts-index entry and any
+    // stored session are untouched, so "use <host>" again needs no new login.
+    const previous = getCurrentHost();
+    clearCurrentHost();
+    console.log(
+      previous
+        ? `Current host cleared (was ${previous}).`
+        : 'No current host was set.',
     );
-    process.exit(ErrorCode.CLIENT_ERROR);
+    return;
   }
 
-  if (!hasHost(host)) recordHost(host, factsFromHostName(host));
+  const host = normalizeHost(opts.host);
 
-  const previous = setDefaultHost(host);
+  if (await hasStoredSessionFor(host)) {
+    if (!hasHost(host)) recordHost(host, factsFromHostName(host));
+  } else {
+    const facts = await resolveHostFacts(host);
+    await login(facts);
+    recordHost(
+      host,
+      { mode: facts.mode, org: facts.org },
+      { loggedInAt: new Date().toISOString() },
+    );
+  }
+
+  const previous = setCurrentHost(host);
   console.log(
     previous
-      ? `Default host: ${host} (was ${previous})`
-      : `Default host: ${host} (none before)`,
+      ? `Current host: ${host} (was ${previous})`
+      : `Current host: ${host} (none before)`,
   );
 }

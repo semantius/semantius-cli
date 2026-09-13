@@ -12,14 +12,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setEnvPrefix } from '../src/config';
-import { recordHost, setDefaultHost, setHostsIndexDirForTests } from '../src/hosts-index';
+import { recordHost, setCurrentHost, setHostsIndexDirForTests } from '../src/hosts-index';
 
 describe('Startup env variable validation', () => {
   const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
 
   // A spawned CLI reads the real user config dir (APPDATA / HOME) for the
-  // stored default host (hosts.json) unless redirected — without this, a
-  // developer's own recorded default would leak into these "no host
+  // current host (hosts.json) unless redirected — without this, a
+  // developer's own recorded current host would leak into these "no host
   // configured" expectations.
   let configDir: string;
 
@@ -252,7 +252,7 @@ describe('Startup env variable validation', () => {
     });
   });
 
-  describe('binding, the default host, and conflicts', () => {
+  describe('binding, the current host, and conflicts', () => {
     let configDir: string;
     let savedAppData: string | undefined;
     let savedHome: string | undefined;
@@ -273,17 +273,17 @@ describe('Startup env variable validation', () => {
     });
 
     /**
-     * Records `host` as the default in configDir's hosts.json (the same dir
+     * Records `host` as current in configDir's hosts.json (the same dir
      * every spawned child in this describe block is pointed at via
-     * runWithConfigDir), so a startup check against it sees a real default.
+     * runWithConfigDir), so a startup check against it sees a real current host.
      */
-    function seedDefaultHost(host: string): void {
+    function seedCurrentHost(host: string): void {
       process.env.APPDATA = configDir;
       process.env.HOME = configDir;
       setHostsIndexDirForTests(undefined); // force a re-read under the dir just set
       setEnvPrefix('SEMANTIUS');
       recordHost(host, { mode: 'selfhosted', org: null });
-      setDefaultHost(host);
+      setCurrentHost(host);
     }
 
     async function runWithConfigDir(
@@ -304,21 +304,19 @@ describe('Startup env variable validation', () => {
       expect(result.stderr).not.toContain('MISSING_ENV_VAR');
     });
 
-    test('a recorded default host alone passes the startup check', async () => {
-      seedDefaultHost('x.example.com');
+    test('a recorded current host alone passes the startup check', async () => {
+      seedCurrentHost('x.example.com');
       const result = await runWithConfigDir(['grep', 'nonexistent-tool-xyz'], {});
       expect(result.stderr).not.toContain('MISSING_ENV_VAR');
     });
 
-    test('a bare API key next to the default host is CREDENTIAL_WITHOUT_HOST', async () => {
-      seedDefaultHost('x.example.com');
-      const result = await runWithConfigDir(['grep', '*'], {
+    test('a bare API key next to the current host is ignored, not an error', async () => {
+      seedCurrentHost('x.example.com');
+      const result = await runWithConfigDir(['grep', 'nonexistent-tool-xyz'], {
         SEMANTIUS_API_KEY: 'bare-key',
       });
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('Error [CREDENTIAL_WITHOUT_HOST]:');
-      expect(result.stderr).toContain('SEMANTIUS_API_KEY');
-      expect(result.stderr).toContain('x.example.com');
+      expect(result.stderr).not.toContain('CREDENTIAL_WITHOUT_HOST');
+      expect(result.stderr).not.toContain('MISSING_ENV_VAR');
     });
 
     test('SEMANTIUS_HOST plus an org-bound credential naming a different host is a HOST_CONFLICT', async () => {

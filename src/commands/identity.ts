@@ -20,7 +20,7 @@ import {
   toolExecutionError,
 } from '../errors.js';
 import { getHost, getHostSource } from '../host.js';
-import { getDefaultHost } from '../hosts-index.js';
+import { getCurrentHost } from '../hosts-index.js';
 import { getRecordedJwt } from '../logger.js';
 import { McpToolError } from '../output.js';
 
@@ -285,8 +285,8 @@ export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
   // neither call below can throw (a HOST_CONFLICT or invalid host would have
   // exited before whoami ever ran).
   const host = getHost();
-  const defaultSuffix = host && host === getDefaultHost() ? ' (default)' : '';
-  console.log(`${ts}  host  ${host ?? '(none)'}${defaultSuffix}`);
+  const currentSuffix = host && host === getCurrentHost() ? ' (current)' : '';
+  console.log(`${ts}  host  ${host ?? '(none)'}${currentSuffix}`);
   console.log(`${ts}  host_source  ${getHostSource() ?? '(none)'}`);
 
   let user: CurrentUser;

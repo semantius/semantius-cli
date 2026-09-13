@@ -1,5 +1,5 @@
 /**
- * Tests for the host index (src/hosts-index.ts): the default host, the
+ * Tests for the host index (src/hosts-index.ts): the current host, the
  * per-host record, and the sessions-scan marker — all scoped to the active
  * --env prefix and persisted at <dir>/hosts.json.
  */
@@ -11,8 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setEnvPrefix } from '../src/config';
 import {
-  clearDefaultHost,
-  getDefaultHost,
+  clearCurrentHost,
+  getCurrentHost,
   getHostsIndexPath,
   hasHost,
   listHosts,
@@ -20,7 +20,7 @@ import {
   recordHost,
   removeHost,
   sessionsScannedAt,
-  setDefaultHost,
+  setCurrentHost,
   setHostsIndexDirForTests,
 } from '../src/hosts-index';
 
@@ -39,8 +39,8 @@ describe('hosts index', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('empty index: no default, no hosts, no scan marker', () => {
-    expect(getDefaultHost()).toBeNull();
+  test('empty index: no current host, no hosts, no scan marker', () => {
+    expect(getCurrentHost()).toBeNull();
     expect(listHosts()).toEqual([]);
     expect(hasHost('acme.semantius.cloud')).toBe(false);
     expect(sessionsScannedAt()).toBeNull();
@@ -48,19 +48,19 @@ describe('hosts index', () => {
     expect(existsSync(getHostsIndexPath())).toBe(false);
   });
 
-  test('round trip: recordHost, setDefaultHost, listHosts, hasHost survive a reload', () => {
+  test('round trip: recordHost, setCurrentHost, listHosts, hasHost survive a reload', () => {
     recordHost(
       'acme.semantius.cloud',
       { mode: 'cloud', org: 'acme' },
       { loggedInAt: '2026-01-01T00:00:00.000Z' },
     );
     recordHost('x.example.com', { mode: 'selfhosted', org: null });
-    setDefaultHost('acme.semantius.cloud');
+    setCurrentHost('acme.semantius.cloud');
 
     // Simulate a new process re-reading the same file.
     setHostsIndexDirForTests(dir);
 
-    expect(getDefaultHost()).toBe('acme.semantius.cloud');
+    expect(getCurrentHost()).toBe('acme.semantius.cloud');
     expect(hasHost('acme.semantius.cloud')).toBe(true);
     expect(hasHost('x.example.com')).toBe(true);
     expect(hasHost('nope.example.com')).toBe(false);
@@ -109,47 +109,47 @@ describe('hosts index', () => {
     expect(listHosts()[0].loggedInAt).toBe('2026-02-02T00:00:00.000Z');
   });
 
-  test('setDefaultHost returns the previous default (null the first time)', () => {
-    expect(setDefaultHost('a.semantius.cloud')).toBeNull();
-    expect(setDefaultHost('b.semantius.cloud')).toBe('a.semantius.cloud');
-    expect(getDefaultHost()).toBe('b.semantius.cloud');
+  test('setCurrentHost returns the previous current host (null the first time)', () => {
+    expect(setCurrentHost('a.semantius.cloud')).toBeNull();
+    expect(setCurrentHost('b.semantius.cloud')).toBe('a.semantius.cloud');
+    expect(getCurrentHost()).toBe('b.semantius.cloud');
   });
 
-  test('clearDefaultHost leaves recorded hosts untouched', () => {
+  test('clearCurrentHost leaves recorded hosts untouched', () => {
     recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
-    setDefaultHost('acme.semantius.cloud');
-    clearDefaultHost();
-    expect(getDefaultHost()).toBeNull();
+    setCurrentHost('acme.semantius.cloud');
+    clearCurrentHost();
+    expect(getCurrentHost()).toBeNull();
     expect(hasHost('acme.semantius.cloud')).toBe(true);
   });
 
-  test('removeHost: wasDefault is true only when the removed host was the default', () => {
+  test('removeHost: wasCurrent is true only when the removed host was current', () => {
     recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
     recordHost('other.semantius.cloud', { mode: 'cloud', org: 'other' });
-    setDefaultHost('acme.semantius.cloud');
+    setCurrentHost('acme.semantius.cloud');
 
-    expect(removeHost('other.semantius.cloud')).toEqual({ wasDefault: false });
-    expect(getDefaultHost()).toBe('acme.semantius.cloud');
+    expect(removeHost('other.semantius.cloud')).toEqual({ wasCurrent: false });
+    expect(getCurrentHost()).toBe('acme.semantius.cloud');
 
-    expect(removeHost('acme.semantius.cloud')).toEqual({ wasDefault: true });
-    expect(getDefaultHost()).toBeNull();
+    expect(removeHost('acme.semantius.cloud')).toEqual({ wasCurrent: true });
+    expect(getCurrentHost()).toBeNull();
     expect(hasHost('acme.semantius.cloud')).toBe(false);
   });
 
   test('removeHost on an unknown host is a no-op', () => {
-    expect(removeHost('nope.example.com')).toEqual({ wasDefault: false });
+    expect(removeHost('nope.example.com')).toEqual({ wasCurrent: false });
   });
 
-  test('removeHost clears a dangling default even with no matching entry', () => {
-    // Not reachable through setDefaultHost's own callers (they always
+  test('removeHost clears a dangling current host even with no matching entry', () => {
+    // Not reachable through setCurrentHost's own callers (they always
     // recordHost first), but hosts.json could end up this way regardless —
     // a hand edit, or a future caller that skips recordHost — and the
-    // default must not survive the host it named being "removed".
-    setDefaultHost('ghost.example.com');
+    // current host must not survive the host it named being "removed".
+    setCurrentHost('ghost.example.com');
     expect(hasHost('ghost.example.com')).toBe(false);
 
-    expect(removeHost('ghost.example.com')).toEqual({ wasDefault: true });
-    expect(getDefaultHost()).toBeNull();
+    expect(removeHost('ghost.example.com')).toEqual({ wasCurrent: true });
+    expect(getCurrentHost()).toBeNull();
   });
 
   test('markSessionsScanned records an ISO timestamp; unset before that', () => {
@@ -158,33 +158,33 @@ describe('hosts index', () => {
     expect(sessionsScannedAt()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  test('per-prefix isolation: PROD and SEMANTIUS keep separate defaults and hosts', () => {
+  test('per-prefix isolation: PROD and SEMANTIUS keep separate current hosts and hosts', () => {
     setEnvPrefix('SEMANTIUS');
     recordHost('sem.semantius.cloud', { mode: 'cloud', org: 'sem' });
-    setDefaultHost('sem.semantius.cloud');
+    setCurrentHost('sem.semantius.cloud');
 
     setEnvPrefix('PROD');
-    expect(getDefaultHost()).toBeNull();
+    expect(getCurrentHost()).toBeNull();
     expect(hasHost('sem.semantius.cloud')).toBe(false);
     recordHost('prod.semantius.cloud', { mode: 'cloud', org: 'prod' });
-    setDefaultHost('prod.semantius.cloud');
+    setCurrentHost('prod.semantius.cloud');
 
     setEnvPrefix('SEMANTIUS');
-    expect(getDefaultHost()).toBe('sem.semantius.cloud');
+    expect(getCurrentHost()).toBe('sem.semantius.cloud');
     expect(hasHost('prod.semantius.cloud')).toBe(false);
 
     setEnvPrefix('PROD');
-    expect(getDefaultHost()).toBe('prod.semantius.cloud');
+    expect(getCurrentHost()).toBe('prod.semantius.cloud');
   });
 
   test('corrupt file reads as empty; a later write repairs it', () => {
     writeFileSync(getHostsIndexPath(), 'not json', 'utf8');
-    expect(getDefaultHost()).toBeNull();
+    expect(getCurrentHost()).toBeNull();
     expect(listHosts()).toEqual([]);
 
-    setDefaultHost('acme.semantius.cloud');
+    setCurrentHost('acme.semantius.cloud');
     setHostsIndexDirForTests(dir); // force a re-read from disk
-    expect(getDefaultHost()).toBe('acme.semantius.cloud');
+    expect(getCurrentHost()).toBe('acme.semantius.cloud');
     expect(JSON.parse(readFileSync(getHostsIndexPath(), 'utf8')).version).toBe(
       1,
     );
@@ -196,21 +196,21 @@ describe('hosts index', () => {
       JSON.stringify({ version: 2, profiles: { SEMANTIUS: { hosts: {} } } }),
       'utf8',
     );
-    expect(getDefaultHost()).toBeNull();
+    expect(getCurrentHost()).toBeNull();
 
-    setDefaultHost('acme.semantius.cloud');
+    setCurrentHost('acme.semantius.cloud');
     setHostsIndexDirForTests(dir);
-    expect(getDefaultHost()).toBe('acme.semantius.cloud');
+    expect(getCurrentHost()).toBe('acme.semantius.cloud');
   });
 
   test('a missing profiles object reads as empty', () => {
     writeFileSync(getHostsIndexPath(), JSON.stringify({ version: 1 }), 'utf8');
-    expect(getDefaultHost()).toBeNull();
+    expect(getCurrentHost()).toBeNull();
     expect(listHosts()).toEqual([]);
   });
 
   test('write leaves no .tmp file behind', async () => {
-    setDefaultHost('acme.semantius.cloud');
+    setCurrentHost('acme.semantius.cloud');
     const files = await readdir(dir);
     expect(files.some((f) => f.endsWith('.tmp'))).toBe(false);
     expect(files).toContain('hosts.json');
@@ -218,7 +218,7 @@ describe('hosts index', () => {
 
   test('file is written 0600 (non-Windows)', () => {
     if (process.platform === 'win32') return;
-    setDefaultHost('acme.semantius.cloud');
+    setCurrentHost('acme.semantius.cloud');
     expect(statSync(getHostsIndexPath()).mode & 0o777).toBe(0o600);
   });
 

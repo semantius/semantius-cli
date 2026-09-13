@@ -31,6 +31,7 @@ import {
   getUserConfigDir,
   ignoreEnvCredentials,
   isCrudMcp,
+  isSessionOnlyHost,
   loadDotEnv,
   prefixedEnvName,
   setAuthFlag,
@@ -38,9 +39,7 @@ import {
   setEnvPrefix,
   setHostFlag,
   setTokenArg,
-  snapshotEnvHost,
   splitOrgPrefix,
-  strayCredentialError,
 } from './config.js';
 import { runDaemonFromArgv } from './daemon.js';
 import {
@@ -56,10 +55,8 @@ import {
   deleteHostCache,
   getHost,
   getHostMode,
-  getHostSource,
   normalizeHost,
   propagateOrg,
-  resolveHostValue,
 } from './host.js';
 import {
   deleteCachedToken,
@@ -99,10 +96,12 @@ interface ParsedArgs {
   /** --token <org:jwt | ->; undefined unless the flag was given. */
   token?: string;
   tokenFile?: string;
-  /** Positional argument for "use". */
+  /** Positional argument for "use"; absent when --clear is given instead. */
   useHost?: string;
   /** --json, for "hosts" only. */
   json: boolean;
+  /** --clear, for "use" only: clear the current host instead of setting one. */
+  clear: boolean;
   crudMcp: boolean;
   pingCount?: number;
   disableJwtCache: boolean;
@@ -252,6 +251,7 @@ function parseArgs(args: string[]): ParsedArgs {
     stream: false,
     envPrefix: 'SEMANTIUS',
     json: false,
+    clear: false,
     crudMcp: false,
     disableJwtCache: false,
     resetCache: false,
@@ -290,6 +290,10 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--json':
         result.json = true;
+        break;
+
+      case '--clear':
+        result.clear = true;
         break;
 
       case '--single':
@@ -528,6 +532,22 @@ function parseArgs(args: string[]): ParsedArgs {
   }
 
   if (firstArg === 'use') {
+    if (result.clear) {
+      if (positional.length > 1) {
+        console.error(
+          formatCliError({
+            code: ErrorCode.CLIENT_ERROR,
+            type: 'INVALID_OPTION',
+            message: '--clear cannot be combined with a host argument',
+            suggestion:
+              'Use "semantius use --clear" on its own, or "semantius use <host>" without --clear',
+          }),
+        );
+        process.exit(ErrorCode.CLIENT_ERROR);
+      }
+      result.command = 'use';
+      return result;
+    }
     if (positional.length > 2) {
       console.error(
         formatCliError(tooManyArgumentsError('use', positional.length - 1, 1)),
@@ -661,8 +681,8 @@ function missingHostWarning(): string {
   return `
 ⚠  No host configured: set ${prefixedEnvName('ORG')} or --host (or ${prefixedEnvName('HOST')}).
    Set it in ${getUserConfigDir()}/.env or export it in your shell.
-   Or run "semantius login" to sign in with the browser, then "semantius use <host>"
-   to make it the default host for every directory.
+   Or run "semantius use <host>" to sign in (with the browser, if needed) and
+   make it your current host for every directory.
    Generate an API key at https://app.semantius.com/dashboard`;
 }
 
@@ -688,8 +708,9 @@ Usage:
   semantius [options] whoami                       Show current user (email, org, roles)
   semantius [options] login                        Sign in with the browser and store the session for the host
   semantius [options] logout                       Revoke and delete the stored session for the host
-  semantius [options] hosts [--json]                List every host this machine has a session or default for
-  semantius use <host>                             Make <host> the default host (needs a stored session)
+  semantius [options] hosts [--json]                List every host this machine has a session or is current for
+  semantius use <host>                             Make <host> the current host (signs in with the browser first if needed)
+  semantius use --clear                            Unset the current host (session and hosts entry untouched)
 
 Formats (both work):
   semantius info server tool                       Space-separated
@@ -706,26 +727,33 @@ Built-in servers:
 Credentials (first match wins):
   1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
   2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached per host
-  3. ${'browser login'.padEnd(22)} The session stored by "semantius login" for this host (kept in
-                            the OS keyring, refreshed automatically)
+  3. ${'browser login'.padEnd(22)} The session stored for this host (kept in the OS keyring,
+                            refreshed automatically)
   Without any of them, commands that call the platform exit 5 ("Authentication required").
-  --auth jwt|apikey|oauth picks one source explicitly.
+  --auth jwt|apikey|oauth picks one source explicitly. --token/--token-file supply their
+  own JWT directly (see below) and are not affected by --auth.
 
-  With --host, or on the stored default host (see "hosts"/"use" below), only a stored
-  browser session is used — the API key, JWT and org from the environment are ignored.
-  To pair a host with an API key instead, set ${hostVar} (or use
-  --env <prefix> with <PREFIX>_HOST and <PREFIX>_API_KEY).
+  With --host, or on the current host (see "hosts"/"use" below), only a stored browser
+  session is used — a leftover API key / JWT / org in the environment is ignored (not
+  an error). To pair a host with an API key instead, set ${hostVar} alongside
+  ${apiKeyVar} (shell, or the same .env file), or use --env <prefix> for a second pair.
 
-  An "org:" prefix on ${apiKeyVar} / ${jwtVar} (or --token) binds the invocation to
-  that org's host: it wins over ${hostVar}, and a --host / ${hostVar} naming a
-  *different* host is a HOST_CONFLICT error rather than a silent pick.
+  An "org:" prefix on ${apiKeyVar} / ${jwtVar} binds it to that org's host. It is only
+  compared against a ${hostVar} set alongside it (same shell, or the same .env file):
+  naming a *different* host there is a HOST_CONFLICT error. A ${hostVar} or current host
+  resolved before that credential is even reached is never compared against it — and the
+  credential itself is then ignored, since it was never issued for the host actually in use.
 
 Hosts:
-  The CLI talks to one host per invocation: --host, then a bound credential (above),
-  then ${hostVar}, then ${orgVar}, then the stored default (last rung). "semantius
-  login" records the host it signs in to and, the first time there is no other
-  setting to conflict with, makes it the default; "semantius use <host>" sets it
-  explicitly. "semantius hosts" lists every host this machine knows about.
+  The CLI talks to one host per invocation, first match wins: --host, then --token's own
+  org, then the current host ("semantius use", below), then ${hostVar} / ${orgVar} — checked
+  in the shell environment, then the project's .env, then the global .env, host before org
+  at each. "semantius use <host>" signs in with the browser first if there is no stored
+  session yet, then makes <host> the current host, overriding ${hostVar} / ${orgVar}
+  everywhere until changed; "semantius use --clear" unsets it again (the session and hosts
+  entry are kept — "semantius logout" is what removes those). "semantius login" only stores
+  a session for the host it resolves to — it never changes the current host. "semantius
+  hosts" lists every host this machine knows about, marking the current one.
 
 Options:
   -h, --help               Show this help message
@@ -735,6 +763,7 @@ Options:
   --diag                   (call) Output full JSON response instead of just response.data
                            (whoami) Also show the bearer token used for the request
   --json                   (hosts only) Machine-readable output instead of the table
+  --clear                  (use only) Unset the current host instead of setting one: "semantius use --clear"
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows.
                            Rejected (exit 1) for bulk calls: an array in data/body/id/table_name
   --stream                 (call crud postgrestRequest only) Pipe the PostgREST response body to stdout
@@ -749,10 +778,11 @@ Options:
                            credentials stored for that host (see Credentials)
   --auth <source>          Use exactly one credential source: jwt, apikey or oauth (the stored
                            browser session). Not with --host for jwt/apikey — see Credentials
-  --token <org:jwt | ->    A JWT for the invocation, binding it to <org>.semantius.cloud (error if
-                           --host / SEMANTIUS_HOST names a different host). "-" reads it from stdin;
-                           a literal value is visible in the shell history and process list — prefer
-                           "-" or --token-file. Not with --auth apikey/oauth or --login
+  --token <org:jwt | ->    A JWT for the invocation, binding it to <org>.semantius.cloud — wins
+                           over the current host and any ${hostVar} / ${orgVar} from the
+                           environment or .env. "-" reads it from stdin; a literal value is
+                           visible in the shell history and process list — prefer "-" or
+                           --token-file. Not with --host, --auth apikey/oauth, or --login
   --token-file <path>      Same as --token, read from a file (org:jwt, trimmed)
   --login                  Sign in with the browser first, then run the command with that session
                            (needs an interactive terminal)
@@ -788,19 +818,21 @@ Examples:
   semantius --host semantius.example.com whoami    # Self-hosted instance
   semantius login --host acme.semantius.app        # Browser login, stored for acme.semantius.cloud
   semantius --host acme.semantius.app whoami       # Uses that stored session
-  semantius login                                  # Also makes it the default host, if none is set yet
+  semantius use acme.semantius.cloud               # Sign in if needed, then make it the current host
   semantius hosts                                  # List every host this machine knows about
-  semantius use acme.semantius.cloud               # Make it the default explicitly
+  semantius use --clear                            # Stop using a current host; fall back to env/.env
   echo acme:eyJ... | semantius --token - whoami    # A one-off token, from stdin
 
 Environment Variables (all respect --env <prefix>; default prefix shown):
   ${orgVar.padEnd(28)} Organization on the managed cloud; the host defaults to
-                               <org>.semantius.cloud. Required unless ${hostVar},
-                               --host or the stored default host is set (an "org:" prefix
-                               on the API key or JWT also supplies it)
-  ${hostVar.padEnd(28)} Hostname, same as --host. Precedence: --host, then a bound
-                               credential, then ${hostVar} (shell, project .env, global .env),
-                               then ${orgVar}, then the stored default host. <org>.semantius.app
+                               <org>.semantius.cloud. Required unless ${hostVar}, --host,
+                               --token or the current host is set (an "org:" prefix on the
+                               API key or JWT also supplies it, for whichever of shell,
+                               project .env or global .env that variable is set in)
+  ${hostVar.padEnd(28)} Hostname, same as --host. Checked before ${orgVar} in each of the
+                               shell environment, the project .env and the global .env — but
+                               only once --host, --token and the current host (see
+                               "hosts"/"use") have all left the host unset. <org>.semantius.app
                                / .ai / .io map to <org>.semantius.cloud
   ${apiKeyVar.padEnd(28)} API key for Semantius (needed to call tools unless ${jwtVar} is set).
                                Value may be "org:key" — the org prefix overrides ${orgVar}
@@ -852,7 +884,7 @@ function checkRequiredEnvVars(): void {
     const orgVar = prefixedEnvName('ORG');
     for (const v of missing) {
       console.error(
-        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host, or run "semantius login" / "semantius use <host>")`,
+        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host, or run "semantius use <host>")`,
       );
     }
     console.error('Generate an API key at https://app.semantius.com/dashboard');
@@ -993,6 +1025,25 @@ async function main(): Promise<void> {
     process.exit(ErrorCode.CLIENT_ERROR);
   }
 
+  // --token's value names its own organization (and so its own host);
+  // --host would either restate that or contradict it, so the two are
+  // never combined — unlike --host, --token is never session-only, so
+  // "relax and let --host pick the mode" isn't an option here either.
+  if (
+    args.host !== undefined &&
+    (args.token !== undefined || args.tokenFile !== undefined)
+  ) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: `--host cannot be combined with ${tokenFlagLabel}`,
+        suggestion: `${tokenFlagLabel} already names its own host via the token's organization; drop --host`,
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
   // --token / --token-file already supply a JWT: --auth would only be
   // picking among credentials that no longer apply.
   if (
@@ -1074,14 +1125,11 @@ async function main(): Promise<void> {
   }
 
   // With --host only credentials stored for that host apply, so --auth can
-  // only pick among those — never the environment's key or token. Relaxed
-  // for --auth jwt when --token / --token-file is set: the flag names the
-  // token's own host, so forcing jwt is consistent rather than contradictory
-  // (--auth apikey / oauth already can't reach here with --token, see above).
+  // only pick among those — never the environment's key or token (--token /
+  // --token-file cannot reach here at all: they were already rejected above
+  // for combining with --host).
   if (
     args.host !== undefined &&
-    args.token === undefined &&
-    args.tokenFile === undefined &&
     (args.auth === 'jwt' || args.auth === 'apikey')
   ) {
     console.error(
@@ -1139,54 +1187,32 @@ async function main(): Promise<void> {
     return;
   }
   if (args.command === 'use') {
-    await useCommand({ host: args.useHost as string });
+    await useCommand(
+      args.clear ? { clear: true } : { host: args.useHost as string },
+    );
     return;
   }
 
-  // Resolve the host and where it came from before anything else touches the
-  // credential env vars: a bound credential (--token, or an "org:"-prefixed
-  // API key / JWT) that conflicts with --host / ${PREFIX}_HOST must be
-  // reported here, not hidden by ignoreEnvCredentials() blanking it first.
-  let hostSource: ReturnType<typeof getHostSource>;
+  // Resolve the host before anything else touches the credential env vars: a
+  // HOST_CONFLICT between an org-bound credential and ${PREFIX}_HOST (or a
+  // bare ${PREFIX}_ORG) *at the same layer* is reported inside
+  // isSessionOnlyHost()'s own getHostSource() call (host.ts's
+  // resolveHostValue); a credential whose layer is never reached is
+  // suppressed there too, so it cannot leak into the credential lookups
+  // below either way.
+  //
+  // With --host, or the current host (`semantius use`), only a stored
+  // browser session applies — never the API key / JWT / org from the
+  // environment. --token does not count as session-only: it is itself the
+  // credential for this invocation (see getCredentialSource()), not a host
+  // that only a session can authenticate against.
   try {
-    hostSource = getHostSource();
+    if (isSessionOnlyHost()) {
+      ignoreEnvCredentials();
+    }
   } catch (error) {
     console.error((error as Error).message);
     process.exit(ErrorCode.CLIENT_ERROR);
-  }
-
-  // The snapshot captures what the environment alone (no --host, no stored
-  // default) would resolve to, for loginCommand's decideDefaultAfterLogin —
-  // taken now, before ignoreEnvCredentials() can blank the credential it
-  // reflects. Its own try/catch, separate from the authoritative call above:
-  // --host can resolve the real host just fine (e.g. it matches a bound
-  // credential) while *ignoring* --host newly exposes an unrelated conflict
-  // between that credential and a stray ${PREFIX}_HOST — informational only,
-  // so it must not abort a command --host already made valid.
-  try {
-    snapshotEnvHost(
-      resolveHostValue({ ignoreFlag: true, ignoreDefault: true })?.host ?? null,
-    );
-  } catch {
-    snapshotEnvHost(null);
-  }
-
-  // A bare API key / JWT left over from a project .env, next to a host that
-  // only came from the stored default, would silently never be used
-  // (session-only, see below) — reject that contradiction instead.
-  if (hostSource === 'default') {
-    const strayError = strayCredentialError();
-    if (strayError) {
-      console.error(strayError);
-      process.exit(ErrorCode.CLIENT_ERROR);
-    }
-  }
-
-  // With --host, or a host with no other setting but the stored default,
-  // only a stored browser session applies — never the API key / JWT / org
-  // from the environment.
-  if (hostSource === 'flag' || hostSource === 'default') {
-    ignoreEnvCredentials();
   }
 
   // On a cloud host the host's org becomes ${PREFIX}_ORG (the host wins over

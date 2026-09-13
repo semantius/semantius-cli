@@ -221,7 +221,6 @@ export function setEnvPrefix(prefix: string): void {
   _envPrefix = prefix.toUpperCase();
   _credentialOrgs = {};
   _tokenArg = undefined;
-  _envHostSnapshot = undefined;
 }
 
 export function getEnvPrefix(): string {
@@ -263,7 +262,7 @@ export function getAuthFlag(): AuthFlag | undefined {
  * after parseArgs (before loadDotEnv). Kept as state rather than written
  * into process.env so that ignoreEnvCredentials() cannot blank it and
  * describeEnvVar() cannot misattribute it to a .env file — the flag names
- * its own host directly (see getCredentialBinding), independent of --host.
+ * its own host directly, and cannot be combined with --host (see index.ts).
  */
 export interface TokenArg {
   org: string;
@@ -281,15 +280,17 @@ export function getTokenArg(): TokenArg | undefined {
 }
 
 /**
- * --host names a host explicitly: credentials belong to the host they were
- * stored for, so the API key, static JWT and org configured in the
- * environment / .env are not used. They are set to empty so no code path
- * (the local layer, or the MCP route's config templates) can pick them up;
- * on a cloud host the org is re-derived from the host (propagateOrg).
+ * --host, --token or the current host (`semantius use`) name a host
+ * explicitly: credentials belong to the host they were stored for (or, for
+ * --token, travel with the flag itself), so the API key, static JWT and org
+ * configured in the environment / .env are not used. They are set to empty
+ * so no code path (the local layer, or the MCP route's config templates) can
+ * pick them up; on a cloud host the org is re-derived from the host
+ * (propagateOrg).
  *
  * Clears the recorded org bindings (_credentialOrgs) along with the env vars
  * they were hoisted from, but never _tokenArg: --token names the invocation's
- * own host and survives --host blanking (see getEnvJwt).
+ * own host and credential, independent of process.env entirely.
  */
 export function ignoreEnvCredentials(): void {
   for (const name of ['API_KEY', 'JWT', 'ORG']) {
@@ -370,9 +371,9 @@ export function getEnvJwt(): string | undefined {
 
 /**
  * Required env vars that are actually missing: a host must be resolvable.
- * Delegates to getHost() so every rung counts — --host, ${PREFIX}_HOST,
- * --token / an org-bound credential, ${PREFIX}_ORG, and the stored default
- * host. Returns [${PREFIX}_ORG] when getHost() resolves to null.
+ * Delegates to getHost() so every rung counts — --host, --token, the current
+ * host (`semantius use`), ${PREFIX}_HOST and ${PREFIX}_ORG (shell, local or
+ * global .env). Returns [${PREFIX}_ORG] when getHost() resolves to null.
  *
  * getHost() can throw (an invalid host, or a bound credential conflicting
  * with --host / ${PREFIX}_HOST): that failure is reported properly by main's
@@ -391,56 +392,63 @@ export function getMissingRequiredEnvVars(): string[] {
 }
 
 /**
- * The org a credential binds the invocation to, or null when neither carries
- * one. --token wins (it is the invocation's own, explicit credential), then
- * ${PREFIX}_JWT, then ${PREFIX}_API_KEY — the same order normalizeCredentialEnv
- * hoists them in. Consulted by host.ts's resolveHostValue to raise a bound
- * credential's host above ${PREFIX}_HOST, and to detect a conflict with it.
+ * An org-bound credential: the org its "org:" prefix named, and the env var
+ * it came from. Read by host.ts's resolveHostValue (getJwtOrgInfo /
+ * getApiKeyOrgInfo) to place it at the right layer of the host-resolution
+ * walk and to detect a same-layer conflict with ${PREFIX}_HOST.
  */
-export interface CredentialBinding {
+export interface CredentialOrgInfo {
   org: string;
-  source: 'token-arg' | 'jwt-env' | 'apikey-env';
-  /** The env var the binding came from; absent for source 'token-arg'. */
-  varName?: string;
-}
-
-export function getCredentialBinding(): CredentialBinding | null {
-  if (_tokenArg) return { org: _tokenArg.org, source: 'token-arg' };
-  if (_credentialOrgs.jwt) {
-    return {
-      org: _credentialOrgs.jwt.org,
-      source: 'jwt-env',
-      varName: _credentialOrgs.jwt.varName,
-    };
-  }
-  if (_credentialOrgs.apikey) {
-    return {
-      org: _credentialOrgs.apikey.org,
-      source: 'apikey-env',
-      varName: _credentialOrgs.apikey.varName,
-    };
-  }
-  return null;
+  varName: string;
 }
 
 /**
  * Which credential env var(s) carried an "org:" prefix this invocation, and
- * what they were hoisted to. Populated by normalizeCredentialEnv, read by
- * getCredentialBinding; cleared by ignoreEnvCredentials (never by a later,
- * now-prefix-less normalizeCredentialEnv call — see its docstring).
+ * what they were hoisted to. Populated by normalizeCredentialEnv; cleared by
+ * ignoreEnvCredentials or suppressCredential (never by a later, now-prefix-
+ * less normalizeCredentialEnv call — see its docstring).
  */
 let _credentialOrgs: {
-  apikey?: { org: string; varName: string };
-  jwt?: { org: string; varName: string };
+  apikey?: CredentialOrgInfo;
+  jwt?: CredentialOrgInfo;
 } = {};
+
+/** The org ${PREFIX}_JWT was prefixed with, or undefined if unprefixed/unset. */
+export function getJwtOrgInfo(): CredentialOrgInfo | undefined {
+  return _credentialOrgs.jwt;
+}
+
+/** The org ${PREFIX}_API_KEY was prefixed with, or undefined if unprefixed/unset. */
+export function getApiKeyOrgInfo(): CredentialOrgInfo | undefined {
+  return _credentialOrgs.apikey;
+}
+
+/**
+ * Suppress one credential var and forget its org-prefix, because host
+ * resolution determined it belongs to a layer the walk never reached (see
+ * host.ts's suppressUnreachedCredentials) — set to "" like
+ * ignoreEnvCredentials does, so no code path can still pick it up.
+ */
+export function suppressCredential(which: 'jwt' | 'apikey'): void {
+  const name = which === 'jwt' ? `${_envPrefix}_JWT` : `${_envPrefix}_API_KEY`;
+  process.env[name] = '';
+  _credentialOrgs[which] = undefined;
+}
 
 /**
  * Normalize credential env vars in place after .env loading:
- *   - Hoist an "org:" prefix from ${PREFIX}_API_KEY / ${PREFIX}_JWT into
- *     ${PREFIX}_ORG (deliberately overwriting an existing ORG — the prefix
- *     wins) and record it in _credentialOrgs. JWT is processed second so its
- *     org beats the API key's, both for ${PREFIX}_ORG and for
- *     getCredentialBinding's precedence.
+ *   - Strip an "org:" prefix from ${PREFIX}_API_KEY / ${PREFIX}_JWT and
+ *     record it in _credentialOrgs (getJwtOrgInfo/getApiKeyOrgInfo), read by
+ *     host.ts's per-layer resolution. Deliberately never writes
+ *     ${PREFIX}_ORG itself: that stayed a plain per-layer env var (host.ts's
+ *     orgAt reads it directly), so a layer's own bare org — the shell's,
+ *     say — is never clobbered by some other, lower-precedence layer's
+ *     credential. ${PREFIX}_ORG still ends up set correctly for config
+ *     templating (getDefaultConfig's cube URL, REMOTE_CRUD_MCP) on a cloud
+ *     host: propagateOrg() sets it from the host that actually won
+ *     resolution, once resolution is done. JWT is processed second so its
+ *     org beats the API key's in getJwtOrgInfo/getApiKeyOrgInfo's
+ *     precedence in host.ts.
  *   - Backfill ${PREFIX}_API_KEY='' whenever it is undefined (JWT-only and
  *     credential-less sessions alike) so the default config's
  *     ${PREFIX}_API_KEY reference substitutes cleanly under strict mode
@@ -454,7 +462,6 @@ let _credentialOrgs: {
 export function normalizeCredentialEnv(): void {
   const apiKeyName = `${_envPrefix}_API_KEY`;
   const jwtName = `${_envPrefix}_JWT`;
-  const orgName = `${_envPrefix}_ORG`;
 
   const hoist = (name: string, key: 'apikey' | 'jwt'): void => {
     const raw = process.env[name];
@@ -462,7 +469,6 @@ export function normalizeCredentialEnv(): void {
     const { org, value } = splitOrgPrefix(raw);
     if (!org) return;
     process.env[name] = value;
-    process.env[orgName] = org;
     _credentialOrgs[key] = { org, varName: name };
   };
 
@@ -476,68 +482,14 @@ export function normalizeCredentialEnv(): void {
 
 /**
  * Whether only a stored browser session can supply credentials for this
- * invocation: the host came from --host or the stored default, and no
- * --token argument names its own. On a session-only host, a bare
- * ${PREFIX}_API_KEY / ${PREFIX}_JWT left over from a project .env is never
- * used (see strayCredentialError) — only the session stored for the host.
+ * invocation: the host came from --host or the current host (`semantius
+ * use`). There, a bare ${PREFIX}_API_KEY / ${PREFIX}_JWT left over from a
+ * project .env is ignored — see ignoreEnvCredentials — never sent anywhere;
+ * only the session stored for the host applies.
  */
 export function isSessionOnlyHost(): boolean {
-  if (_tokenArg) return false;
   const source = getHostSource();
-  return source === 'flag' || source === 'default';
-}
-
-/**
- * A bare ${PREFIX}_API_KEY / ${PREFIX}_JWT sitting next to a host that came
- * from the stored default is a contradiction, not a credential to silently
- * drop: it was set for whatever host was configured when it was written, not
- * necessarily the default one. Returns the formatted error, or null when
- * there is nothing to complain about. Checked by main() before blanking, for
- * a source-'default' host only — with --host the same setup is unremarkable
- * (blanked silently, as always) because naming the host is the explicit point
- * of the flag.
- *
- * JWT is checked first, matching getCredentialSource's precedence. Only a
- * bare value reaches here: an org-prefixed one would have produced a binding
- * and therefore a different host source (see getCredentialBinding).
- */
-export function strayCredentialError(): string | null {
-  if (getHostSource() !== 'default') return null;
-
-  const jwtName = `${_envPrefix}_JWT`;
-  const apiKeyName = `${_envPrefix}_API_KEY`;
-  const varName = process.env[jwtName]
-    ? jwtName
-    : process.env[apiKeyName]
-      ? apiKeyName
-      : null;
-  if (!varName) return null;
-
-  return formatCliError({
-    code: ErrorCode.CLIENT_ERROR,
-    type: 'CREDENTIAL_WITHOUT_HOST',
-    message: `${describeEnvVar(varName)} names no host, and the host ${getHost()} comes from the stored default`,
-    suggestion: `Set ${prefixedEnvName('ORG')} / ${prefixedEnvName('HOST')} next to it, prefix it "org:key", or unset it`,
-  });
-}
-
-/**
- * The host the environment alone would resolve to — ignoring --host and the
- * stored default — captured by main() right after getHostSource(), before
- * ignoreEnvCredentials() can blank the credential it was derived from.
- * loginCommand reads it to decide whether a fresh login should become the
- * default host (see decideDefaultAfterLogin): undefined means "not captured
- * yet" (a bug, since main() always sets it before dispatching a command);
- * null means the environment resolves to no host at all.
- */
-let _envHostSnapshot: string | null | undefined;
-
-export function snapshotEnvHost(host: string | null): void {
-  _envHostSnapshot = host;
-}
-
-export function getSnapshotEnvHost(): string | null | undefined {
-  return _envHostSnapshot;
+  return source === 'flag' || source === 'current';
 }
 
 // ============================================================================
@@ -631,7 +583,17 @@ async function loadEnvFile(envPath: string): Promise<boolean> {
       (current === value || current === splitOrgPrefix(value).value)
     ) {
       // Bun itself loads the working directory's .env before the CLI runs,
-      // so a value that matches this file most likely came from it.
+      // so a value that matches this file most likely came from it. This is
+      // the common case for the cwd's own .env (Bun's auto-load and this
+      // search's first local candidate are the same file), so it's trusted
+      // the same way as a definite attribution — including by
+      // getEnvVarPosition's layer resolution in host.ts. The residual risk
+      // (the shell coincidentally exporting the same value a project's own
+      // .env also happens to carry) is caught downstream instead: orgAt
+      // conflict-checks a bare ${PREFIX}_ORG against a credential sharing
+      // its layer, the same way checkSameLayerConflict does for
+      // ${PREFIX}_HOST, so a genuine disagreement still surfaces as
+      // HOST_CONFLICT rather than silently picking one side.
       _envSources.set(key, envPath);
     }
   }
@@ -652,22 +614,46 @@ export function describeEnvVar(name: string): string {
   return file ? `${name} (from ${file})` : name;
 }
 
+/** Which of the three places host.ts's resolveHostValue checks a variable's value came from. */
+export type EnvPosition = 'shell' | 'local' | 'global';
+
 /**
- * The .env file a variable's value came from, or undefined for the shell
- * environment / an unset variable. The raw counterpart of describeEnvVar,
- * used by host.ts's resolveHostValue to distinguish getHostSource()'s 'env'
- * from `dotenv:<path>`.
+ * Where a variable's current value came from: the shell environment, the one
+ * local .env file that was actually loaded (see getLocalEnvPath), or the
+ * global one (see getGlobalEnvPath) — or undefined when the variable is unset
+ * (or "", which the rest of the CLI already treats as unset throughout).
+ * Only these two files are ever loaded, so any attributed path that isn't
+ * the local one must be the global one.
  */
-export function getEnvVarSourceFile(name: string): string | undefined {
-  return _envSources.get(name);
+export function getEnvVarPosition(name: string): EnvPosition | undefined {
+  if (!process.env[name]) return undefined;
+  const source = _envSources.get(name);
+  if (!source) return 'shell';
+  return source === _localEnvPath ? 'local' : 'global';
 }
 
-// Directory of the first .env file that was actually loaded. Used by the
-// logger to resolve bare SEMANTIUS_LOG_FILE filenames next to the project's .env.
+// Directory of the first .env file that was actually loaded (local or,
+// failing that, global). Used by the logger to resolve bare
+// SEMANTIUS_LOG_FILE filenames next to the project's .env.
 let _loadedEnvDir: string | undefined;
 
 export function getLoadedEnvDir(): string | undefined {
   return _loadedEnvDir;
+}
+
+// The one local .env file actually loaded this run (cwd / config-file dir /
+// exe dir, first found), if any — distinct from _loadedEnvDir, which also
+// ends up pointing at the *global* dir when no local file exists.
+let _localEnvPath: string | undefined;
+
+/** The local .env file that was actually loaded this run, or undefined if none was found. */
+export function getLocalEnvPath(): string | undefined {
+  return _localEnvPath;
+}
+
+/** `<user config dir>/.env` — always the global candidate, whether or not it exists. */
+export function getGlobalEnvPath(): string {
+  return join(getUserConfigDir(), '.env');
 }
 
 /**
@@ -694,6 +680,7 @@ export async function loadDotEnv(searchDir?: string): Promise<void> {
     seen.add(envPath);
     if (await loadEnvFile(envPath)) {
       if (!_loadedEnvDir) _loadedEnvDir = dir;
+      if (!_localEnvPath) _localEnvPath = envPath;
       break;
     }
   }

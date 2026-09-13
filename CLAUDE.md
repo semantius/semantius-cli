@@ -18,7 +18,7 @@ The vendored tree under `src/vendor/` is synced, never edited: `src/vendor/postg
 
 ## Tests that spawn the CLI
 
-Any test that spawns the CLI as a subprocess must redirect `APPDATA` and `HOME` to a temp dir in the child's env. The user config dir (`getUserConfigDir()`) — a developer's `hosts.json`, session keyring fallback, and global `.env` — is derived from those two vars, so without the redirect a spawned test can silently pick up a real developer's stored default host or credentials instead of the hermetic state the test set up. See `tests/token-arg.test.ts` or `tests/acceptance-hosts.test.ts` for the pattern.
+Any test that spawns the CLI as a subprocess must redirect `APPDATA` and `HOME` to a temp dir in the child's env. The user config dir (`getUserConfigDir()`) — a developer's `hosts.json`, session keyring fallback, and global `.env` — is derived from those two vars, so without the redirect a spawned test can silently pick up a real developer's current host or credentials instead of the hermetic state the test set up. The current host is checked right after `--host`/`--token` (see `src/host.ts`'s `resolveHostValue`), ahead of `SEMANTIUS_HOST`/`SEMANTIUS_ORG`, so a leaked one doesn't just affect host-specific tests — it can silently redirect almost any test that resolves a host at all. In-process tests (not spawning a subprocess) need the same isolation via `setHostsIndexDirForTests` from `src/hosts-index.ts`. See `tests/token-arg.test.ts`, `tests/acceptance-hosts.test.ts`, or `tests/host.test.ts`'s outer `beforeEach`/`afterEach` for the pattern.
 
 ## Memory
 

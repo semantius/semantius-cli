@@ -1,14 +1,20 @@
 /**
  * Host / server resolution.
  *
- * One host value decides where the CLI talks to. Precedence (see
- * resolveHostValue for the full detail): --host → a bound credential
- * (--token, or an "org:"-prefixed ${PREFIX}_JWT / ${PREFIX}_API_KEY) →
- * ${PREFIX}_HOST (shell env, then project .env, then the global .env —
- * loadDotEnv never overrides a set variable) → <${PREFIX}_ORG>.semantius.cloud
- * → the stored default host (see hosts-index.ts). A bound credential that
- * conflicts with --host / ${PREFIX}_HOST — i.e. either names a different host
- * — is a HOST_CONFLICT error rather than a silent pick.
+ * One host value decides where the CLI talks to (see resolveHostValue for
+ * the full detail): --host, else --token's org (the two cannot be combined),
+ * else the current host (`semantius use`), else — checking each in turn,
+ * host before org at each — the shell environment, the local `.env` (cwd →
+ * config-file dir → exe dir, first found) and the global `.env`
+ * (`<user config dir>/.env`). An "org:"-prefixed ${PREFIX}_JWT /
+ * ${PREFIX}_API_KEY supplies the org of whichever of those three it was
+ * itself set in, the same way a bare ${PREFIX}_ORG would.
+ *
+ * A host resolved from the environment/.env layers that disagrees with an
+ * org-bound credential *at that same layer* is a HOST_CONFLICT error rather
+ * than a silent pick (host beats org within a layer, but not silently over a
+ * credential's own claim) — a layer never reached because an earlier one
+ * already resolved a host is simply not consulted, credential included.
  *
  * A host is a bare hostname[:port]; the CLI picks the protocol (hostBaseUrl).
  * A host matching *.semantius.cloud is the managed cloud: the org is its first
@@ -28,19 +34,23 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  type CredentialBinding,
+  type CredentialOrgInfo,
   debug,
   describeEnvVar,
+  getApiKeyOrgInfo,
   getConnectTimeoutMs,
-  getCredentialBinding,
-  getEnvVarSourceFile,
+  getEnvVarPosition,
+  getGlobalEnvPath,
   getHostFlag,
-  getPrefixedEnv,
+  getJwtOrgInfo,
+  getLocalEnvPath,
+  getTokenArg,
   getUserConfigDir,
   prefixedEnvName,
+  suppressCredential,
 } from './config.js';
 import { ErrorCode, formatCliError } from './errors.js';
-import { getDefaultHost } from './hosts-index.js';
+import { getCurrentHost } from './hosts-index.js';
 
 export interface HostFacts {
   mode: 'cloud' | 'selfhosted';
@@ -186,132 +196,228 @@ export function hostBaseUrl(host: string): string {
 }
 
 /**
- * Where the configured host came from. `'token'` covers every org-bound
- * credential (--token, and an "org:" prefixed ${PREFIX}_JWT / ${PREFIX}_API_KEY)
- * that is not shadowed by a matching --host — see resolveHostValue.
+ * Where the configured host came from. `'org'` covers a resolved organization
+ * regardless of which layer named it (bare ${PREFIX}_ORG or a credential's
+ * prefix) — unlike a resolved host, which distinguishes 'env' (shell) from
+ * `dotenv:<path>` (a .env file). See resolveHostValue.
  */
 export type HostSource =
   | 'flag'
   | 'token'
+  | 'current'
   | 'env'
   | `dotenv:${string}`
-  | 'org'
-  | 'default';
+  | 'org';
 
-/** 'env', or `dotenv:<path>` when the variable was loaded from a .env file. */
-function envVarSource(varName: string): HostSource {
-  const file = getEnvVarSourceFile(varName);
-  return file ? `dotenv:${file}` : 'env';
-}
+/** The three places ${PREFIX}_HOST / ${PREFIX}_ORG are checked, in order. */
+type EnvLayer = 'shell' | 'local' | 'global';
+const ENV_LAYERS: readonly EnvLayer[] = ['shell', 'local', 'global'];
 
-/** The credential label a HOST_CONFLICT names: "--token" or the env var it came from. */
-function credentialLabel(binding: CredentialBinding): string {
-  return binding.source === 'token-arg'
-    ? '--token'
-    : describeEnvVar(binding.varName as string);
+/** `value`, but only if it is genuinely attributed to `layer` (never "" / unset). */
+function valueAt(name: string, layer: EnvLayer): string | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  return getEnvVarPosition(name) === layer ? raw : undefined;
 }
 
 /**
- * The host a binding's org names, normalized the same as every other host
- * value (in particular, lowercased): without this, --host / ${PREFIX}_HOST
- * naming the exact same org in a different case reads as a conflict, and the
- * bound host itself would go on to key the on-disk host cache, the hosts
- * index and the session store — all case-sensitive — under a different
- * identity than the same org referenced in its usual (lowercase) case
- * elsewhere. normalizeHost also rejects a malformed org early, with a clear
- * INVALID_HOST error, rather than producing a host that only fails later.
+ * Every org-bound credential (JWT and/or API key) whose own var is
+ * attributed to `layer` — both, if a project genuinely sets both there.
+ * Kept separate from credentialAt below: a conflict check or a suppression
+ * must catch either one, not just whichever credentialAt would prefer.
  */
-function boundHostOf(binding: CredentialBinding): string {
-  return normalizeHost(`${binding.org}${CLOUD_SUFFIX}`);
+function credentialsAt(
+  layer: EnvLayer,
+): Array<CredentialOrgInfo & { which: 'jwt' | 'apikey' }> {
+  const result: Array<CredentialOrgInfo & { which: 'jwt' | 'apikey' }> = [];
+  const jwt = getJwtOrgInfo();
+  if (jwt && getEnvVarPosition(jwt.varName) === layer) {
+    result.push({ ...jwt, which: 'jwt' });
+  }
+  const apiKey = getApiKeyOrgInfo();
+  if (apiKey && getEnvVarPosition(apiKey.varName) === layer) {
+    result.push({ ...apiKey, which: 'apikey' });
+  }
+  return result;
 }
 
 /**
- * A credential bound to one host (see getCredentialBinding) but contradicted
- * by --host or ${PREFIX}_HOST naming another. `otherLabel`/`otherHost` are the
- * flag or env var doing the contradicting.
+ * The org-bound JWT or API key whose own var is attributed to `layer`, if
+ * any (JWT wins, matching getCredentialSource's precedence) — for orgAt's
+ * single "the org at this layer" answer. A conflict check or a suppression
+ * needs every credential at the layer instead; see credentialsAt. Kept as
+ * its own JWT-first check, not credentialsAt(layer)[0]: that array's order
+ * is an implementation detail of a sibling function, not a contract this
+ * one should depend on for its precedence.
  */
+function credentialAt(
+  layer: EnvLayer,
+): (CredentialOrgInfo & { which: 'jwt' | 'apikey' }) | undefined {
+  const jwt = getJwtOrgInfo();
+  if (jwt && getEnvVarPosition(jwt.varName) === layer) {
+    return { ...jwt, which: 'jwt' };
+  }
+  const apiKey = getApiKeyOrgInfo();
+  if (apiKey && getEnvVarPosition(apiKey.varName) === layer) {
+    return { ...apiKey, which: 'apikey' };
+  }
+  return undefined;
+}
+
+/**
+ * The org that applies at `layer`: a credential's prefix there, a bare
+ * ${PREFIX}_ORG genuinely attributed to that same layer, or — when both are
+ * genuinely at this layer and disagree — a HOST_CONFLICT, the same way a
+ * contradicting ${PREFIX}_HOST is caught by checkSameLayerConflict below.
+ * Silently preferring the credential would hide a real contradiction in the
+ * user's own config; silently preferring the bare org would send the
+ * credential to a host it was never issued for.
+ */
+function orgAt(layer: EnvLayer): string | undefined {
+  const credential = credentialAt(layer);
+  const bareOrg = valueAt(prefixedEnvName('ORG'), layer);
+  if (
+    credential &&
+    bareOrg &&
+    orgToHost(credential.org) !== orgToHost(bareOrg)
+  ) {
+    throw hostConflictError(
+      describeEnvVar(credential.varName),
+      orgToHost(credential.org),
+      prefixedEnvName('ORG'),
+      describeEnvVar(prefixedEnvName('ORG')),
+      orgToHost(bareOrg),
+    );
+  }
+  return credential?.org ?? bareOrg;
+}
+
+/** An org, normalized into its cloud host the same way every other host value is (in particular, lowercased). */
+function orgToHost(org: string): string {
+  return normalizeHost(`${org}${CLOUD_SUFFIX}`);
+}
+
 function hostConflictError(
+  credentialLabel: string,
+  boundHost: string,
+  otherVarName: string,
   otherLabel: string,
   otherHost: string,
-  binding: CredentialBinding,
 ): Error {
-  const boundHost = boundHostOf(binding);
   return new Error(
     formatCliError({
       code: ErrorCode.CLIENT_ERROR,
       type: 'HOST_CONFLICT',
-      message: `${credentialLabel(binding)} is bound to ${boundHost}, but ${otherLabel} names ${otherHost}`,
-      suggestion: `Drop --host / ${prefixedEnvName('HOST')}, or use a credential issued for ${otherHost}`,
+      message: `${credentialLabel} is bound to ${boundHost}, but ${otherLabel} names ${otherHost}`,
+      suggestion: `Drop ${otherVarName}, or use a credential issued for ${otherHost}`,
     }),
   );
+}
+
+/**
+ * A host resolved from ${PREFIX}_HOST at `layer` but contradicted by an
+ * org-bound credential *at that same layer* (host is checked first within a
+ * layer, but must still agree with every credential sharing it — the
+ * classic case being both set in the same .env file; a project could
+ * conceivably set both JWT and API key there, so both are checked, not just
+ * the one getCredentialSource would end up using). A credential at any other
+ * layer was never reached (an earlier layer already resolved something, or
+ * this is a later layer that resolveHostValue never gets to) and is not
+ * compared at all.
+ */
+function checkSameLayerConflict(layer: EnvLayer, resolvedHost: string): void {
+  for (const credential of credentialsAt(layer)) {
+    const boundHost = orgToHost(credential.org);
+    if (boundHost === resolvedHost) continue;
+    throw hostConflictError(
+      describeEnvVar(credential.varName),
+      boundHost,
+      prefixedEnvName('HOST'),
+      describeEnvVar(prefixedEnvName('HOST')),
+      resolvedHost,
+    );
+  }
+}
+
+/**
+ * Blank every org-bound credential attributed to a layer strictly after
+ * `winningLayerIndex` (ENV_LAYERS[winningLayerIndex] is where the host was
+ * actually resolved) — both JWT and API key, if a layer sets both, not just
+ * whichever one credentialAt would prefer. Without this, getEnvJwt() /
+ * getPrefixedEnv('API_KEY') — which read one flat, layer-blind value —
+ * would still see it and could send it to a host it was never configured
+ * for, even though it played no part in choosing that host and (per
+ * checkSameLayerConflict) was never validated against it either.
+ */
+function suppressUnreachedCredentials(winningLayerIndex: number): void {
+  for (let i = winningLayerIndex + 1; i < ENV_LAYERS.length; i++) {
+    for (const credential of credentialsAt(ENV_LAYERS[i])) {
+      suppressCredential(credential.which);
+    }
+  }
+}
+
+function hostSourceForLayer(layer: EnvLayer): HostSource {
+  if (layer === 'shell') return 'env';
+  const path = layer === 'local' ? getLocalEnvPath() : getGlobalEnvPath();
+  return path ? `dotenv:${path}` : 'env';
 }
 
 /**
  * The configured host (normalized) and where it came from, or null when
  * nothing configures one. Order:
  *
- *   1. --host                                                      'flag'
- *   2. a bound credential (--token, or an "org:"-prefixed            'token' /
- *      ${PREFIX}_JWT / ${PREFIX}_API_KEY) — raised above             'env' /
- *      ${PREFIX}_HOST so a mismatched .env can no longer send      `dotenv:<path>`
- *      it to the wrong host silently
- *   3. ${PREFIX}_HOST                                        'env' / `dotenv:<path>`
- *   4. ${PREFIX}_ORG → <org>.semantius.cloud                         'org'
- *   5. the stored default host (see hosts-index.ts)                'default'
+ *   1. --host                                                        'flag'
+ *   2. --token's org (cannot be combined with --host — see index.ts)  'token'
+ *   3. the current host (`semantius use`, see hosts-index.ts)        'current'
+ *   4. shell: ${PREFIX}_HOST, else ${PREFIX}_ORG (bare or credential)  'env'
+ *   5. local .env: same pair                                  `dotenv:<path>`
+ *   6. global .env: same pair                                `dotenv:<path>`
  *
- * A bound credential (rung 2) that conflicts with --host or ${PREFIX}_HOST —
- * i.e. either names a *different* host — throws HOST_CONFLICT rather than
- * picking one silently; naming the same host is not a conflict. `opts` skip
- * the --host rung / the default rung, for callers that need the host the
- * environment alone would resolve to (see config.ts's snapshotEnvHost).
+ * Rungs 4-6 check host before org *within* that same rung, then move to the
+ * next rung only if NEITHER was set. An org-bound credential (an "org:"
+ * prefixed ${PREFIX}_JWT / ${PREFIX}_API_KEY) supplies the org of whichever
+ * rung its own env var sits in; if that same rung's host disagrees, that is a
+ * HOST_CONFLICT (checkSameLayerConflict) — but a credential at a rung this
+ * walk never reaches (an earlier rung already resolved something) is simply
+ * not consulted at all, and is actively suppressed from later credential
+ * lookups too (suppressUnreachedCredentials), since those read one flat env
+ * value with no notion of "rung".
  */
-export function resolveHostValue(
-  opts: { ignoreFlag?: boolean; ignoreDefault?: boolean } = {},
-): { host: string; source: HostSource } | null {
-  const flag = opts.ignoreFlag ? undefined : getHostFlag();
-  const flagHost = flag ? normalizeHost(flag) : undefined;
+export function resolveHostValue(): {
+  host: string;
+  source: HostSource;
+} | null {
+  const flag = getHostFlag();
+  if (flag) return { host: normalizeHost(flag), source: 'flag' };
 
-  const binding = getCredentialBinding();
-  const boundHost = binding ? boundHostOf(binding) : undefined;
+  const tokenArg = getTokenArg();
+  if (tokenArg) return { host: orgToHost(tokenArg.org), source: 'token' };
 
-  if (flagHost) {
-    if (binding && boundHost !== flagHost) {
-      throw hostConflictError('--host', flagHost, binding);
+  const current = getCurrentHost();
+  // Normalized like every other branch, not assumed pre-normalized: the
+  // normal path (useCommand) always stores an already-normalized host, but
+  // hosts.json is hand-editable (removeHost already defends against a
+  // dangling entry left that way), so this shouldn't be the one source that
+  // skips validation.
+  if (current) return { host: normalizeHost(current), source: 'current' };
+
+  for (let i = 0; i < ENV_LAYERS.length; i++) {
+    const layer = ENV_LAYERS[i];
+
+    const hostVal = valueAt(prefixedEnvName('HOST'), layer);
+    if (hostVal) {
+      const resolved = normalizeHost(hostVal);
+      checkSameLayerConflict(layer, resolved);
+      suppressUnreachedCredentials(i);
+      return { host: resolved, source: hostSourceForLayer(layer) };
     }
-    return { host: flagHost, source: 'flag' };
-  }
 
-  if (binding && boundHost) {
-    const rawEnvHost = getPrefixedEnv('HOST');
-    const envHost = rawEnvHost ? normalizeHost(rawEnvHost) : undefined;
-    if (envHost && envHost !== boundHost) {
-      throw hostConflictError(
-        describeEnvVar(prefixedEnvName('HOST')),
-        envHost,
-        binding,
-      );
+    const org = orgAt(layer);
+    if (org) {
+      suppressUnreachedCredentials(i);
+      return { host: orgToHost(org), source: 'org' };
     }
-    const source: HostSource =
-      binding.source === 'token-arg'
-        ? 'token'
-        : envVarSource(binding.varName as string);
-    return { host: boundHost, source };
-  }
-
-  const rawEnvHost = getPrefixedEnv('HOST');
-  if (rawEnvHost) {
-    return {
-      host: normalizeHost(rawEnvHost),
-      source: envVarSource(prefixedEnvName('HOST')),
-    };
-  }
-
-  const org = getPrefixedEnv('ORG');
-  if (org) return { host: `${org}${CLOUD_SUFFIX}`, source: 'org' };
-
-  if (!opts.ignoreDefault) {
-    const defaultHost = getDefaultHost();
-    if (defaultHost) return { host: defaultHost, source: 'default' };
   }
 
   return null;
@@ -386,7 +492,16 @@ export function resolveHost(): Promise<HostFacts> {
       ),
     );
   }
+  return resolveHostFacts(host);
+}
 
+/**
+ * Resolve an arbitrary, already-normalized host into HostFacts — independent
+ * of the configured-host machinery above. Used by `semantius use <host>` to
+ * resolve the host it is about to log in to, before it becomes the current
+ * one (so getHost()/resolveHostValue() cannot see it yet).
+ */
+export function resolveHostFacts(host: string): Promise<HostFacts> {
   let pending = _resolved.get(host);
   if (!pending) {
     pending = isCloudHost(host)

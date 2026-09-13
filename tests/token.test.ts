@@ -22,7 +22,7 @@ import {
 import { setEnvPrefix, setHostFlag, setTokenArg } from '../src/config';
 import { isAuthErrorMessage } from '../src/errors';
 import type { HostFacts } from '../src/host';
-import { setDefaultHost, setHostsIndexDirForTests } from '../src/hosts-index';
+import { setCurrentHost, setHostsIndexDirForTests } from '../src/hosts-index';
 import {
   deleteCachedToken,
   readCachedToken,
@@ -328,7 +328,7 @@ describe('getAccessToken', () => {
   });
 });
 
-describe('getCredentialSource: --token and the default host', () => {
+describe('getCredentialSource: --token and the current host', () => {
   const VARS = ['SEMANTIUS_JWT', 'SEMANTIUS_API_KEY', 'SEMANTIUS_ORG', 'SEMANTIUS_HOST'];
   let saved: Record<string, string | undefined>;
   let hostsDir: string;
@@ -362,8 +362,8 @@ describe('getCredentialSource: --token and the default host', () => {
     expect(getCredentialSource()).toBe('jwt');
   });
 
-  test('the stored default host is source null: only a session applies', () => {
-    setDefaultHost('acme.semantius.cloud');
+  test('the current host is source null: only a session applies', () => {
+    setCurrentHost('acme.semantius.cloud');
     expect(getCredentialSource()).toBeNull();
   });
 
@@ -373,12 +373,12 @@ describe('getCredentialSource: --token and the default host', () => {
     expect(getCredentialSource()).toBe('jwt');
   });
 
-  test('NoCredentialsError on the stored default host names it and points at plain "semantius login"', async () => {
-    setDefaultHost(CLOUD.host);
+  test('NoCredentialsError on the current host names it and points at plain "semantius login"', async () => {
+    setCurrentHost(CLOUD.host);
     const error = await getAccessToken(CLOUD).catch((e: Error) => e);
     expect(error).toBeInstanceOf(NoCredentialsError);
     expect((error as Error).message).toBe(
-      `Authentication required: no credentials stored for ${CLOUD.host} (the default host). Run "semantius login" (SEMANTIUS_API_KEY and SEMANTIUS_JWT apply only when they name a host of their own).`,
+      `Authentication required: no credentials stored for ${CLOUD.host} (the current host). Run "semantius login" (SEMANTIUS_API_KEY and SEMANTIUS_JWT apply only when they name a host of their own).`,
     );
     expect(isAuthErrorMessage((error as Error).message)).toBe(true);
   });

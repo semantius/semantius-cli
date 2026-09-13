@@ -2,7 +2,7 @@
  * Tests for --token / --token-file (spawned CLI so the whole argv → resolved
  * credential path is exercised, config dir redirected so a developer's own
  * hosts.json / global .env never leaks in): validation, resolution (literal /
- * stdin / file), the stderr warning for a literal, the HOST_CONFLICT binding
+ * stdin / file), the stderr warning for a literal, the --host mutual-exclusion
  * check, and that the JSONL log redacts the literal.
  */
 
@@ -195,32 +195,32 @@ describe('--token / --token-file', () => {
     expect(result.stderr).toContain('--login');
   });
 
-  test('--token acme:x --host other.example.com is HOST_CONFLICT', async () => {
-    const result = await runCli([
-      '--token',
-      `acme:${JWT}`,
-      '--host',
-      'other.example.com',
-    ]);
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('Error [HOST_CONFLICT]:');
-    expect(result.stderr).toContain('acme.semantius.cloud');
-    expect(result.stderr).toContain('other.example.com');
-  });
-
-  test('--token acme:x --host acme.semantius.cloud is allowed: same host', async () => {
+  test('--token cannot be combined with --host, even naming the same org', async () => {
     const result = await runCli([
       '--token',
       `acme:${JWT}`,
       '--host',
       'acme.semantius.cloud',
-      '-c',
-      noServersConfig,
-      'info',
-      'utils',
     ]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).not.toContain('HOST_CONFLICT');
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('INVALID_OPTION');
+    expect(result.stderr).toContain('--host cannot be combined with --token');
+  });
+
+  test('--token-file cannot be combined with --host', async () => {
+    const tokenFile = join(configDir, 'token.txt');
+    await writeFile(tokenFile, `acme:${JWT}`);
+    const result = await runCli([
+      '--token-file',
+      tokenFile,
+      '--host',
+      'other.example.com',
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('INVALID_OPTION');
+    expect(result.stderr).toContain(
+      '--host cannot be combined with --token-file',
+    );
   });
 
   test('the JSONL log redacts a literal --token, never the raw value', async () => {

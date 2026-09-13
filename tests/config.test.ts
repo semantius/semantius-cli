@@ -21,15 +21,16 @@ import {
   splitOrgPrefix,
   normalizeCredentialEnv,
   getUserConfigDir,
-  getCredentialBinding,
+  getJwtOrgInfo,
+  getApiKeyOrgInfo,
   setTokenArg,
   getTokenArg,
   ignoreEnvCredentials,
   isSessionOnlyHost,
-  strayCredentialError,
   setHostFlag,
 } from '../src/config';
-import { setDefaultHost, setHostsIndexDirForTests } from '../src/hosts-index';
+import { propagateOrg } from '../src/host';
+import { setCurrentHost, setHostsIndexDirForTests } from '../src/hosts-index';
 
 describe('config', () => {
   let tempDir: string;
@@ -478,12 +479,16 @@ describe('config', () => {
       }
     });
 
-    test('hoists org prefix from API key and overwrites SEMANTIUS_ORG', () => {
+    test('hoists org prefix from API key into getApiKeyOrgInfo, leaving SEMANTIUS_ORG untouched', () => {
       process.env.SEMANTIUS_API_KEY = 'key-org:sk-abc-secret';
       process.env.SEMANTIUS_ORG = 'env-org';
       normalizeCredentialEnv();
       expect(process.env.SEMANTIUS_API_KEY).toBe('sk-abc-secret');
-      expect(process.env.SEMANTIUS_ORG).toBe('key-org');
+      expect(process.env.SEMANTIUS_ORG).toBe('env-org');
+      expect(getApiKeyOrgInfo()).toEqual({
+        org: 'key-org',
+        varName: 'SEMANTIUS_API_KEY',
+      });
     });
 
     test('bare API key leaves SEMANTIUS_ORG untouched', () => {
@@ -494,19 +499,31 @@ describe('config', () => {
       expect(process.env.SEMANTIUS_ORG).toBe('env-org');
     });
 
-    test('hoists org prefix from JWT', () => {
+    test('hoists org prefix from JWT into getJwtOrgInfo, leaving SEMANTIUS_ORG untouched', () => {
       process.env.SEMANTIUS_JWT = 'jwt-org:eyJhbGciOiJIUzI1NiJ9.e30.sig';
       normalizeCredentialEnv();
       expect(process.env.SEMANTIUS_JWT).toBe('eyJhbGciOiJIUzI1NiJ9.e30.sig');
-      expect(process.env.SEMANTIUS_ORG).toBe('jwt-org');
+      expect(process.env.SEMANTIUS_ORG).toBeUndefined();
+      expect(getJwtOrgInfo()).toEqual({
+        org: 'jwt-org',
+        varName: 'SEMANTIUS_JWT',
+      });
     });
 
-    test('JWT org wins over API key org when both are prefixed', () => {
+    test('both JWT and API key org prefixes are recorded independently; SEMANTIUS_ORG stays untouched', () => {
       process.env.SEMANTIUS_API_KEY = 'key-org:sk-abc-secret';
       process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
       process.env.SEMANTIUS_ORG = 'env-org';
       normalizeCredentialEnv();
-      expect(process.env.SEMANTIUS_ORG).toBe('jwt-org');
+      expect(process.env.SEMANTIUS_ORG).toBe('env-org');
+      expect(getApiKeyOrgInfo()).toEqual({
+        org: 'key-org',
+        varName: 'SEMANTIUS_API_KEY',
+      });
+      expect(getJwtOrgInfo()).toEqual({
+        org: 'jwt-org',
+        varName: 'SEMANTIUS_JWT',
+      });
     });
 
     test('malformed prefixed values are left untouched', () => {
@@ -557,9 +574,10 @@ describe('config', () => {
       process.env.SEMANTIUS_JWT = 'sem-org:other.jwt.sig';
       normalizeCredentialEnv();
       expect(process.env.PROD_JWT).toBe('eyJ.e30.sig');
-      expect(process.env.PROD_ORG).toBe('prod-org');
+      expect(getJwtOrgInfo()).toEqual({ org: 'prod-org', varName: 'PROD_JWT' });
       expect(process.env.PROD_API_KEY).toBe('');
       expect(process.env.SEMANTIUS_JWT).toBe('sem-org:other.jwt.sig');
+      expect(process.env.PROD_ORG).toBeUndefined();
       expect(process.env.SEMANTIUS_ORG).toBeUndefined();
     });
 
@@ -606,6 +624,14 @@ describe('config', () => {
         delete process.env.SEMANTIUS_CONFIG_PATH;
 
         process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
+        normalizeCredentialEnv();
+        // loadConfig's own internal loadDotEnv() call only re-loads .env
+        // files and re-hoists (both no-ops here); it never resolves the
+        // host, so ${SEMANTIUS_ORG} in the cube URL template needs
+        // propagateOrg() to have already set it from the credential-resolved
+        // host — same as main() does before ever dispatching to a command
+        // that calls loadConfig().
+        propagateOrg();
 
         const config = await loadConfig();
         const cube = config.mcpServers.cube as any;
@@ -650,49 +676,42 @@ describe('config', () => {
       await rm(hostsDir, { recursive: true, force: true });
     });
 
-    describe('getCredentialBinding', () => {
-      test('null when nothing is bound', () => {
-        expect(getCredentialBinding()).toBeNull();
+    describe('getJwtOrgInfo / getApiKeyOrgInfo', () => {
+      test('undefined when nothing is bound', () => {
+        expect(getJwtOrgInfo()).toBeUndefined();
+        expect(getApiKeyOrgInfo()).toBeUndefined();
       });
 
       test('an org-prefixed API key binds, naming the var', () => {
         process.env.SEMANTIUS_API_KEY = 'acme:sk-secret';
         normalizeCredentialEnv();
-        expect(getCredentialBinding()).toEqual({
+        expect(getApiKeyOrgInfo()).toEqual({
           org: 'acme',
-          source: 'apikey-env',
           varName: 'SEMANTIUS_API_KEY',
         });
+        expect(getJwtOrgInfo()).toBeUndefined();
       });
 
       test('an org-prefixed JWT binds, naming the var', () => {
         process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
         normalizeCredentialEnv();
-        expect(getCredentialBinding()).toEqual({
+        expect(getJwtOrgInfo()).toEqual({
           org: 'acme',
-          source: 'jwt-env',
           varName: 'SEMANTIUS_JWT',
         });
       });
 
-      test('JWT wins over API key when both are prefixed', () => {
+      test('both bind independently, from their own vars', () => {
         process.env.SEMANTIUS_API_KEY = 'key-org:sk-secret';
         process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
         normalizeCredentialEnv();
-        expect(getCredentialBinding()).toEqual({
+        expect(getJwtOrgInfo()).toEqual({
           org: 'jwt-org',
-          source: 'jwt-env',
           varName: 'SEMANTIUS_JWT',
         });
-      });
-
-      test('a --token argument wins over either env credential', () => {
-        process.env.SEMANTIUS_JWT = 'jwt-org:eyJ.e30.sig';
-        normalizeCredentialEnv();
-        setTokenArg({ org: 'token-org', jwt: 'eyJ.token.sig' });
-        expect(getCredentialBinding()).toEqual({
-          org: 'token-org',
-          source: 'token-arg',
+        expect(getApiKeyOrgInfo()).toEqual({
+          org: 'key-org',
+          varName: 'SEMANTIUS_API_KEY',
         });
       });
 
@@ -700,7 +719,8 @@ describe('config', () => {
         process.env.SEMANTIUS_API_KEY = 'sk-secret';
         process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
         normalizeCredentialEnv();
-        expect(getCredentialBinding()).toBeNull();
+        expect(getJwtOrgInfo()).toBeUndefined();
+        expect(getApiKeyOrgInfo()).toBeUndefined();
       });
     });
 
@@ -719,14 +739,14 @@ describe('config', () => {
     });
 
     describe('ignoreEnvCredentials', () => {
-      test('clears the recorded env binding along with the env vars', () => {
+      test('clears the recorded org info along with the env vars', () => {
         process.env.SEMANTIUS_API_KEY = 'acme:sk-secret';
         normalizeCredentialEnv();
-        expect(getCredentialBinding()).not.toBeNull();
+        expect(getApiKeyOrgInfo()).not.toBeUndefined();
 
         ignoreEnvCredentials();
 
-        expect(getCredentialBinding()).toBeNull();
+        expect(getApiKeyOrgInfo()).toBeUndefined();
         expect(process.env.SEMANTIUS_API_KEY).toBe('');
         expect(process.env.SEMANTIUS_JWT).toBe('');
         expect(process.env.SEMANTIUS_ORG).toBe('');
@@ -736,27 +756,22 @@ describe('config', () => {
         setTokenArg({ org: 'token-org', jwt: 'token.jwt.sig' });
         ignoreEnvCredentials();
         expect(getTokenArg()).toEqual({ org: 'token-org', jwt: 'token.jwt.sig' });
-        expect(getCredentialBinding()).toEqual({
-          org: 'token-org',
-          source: 'token-arg',
-        });
       });
     });
 
     describe('isSessionOnlyHost', () => {
-      test('true with --host and no --token', () => {
+      test('true with --host', () => {
         setHostFlag('acme.semantius.cloud');
         expect(isSessionOnlyHost()).toBe(true);
       });
 
-      test('true for the stored default host', () => {
-        setDefaultHost('acme.semantius.cloud');
+      test('true for the current host', () => {
+        setCurrentHost('acme.semantius.cloud');
         expect(isSessionOnlyHost()).toBe(true);
       });
 
-      test('false when a --token argument is set, even if --host names the same host', () => {
+      test('false when a --token argument is set (no --host)', () => {
         setTokenArg({ org: 'acme', jwt: 'eyJ.e30.sig' });
-        setHostFlag('acme.semantius.cloud');
         expect(isSessionOnlyHost()).toBe(false);
       });
 
@@ -767,39 +782,6 @@ describe('config', () => {
 
       test('false when nothing configures a host', () => {
         expect(isSessionOnlyHost()).toBe(false);
-      });
-    });
-
-    describe('strayCredentialError', () => {
-      test('null when the source is not "default"', () => {
-        process.env.SEMANTIUS_API_KEY = 'sk-secret';
-        process.env.SEMANTIUS_ORG = 'acme';
-        expect(strayCredentialError()).toBeNull();
-      });
-
-      test('null on the default host with no leftover credential', () => {
-        setDefaultHost('acme.semantius.cloud');
-        expect(strayCredentialError()).toBeNull();
-      });
-
-      test('a bare API key next to the default host is CREDENTIAL_WITHOUT_HOST', () => {
-        setDefaultHost('acme.semantius.cloud');
-        process.env.SEMANTIUS_API_KEY = 'sk-secret';
-        const error = strayCredentialError();
-        expect(error).toContain('Error [CREDENTIAL_WITHOUT_HOST]:');
-        expect(error).toContain('SEMANTIUS_API_KEY');
-        expect(error).toContain('names no host');
-        expect(error).toContain('acme.semantius.cloud');
-        expect(error).toContain('stored default');
-      });
-
-      test('a bare JWT next to the default host is CREDENTIAL_WITHOUT_HOST, checked before the API key', () => {
-        setDefaultHost('acme.semantius.cloud');
-        process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
-        process.env.SEMANTIUS_API_KEY = 'sk-secret';
-        const error = strayCredentialError();
-        expect(error).toContain('SEMANTIUS_JWT');
-        expect(error).not.toContain('SEMANTIUS_API_KEY names');
       });
     });
   });

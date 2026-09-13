@@ -1,8 +1,9 @@
 /**
- * Acceptance tests for host resolution / credential binding: the three
- * scenarios from the plan (project .env resolves host A; the user has also
- * logged in to a separate host B; the stored default is untouched unless
- * stated otherwise), and whoami's `host` / `host_source` rows.
+ * Acceptance tests for host resolution / credential binding: the scenarios
+ * from the plan (project .env resolves host A; the user has also logged in
+ * to a separate host B; the current host is untouched unless stated
+ * otherwise; the current host overrides a different project .env), and
+ * whoami's `host` / `host_source` rows.
  *
  * Spawns the real CLI throughout, config dir redirected (APPDATA/HOME) so
  * nothing here touches a developer's own hosts.json or global .env.
@@ -155,7 +156,7 @@ describe('acceptance: host resolution and credential binding', () => {
       expect(tokenRequestsA).toEqual(['sk-bare-key']);
     });
 
-    test('an org-prefixed key would instead make "login --host B" a HOST_CONFLICT', async () => {
+    test('an org-prefixed key does not stop "login --host B": --host wins outright and the credential is ignored', async () => {
       await writeFile(
         join(projectDir, '.env'),
         `SEMANTIUS_HOST=${hostA}\nSEMANTIUS_API_KEY=a-org:sk-bound-key\n`,
@@ -164,13 +165,14 @@ describe('acceptance: host resolution and credential binding', () => {
       const login = await runCli(projectDir, configDir, [
         'login',
         '--host',
-        'b.semantius.cloud',
+        '127.0.0.1:1', // nothing listens here: discovery fails fast (ECONNREFUSED)
       ]);
-      // Fails on the conflict check, before ever trying to open a browser.
+      // No conflict: --host always wins over a credential bound at a
+      // lower-precedence layer (the project .env), so login proceeds to (and
+      // fails at) actually reaching the host, instead of erroring up front.
       expect(login.exitCode).toBe(1);
-      expect(login.stderr).toContain('Error [HOST_CONFLICT]:');
-      expect(login.stderr).toContain('a-org.semantius.cloud');
-      expect(login.stderr).toContain('b.semantius.cloud');
+      expect(login.stderr).not.toContain('HOST_CONFLICT');
+      expect(login.stderr).toContain('could not reach');
       expect(tokenRequestsA).toEqual([]);
     });
   });
@@ -195,8 +197,8 @@ describe('acceptance: host resolution and credential binding', () => {
     });
   });
 
-  describe('scenario 3: A was the default host', () => {
-    test('logout clears the default (hint on stderr); this folder is unaffected; elsewhere needs "use"', async () => {
+  describe('scenario 3: A was the current host', () => {
+    test('logout clears the current host (hint on stderr); this folder is unaffected; elsewhere needs "use"', async () => {
       await writeFile(
         join(projectDir, '.env'),
         `SEMANTIUS_HOST=${hostA}\nSEMANTIUS_API_KEY=sk-bare-key\n`,
@@ -205,14 +207,15 @@ describe('acceptance: host resolution and credential binding', () => {
 
       const use = await runCli(projectDir, configDir, ['use', hostA]);
       expect(use.exitCode).toBe(0);
-      expect(use.stdout.trim()).toBe(`Default host: ${hostA} (none before)`);
+      expect(use.stdout.trim()).toBe(`Current host: ${hostA} (none before)`);
 
       const logout = await runCli(projectDir, configDir, ['logout']);
       expect(logout.exitCode).toBe(0);
-      expect(logout.stderr).toContain(`${hostA} was the default host`);
+      expect(logout.stderr).toContain(`${hostA} was the current host`);
       expect(logout.stderr).toContain('semantius use <host>');
 
-      // In the project folder, nothing changes: HOST comes from .env either way.
+      // In the project folder, nothing changes: once "current" is cleared,
+      // resolution falls through to the project .env, which names the same A.
       const stillWorks = await runCli(projectDir, configDir, ['whoami']);
       expect(stillWorks.exitCode).toBe(0);
 
@@ -237,8 +240,34 @@ describe('acceptance: host resolution and credential binding', () => {
     });
   });
 
+  describe('scenario 4: the current host overrides a different HOST/ORG from .env (the bug this redesign fixes)', () => {
+    test('use hostA persists across directories, beating a different project .env', async () => {
+      await seedSession(configDir, hostA);
+      const use = await runCli(projectDir, configDir, ['use', hostA]);
+      expect(use.exitCode).toBe(0);
+
+      // A different project, with its OWN .env naming a completely different
+      // host — under the old last-rung design this would win; the current
+      // host (set by "use", above) must win instead.
+      const otherProjectDir = await mkdtemp(
+        join(tmpdir(), 'semantius-accept-other-'),
+      );
+      try {
+        await writeFile(
+          join(otherProjectDir, '.env'),
+          'SEMANTIUS_ORG=some-other-org\n',
+        );
+        const result = await runCli(otherProjectDir, configDir, ['whoami']);
+        expect(result.stdout).toContain(`host  ${hostA} (current)`);
+        expect(result.stdout).toContain('host_source  current');
+      } finally {
+        await rm(otherProjectDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('whoami rows: host and host_source', () => {
-    test('source "default" gets the " (default)" suffix', async () => {
+    test('source "current" gets the " (current)" suffix', async () => {
       await seedSession(configDir, hostA);
       const use = await runCli(projectDir, configDir, ['use', hostA]);
       expect(use.exitCode).toBe(0);
@@ -246,8 +275,8 @@ describe('acceptance: host resolution and credential binding', () => {
       const emptyDir = await mkdtemp(join(tmpdir(), 'semantius-accept-empty-'));
       try {
         const result = await runCli(emptyDir, configDir, ['whoami']);
-        expect(result.stdout).toContain(`host  ${hostA} (default)`);
-        expect(result.stdout).toContain('host_source  default');
+        expect(result.stdout).toContain(`host  ${hostA} (current)`);
+        expect(result.stdout).toContain('host_source  current');
       } finally {
         await rm(emptyDir, { recursive: true, force: true });
       }
@@ -259,7 +288,7 @@ describe('acceptance: host resolution and credential binding', () => {
 
       const result = await runCli(projectDir, configDir, ['whoami']);
       expect(result.stdout).toMatch(/host_source\s+dotenv:.*\.env/);
-      expect(result.stdout).not.toContain(`host  ${hostA} (default)`);
+      expect(result.stdout).not.toContain(`host  ${hostA} (current)`);
     });
 
     test('source "token" for --token', async () => {

@@ -10,16 +10,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { hasStoredSessionFor } from '../src/auth/session';
 import { hostsCommand, useCommand } from '../src/commands/hosts';
 import { type SecretsApi, setSecretsForTests } from '../src/auth/storage';
 import { setEnvPrefix, setHostFlag } from '../src/config';
 import { setHostCacheDirForTests } from '../src/host';
 import {
-  getDefaultHost,
+  getCurrentHost,
   hasHost,
   recordHost,
   sessionsScannedAt,
-  setDefaultHost,
+  setCurrentHost,
   setHostsIndexDirForTests,
 } from '../src/hosts-index';
 
@@ -97,17 +98,17 @@ describe('commands/hosts (in-process)', () => {
   }
 
   describe('hostsCommand', () => {
-    test('an empty index hints at login', async () => {
+    test('an empty index hints at "use"', async () => {
       const lines = await captureLog(() => hostsCommand({}));
       expect(lines).toEqual([
-        'No hosts yet. Run "semantius login --host <host>" to sign in to one.',
+        'No hosts yet. Run "semantius use <host>" to sign in to one and make it current.',
       ]);
     });
 
-    test('table: mode, org, session, default marker, and a drift row (no session)', async () => {
+    test('table: mode, org, session, current-host marker, and a drift row (no session)', async () => {
       recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
       recordHost('x.example.com', { mode: 'selfhosted', org: null });
-      setDefaultHost('acme.semantius.cloud');
+      setCurrentHost('acme.semantius.cloud');
       storeFakeSession('acme.semantius.cloud');
       // x.example.com is recorded but has no session: the index and the
       // credential store have drifted apart.
@@ -119,36 +120,39 @@ describe('commands/hosts (in-process)', () => {
       expect(out).toContain('MODE');
       expect(out).toMatch(/\*\s+acme\.semantius\.cloud\s+cloud\s+acme\s+yes/);
       expect(out).toMatch(/x\.example\.com\s+selfhosted\s+\(none\)\s+no\s+-/);
-      // The default host IS "current" here: nothing else names one.
-      expect(lines.at(-1)).toBe('current: acme.semantius.cloud (default)');
+      // The current host IS what resolves here: nothing else names one.
+      expect(lines.at(-1)).toBe('current: acme.semantius.cloud (current)');
     });
 
     test('"current" reflects getHost() / getHostSource() for this directory', async () => {
       recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
-      setDefaultHost('acme.semantius.cloud');
+      setCurrentHost('acme.semantius.cloud');
       setHostFlag('other.example.com');
 
       const lines = await captureLog(() => hostsCommand({}));
       expect(lines.at(-1)).toBe('current: other.example.com (flag)');
     });
 
-    test('--json: defaultHost, current, and the full row shape', async () => {
+    test('--json: currentHost, current, and the full row shape', async () => {
       recordHost(
         'acme.semantius.cloud',
         { mode: 'cloud', org: 'acme' },
         { loggedInAt: '2026-01-01T00:00:00.000Z' },
       );
-      setDefaultHost('acme.semantius.cloud');
+      setCurrentHost('acme.semantius.cloud');
       storeFakeSession('acme.semantius.cloud');
+      // The current host beats SEMANTIUS_ORG now, unlike under the old
+      // last-rung design — set it here to prove that, not just to give
+      // getHost() something to resolve.
       process.env.SEMANTIUS_ORG = 'acme';
 
       const lines = await captureLog(() => hostsCommand({ json: true }));
       const parsed = JSON.parse(lines.join('\n'));
 
-      expect(parsed.defaultHost).toBe('acme.semantius.cloud');
+      expect(parsed.currentHost).toBe('acme.semantius.cloud');
       expect(parsed.current).toEqual({
         host: 'acme.semantius.cloud',
-        source: 'org',
+        source: 'current',
       });
       expect(parsed.hosts).toHaveLength(1);
       expect(parsed.hosts[0]).toMatchObject({
@@ -156,7 +160,7 @@ describe('commands/hosts (in-process)', () => {
         mode: 'cloud',
         org: 'acme',
         loggedInAt: '2026-01-01T00:00:00.000Z',
-        isDefault: true,
+        isCurrent: true,
         session: true,
       });
       expect(typeof parsed.hosts[0].sessionExpires).toBe('string');
@@ -165,7 +169,7 @@ describe('commands/hosts (in-process)', () => {
     test('--json with an empty index: still valid JSON, not the plain-text hint', async () => {
       const lines = await captureLog(() => hostsCommand({ json: true }));
       const parsed = JSON.parse(lines.join('\n'));
-      expect(parsed).toEqual({ defaultHost: null, current: null, hosts: [] });
+      expect(parsed).toEqual({ currentHost: null, current: null, hosts: [] });
     });
 
     test('one-time sessions scan indexes an unindexed host and reverses a mangled port', async () => {
@@ -234,8 +238,8 @@ describe('commands/hosts (in-process)', () => {
     });
   });
 
-  describe('useCommand: success path', () => {
-    test('sets the default and records a not-yet-indexed host, "none before"', async () => {
+  describe('useCommand: success path (a session is already stored)', () => {
+    test('sets the current host and records a not-yet-indexed host, "none before"', async () => {
       storeFakeSession('acme.semantius.cloud');
       expect(hasHost('acme.semantius.cloud')).toBe(false);
 
@@ -243,26 +247,26 @@ describe('commands/hosts (in-process)', () => {
         useCommand({ host: 'acme.semantius.cloud' }),
       );
 
-      expect(getDefaultHost()).toBe('acme.semantius.cloud');
+      expect(getCurrentHost()).toBe('acme.semantius.cloud');
       expect(hasHost('acme.semantius.cloud')).toBe(true);
-      expect(lines).toEqual(['Default host: acme.semantius.cloud (none before)']);
+      expect(lines).toEqual(['Current host: acme.semantius.cloud (none before)']);
     });
 
-    test('reports the previous default', async () => {
+    test('reports the previous current host', async () => {
       storeFakeSession('b.semantius.cloud');
-      setDefaultHost('a.semantius.cloud');
+      setCurrentHost('a.semantius.cloud');
 
       const lines = await captureLog(() => useCommand({ host: 'b.semantius.cloud' }));
 
       expect(lines).toEqual([
-        'Default host: b.semantius.cloud (was a.semantius.cloud)',
+        'Current host: b.semantius.cloud (was a.semantius.cloud)',
       ]);
     });
 
     test('normalizes the host argument', async () => {
       storeFakeSession('acme.semantius.cloud');
       await useCommand({ host: 'https://acme.semantius.app/' });
-      expect(getDefaultHost()).toBe('acme.semantius.cloud');
+      expect(getCurrentHost()).toBe('acme.semantius.cloud');
     });
 
     test('does not overwrite an already-indexed host entry', async () => {
@@ -275,6 +279,48 @@ describe('commands/hosts (in-process)', () => {
       await useCommand({ host: 'acme.semantius.cloud' });
       // Still there — useCommand only recordHost()s when the entry is missing.
       expect(hasHost('acme.semantius.cloud')).toBe(true);
+    });
+  });
+
+  describe('useCommand: no stored session', () => {
+    test('attempts a login instead of erroring NO_SESSION, and records nothing on failure', async () => {
+      // A loopback port nothing listens on: login()'s discovery fetch fails
+      // fast (ECONNREFUSED), with no DNS lookup and no browser involved.
+      expect(hasHost('localhost:1')).toBe(false);
+
+      await expect(useCommand({ host: 'localhost:1' })).rejects.toThrow(
+        'HOST_RESOLUTION_FAILED',
+      );
+
+      expect(hasHost('localhost:1')).toBe(false);
+      expect(getCurrentHost()).toBeNull();
+    });
+  });
+
+  describe('useCommand: --clear', () => {
+    test('clears an existing current host, naming what it was', async () => {
+      setCurrentHost('acme.semantius.cloud');
+
+      const lines = await captureLog(() => useCommand({ clear: true }));
+
+      expect(getCurrentHost()).toBeNull();
+      expect(lines).toEqual(['Current host cleared (was acme.semantius.cloud).']);
+    });
+
+    test('says so when there was no current host to clear', async () => {
+      const lines = await captureLog(() => useCommand({ clear: true }));
+      expect(lines).toEqual(['No current host was set.']);
+    });
+
+    test('leaves the hosts-index entry and session untouched', async () => {
+      storeFakeSession('acme.semantius.cloud');
+      recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
+      setCurrentHost('acme.semantius.cloud');
+
+      await useCommand({ clear: true });
+
+      expect(hasHost('acme.semantius.cloud')).toBe(true);
+      expect(await hasStoredSessionFor('acme.semantius.cloud')).toBe(true);
     });
   });
 });
@@ -323,12 +369,13 @@ describe('commands/hosts CLI surface (spawned)', () => {
     expect(result.stdout).toContain('No hosts yet.');
   });
 
-  test('"use" refuses a host with no stored session', async () => {
-    const result = await runCli(['use', 'never-logged-in.example.com']);
+  test('"use" with no stored session attempts a login instead of erroring NO_SESSION', async () => {
+    // A loopback port nothing listens on: the login attempt's discovery
+    // fetch fails fast (ECONNREFUSED), with no DNS lookup and no browser.
+    const result = await runCli(['use', 'localhost:1']);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('Error [NO_SESSION]:');
-    expect(result.stderr).toContain('never-logged-in.example.com');
-    expect(result.stderr).toContain('semantius login --host never-logged-in.example.com');
+    expect(result.stderr).not.toContain('Error [NO_SESSION]:');
+    expect(result.stderr).toContain('could not reach');
   });
 
   test('"use" without a host argument is a missing argument', async () => {
@@ -337,10 +384,23 @@ describe('commands/hosts CLI surface (spawned)', () => {
     expect(result.stderr).toContain('MISSING_ARGUMENT');
   });
 
+  test('"use --clear" works on a machine with nothing configured', async () => {
+    const result = await runCli(['use', '--clear']);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe('No current host was set.');
+  });
+
+  test('"use --clear" cannot be combined with a host argument', async () => {
+    const result = await runCli(['use', 'acme.semantius.cloud', '--clear']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('INVALID_OPTION');
+    expect(result.stderr).toContain('--clear cannot be combined with a host argument');
+  });
+
   test('"hosts" and "use" bypass the host gate (no MISSING_ENV_VAR)', async () => {
     const hosts = await runCli(['hosts']);
     expect(hosts.stderr).not.toContain('MISSING_ENV_VAR');
-    const use = await runCli(['use', 'never-logged-in.example.com']);
+    const use = await runCli(['use', 'localhost:1']);
     expect(use.stderr).not.toContain('MISSING_ENV_VAR');
   });
 
@@ -358,10 +418,11 @@ describe('commands/hosts CLI surface (spawned)', () => {
     expect(result.stderr).toContain('--login cannot be combined with "use"');
   });
 
-  test('--help documents hosts, use and --json', async () => {
+  test('--help documents hosts, use, --json and --clear', async () => {
     const result = await runCli(['--help']);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('hosts [--json]');
     expect(result.stdout).toContain('semantius use <host>');
+    expect(result.stdout).toContain('use --clear');
   });
 });
