@@ -15,11 +15,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   getDefaultConfig,
+  getMissingRequiredEnvVars,
   loadConfig,
   loadDotEnv,
+  normalizeCredentialEnv,
   setCrudMcpFlag,
   setEnvPrefix,
   setHostFlag,
+  setTokenArg,
 } from '../src/config';
 import {
   HOST_CACHE_TTL_MS,
@@ -27,12 +30,15 @@ import {
   getHost,
   getHostCachePath,
   getHostMode,
+  getHostSource,
   hostBaseUrl,
   normalizeHost,
   propagateOrg,
   resolveHost,
+  resolveHostValue,
   setHostCacheDirForTests,
 } from '../src/host';
+import { setDefaultHost, setHostsIndexDirForTests } from '../src/hosts-index';
 import { formatServerDetails } from '../src/output';
 
 const VARS = [
@@ -105,36 +111,58 @@ describe('host resolution', () => {
 
   describe('normalizeHost', () => {
     test('a host is a bare hostname: https:// / http:// and trailing slashes are stripped', () => {
-      expect(normalizeHost('acme.semantius.cloud')).toBe('acme.semantius.cloud');
-      expect(normalizeHost('https://acme.semantius.cloud/')).toBe('acme.semantius.cloud');
-      expect(normalizeHost('http://acme.semantius.cloud')).toBe('acme.semantius.cloud');
+      expect(normalizeHost('acme.semantius.cloud')).toBe(
+        'acme.semantius.cloud',
+      );
+      expect(normalizeHost('https://acme.semantius.cloud/')).toBe(
+        'acme.semantius.cloud',
+      );
+      expect(normalizeHost('http://acme.semantius.cloud')).toBe(
+        'acme.semantius.cloud',
+      );
     });
 
     test('keeps a non-default port, drops the default one, lowercases', () => {
       expect(normalizeHost('https://Semantius.Example.com:8443/')).toBe(
         'semantius.example.com:8443',
       );
-      expect(normalizeHost('https://x.example.com:443//')).toBe('x.example.com');
+      expect(normalizeHost('https://x.example.com:443//')).toBe(
+        'x.example.com',
+      );
       expect(normalizeHost('localhost:3000')).toBe('localhost:3000');
     });
 
     test('maps the web-app / MCP / analytics names of a cloud org to <org>.semantius.cloud', () => {
-      expect(normalizeHost('cli1-bb82.semantius.app')).toBe('cli1-bb82.semantius.cloud');
-      expect(normalizeHost('https://acme.semantius.app/')).toBe('acme.semantius.cloud');
+      expect(normalizeHost('cli1-bb82.semantius.app')).toBe(
+        'cli1-bb82.semantius.cloud',
+      );
+      expect(normalizeHost('https://acme.semantius.app/')).toBe(
+        'acme.semantius.cloud',
+      );
       expect(normalizeHost('acme.semantius.ai')).toBe('acme.semantius.cloud');
       expect(normalizeHost('acme.semantius.io')).toBe('acme.semantius.cloud');
     });
 
     test('rejects other schemes, paths, queries and credentials', () => {
-      expect(() => normalizeHost('ftp://x.example.com')).toThrow('INVALID_HOST');
-      expect(() => normalizeHost('https://x.example.com/api')).toThrow('INVALID_HOST');
-      expect(() => normalizeHost('https://x.example.com/?a=1')).toThrow('INVALID_HOST');
-      expect(() => normalizeHost('https://u:p@x.example.com')).toThrow('INVALID_HOST');
+      expect(() => normalizeHost('ftp://x.example.com')).toThrow(
+        'INVALID_HOST',
+      );
+      expect(() => normalizeHost('https://x.example.com/api')).toThrow(
+        'INVALID_HOST',
+      );
+      expect(() => normalizeHost('https://x.example.com/?a=1')).toThrow(
+        'INVALID_HOST',
+      );
+      expect(() => normalizeHost('https://u:p@x.example.com')).toThrow(
+        'INVALID_HOST',
+      );
     });
 
     test('HTTPS everywhere, plain HTTP only for loopback hosts', () => {
       expect(hostBaseUrl('x.example.com')).toBe('https://x.example.com');
-      expect(hostBaseUrl('x.example.com:8443')).toBe('https://x.example.com:8443');
+      expect(hostBaseUrl('x.example.com:8443')).toBe(
+        'https://x.example.com:8443',
+      );
       expect(hostBaseUrl('localhost:3000')).toBe('http://localhost:3000');
       expect(hostBaseUrl('127.0.0.1:8080')).toBe('http://127.0.0.1:8080');
       expect(hostBaseUrl('[::1]:8080')).toBe('http://[::1]:8080');
@@ -198,6 +226,219 @@ describe('host resolution', () => {
     });
   });
 
+  describe('credential binding and conflicts', () => {
+    // A binding's source is 'env', or `dotenv:<path>` when the same-named var
+    // was ALSO loaded from a .env by an earlier test in this process (the
+    // repo's own local .env sets SEMANTIUS_API_KEY, and _envSources — unlike
+    // process.env — is never reset between tests; see tests/token.test.ts's
+    // similarly-tolerant API_KEY_REJECTED regex for the established pattern).
+    // The dedicated "source is dotenv:<path>" test below covers that label
+    // deterministically via its own temp .env.
+    function isEnvOrDotenv(source: string | null): boolean {
+      return source === 'env' || !!source?.startsWith('dotenv:');
+    }
+
+    test('an org-prefixed API key alone binds the host, source "env"', () => {
+      process.env.SEMANTIUS_API_KEY = 'acme:sk-secret';
+      normalizeCredentialEnv();
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(isEnvOrDotenv(getHostSource())).toBe(true);
+      // The value is stripped for actual use, same as before this feature.
+      expect(process.env.SEMANTIUS_API_KEY).toBe('sk-secret');
+    });
+
+    test('an org-prefixed JWT alone binds the host, source "env"', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(isEnvOrDotenv(getHostSource())).toBe(true);
+    });
+
+    test('a --token argument binds the host, source "token"', () => {
+      setTokenArg({ org: 'acme', jwt: 'eyJ.e30.sig' });
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(getHostSource()).toBe('token');
+    });
+
+    test('a --token argument wins over an org-prefixed env credential', () => {
+      process.env.SEMANTIUS_JWT = 'env-org:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setTokenArg({ org: 'token-org', jwt: 'eyJ.e30.sig' });
+      expect(getHost()).toBe('token-org.semantius.cloud');
+      expect(getHostSource()).toBe('token');
+    });
+
+    test('a JWT-prefixed org wins over an API-key-prefixed org for the binding', () => {
+      process.env.SEMANTIUS_API_KEY = 'from-key:sk-secret';
+      process.env.SEMANTIUS_JWT = 'from-jwt:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      expect(getHost()).toBe('from-jwt.semantius.cloud');
+    });
+
+    test('source is dotenv:<path> when the binding came from a project .env', async () => {
+      const projectDir = await mkdtemp(join(tmpdir(), 'semantius-host-bind-'));
+      const originalCwd = process.cwd();
+      try {
+        await writeFile(
+          join(projectDir, '.env'),
+          'SEMANTIUS_API_KEY=acme:sk-secret\n',
+        );
+        process.chdir(projectDir);
+        await loadDotEnv();
+        expect(getHost()).toBe('acme.semantius.cloud');
+        expect(getHostSource()).toMatch(/^dotenv:.*\.env$/);
+      } finally {
+        process.chdir(originalCwd);
+        await rm(projectDir, { recursive: true, force: true });
+      }
+    });
+
+    test('a bound credential is the host when nothing else names one', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      expect(getHost()).toBe('acme.semantius.cloud');
+    });
+
+    test('--host naming the SAME org as the binding is not a conflict', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setHostFlag('acme.semantius.cloud');
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(getHostSource()).toBe('flag');
+    });
+
+    test('--host naming a DIFFERENT host than the binding is HOST_CONFLICT', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setHostFlag('other.semantius.cloud');
+      expect(() => getHost()).toThrow(
+        /^Error \[HOST_CONFLICT\]: SEMANTIUS_JWT is bound to acme\.semantius\.cloud, but --host names other\.semantius\.cloud\n/,
+      );
+    });
+
+    test('--host naming the SAME org in a DIFFERENT case is not a conflict, and normalizes to lowercase', () => {
+      process.env.SEMANTIUS_JWT = 'ACME:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setHostFlag('acme.semantius.cloud');
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(getHostSource()).toBe('flag');
+    });
+
+    test('a --token argument alone normalizes a mixed-case org to lowercase', () => {
+      setTokenArg({ org: 'Acme', jwt: 'eyJ.e30.sig' });
+      expect(getHost()).toBe('acme.semantius.cloud');
+    });
+
+    test('SEMANTIUS_HOST naming a DIFFERENT host than the binding is HOST_CONFLICT, naming both and the origin', async () => {
+      const projectDir = await mkdtemp(
+        join(tmpdir(), 'semantius-host-conflict-'),
+      );
+      const originalCwd = process.cwd();
+      try {
+        await writeFile(
+          join(projectDir, '.env'),
+          'SEMANTIUS_HOST=other.example.com\nSEMANTIUS_API_KEY=acme:sk-secret\n',
+        );
+        process.chdir(projectDir);
+        await loadDotEnv();
+        expect(() => getHost()).toThrow(/^Error \[HOST_CONFLICT\]:/);
+        expect(() => getHost()).toThrow(
+          /SEMANTIUS_API_KEY \(from .*\.env\) is bound to acme\.semantius\.cloud, but SEMANTIUS_HOST \(from .*\.env\) names other\.example\.com/,
+        );
+      } finally {
+        process.chdir(originalCwd);
+        await rm(projectDir, { recursive: true, force: true });
+      }
+    });
+
+    test('the conflict check normalizes both sides: acme.semantius.app == acme.semantius.cloud', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setHostFlag('acme.semantius.app');
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(getHostSource()).toBe('flag');
+    });
+
+    test('getMissingRequiredEnvVars is empty for a binding alone (no ORG, no HOST)', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      expect(getMissingRequiredEnvVars()).toEqual([]);
+    });
+
+    test('getMissingRequiredEnvVars is empty (not throwing) when getHost() would throw a conflict', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setHostFlag('other.semantius.cloud');
+      expect(getMissingRequiredEnvVars()).toEqual([]);
+      expect(() => getHost()).toThrow('HOST_CONFLICT');
+    });
+
+    test('propagateOrg writes the bound org', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      propagateOrg();
+      expect(process.env.SEMANTIUS_ORG).toBe('acme');
+    });
+
+    test('resolveHostValue({ignoreFlag: true}) skips --host, still sees the binding', () => {
+      process.env.SEMANTIUS_JWT = 'acme:eyJ.e30.sig';
+      normalizeCredentialEnv();
+      setHostFlag('acme.semantius.cloud');
+      const resolved = resolveHostValue({ ignoreFlag: true });
+      expect(resolved?.host).toBe('acme.semantius.cloud');
+      expect(isEnvOrDotenv(resolved?.source ?? null)).toBe(true);
+    });
+  });
+
+  describe('default host', () => {
+    let configDir: string;
+
+    beforeEach(async () => {
+      configDir = await mkdtemp(join(tmpdir(), 'semantius-host-default-'));
+      setHostsIndexDirForTests(configDir);
+    });
+
+    afterEach(async () => {
+      setHostsIndexDirForTests(undefined);
+      await rm(configDir, { recursive: true, force: true });
+    });
+
+    test('the stored default is the last rung, source "default"', () => {
+      setDefaultHost('acme.semantius.cloud');
+      expect(getHost()).toBe('acme.semantius.cloud');
+      expect(getHostSource()).toBe('default');
+    });
+
+    test('--host beats the default', () => {
+      setDefaultHost('acme.semantius.cloud');
+      setHostFlag('other.example.com');
+      expect(getHost()).toBe('other.example.com');
+      expect(getHostSource()).toBe('flag');
+    });
+
+    test('SEMANTIUS_ORG beats the default', () => {
+      setDefaultHost('acme.semantius.cloud');
+      process.env.SEMANTIUS_ORG = 'other';
+      expect(getHost()).toBe('other.semantius.cloud');
+      expect(getHostSource()).toBe('org');
+    });
+
+    test('no default and nothing else → null, same as before', () => {
+      expect(getHost()).toBeNull();
+      expect(getHostSource()).toBeNull();
+    });
+
+    test('resolveHostValue({ignoreDefault: true}) skips the stored default', () => {
+      setDefaultHost('acme.semantius.cloud');
+      expect(resolveHostValue({ ignoreDefault: true })).toBeNull();
+    });
+
+    test('getMissingRequiredEnvVars is empty when only the default supplies the host', () => {
+      setDefaultHost('acme.semantius.cloud');
+      expect(getMissingRequiredEnvVars()).toEqual([]);
+    });
+  });
+
   describe('cloud hosts', () => {
     test('resolves the control-plane record into host facts', async () => {
       process.env.SEMANTIUS_ORG = 'acme';
@@ -211,7 +452,8 @@ describe('host resolution', () => {
         host: 'acme.semantius.cloud',
         org: 'acme',
         tenantId: RECORD.id,
-        postgrestUrl: 'https://ep-test.apirest.example.neon.tech/neondb/rest/v1',
+        postgrestUrl:
+          'https://ep-test.apirest.example.neon.tech/neondb/rest/v1',
         discoveryUrl:
           'https://acme.semantius.cloud/.well-known/oauth-protected-resource',
         tokenExchange: {
@@ -266,7 +508,9 @@ describe('host resolution', () => {
       await writeFile(
         path,
         JSON.stringify({
-          fetched_at: new Date(Date.now() - HOST_CACHE_TTL_MS - 1000).toISOString(),
+          fetched_at: new Date(
+            Date.now() - HOST_CACHE_TTL_MS - 1000,
+          ).toISOString(),
           record: {
             id: 'stale',
             postgrest_url: 'https://stale.example/rest',
@@ -351,7 +595,8 @@ describe('host resolution', () => {
         org: null,
         tenantId: null,
         postgrestUrl: 'https://x.example.com/rest',
-        discoveryUrl: 'https://x.example.com/.well-known/oauth-protected-resource',
+        discoveryUrl:
+          'https://x.example.com/.well-known/oauth-protected-resource',
         tokenExchange: {
           method: 'GET',
           url: 'https://x.example.com/api/auth/token',
@@ -441,7 +686,9 @@ describe('host resolution', () => {
       await writeFile(
         configPath,
         JSON.stringify({
-          mcpServers: { crud: { postgrest: true, disabledTools: ['delete_*'] } },
+          mcpServers: {
+            crud: { postgrest: true, disabledTools: ['delete_*'] },
+          },
         }),
       );
       const config = await loadConfig(configPath);
@@ -485,6 +732,15 @@ describe('host resolution', () => {
 describe('host CLI surface', () => {
   const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
   const noServersConfig = join(import.meta.dir, 'fixtures', 'no-servers.json');
+  let configDir: string;
+
+  beforeEach(async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'semantius-host-cli-'));
+  });
+
+  afterEach(async () => {
+    await rm(configDir, { recursive: true, force: true });
+  });
 
   async function runCli(
     args: string[],
@@ -501,6 +757,8 @@ describe('host CLI surface', () => {
         SEMANTIUS_CRUD_MCP: '',
         SEMANTIUS_NO_DAEMON: '1',
         SEMANTIUS_MAX_RETRIES: '0',
+        APPDATA: configDir,
+        HOME: configDir,
         ...env,
       },
       stdin: null,
@@ -526,6 +784,22 @@ describe('host CLI surface', () => {
     ]);
     expect(result.exitCode).toBe(0);
     expect(result.stderr).not.toContain('MISSING_ENV_VAR');
+  });
+
+  test('--host matching a bound credential works even with a conflicting stray SEMANTIUS_HOST', async () => {
+    // getHostSource() (authoritative) short-circuits on --host before ever
+    // comparing the binding to SEMANTIUS_HOST; the *env-only* snapshot taken
+    // right after it (ignoring --host, for decideDefaultAfterLogin) would see
+    // that conflict on its own and must not let it abort this command.
+    const result = await runCli(
+      ['--host', 'acme.semantius.cloud', '-c', noServersConfig, 'info', 'utils'],
+      {
+        SEMANTIUS_HOST: 'other.example.com',
+        SEMANTIUS_JWT: 'acme:eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.sig',
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).not.toContain('HOST_CONFLICT');
   });
 
   test('--host without a value is a missing argument', async () => {

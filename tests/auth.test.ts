@@ -17,8 +17,10 @@ import { buildScope, getOAuthMetadata } from '../src/auth/provider';
 import {
   LoginUnavailableError,
   getSessionExpiry,
+  getSessionExpiryFor,
   getSessionToken,
   hasStoredSession,
+  hasStoredSessionFor,
   login,
   logout,
 } from '../src/auth/session';
@@ -33,7 +35,13 @@ import {
   getUsedCredentialSource,
 } from '../src/auth/token';
 import { transformConfigWithJwt } from '../src/client';
-import { setAuthFlag, setEnvPrefix, setHostFlag } from '../src/config';
+import {
+  setAuthFlag,
+  setEnvPrefix,
+  setHostFlag,
+  snapshotEnvHost,
+} from '../src/config';
+import { decideDefaultAfterLogin, loginCommand, logoutCommand } from '../src/commands/auth';
 import {
   type HostFacts,
   SELF_HOSTED_CLIENT_ID,
@@ -41,6 +49,14 @@ import {
   resolveHost,
   setHostCacheDirForTests,
 } from '../src/host';
+import {
+  getDefaultHost,
+  hasHost,
+  listHosts,
+  recordHost,
+  setDefaultHost,
+  setHostsIndexDirForTests,
+} from '../src/hosts-index';
 
 // ============================================================================
 // Mock provider
@@ -228,6 +244,9 @@ describe('oauth login', () => {
     setHostFlag(undefined);
     setAuthFlag(undefined);
     setHostCacheDirForTests(cacheDir);
+    // hosts-index.ts caches its file in a module variable; APPDATA/HOME just
+    // changed, so force it to forget whatever the previous test's dir held.
+    setHostsIndexDirForTests(undefined);
     secrets = fakeSecrets();
     setSecretsForTests(secrets);
 
@@ -250,6 +269,7 @@ describe('oauth login', () => {
   afterEach(async () => {
     setSecretsForTests(undefined);
     setHostCacheDirForTests(undefined);
+    setHostsIndexDirForTests(undefined);
     setHostFlag(undefined);
     setAuthFlag(undefined);
     for (const v of VARS) {
@@ -696,6 +716,196 @@ describe('oauth login', () => {
   });
 
   // --------------------------------------------------------------------
+  describe('host index self-heal (getSessionToken)', () => {
+    test('records the host once a session is found, never before', async () => {
+      expect(hasHost(host.host)).toBe(false);
+
+      // No session yet: the null path must not record a host with no session.
+      expect(await getSessionToken(host)).toBeNull();
+      expect(hasHost(host.host)).toBe(false);
+
+      await login(host, { openUrl });
+      expect(await getSessionToken(host)).toBe('access-1');
+
+      expect(hasHost(host.host)).toBe(true);
+      const entry = listHosts().find((h) => h.host === host.host);
+      expect(entry).toMatchObject({ mode: 'selfhosted', org: null });
+      // Self-healed, not an explicit login record: no loggedInAt.
+      expect(entry?.loggedInAt).toBeUndefined();
+    });
+
+    test('does not touch an already-indexed host', async () => {
+      await login(host, { openUrl });
+      recordHost(
+        host.host,
+        { mode: 'selfhosted', org: null },
+        { loggedInAt: '2020-01-01T00:00:00.000Z' },
+      );
+
+      await getSessionToken(host);
+
+      expect(listHosts().find((h) => h.host === host.host)?.loggedInAt).toBe(
+        '2020-01-01T00:00:00.000Z',
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------
+  describe('hasStoredSessionFor / getSessionExpiryFor', () => {
+    test('false / undefined before login, true / a timestamp after', async () => {
+      expect(await hasStoredSessionFor(host.host)).toBe(false);
+      expect(await getSessionExpiryFor(host.host)).toBeUndefined();
+
+      await login(host, { openUrl });
+
+      expect(await hasStoredSessionFor(host.host)).toBe(true);
+      expect(await getSessionExpiryFor(host.host)).toMatch(/^\d{4}-/);
+    });
+
+    test('never print the keyring-fallback announcement (quiet)', async () => {
+      const broken: SecretsApi = {
+        async get() {
+          throw new Error('no keyring');
+        },
+        async set() {
+          throw new Error('no keyring');
+        },
+        async delete() {
+          throw new Error('no keyring');
+        },
+      };
+      setSecretsForTests(broken);
+      const stderrLines: string[] = [];
+      const origError = console.error;
+      console.error = (...args: unknown[]) => {
+        stderrLines.push(args.join(' '));
+      };
+      try {
+        await hasStoredSessionFor('never-logged-in.example.com');
+      } finally {
+        console.error = origError;
+        setSecretsForTests(secrets);
+      }
+      expect(
+        stderrLines.some((l) => l.includes('no OS keyring available')),
+      ).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------
+  describe('loginCommand: recording and the default host', () => {
+    /** Capture console.log lines for the duration of `fn`. */
+    async function captureLog(fn: () => Promise<void>): Promise<string[]> {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => {
+        lines.push(args.join(' '));
+      };
+      try {
+        await fn();
+      } finally {
+        console.log = orig;
+      }
+      return lines;
+    }
+
+    test('records the host with loggedInAt', async () => {
+      snapshotEnvHost(host.host);
+      await loginCommand();
+      const entry = listHosts().find((h) => h.host === host.host);
+      expect(entry).toMatchObject({ mode: 'selfhosted', org: null });
+      expect(entry?.loggedInAt).toMatch(/^\d{4}-/);
+    });
+
+    test('set: no default yet, env resolves to the login host', async () => {
+      snapshotEnvHost(host.host);
+      const lines = await captureLog(loginCommand);
+      expect(getDefaultHost()).toBe(host.host);
+      expect(lines.some((l) => l.includes('is now the default host'))).toBe(
+        true,
+      );
+    });
+
+    test('set: no default yet, env resolves to nothing at all', async () => {
+      snapshotEnvHost(null);
+      await loginCommand();
+      expect(getDefaultHost()).toBe(host.host);
+    });
+
+    test('hint: no default yet, but env resolves to a different host', async () => {
+      snapshotEnvHost('elsewhere.example.com');
+      const lines = await captureLog(loginCommand);
+      expect(getDefaultHost()).toBeNull();
+      expect(hasHost(host.host)).toBe(true);
+      expect(
+        lines.some(
+          (l) =>
+            l.includes('is not the default host') &&
+            l.includes(`semantius use ${host.host}`),
+        ),
+      ).toBe(true);
+    });
+
+    test('keep: an existing default is left alone', async () => {
+      setDefaultHost('already-default.example.com');
+      snapshotEnvHost(host.host);
+      await loginCommand();
+      expect(getDefaultHost()).toBe('already-default.example.com');
+      // Still recorded, just not promoted to default.
+      expect(hasHost(host.host)).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------
+  describe('logoutCommand: host index', () => {
+    async function captureError(fn: () => Promise<void>): Promise<string[]> {
+      const lines: string[] = [];
+      const orig = console.error;
+      console.error = (...args: unknown[]) => {
+        lines.push(args.join(' '));
+      };
+      try {
+        await fn();
+      } finally {
+        console.error = orig;
+      }
+      return lines;
+    }
+
+    test('removes the entry and hints when it was the default', async () => {
+      await login(host, { openUrl });
+      recordHost(host.host, { mode: 'selfhosted', org: null });
+      setDefaultHost(host.host);
+
+      const lines = await captureError(logoutCommand);
+
+      expect(hasHost(host.host)).toBe(false);
+      expect(getDefaultHost()).toBeNull();
+      expect(lines.some((l) => l.includes('was the default host'))).toBe(
+        true,
+      );
+    });
+
+    test('removes the entry with no hint when it was not the default', async () => {
+      await login(host, { openUrl });
+      recordHost(host.host, { mode: 'selfhosted', org: null });
+      setDefaultHost('other.example.com');
+
+      const lines = await captureError(logoutCommand);
+
+      expect(hasHost(host.host)).toBe(false);
+      expect(getDefaultHost()).toBe('other.example.com');
+      expect(lines.length).toBe(0);
+    });
+
+    test('removes a recorded host even with no stored session', async () => {
+      recordHost(host.host, { mode: 'selfhosted', org: null });
+      await logoutCommand();
+      expect(hasHost(host.host)).toBe(false);
+    });
+  });
+
+  // --------------------------------------------------------------------
   describe('MCP route', () => {
     const config = {
       url: 'https://acme.semantius.ai/mcp',
@@ -716,5 +926,45 @@ describe('oauth login', () => {
     test('without a session the config is left untouched', async () => {
       expect(await transformConfigWithJwt('cube', config)).toEqual(config);
     });
+  });
+});
+
+describe('decideDefaultAfterLogin', () => {
+  test('no default, env resolves to the login host → set', () => {
+    expect(
+      decideDefaultAfterLogin('a.semantius.cloud', 'a.semantius.cloud', null),
+    ).toBe('set');
+  });
+
+  test('no default, env resolves to nothing → set', () => {
+    expect(decideDefaultAfterLogin('a.semantius.cloud', null, null)).toBe(
+      'set',
+    );
+  });
+
+  test('no default, env resolves elsewhere → hint', () => {
+    expect(
+      decideDefaultAfterLogin('a.semantius.cloud', 'b.semantius.cloud', null),
+    ).toBe('hint');
+  });
+
+  test('an existing default → keep, regardless of the environment', () => {
+    expect(
+      decideDefaultAfterLogin(
+        'a.semantius.cloud',
+        'a.semantius.cloud',
+        'c.semantius.cloud',
+      ),
+    ).toBe('keep');
+    expect(
+      decideDefaultAfterLogin('a.semantius.cloud', null, 'c.semantius.cloud'),
+    ).toBe('keep');
+    expect(
+      decideDefaultAfterLogin(
+        'a.semantius.cloud',
+        'b.semantius.cloud',
+        'c.semantius.cloud',
+      ),
+    ).toBe('keep');
   });
 });

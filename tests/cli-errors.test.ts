@@ -5,7 +5,9 @@
  * by invoking the actual CLI with wrong/confusing arguments.
  */
 
-import { afterAll, afterEach, beforeAll, describe, test, expect } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, test, expect } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('CLI Error Handling Tests', () => {
@@ -22,6 +24,19 @@ describe('CLI Error Handling Tests', () => {
   // process instead of exit 0.
   // This fixture has no remote servers (only the in-process "utils" builtin).
   const configPath = join(import.meta.dir, 'fixtures', 'no-servers.json');
+
+  // A spawned CLI reads the real user config dir (APPDATA / HOME) for the
+  // global .env fallback and the stored default host (hosts.json) unless
+  // redirected — without this, a developer's own config could leak in.
+  let configDir: string;
+
+  beforeEach(async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'semantius-cli-errors-'));
+  });
+
+  afterEach(async () => {
+    await rm(configDir, { recursive: true, force: true });
+  });
 
   async function runCli(
     args: string[]
@@ -42,6 +57,8 @@ describe('CLI Error Handling Tests', () => {
           // here can spend the default 30-minute budget on backoff.
           SEMANTIUS_MAX_RETRIES: '0',
           SEMANTIUS_TIMEOUT: '10',
+          APPDATA: configDir,
+          HOME: configDir,
         },
         stdin: null,
         stdout: 'pipe',
@@ -570,6 +587,9 @@ describe('CLI errors through the local crud layer', () => {
   const JWT = 'eyJhbGciOiJub25lIn0.eyJzdWIiOiJ0ZXN0In0.sig';
   let reply: (path: string, headers: Headers) => Response = () => Response.json([]);
   let server: ReturnType<typeof Bun.serve>;
+  // Redirects the real user config dir away from any developer state
+  // (hosts.json, a global .env) for every spawned CLI below.
+  let configDir: string;
 
   beforeAll(() => {
     server = Bun.serve({
@@ -584,8 +604,12 @@ describe('CLI errors through the local crud layer', () => {
   afterAll(() => {
     server.stop(true);
   });
-  afterEach(() => {
+  beforeEach(async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'semantius-cli-errors-local-'));
+  });
+  afterEach(async () => {
     reply = () => Response.json([]);
+    await rm(configDir, { recursive: true, force: true });
   });
 
   async function runLocal(
@@ -607,6 +631,8 @@ describe('CLI errors through the local crud layer', () => {
         SEMANTIUS_STREAM: '',
         SEMANTIUS_MAX_RETRIES: '0',
         SEMANTIUS_TIMEOUT: '10',
+        APPDATA: configDir,
+        HOME: configDir,
         ...env,
       },
       stdin: null,

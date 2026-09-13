@@ -16,6 +16,7 @@ import {
   deleteHostCache,
   resolveHost,
 } from '../host.js';
+import { hasHost, recordHost } from '../hosts-index.js';
 import { logTokenEvent } from '../logger.js';
 import { buildScope, getOAuthMetadata } from './provider.js';
 import {
@@ -74,21 +75,47 @@ export class LoginFailedError extends Error {
 // Stored session
 // ============================================================================
 
-function storageFor(host: HostFacts) {
-  return createSecretStorage(sessionName(host.host));
+function storageFor(host: string, opts: { quiet?: boolean } = {}) {
+  return createSecretStorage(sessionName(host), undefined, opts);
 }
 
-/** The stored token set for this host, or undefined when never logged in. */
-async function loadSession(host: HostFacts): Promise<TokenSet | undefined> {
-  const stored = await storageFor(host).load();
+/** The stored token set for this host name, or undefined when never logged in. */
+async function loadSessionFor(
+  host: string,
+  opts: { quiet?: boolean } = {},
+): Promise<TokenSet | undefined> {
+  const stored = await storageFor(host, opts).load();
   return stored && Object.keys(stored.tokens ?? {}).length > 0
     ? stored
     : undefined;
 }
 
+/**
+ * Whether a session is stored for this host name (no network, no resolution
+ * — unlike hasStoredSession, it needs no HostFacts). Used by "semantius
+ * hosts", which probes every indexed host and must not print the keyring
+ * fallback announcement once per host (see createSecretStorage's `quiet`).
+ */
+export async function hasStoredSessionFor(host: string): Promise<boolean> {
+  return (await loadSessionFor(host, { quiet: true })) !== undefined;
+}
+
+/** getSessionExpiry, in terms of a host name rather than resolved HostFacts. */
+export async function getSessionExpiryFor(
+  host: string,
+): Promise<string | undefined> {
+  const stored = await loadSessionFor(host, { quiet: true });
+  const expiries = Object.values(stored?.tokens ?? {})
+    .map((t) => t.expires_at)
+    .filter((e): e is number => typeof e === 'number' && e > 0);
+  return expiries.length
+    ? new Date(Math.min(...expiries)).toISOString()
+    : undefined;
+}
+
 /** Whether a session is stored for this host (no network, no validation). */
 export async function hasStoredSession(host: HostFacts): Promise<boolean> {
-  return (await loadSession(host)) !== undefined;
+  return (await loadSessionFor(host.host)) !== undefined;
 }
 
 /**
@@ -98,7 +125,7 @@ export async function hasStoredSession(host: HostFacts): Promise<boolean> {
 export async function getSessionExpiry(
   host: HostFacts,
 ): Promise<string | undefined> {
-  const stored = await loadSession(host);
+  const stored = await loadSessionFor(host.host);
   const expiries = Object.values(stored?.tokens ?? {})
     .map((t) => t.expires_at)
     .filter((e): e is number => typeof e === 'number' && e > 0);
@@ -126,9 +153,17 @@ export async function getSessionToken(
   host: HostFacts,
   opts: { forceRefresh?: boolean } = {},
 ): Promise<string | null> {
-  const storage = storageFor(host);
+  const storage = storageFor(host.host);
   const stored = await storage.load();
   if (!stored || Object.keys(stored.tokens ?? {}).length === 0) return null;
+
+  // Self-heal the host index: a session found here was stored by a login
+  // this machine's index may predate (an older CLI version, or a keyring
+  // entry from before hosts.json existed). hasHost() is a cheap, synchronous,
+  // cached read, so this costs nothing once the index already knows the host.
+  if (!hasHost(host.host)) {
+    recordHost(host.host, { mode: host.mode, org: host.org });
+  }
 
   if (opts.forceRefresh) {
     await expireStoredAccessTokens(storage);
@@ -201,7 +236,7 @@ export async function login(
   opts: { openUrl?: (url: string) => void } = {},
 ): Promise<void> {
   const facts = await requireLoginableHost(host);
-  const storage = storageFor(facts);
+  const storage = storageFor(facts.host);
   // Rediscover: a login is rare, and starting it from a cached issuer would
   // fail the callback check below against endpoints the host may have changed.
   const metadata = await getOAuthMetadata(facts, { rediscover: true });
@@ -279,7 +314,7 @@ export function issuerMismatch(
 
 /** Revoke (best effort) and delete the stored session for this host. */
 export async function logout(host: HostFacts): Promise<boolean> {
-  const storage = storageFor(host);
+  const storage = storageFor(host.host);
   const stored = await storage.load();
   if (!stored) return false;
 

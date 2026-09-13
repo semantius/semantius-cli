@@ -405,7 +405,8 @@ export function unknownSubcommandError(subcommand: string): CliError {
   };
 
   const suggested = suggestions[subcommand.toLowerCase()];
-  const validCommands = 'info, grep, call';
+  const validCommands =
+    'info, grep, call, ping, whoami, login, logout, hosts, use';
 
   return {
     code: ErrorCode.CLIENT_ERROR,

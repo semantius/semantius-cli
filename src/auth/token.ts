@@ -19,10 +19,12 @@ import {
   getEnvJwt,
   getHostFlag,
   getPrefixedEnv,
+  getTokenArg,
+  isSessionOnlyHost,
   prefixedEnvName,
 } from '../config.js';
 import { ErrorCode, formatCliError } from '../errors.js';
-import type { HostFacts } from '../host.js';
+import { type HostFacts, getHostSource } from '../host.js';
 import {
   type CachedToken,
   deleteCachedToken,
@@ -41,12 +43,26 @@ export class NoCredentialsError extends Error {
     super(
       forced
         ? `Authentication required: --auth ${forced} was given but ${forcedSourceHint(forced, host)}`
-        : getHostFlag()
-          ? `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`
-          : `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`,
+        : noCredentialsHint(host),
     );
     this.name = 'NoCredentialsError';
   }
+}
+
+/**
+ * No credential source at all, and no --auth forcing one: on a session-only
+ * host (--host, or the stored default — see isSessionOnlyHost) only a stored
+ * session can help, so point at login; everywhere else the environment's
+ * credential vars are still live, so mention them too.
+ */
+function noCredentialsHint(host: string): string {
+  if (!isSessionOnlyHost()) {
+    return `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`;
+  }
+  if (getHostSource() === 'default') {
+    return `Authentication required: no credentials stored for ${host} (the default host). Run "semantius login" (${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} apply only when they name a host of their own).`;
+  }
+  return `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`;
 }
 
 /** What --auth <source> asked for and did not find. */
@@ -64,8 +80,10 @@ function forcedSourceHint(forced: CredentialSource, host: string): string {
  */
 export class SessionExpiredError extends Error {
   constructor(host: string, detail: string) {
+    const defaultSuffix =
+      getHostSource() === 'default' ? ' (the default host)' : '';
     super(
-      `Authentication required: the session stored for ${host} could not be refreshed (${detail}). Run "semantius login${getHostFlag() ? ` --host ${host}` : ''}" again.`,
+      `Authentication required: the session stored for ${host}${defaultSuffix} could not be refreshed (${detail}). Run "semantius login${getHostFlag() ? ` --host ${host}` : ''}" again.`,
     );
     this.name = 'SessionExpiredError';
   }
@@ -103,11 +121,15 @@ export type CredentialSource = 'jwt' | 'apikey' | 'oauth';
 
 /**
  * The environment's credential source, or null when it has none (then the
- * stored session applies). With --host the environment's credentials never
- * apply: they belong to the environment's host.
+ * stored session applies). A --token argument always wins (it names its own
+ * host, so it is never "the environment's"). On a session-only host
+ * (--host, or the stored default — see isSessionOnlyHost) the environment's
+ * API key / JWT never apply: they belong to whatever host they were set for,
+ * not necessarily this one.
  */
 export function getCredentialSource(): CredentialSource | null {
-  if (getHostFlag()) return null;
+  if (getTokenArg()) return 'jwt';
+  if (isSessionOnlyHost()) return null;
   if (getEnvJwt()) return 'jwt';
   if (getPrefixedEnv('API_KEY')) return 'apikey';
   return null;

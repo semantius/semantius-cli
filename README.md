@@ -61,23 +61,41 @@ semantius login --host acme.semantius.app    # a specific organization
 semantius login --host semantius.example.com # a self-hosted instance
 ```
 
+```bash
+# Option 6: a token for just this one invocation, without an .env at all
+echo your-org-name:eyJhbGciOi... | semantius --token - whoami   # from stdin (preferred)
+semantius --token-file ./token.txt whoami                        # from a file
+semantius --token your-org-name:eyJhbGciOi... whoami              # literal (shell history!)
+```
+
 Credentials are tried in this order, first match wins:
 
-1. `SEMANTIUS_JWT` — a static token, sent as-is (no exchange, no cache)
-2. `SEMANTIUS_API_KEY` — exchanged for a short-lived token at your host's token endpoint and cached (see [Token cache](#token-cache))
-3. The session stored by `semantius login` for this host (see [Browser login](#browser-login))
+1. `--token` / `--token-file` — a JWT for just this invocation (see below)
+2. `SEMANTIUS_JWT` — a static token, sent as-is (no exchange, no cache)
+3. `SEMANTIUS_API_KEY` — exchanged for a short-lived token at your host's token endpoint and cached (see [Token cache](#token-cache))
+4. The session stored by `semantius login` for this host (see [Browser login](#browser-login))
 
 Without any of them, commands that call the platform exit `5` with "Authentication required".
 `--auth jwt|apikey|oauth` picks one source explicitly.
-Which host the CLI talks to is covered in [Hosts](#hosts-managed-cloud-and-self-hosted).
+Which host the CLI talks to — including the **default host** `semantius login` /
+`semantius use` can set, so you don't need an `.env` or `--host` at all once
+you've signed in once — is covered in [Hosts](#hosts-managed-cloud-and-self-hosted).
 
-The environment's credentials belong to the environment's host (`SEMANTIUS_HOST` /
-`SEMANTIUS_ORG`). **With `--host`, only the host name counts:** the CLI uses the
-credentials stored for that host — one set per host, stored by
-`semantius login --host <host>` — and ignores the API key, JWT and org from the
-environment, so they are never sent to another host. To pair a host with an API
-key, set `SEMANTIUS_HOST` next to it, or keep several pairs side by side with
-`--env <prefix>` (`<PREFIX>_HOST`, `<PREFIX>_API_KEY`).
+**A credential that names its own organization is bound to that host.** An
+`"org:"` prefix on `SEMANTIUS_API_KEY` / `SEMANTIUS_JWT`, and `--token` /
+`--token-file` (always `org:jwt`), all bind the invocation to
+`<org>.semantius.cloud`. If `--host` or `SEMANTIUS_HOST` also names a host, it
+must be the *same* one — a different one is an error (`HOST_CONFLICT`) rather
+than the credential silently going wherever `--host` says.
+
+The environment's credentials belong to the environment's host. **With
+`--host`, or on the stored default host, only a stored browser session is
+used:** the CLI ignores the API key, JWT and org from the environment (a bound
+`--token` is the one exception — it always applies), so they are never sent to
+another host by mistake. One session is stored per host, by `semantius login
+--host <host>`. To pair a host with an API key instead, set `SEMANTIUS_HOST`
+next to it, or keep several pairs side by side with `--env <prefix>`
+(`<PREFIX>_HOST`, `<PREFIX>_API_KEY`).
 
 No config file is needed: the `crud` tools run inside the CLI against your
 organization's PostgREST API, and `cube` (analytics) is reached as a Semantius
@@ -114,9 +132,11 @@ semantius [options] grep <pattern>              Search tools by glob pattern
 semantius [options] call <server> <tool>        Call tool (reads JSON from stdin if no args)
 semantius [options] call <server> <tool> <json> Call tool with JSON arguments
 semantius [options] ping [-n [count]]           Check connectivity & latency: crud/getCurrentUser (one PostgREST round trip; the cloud MCP server with --crud-mcp)
-semantius [options] whoami                      Show current user (email, org, roles)
+semantius [options] whoami                      Show current user (email, org, roles) and the resolved host
 semantius [options] login                       Sign in with the browser; stores the session for the host
 semantius [options] logout                      Revoke and delete the stored session for the host
+semantius [options] hosts [--json]              List every host this machine has a session or default for
+semantius use <host>                            Make <host> the default host (needs a stored session)
 ```
 
 **Both formats work:** `info <server> <tool>` or `info <server>/<tool>`
@@ -133,9 +153,12 @@ semantius [options] logout                      Revoke and delete the stored ses
 | `-d, --with-descriptions` | Include tool descriptions |
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
 | `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
+| `--json` | (`hosts` only) Machine-readable output instead of the table |
 | `--env <prefix>` | Env var prefix (default `SEMANTIUS`), e.g. `--env PROD` reads `PROD_API_KEY` / `PROD_ORG` |
 | `--host <hostname>` | Semantius host to talk to, `hostname[:port]` (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST` |
-| `--auth <source>` | Use exactly one credential source: `jwt`, `apikey` or `oauth` (the stored browser session). Not combinable with `--host` for `jwt`/`apikey` |
+| `--auth <source>` | Use exactly one credential source: `jwt`, `apikey` or `oauth` (the stored browser session). Not combinable with `--host` for `jwt`/`apikey` (unless `--token` supplies the credential — see [Credentials](#2-set-up-credentials)) |
+| `--token <org:jwt \| ->` | A JWT for just this invocation, binding it to `<org>.semantius.cloud` (error if `--host` / `SEMANTIUS_HOST` names a different host). `-` reads it from stdin; a literal value is visible in the shell history and process list, so prefer `-` or `--token-file`. Not combinable with `--auth apikey`/`oauth` or `--login` |
+| `--token-file <path>` | Same as `--token`, read from a file (`org:jwt`, trimmed) |
 | `--login` | Sign in with the browser first, then run the command with that session (needs an interactive terminal) |
 | `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
 | `--stream` | (`call crud postgrestRequest` only) Pipe the PostgREST response body to stdout unchanged — see [Streaming large reads](#streaming-large-reads---stream). Also `SEMANTIUS_STREAM=1` |
@@ -353,7 +376,7 @@ configurations side by side in the same `.env`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SEMANTIUS_ORG` | Organization on the managed cloud; the host defaults to `https://<org>.semantius.cloud`. **Required** unless `SEMANTIUS_HOST` or `--host` names the host (an `org:` prefix on the API key or JWT also supplies it) | (none) |
+| `SEMANTIUS_ORG` | Organization on the managed cloud; the host defaults to `https://<org>.semantius.cloud`. **Required** unless `SEMANTIUS_HOST`, `--host`, a bound credential or the stored default host (see [Hosts](#hosts-managed-cloud-and-self-hosted)) names the host (an `org:` prefix on the API key or JWT also supplies it) | (none) |
 | `SEMANTIUS_HOST` | Hostname, same as `--host` (see [Hosts](#hosts-managed-cloud-and-self-hosted)) | `${SEMANTIUS_ORG}.semantius.cloud` |
 | `SEMANTIUS_API_KEY` | API key for Semantius (needed to call tools unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
 | `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
@@ -378,8 +401,15 @@ configurations side by side in the same `.env`.
 The CLI talks to one Semantius host per invocation, taken from the first of:
 
 1. `--host <hostname>`
-2. `SEMANTIUS_HOST` — from the shell, then a project `.env`, then the global `.env` in the user config dir
-3. `SEMANTIUS_ORG` — the managed-cloud host `<org>.semantius.cloud`
+2. A **bound credential**: `--token` / `--token-file`, or an `"org:"`-prefixed
+   `SEMANTIUS_API_KEY` / `SEMANTIUS_JWT` — binds to `<org>.semantius.cloud`.
+   Raised above `SEMANTIUS_HOST` so a stale `.env` can no longer send a
+   credential to the wrong host silently: `--host` or `SEMANTIUS_HOST` naming
+   a *different* host is a `HOST_CONFLICT` error naming both; naming the
+   *same* host is fine.
+3. `SEMANTIUS_HOST` — from the shell, then a project `.env`, then the global `.env` in the user config dir
+4. `SEMANTIUS_ORG` — the managed-cloud host `<org>.semantius.cloud`
+5. The **stored default host** — see below
 
 A host is a hostname with an optional port (`acme.semantius.cloud`,
 `semantius.example.com:8443`); a leading `https://` or `http://` is ignored.
@@ -398,8 +428,40 @@ is **self-hosted**: PostgREST is expected at `https://<host>/rest`, the token
 exchange at `https://<host>/api/auth/token`, and there is no `cube` (analytics)
 server and no cloud MCP server, so `--crud-mcp` is not available.
 
-With `--host`, only credentials stored for that host are used — see
-[Set up credentials](#2-set-up-credentials).
+With `--host`, or on the stored default host, only credentials stored for that
+host (a browser session) are used — see [Set up credentials](#2-set-up-credentials).
+A bare `SEMANTIUS_API_KEY` / `SEMANTIUS_JWT` sitting next to the default host
+(left over from a project `.env`, say) is an error rather than silently
+unused: it was set for whatever host was configured when it was written, not
+necessarily the default one.
+
+#### The default host, and `semantius hosts` / `semantius use`
+
+Once you've signed in somewhere, you don't need an `.env` or `--host` in every
+directory: `semantius login` records the host it signs in to and, the first
+time there is nothing else configured to conflict with, makes it the default
+— the last rung above. `semantius login --host <other>` from inside a
+directory whose `.env` already resolves to a *different* host just hints that
+you can run `semantius use <other>` to make it the default explicitly, rather
+than silently promoting it out from under you.
+
+```bash
+semantius hosts                        # every host this machine has a session or default for
+semantius hosts --json                 # the same, machine-readable
+semantius use acme.semantius.cloud     # make it the default (needs a stored session already)
+```
+
+`semantius hosts` prints a table — host, mode, org, whether a session is
+stored, its expiry — with `*` on the default and a trailing `current: <host>
+(<source>)` line showing what this directory resolves to right now (a project
+`.env` can still override the default there). It works even with nothing
+configured at all, or with a conflicting setup, since it — and `use` — are
+exactly how you inspect and fix that.
+
+`semantius logout` on the default host clears the default too (with a hint to
+run `use` again) and stops any running background connection daemon, so a
+revoked session can't linger in a cached connection (Linux/macOS only; no
+daemon on Windows).
 
 ### Browser login
 

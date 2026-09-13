@@ -9,6 +9,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { randomBytes } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   ApiKeyRejectedError,
   NoCredentialsError,
@@ -16,9 +19,10 @@ import {
   getCredentialSource,
   isCredentialError,
 } from '../src/auth/token';
-import { setEnvPrefix, setHostFlag } from '../src/config';
+import { setEnvPrefix, setHostFlag, setTokenArg } from '../src/config';
 import { isAuthErrorMessage } from '../src/errors';
 import type { HostFacts } from '../src/host';
+import { setDefaultHost, setHostsIndexDirForTests } from '../src/hosts-index';
 import {
   deleteCachedToken,
   readCachedToken,
@@ -321,5 +325,61 @@ describe('getAccessToken', () => {
     await expect(getAccessToken(SELF_HOSTED)).rejects.toBeInstanceOf(
       NoCredentialsError,
     );
+  });
+});
+
+describe('getCredentialSource: --token and the default host', () => {
+  const VARS = ['SEMANTIUS_JWT', 'SEMANTIUS_API_KEY', 'SEMANTIUS_ORG', 'SEMANTIUS_HOST'];
+  let saved: Record<string, string | undefined>;
+  let hostsDir: string;
+
+  beforeEach(async () => {
+    setEnvPrefix('SEMANTIUS');
+    saved = {};
+    for (const v of VARS) {
+      saved[v] = process.env[v];
+      delete process.env[v];
+    }
+    hostsDir = await mkdtemp(join(tmpdir(), 'semantius-token-hosts-'));
+    setHostsIndexDirForTests(hostsDir);
+  });
+
+  afterEach(async () => {
+    setEnvPrefix('SEMANTIUS');
+    setHostFlag(undefined);
+    setTokenArg(undefined);
+    setHostsIndexDirForTests(undefined);
+    for (const v of VARS) {
+      if (saved[v] !== undefined) process.env[v] = saved[v];
+      else delete process.env[v];
+    }
+    await rm(hostsDir, { recursive: true, force: true });
+  });
+
+  test('a --token argument is source "jwt", even combined with --host', () => {
+    setTokenArg({ org: 'acme', jwt: 'eyJ.e30.sig' });
+    setHostFlag('acme.semantius.cloud');
+    expect(getCredentialSource()).toBe('jwt');
+  });
+
+  test('the stored default host is source null: only a session applies', () => {
+    setDefaultHost('acme.semantius.cloud');
+    expect(getCredentialSource()).toBeNull();
+  });
+
+  test('a bare env JWT with a plain ORG-sourced host is still "jwt"', () => {
+    process.env.SEMANTIUS_JWT = 'eyJ.e30.sig';
+    process.env.SEMANTIUS_ORG = 'acme';
+    expect(getCredentialSource()).toBe('jwt');
+  });
+
+  test('NoCredentialsError on the stored default host names it and points at plain "semantius login"', async () => {
+    setDefaultHost(CLOUD.host);
+    const error = await getAccessToken(CLOUD).catch((e: Error) => e);
+    expect(error).toBeInstanceOf(NoCredentialsError);
+    expect((error as Error).message).toBe(
+      `Authentication required: no credentials stored for ${CLOUD.host} (the default host). Run "semantius login" (SEMANTIUS_API_KEY and SEMANTIUS_JWT apply only when they name a host of their own).`,
+    );
+    expect(isAuthErrorMessage((error as Error).message)).toBe(true);
   });
 });

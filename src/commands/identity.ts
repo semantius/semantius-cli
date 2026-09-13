@@ -19,6 +19,8 @@ import {
   serverConnectionError,
   toolExecutionError,
 } from '../errors.js';
+import { getHost, getHostSource } from '../host.js';
+import { getDefaultHost } from '../hosts-index.js';
 import { getRecordedJwt } from '../logger.js';
 import { McpToolError } from '../output.js';
 
@@ -269,14 +271,23 @@ async function sessionExpiry(): Promise<string | undefined> {
 }
 
 /**
- * whoami — prints the local config source first (so it's visible even when
- * the remote call fails), then calls crud/getCurrentUser and prints the
- * key identity fields.
+ * whoami — prints the local config source and the resolved host first (so
+ * both are visible even when the remote call fails), then calls
+ * crud/getCurrentUser and prints the key identity fields.
  */
 export async function whoamiCommand(options: WhoamiOptions): Promise<void> {
   const envDir = getLoadedEnvDir();
   const configSource = envDir ?? 'shell environment';
-  console.log(`${localTimestamp()}  config_source  ${configSource}`);
+  const ts = localTimestamp();
+  console.log(`${ts}  config_source  ${configSource}`);
+
+  // main() has already validated host resolution before dispatching here, so
+  // neither call below can throw (a HOST_CONFLICT or invalid host would have
+  // exited before whoami ever ran).
+  const host = getHost();
+  const defaultSuffix = host && host === getDefaultHost() ? ' (default)' : '';
+  console.log(`${ts}  host  ${host ?? '(none)'}${defaultSuffix}`);
+  console.log(`${ts}  host_source  ${getHostSource() ?? '(none)'}`);
 
   let user: CurrentUser;
   try {

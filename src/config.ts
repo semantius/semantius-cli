@@ -14,7 +14,7 @@ import {
   formatCliError,
   serverNotFoundError,
 } from './errors.js';
-import { getHostMode } from './host.js';
+import { getHost, getHostMode, getHostSource } from './host.js';
 
 /**
  * Base server configuration with tool filtering
@@ -210,8 +210,18 @@ export function isPostgrestServer(
 
 let _envPrefix = 'SEMANTIUS';
 
+/**
+ * Set the active --env prefix. Always the first thing done for a new
+ * invocation (see main()), before any credential env var is read — so this
+ * doubles as the reset point for the per-invocation credential state below
+ * (_credentialOrgs, _tokenArg), which keeps tests that reuse the process
+ * across prefixes isolated from one another without affecting real runs.
+ */
 export function setEnvPrefix(prefix: string): void {
   _envPrefix = prefix.toUpperCase();
+  _credentialOrgs = {};
+  _tokenArg = undefined;
+  _envHostSnapshot = undefined;
 }
 
 export function getEnvPrefix(): string {
@@ -249,16 +259,43 @@ export function getAuthFlag(): AuthFlag | undefined {
 }
 
 /**
+ * --token / --token-file: an org:jwt argument, resolved in index.ts right
+ * after parseArgs (before loadDotEnv). Kept as state rather than written
+ * into process.env so that ignoreEnvCredentials() cannot blank it and
+ * describeEnvVar() cannot misattribute it to a .env file — the flag names
+ * its own host directly (see getCredentialBinding), independent of --host.
+ */
+export interface TokenArg {
+  org: string;
+  jwt: string;
+}
+
+let _tokenArg: TokenArg | undefined;
+
+export function setTokenArg(value: TokenArg | undefined): void {
+  _tokenArg = value;
+}
+
+export function getTokenArg(): TokenArg | undefined {
+  return _tokenArg;
+}
+
+/**
  * --host names a host explicitly: credentials belong to the host they were
  * stored for, so the API key, static JWT and org configured in the
  * environment / .env are not used. They are set to empty so no code path
  * (the local layer, or the MCP route's config templates) can pick them up;
  * on a cloud host the org is re-derived from the host (propagateOrg).
+ *
+ * Clears the recorded org bindings (_credentialOrgs) along with the env vars
+ * they were hoisted from, but never _tokenArg: --token names the invocation's
+ * own host and survives --host blanking (see getEnvJwt).
  */
 export function ignoreEnvCredentials(): void {
   for (const name of ['API_KEY', 'JWT', 'ORG']) {
     process.env[`${_envPrefix}_${name}`] = '';
   }
+  _credentialOrgs = {};
 }
 
 /**
@@ -319,65 +356,188 @@ export function splitOrgPrefix(raw: string): { org?: string; value: string } {
 }
 
 /**
- * The static JWT from ${PREFIX}_JWT with any "org:" prefix stripped.
- * Returns undefined when the var is unset or empty. When set, the CLI uses
- * this token directly — no get_cli_token call and no token cache I/O.
+ * The static JWT with any "org:" prefix stripped: from --token / --token-file
+ * when given (see setTokenArg), else from ${PREFIX}_JWT. Returns undefined
+ * when neither is set. When set, the CLI uses this token directly — no
+ * get_cli_token call and no token cache I/O.
  */
 export function getEnvJwt(): string | undefined {
+  if (_tokenArg) return _tokenArg.jwt;
   const raw = getPrefixedEnv('JWT');
   if (!raw) return undefined;
   return splitOrgPrefix(raw).value || undefined;
 }
 
 /**
- * Required env vars that are actually missing: a host must be resolvable —
- * from --host, ${PREFIX}_HOST or ${PREFIX}_ORG (normalizeCredentialEnv may
- * have filled ORG from an "org:" prefix). Returns [${PREFIX}_ORG] when none
- * is set. Credentials are checked later, when a command authenticates.
+ * Required env vars that are actually missing: a host must be resolvable.
+ * Delegates to getHost() so every rung counts — --host, ${PREFIX}_HOST,
+ * --token / an org-bound credential, ${PREFIX}_ORG, and the stored default
+ * host. Returns [${PREFIX}_ORG] when getHost() resolves to null.
+ *
+ * getHost() can throw (an invalid host, or a bound credential conflicting
+ * with --host / ${PREFIX}_HOST): that failure is reported properly by main's
+ * own getHostSource() call, which runs first — here it just means "not
+ * missing", so a broken host doesn't also print a misleading MISSING_ENV_VAR,
+ * and --help / --version (which never call getHostSource()) can still print.
  */
 export function getMissingRequiredEnvVars(): string[] {
-  if (
-    _hostFlag ||
-    process.env[`${_envPrefix}_HOST`] ||
-    process.env[`${_envPrefix}_ORG`]
-  ) {
+  let host: string | null;
+  try {
+    host = getHost();
+  } catch {
     return [];
   }
-  return [`${_envPrefix}_ORG`];
+  return host === null ? [`${_envPrefix}_ORG`] : [];
 }
+
+/**
+ * The org a credential binds the invocation to, or null when neither carries
+ * one. --token wins (it is the invocation's own, explicit credential), then
+ * ${PREFIX}_JWT, then ${PREFIX}_API_KEY — the same order normalizeCredentialEnv
+ * hoists them in. Consulted by host.ts's resolveHostValue to raise a bound
+ * credential's host above ${PREFIX}_HOST, and to detect a conflict with it.
+ */
+export interface CredentialBinding {
+  org: string;
+  source: 'token-arg' | 'jwt-env' | 'apikey-env';
+  /** The env var the binding came from; absent for source 'token-arg'. */
+  varName?: string;
+}
+
+export function getCredentialBinding(): CredentialBinding | null {
+  if (_tokenArg) return { org: _tokenArg.org, source: 'token-arg' };
+  if (_credentialOrgs.jwt) {
+    return {
+      org: _credentialOrgs.jwt.org,
+      source: 'jwt-env',
+      varName: _credentialOrgs.jwt.varName,
+    };
+  }
+  if (_credentialOrgs.apikey) {
+    return {
+      org: _credentialOrgs.apikey.org,
+      source: 'apikey-env',
+      varName: _credentialOrgs.apikey.varName,
+    };
+  }
+  return null;
+}
+
+/**
+ * Which credential env var(s) carried an "org:" prefix this invocation, and
+ * what they were hoisted to. Populated by normalizeCredentialEnv, read by
+ * getCredentialBinding; cleared by ignoreEnvCredentials (never by a later,
+ * now-prefix-less normalizeCredentialEnv call — see its docstring).
+ */
+let _credentialOrgs: {
+  apikey?: { org: string; varName: string };
+  jwt?: { org: string; varName: string };
+} = {};
 
 /**
  * Normalize credential env vars in place after .env loading:
  *   - Hoist an "org:" prefix from ${PREFIX}_API_KEY / ${PREFIX}_JWT into
  *     ${PREFIX}_ORG (deliberately overwriting an existing ORG — the prefix
- *     wins). JWT is processed second so its org beats the API key's.
+ *     wins) and record it in _credentialOrgs. JWT is processed second so its
+ *     org beats the API key's, both for ${PREFIX}_ORG and for
+ *     getCredentialBinding's precedence.
  *   - Backfill ${PREFIX}_API_KEY='' whenever it is undefined (JWT-only and
  *     credential-less sessions alike) so the default config's
  *     ${PREFIX}_API_KEY reference substitutes cleanly under strict mode
  *     (undefined would throw; empty string is fine).
  * Idempotent: hoisted values contain no colon and the backfill only fires
- * while API_KEY is undefined, so repeated calls are no-ops.
+ * while API_KEY is undefined, so repeated calls are no-ops — in particular,
+ * a second call (loadConfig() runs loadDotEnv again) never wipes the
+ * _credentialOrgs a first call already recorded, since by then the env var
+ * itself carries no colon to re-hoist.
  */
 export function normalizeCredentialEnv(): void {
   const apiKeyName = `${_envPrefix}_API_KEY`;
   const jwtName = `${_envPrefix}_JWT`;
   const orgName = `${_envPrefix}_ORG`;
 
-  const hoist = (name: string): void => {
+  const hoist = (name: string, key: 'apikey' | 'jwt'): void => {
     const raw = process.env[name];
     if (!raw?.includes(':')) return;
     const { org, value } = splitOrgPrefix(raw);
     if (!org) return;
     process.env[name] = value;
     process.env[orgName] = org;
+    _credentialOrgs[key] = { org, varName: name };
   };
 
-  hoist(apiKeyName);
-  hoist(jwtName);
+  hoist(apiKeyName, 'apikey');
+  hoist(jwtName, 'jwt');
 
   if (process.env[apiKeyName] === undefined) {
     process.env[apiKeyName] = '';
   }
+}
+
+/**
+ * Whether only a stored browser session can supply credentials for this
+ * invocation: the host came from --host or the stored default, and no
+ * --token argument names its own. On a session-only host, a bare
+ * ${PREFIX}_API_KEY / ${PREFIX}_JWT left over from a project .env is never
+ * used (see strayCredentialError) — only the session stored for the host.
+ */
+export function isSessionOnlyHost(): boolean {
+  if (_tokenArg) return false;
+  const source = getHostSource();
+  return source === 'flag' || source === 'default';
+}
+
+/**
+ * A bare ${PREFIX}_API_KEY / ${PREFIX}_JWT sitting next to a host that came
+ * from the stored default is a contradiction, not a credential to silently
+ * drop: it was set for whatever host was configured when it was written, not
+ * necessarily the default one. Returns the formatted error, or null when
+ * there is nothing to complain about. Checked by main() before blanking, for
+ * a source-'default' host only — with --host the same setup is unremarkable
+ * (blanked silently, as always) because naming the host is the explicit point
+ * of the flag.
+ *
+ * JWT is checked first, matching getCredentialSource's precedence. Only a
+ * bare value reaches here: an org-prefixed one would have produced a binding
+ * and therefore a different host source (see getCredentialBinding).
+ */
+export function strayCredentialError(): string | null {
+  if (getHostSource() !== 'default') return null;
+
+  const jwtName = `${_envPrefix}_JWT`;
+  const apiKeyName = `${_envPrefix}_API_KEY`;
+  const varName = process.env[jwtName]
+    ? jwtName
+    : process.env[apiKeyName]
+      ? apiKeyName
+      : null;
+  if (!varName) return null;
+
+  return formatCliError({
+    code: ErrorCode.CLIENT_ERROR,
+    type: 'CREDENTIAL_WITHOUT_HOST',
+    message: `${describeEnvVar(varName)} names no host, and the host ${getHost()} comes from the stored default`,
+    suggestion: `Set ${prefixedEnvName('ORG')} / ${prefixedEnvName('HOST')} next to it, prefix it "org:key", or unset it`,
+  });
+}
+
+/**
+ * The host the environment alone would resolve to — ignoring --host and the
+ * stored default — captured by main() right after getHostSource(), before
+ * ignoreEnvCredentials() can blank the credential it was derived from.
+ * loginCommand reads it to decide whether a fresh login should become the
+ * default host (see decideDefaultAfterLogin): undefined means "not captured
+ * yet" (a bug, since main() always sets it before dispatching a command);
+ * null means the environment resolves to no host at all.
+ */
+let _envHostSnapshot: string | null | undefined;
+
+export function snapshotEnvHost(host: string | null): void {
+  _envHostSnapshot = host;
+}
+
+export function getSnapshotEnvHost(): string | null | undefined {
+  return _envHostSnapshot;
 }
 
 // ============================================================================
@@ -490,6 +650,16 @@ const _envSources = new Map<string, string>();
 export function describeEnvVar(name: string): string {
   const file = _envSources.get(name);
   return file ? `${name} (from ${file})` : name;
+}
+
+/**
+ * The .env file a variable's value came from, or undefined for the shell
+ * environment / an unset variable. The raw counterpart of describeEnvVar,
+ * used by host.ts's resolveHostValue to distinguish getHostSource()'s 'env'
+ * from `dotenv:<path>`.
+ */
+export function getEnvVarSourceFile(name: string): string | undefined {
+  return _envSources.get(name);
 }
 
 // Directory of the first .env file that was actually loaded. Used by the

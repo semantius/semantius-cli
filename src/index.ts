@@ -11,10 +11,12 @@
  *   semantius call <server> <tool> {}  Call tool with JSON args
  */
 
+import { readFileSync } from 'node:fs';
 import { version as VERSION } from '../package.json' with { type: 'json' };
 import { loginCommand, logoutCommand } from './commands/auth.js';
 import { callCommand } from './commands/call.js';
 import { grepCommand } from './commands/grep.js';
+import { hostsCommand, useCommand } from './commands/hosts.js';
 import { pingCommand, whoamiCommand } from './commands/identity.js';
 import { infoCommand } from './commands/info.js';
 import { listCommand } from './commands/list.js';
@@ -35,6 +37,10 @@ import {
   setCrudMcpFlag,
   setEnvPrefix,
   setHostFlag,
+  setTokenArg,
+  snapshotEnvHost,
+  splitOrgPrefix,
+  strayCredentialError,
 } from './config.js';
 import { runDaemonFromArgv } from './daemon.js';
 import {
@@ -50,8 +56,10 @@ import {
   deleteHostCache,
   getHost,
   getHostMode,
+  getHostSource,
   normalizeHost,
   propagateOrg,
+  resolveHostValue,
 } from './host.js';
 import {
   deleteCachedToken,
@@ -73,7 +81,9 @@ interface ParsedArgs {
     | 'ping'
     | 'whoami'
     | 'login'
-    | 'logout';
+    | 'logout'
+    | 'hosts'
+    | 'use';
   server?: string;
   tool?: string;
   pattern?: string;
@@ -86,6 +96,13 @@ interface ParsedArgs {
   stream: boolean;
   envPrefix: string;
   host?: string;
+  /** --token <org:jwt | ->; undefined unless the flag was given. */
+  token?: string;
+  tokenFile?: string;
+  /** Positional argument for "use". */
+  useHost?: string;
+  /** --json, for "hosts" only. */
+  json: boolean;
   crudMcp: boolean;
   pingCount?: number;
   disableJwtCache: boolean;
@@ -105,6 +122,8 @@ const SUBCOMMANDS = [
   'whoami',
   'login',
   'logout',
+  'hosts',
+  'use',
 ] as const;
 
 /**
@@ -196,6 +215,31 @@ function findHostFlag(args: string[]): string | undefined {
 }
 
 /**
+ * Lightweight scan for --token / --token-file, same pattern as findHostFlag.
+ * Only the literal form is acted on early (to suppress missingHostWarning on
+ * -h / -v paths, which return before parseArgs would see it if the flag comes
+ * after -h/-v in argv) — stdin and a file are never read this early; the full
+ * resolution after parseArgs handles those, and never runs for help/version.
+ */
+function findTokenArgs(args: string[]): {
+  literal?: string;
+  stdin?: boolean;
+  file?: string;
+} {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--token') {
+      const value = args[i + 1];
+      if (value === '-') return { stdin: true };
+      if (value && !value.startsWith('-')) return { literal: value };
+    } else if (args[i] === '--token-file') {
+      const value = args[i + 1];
+      if (value && !value.startsWith('-')) return { file: value };
+    }
+  }
+  return {};
+}
+
+/**
  * Parse command line arguments
  */
 function parseArgs(args: string[]): ParsedArgs {
@@ -207,6 +251,7 @@ function parseArgs(args: string[]): ParsedArgs {
     single: false,
     stream: false,
     envPrefix: 'SEMANTIUS',
+    json: false,
     crudMcp: false,
     disableJwtCache: false,
     resetCache: false,
@@ -241,6 +286,10 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--diag':
         result.diag = true;
+        break;
+
+      case '--json':
+        result.json = true;
         break;
 
       case '--single':
@@ -308,6 +357,29 @@ function parseArgs(args: string[]): ParsedArgs {
         result.host = host;
         break;
       }
+
+      case '--token':
+        // Validated and resolved in main(), after the full parse: the value
+        // may be "-" (read stdin) or a literal, and turning it into a bound
+        // credential needs async I/O this synchronous parser doesn't do.
+        result.token = args[++i];
+        if (!result.token) {
+          console.error(
+            formatCliError(missingArgumentError('--token', 'org:jwt or -')),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        break;
+
+      case '--token-file':
+        result.tokenFile = args[++i];
+        if (!result.tokenFile) {
+          console.error(
+            formatCliError(missingArgumentError('--token-file', 'path')),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        break;
 
       case '-c':
       case '--config':
@@ -442,6 +514,35 @@ function parseArgs(args: string[]): ParsedArgs {
     return result;
   }
 
+  if (firstArg === 'hosts') {
+    if (positional.length > 1) {
+      console.error(
+        formatCliError(
+          tooManyArgumentsError('hosts', positional.length - 1, 0),
+        ),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    result.command = 'hosts';
+    return result;
+  }
+
+  if (firstArg === 'use') {
+    if (positional.length > 2) {
+      console.error(
+        formatCliError(tooManyArgumentsError('use', positional.length - 1, 1)),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    result.useHost = positional[1];
+    if (!result.useHost) {
+      console.error(formatCliError(missingArgumentError('use', 'host')));
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    result.command = 'use';
+    return result;
+  }
+
   if (firstArg === 'call') {
     result.command = 'call';
     const remaining = positional.slice(1);
@@ -560,6 +661,8 @@ function missingHostWarning(): string {
   return `
 ⚠  No host configured: set ${prefixedEnvName('ORG')} or --host (or ${prefixedEnvName('HOST')}).
    Set it in ${getUserConfigDir()}/.env or export it in your shell.
+   Or run "semantius login" to sign in with the browser, then "semantius use <host>"
+   to make it the default host for every directory.
    Generate an API key at https://app.semantius.com/dashboard`;
 }
 
@@ -585,6 +688,8 @@ Usage:
   semantius [options] whoami                       Show current user (email, org, roles)
   semantius [options] login                        Sign in with the browser and store the session for the host
   semantius [options] logout                       Revoke and delete the stored session for the host
+  semantius [options] hosts [--json]                List every host this machine has a session or default for
+  semantius use <host>                             Make <host> the default host (needs a stored session)
 
 Formats (both work):
   semantius info server tool                       Space-separated
@@ -605,10 +710,22 @@ Credentials (first match wins):
                             the OS keyring, refreshed automatically)
   Without any of them, commands that call the platform exit 5 ("Authentication required").
   --auth jwt|apikey|oauth picks one source explicitly.
-  With --host, only credentials stored for that host are used, one set per host (stored
-  by "semantius login --host <host>"); the API key, JWT and org from the environment are
-  ignored. To pair a host with an API key, set ${hostVar} (or use
+
+  With --host, or on the stored default host (see "hosts"/"use" below), only a stored
+  browser session is used — the API key, JWT and org from the environment are ignored.
+  To pair a host with an API key instead, set ${hostVar} (or use
   --env <prefix> with <PREFIX>_HOST and <PREFIX>_API_KEY).
+
+  An "org:" prefix on ${apiKeyVar} / ${jwtVar} (or --token) binds the invocation to
+  that org's host: it wins over ${hostVar}, and a --host / ${hostVar} naming a
+  *different* host is a HOST_CONFLICT error rather than a silent pick.
+
+Hosts:
+  The CLI talks to one host per invocation: --host, then a bound credential (above),
+  then ${hostVar}, then ${orgVar}, then the stored default (last rung). "semantius
+  login" records the host it signs in to and, the first time there is no other
+  setting to conflict with, makes it the default; "semantius use <host>" sets it
+  explicitly. "semantius hosts" lists every host this machine knows about.
 
 Options:
   -h, --help               Show this help message
@@ -617,6 +734,7 @@ Options:
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
   --diag                   (call) Output full JSON response instead of just response.data
                            (whoami) Also show the bearer token used for the request
+  --json                   (hosts only) Machine-readable output instead of the table
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows.
                            Rejected (exit 1) for bulk calls: an array in data/body/id/table_name
   --stream                 (call crud postgrestRequest only) Pipe the PostgREST response body to stdout
@@ -631,6 +749,11 @@ Options:
                            credentials stored for that host (see Credentials)
   --auth <source>          Use exactly one credential source: jwt, apikey or oauth (the stored
                            browser session). Not with --host for jwt/apikey — see Credentials
+  --token <org:jwt | ->    A JWT for the invocation, binding it to <org>.semantius.cloud (error if
+                           --host / SEMANTIUS_HOST names a different host). "-" reads it from stdin;
+                           a literal value is visible in the shell history and process list — prefer
+                           "-" or --token-file. Not with --auth apikey/oauth or --login
+  --token-file <path>      Same as --token, read from a file (org:jwt, trimmed)
   --login                  Sign in with the browser first, then run the command with that session
                            (needs an interactive terminal)
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
@@ -665,15 +788,20 @@ Examples:
   semantius --host semantius.example.com whoami    # Self-hosted instance
   semantius login --host acme.semantius.app        # Browser login, stored for acme.semantius.cloud
   semantius --host acme.semantius.app whoami       # Uses that stored session
+  semantius login                                  # Also makes it the default host, if none is set yet
+  semantius hosts                                  # List every host this machine knows about
+  semantius use acme.semantius.cloud               # Make it the default explicitly
+  echo acme:eyJ... | semantius --token - whoami    # A one-off token, from stdin
 
 Environment Variables (all respect --env <prefix>; default prefix shown):
   ${orgVar.padEnd(28)} Organization on the managed cloud; the host defaults to
-                               <org>.semantius.cloud. Required unless ${hostVar}
-                               or --host is set (an "org:" prefix on the API key or JWT
-                               also supplies it)
-  ${hostVar.padEnd(28)} Hostname, same as --host. Precedence: --host, then
-                               ${hostVar} (shell, project .env, global .env), then ${orgVar}.
-                               <org>.semantius.app / .ai / .io map to <org>.semantius.cloud
+                               <org>.semantius.cloud. Required unless ${hostVar},
+                               --host or the stored default host is set (an "org:" prefix
+                               on the API key or JWT also supplies it)
+  ${hostVar.padEnd(28)} Hostname, same as --host. Precedence: --host, then a bound
+                               credential, then ${hostVar} (shell, project .env, global .env),
+                               then ${orgVar}, then the stored default host. <org>.semantius.app
+                               / .ai / .io map to <org>.semantius.cloud
   ${apiKeyVar.padEnd(28)} API key for Semantius (needed to call tools unless ${jwtVar} is set).
                                Value may be "org:key" — the org prefix overrides ${orgVar}
   ${jwtVar.padEnd(28)} Static JWT sent as "Authorization: Bearer" directly; skips
@@ -724,12 +852,85 @@ function checkRequiredEnvVars(): void {
     const orgVar = prefixedEnvName('ORG');
     for (const v of missing) {
       console.error(
-        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host)`,
+        `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host, or run "semantius login" / "semantius use <host>")`,
       );
     }
     console.error('Generate an API key at https://app.semantius.com/dashboard');
     process.exit(ErrorCode.CLIENT_ERROR);
   }
+}
+
+/**
+ * Resolve --token / --token-file into a validated org-bound JWT (setTokenArg).
+ * literal / stdin ('-') / file are mutually exclusive by construction (parseArgs
+ * only sets one of args.token / args.tokenFile, and '-' is a token value, not a
+ * file value). Only the literal form warns — it is the only one that puts the
+ * token on the command line.
+ */
+async function resolveTokenArg(
+  token: string | undefined,
+  tokenFile: string | undefined,
+): Promise<void> {
+  let literal: string;
+
+  if (tokenFile !== undefined) {
+    let content: string;
+    try {
+      content = readFileSync(tokenFile, 'utf8');
+    } catch (error) {
+      console.error(
+        formatCliError({
+          code: ErrorCode.CLIENT_ERROR,
+          type: 'TOKEN_FILE_UNREADABLE',
+          message: `Could not read --token-file ${tokenFile}: ${(error as Error).message}`,
+          suggestion: 'Check the path and that the file is readable',
+        }),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    literal = content.trim();
+    if (!literal) {
+      console.error(
+        formatCliError({
+          code: ErrorCode.CLIENT_ERROR,
+          type: 'TOKEN_FILE_UNREADABLE',
+          message: `--token-file ${tokenFile} is empty`,
+          suggestion: 'The file must contain org:jwt',
+        }),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+  } else if (token === '-') {
+    literal = (await new Response(Bun.stdin).text()).trim();
+  } else {
+    literal = token as string;
+    process.stderr.write(
+      '[semantius] Warning: --token puts the token on the command line, visible to other processes and the shell history; prefer --token - or --token-file.\n',
+    );
+  }
+
+  const { org, value: jwt } = splitOrgPrefix(literal);
+  if (!org) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_TOKEN',
+        message: '--token requires the form org:jwt',
+        suggestion:
+          'Prefix the token with its organization, e.g. acme:eyJ…; SEMANTIUS_JWT also accepts a bare token',
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  try {
+    normalizeHost(`${org}.semantius.cloud`);
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  setTokenArg({ org, jwt });
 }
 
 /**
@@ -752,6 +953,17 @@ async function main(): Promise<void> {
   setEnvPrefix(findEnvPrefix(argv));
   setHostFlag(findHostFlag(argv));
 
+  // Best-effort early --token literal, so a host it would supply doesn't
+  // trigger missingHostWarning on -h / -v paths that return before the full
+  // parseArgs below would see it (see findTokenArgs). The authoritative,
+  // validated resolution — stdin, a file, or this same literal — happens
+  // after parseArgs and never runs for help/version.
+  const earlyToken = findTokenArgs(argv);
+  if (earlyToken.literal) {
+    const { org, value } = splitOrgPrefix(earlyToken.literal);
+    if (org) setTokenArg({ org, jwt: value });
+  }
+
   // Install the exit-time logger immediately so even early-exit code paths
   // (parse errors, missing env vars) get a log entry when <PREFIX>_LOG_FILE
   // is set in the shell environment.
@@ -764,6 +976,72 @@ async function main(): Promise<void> {
   setEnvPrefix(args.envPrefix);
   if (args.host !== undefined) setHostFlag(args.host);
   setCrudMcpFlag(args.crudMcp);
+
+  const tokenFlagLabel =
+    args.tokenFile !== undefined ? '--token-file' : '--token';
+
+  if (args.token !== undefined && args.tokenFile !== undefined) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: '--token cannot be combined with --token-file',
+        suggestion:
+          'Use --token (literal or -) or --token-file <path>, not both',
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // --token / --token-file already supply a JWT: --auth would only be
+  // picking among credentials that no longer apply.
+  if (
+    (args.token !== undefined || args.tokenFile !== undefined) &&
+    (args.auth === 'apikey' || args.auth === 'oauth')
+  ) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: `${tokenFlagLabel} cannot be combined with --auth ${args.auth}`,
+        suggestion: `${tokenFlagLabel} supplies its own JWT; drop --auth, or use --auth jwt`,
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  if (
+    (args.token !== undefined || args.tokenFile !== undefined) &&
+    args.login
+  ) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: `${tokenFlagLabel} cannot be combined with --login`,
+        suggestion: `${tokenFlagLabel} already supplies a credential; drop --login, or drop ${tokenFlagLabel}`,
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // Both would read stdin for different things (the token, the call args).
+  if (
+    args.token === '-' &&
+    args.command === 'call' &&
+    args.args === undefined
+  ) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: '--token - and call without inline JSON both read stdin',
+        suggestion:
+          'Pass the JSON inline, or use --token-file / SEMANTIUS_JWT instead of --token -',
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
 
   // --login runs the browser flow now and uses that session for this
   // invocation, even when a JWT / API key is configured.
@@ -779,10 +1057,31 @@ async function main(): Promise<void> {
     process.exit(ErrorCode.CLIENT_ERROR);
   }
 
+  // hosts / use dispatch before the pre-flight login below (see there), so
+  // --login would otherwise be silently dropped rather than honored or
+  // rejected — for "use" it is also ambiguous which host --login would even
+  // sign in to, since that is unrelated to the host named on the command line.
+  if (args.login && (args.command === 'hosts' || args.command === 'use')) {
+    console.error(
+      formatCliError({
+        code: ErrorCode.CLIENT_ERROR,
+        type: 'INVALID_OPTION',
+        message: `--login cannot be combined with "${args.command}"`,
+        suggestion: `Run "semantius login" first, then "semantius ${args.command}"`,
+      }),
+    );
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
   // With --host only credentials stored for that host apply, so --auth can
-  // only pick among those — never the environment's key or token.
+  // only pick among those — never the environment's key or token. Relaxed
+  // for --auth jwt when --token / --token-file is set: the flag names the
+  // token's own host, so forcing jwt is consistent rather than contradictory
+  // (--auth apikey / oauth already can't reach here with --token, see above).
   if (
     args.host !== undefined &&
+    args.token === undefined &&
+    args.tokenFile === undefined &&
     (args.auth === 'jwt' || args.auth === 'apikey')
   ) {
     console.error(
@@ -817,6 +1116,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  // --token / --token-file, resolved and validated for real: never for
+  // help/version above, which only ever see the best-effort early literal.
+  if (args.token !== undefined || args.tokenFile !== undefined) {
+    await resolveTokenArg(args.token, args.tokenFile);
+  }
+
   // Load .env before checking required env vars (supports .env next to exe)
   await loadDotEnv();
 
@@ -825,9 +1130,64 @@ async function main(): Promise<void> {
   // `<envDir>/semantius.log` (or stderr when no .env was loaded).
   enableFromEnv(true);
 
-  // With --host only credentials stored for that host apply, never the API
-  // key / JWT / org from the environment.
-  if (args.host !== undefined) ignoreEnvCredentials();
+  // hosts / use dispatch before the host gate below: a machine with no host
+  // configured at all (or a conflicting one) must still be able to list what
+  // it knows about and pick one, rather than being locked out by the same
+  // check these commands exist to help recover from.
+  if (args.command === 'hosts') {
+    await hostsCommand({ json: args.json });
+    return;
+  }
+  if (args.command === 'use') {
+    await useCommand({ host: args.useHost as string });
+    return;
+  }
+
+  // Resolve the host and where it came from before anything else touches the
+  // credential env vars: a bound credential (--token, or an "org:"-prefixed
+  // API key / JWT) that conflicts with --host / ${PREFIX}_HOST must be
+  // reported here, not hidden by ignoreEnvCredentials() blanking it first.
+  let hostSource: ReturnType<typeof getHostSource>;
+  try {
+    hostSource = getHostSource();
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(ErrorCode.CLIENT_ERROR);
+  }
+
+  // The snapshot captures what the environment alone (no --host, no stored
+  // default) would resolve to, for loginCommand's decideDefaultAfterLogin —
+  // taken now, before ignoreEnvCredentials() can blank the credential it
+  // reflects. Its own try/catch, separate from the authoritative call above:
+  // --host can resolve the real host just fine (e.g. it matches a bound
+  // credential) while *ignoring* --host newly exposes an unrelated conflict
+  // between that credential and a stray ${PREFIX}_HOST — informational only,
+  // so it must not abort a command --host already made valid.
+  try {
+    snapshotEnvHost(
+      resolveHostValue({ ignoreFlag: true, ignoreDefault: true })?.host ?? null,
+    );
+  } catch {
+    snapshotEnvHost(null);
+  }
+
+  // A bare API key / JWT left over from a project .env, next to a host that
+  // only came from the stored default, would silently never be used
+  // (session-only, see below) — reject that contradiction instead.
+  if (hostSource === 'default') {
+    const strayError = strayCredentialError();
+    if (strayError) {
+      console.error(strayError);
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+  }
+
+  // With --host, or a host with no other setting but the stored default,
+  // only a stored browser session applies — never the API key / JWT / org
+  // from the environment.
+  if (hostSource === 'flag' || hostSource === 'default') {
+    ignoreEnvCredentials();
+  }
 
   // On a cloud host the host's org becomes ${PREFIX}_ORG (the host wins over
   // an ORG from .env). Also surfaces an invalid ${PREFIX}_HOST early.

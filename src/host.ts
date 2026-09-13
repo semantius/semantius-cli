@@ -1,9 +1,14 @@
 /**
  * Host / server resolution.
  *
- * One host value decides where the CLI talks to. Precedence: --host →
+ * One host value decides where the CLI talks to. Precedence (see
+ * resolveHostValue for the full detail): --host → a bound credential
+ * (--token, or an "org:"-prefixed ${PREFIX}_JWT / ${PREFIX}_API_KEY) →
  * ${PREFIX}_HOST (shell env, then project .env, then the global .env —
- * loadDotEnv never overrides a set variable) → <${PREFIX}_ORG>.semantius.cloud.
+ * loadDotEnv never overrides a set variable) → <${PREFIX}_ORG>.semantius.cloud
+ * → the stored default host (see hosts-index.ts). A bound credential that
+ * conflicts with --host / ${PREFIX}_HOST — i.e. either names a different host
+ * — is a HOST_CONFLICT error rather than a silent pick.
  *
  * A host is a bare hostname[:port]; the CLI picks the protocol (hostBaseUrl).
  * A host matching *.semantius.cloud is the managed cloud: the org is its first
@@ -23,14 +28,19 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
+  type CredentialBinding,
   debug,
+  describeEnvVar,
   getConnectTimeoutMs,
+  getCredentialBinding,
+  getEnvVarSourceFile,
   getHostFlag,
   getPrefixedEnv,
   getUserConfigDir,
   prefixedEnvName,
 } from './config.js';
 import { ErrorCode, formatCliError } from './errors.js';
+import { getDefaultHost } from './hosts-index.js';
 
 export interface HostFacts {
   mode: 'cloud' | 'selfhosted';
@@ -176,17 +186,145 @@ export function hostBaseUrl(host: string): string {
 }
 
 /**
- * The configured host (normalized), or null when none is configured:
- * --host, then ${PREFIX}_HOST, then the managed-cloud default for ${PREFIX}_ORG.
+ * Where the configured host came from. `'token'` covers every org-bound
+ * credential (--token, and an "org:" prefixed ${PREFIX}_JWT / ${PREFIX}_API_KEY)
+ * that is not shadowed by a matching --host — see resolveHostValue.
  */
-export function getHost(): string | null {
-  const flag = getHostFlag();
-  if (flag) return normalizeHost(flag);
-  const env = getPrefixedEnv('HOST');
-  if (env) return normalizeHost(env);
+export type HostSource =
+  | 'flag'
+  | 'token'
+  | 'env'
+  | `dotenv:${string}`
+  | 'org'
+  | 'default';
+
+/** 'env', or `dotenv:<path>` when the variable was loaded from a .env file. */
+function envVarSource(varName: string): HostSource {
+  const file = getEnvVarSourceFile(varName);
+  return file ? `dotenv:${file}` : 'env';
+}
+
+/** The credential label a HOST_CONFLICT names: "--token" or the env var it came from. */
+function credentialLabel(binding: CredentialBinding): string {
+  return binding.source === 'token-arg'
+    ? '--token'
+    : describeEnvVar(binding.varName as string);
+}
+
+/**
+ * The host a binding's org names, normalized the same as every other host
+ * value (in particular, lowercased): without this, --host / ${PREFIX}_HOST
+ * naming the exact same org in a different case reads as a conflict, and the
+ * bound host itself would go on to key the on-disk host cache, the hosts
+ * index and the session store — all case-sensitive — under a different
+ * identity than the same org referenced in its usual (lowercase) case
+ * elsewhere. normalizeHost also rejects a malformed org early, with a clear
+ * INVALID_HOST error, rather than producing a host that only fails later.
+ */
+function boundHostOf(binding: CredentialBinding): string {
+  return normalizeHost(`${binding.org}${CLOUD_SUFFIX}`);
+}
+
+/**
+ * A credential bound to one host (see getCredentialBinding) but contradicted
+ * by --host or ${PREFIX}_HOST naming another. `otherLabel`/`otherHost` are the
+ * flag or env var doing the contradicting.
+ */
+function hostConflictError(
+  otherLabel: string,
+  otherHost: string,
+  binding: CredentialBinding,
+): Error {
+  const boundHost = boundHostOf(binding);
+  return new Error(
+    formatCliError({
+      code: ErrorCode.CLIENT_ERROR,
+      type: 'HOST_CONFLICT',
+      message: `${credentialLabel(binding)} is bound to ${boundHost}, but ${otherLabel} names ${otherHost}`,
+      suggestion: `Drop --host / ${prefixedEnvName('HOST')}, or use a credential issued for ${otherHost}`,
+    }),
+  );
+}
+
+/**
+ * The configured host (normalized) and where it came from, or null when
+ * nothing configures one. Order:
+ *
+ *   1. --host                                                      'flag'
+ *   2. a bound credential (--token, or an "org:"-prefixed            'token' /
+ *      ${PREFIX}_JWT / ${PREFIX}_API_KEY) — raised above             'env' /
+ *      ${PREFIX}_HOST so a mismatched .env can no longer send      `dotenv:<path>`
+ *      it to the wrong host silently
+ *   3. ${PREFIX}_HOST                                        'env' / `dotenv:<path>`
+ *   4. ${PREFIX}_ORG → <org>.semantius.cloud                         'org'
+ *   5. the stored default host (see hosts-index.ts)                'default'
+ *
+ * A bound credential (rung 2) that conflicts with --host or ${PREFIX}_HOST —
+ * i.e. either names a *different* host — throws HOST_CONFLICT rather than
+ * picking one silently; naming the same host is not a conflict. `opts` skip
+ * the --host rung / the default rung, for callers that need the host the
+ * environment alone would resolve to (see config.ts's snapshotEnvHost).
+ */
+export function resolveHostValue(
+  opts: { ignoreFlag?: boolean; ignoreDefault?: boolean } = {},
+): { host: string; source: HostSource } | null {
+  const flag = opts.ignoreFlag ? undefined : getHostFlag();
+  const flagHost = flag ? normalizeHost(flag) : undefined;
+
+  const binding = getCredentialBinding();
+  const boundHost = binding ? boundHostOf(binding) : undefined;
+
+  if (flagHost) {
+    if (binding && boundHost !== flagHost) {
+      throw hostConflictError('--host', flagHost, binding);
+    }
+    return { host: flagHost, source: 'flag' };
+  }
+
+  if (binding && boundHost) {
+    const rawEnvHost = getPrefixedEnv('HOST');
+    const envHost = rawEnvHost ? normalizeHost(rawEnvHost) : undefined;
+    if (envHost && envHost !== boundHost) {
+      throw hostConflictError(
+        describeEnvVar(prefixedEnvName('HOST')),
+        envHost,
+        binding,
+      );
+    }
+    const source: HostSource =
+      binding.source === 'token-arg'
+        ? 'token'
+        : envVarSource(binding.varName as string);
+    return { host: boundHost, source };
+  }
+
+  const rawEnvHost = getPrefixedEnv('HOST');
+  if (rawEnvHost) {
+    return {
+      host: normalizeHost(rawEnvHost),
+      source: envVarSource(prefixedEnvName('HOST')),
+    };
+  }
+
   const org = getPrefixedEnv('ORG');
-  if (org) return `${org}${CLOUD_SUFFIX}`;
+  if (org) return { host: `${org}${CLOUD_SUFFIX}`, source: 'org' };
+
+  if (!opts.ignoreDefault) {
+    const defaultHost = getDefaultHost();
+    if (defaultHost) return { host: defaultHost, source: 'default' };
+  }
+
   return null;
+}
+
+/** The configured host (normalized), or null when none is configured. */
+export function getHost(): string | null {
+  return resolveHostValue()?.host ?? null;
+}
+
+/** Where the configured host came from, or null when none is configured. */
+export function getHostSource(): HostSource | null {
+  return resolveHostValue()?.source ?? null;
 }
 
 /** Cloud-host rule: *.semantius.cloud is the managed cloud, anything else is self-hosted. */

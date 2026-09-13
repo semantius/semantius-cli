@@ -324,6 +324,34 @@ export function recordError(message: string): void {
 }
 
 /**
+ * Redact a --token value out of an argv array before it is logged: the raw
+ * token is a bearer credential, and unlike ${PREFIX}_JWT (never logged at all
+ * — env vars aren't part of `cli`) --token sits right there in process.argv.
+ *
+ * Redacts the element right after --token, unless it is "-" (that names
+ * stdin, not a secret), and the value half of --token=<value> (the parser
+ * doesn't accept that syntax today, but a copy-pasted invocation might use
+ * it, and shows up here regardless once typed). --token-file's path is not a
+ * secret and is kept as-is. Pure, so it is trivial to unit test on its own.
+ */
+export function redactArgv(argv: string[]): string[] {
+  const result = [...argv];
+  for (let i = 0; i < result.length; i++) {
+    const arg = result[i];
+    if (arg === '--token') {
+      const value = result[i + 1];
+      if (value !== undefined && value !== '-') {
+        result[i + 1] = '<redacted>';
+        i++;
+      }
+    } else if (arg.startsWith('--token=') && arg !== '--token=-') {
+      result[i] = '--token=<redacted>';
+    }
+  }
+  return result;
+}
+
+/**
  * Append one JSONL line to the active destination. File mode writes via
  * appendFileSync; console mode writes to stderr. Failures are surfaced to
  * stderr but never thrown — logging must never break the actual command.
@@ -381,7 +409,7 @@ function writeLogEntry(exitCode: number): void {
     ...(_mcpAccumMs > 0 ? { mcp_ms: _mcpAccumMs } : {}),
     ...(_currentUrl ? { url: _currentUrl } : {}),
     ...(includeJwt ? { jwt: _currentJwt } : {}),
-    cli: process.argv,
+    cli: redactArgv(process.argv),
   };
 
   appendLogLine(`${JSON.stringify(entry)}\n`);

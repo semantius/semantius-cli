@@ -406,3 +406,35 @@ export async function cleanupOrphanedDaemons(): Promise<void> {
     // Ignore errors during cleanup scan
   }
 }
+
+/**
+ * Stop every running daemon (all servers, not just one host's). Called after
+ * `logout`: an HTTP daemon's PID file holds only an opaque config hash — for
+ * an HTTP server, hashed from its URL and headers, bearer included
+ * (getConfigHash) — so the daemon serving the just-revoked bearer cannot be
+ * identified and killed individually. Daemons respawn on demand, so this
+ * only costs the next command a fresh connection.
+ *
+ * No-op on Windows: isDaemonEnabled() is always false there (no Unix domain
+ * sockets, no process.getuid), so no daemon can exist to stop.
+ */
+export async function stopAllDaemons(): Promise<void> {
+  if (process.platform === 'win32') return;
+
+  const socketDir = getSocketDir();
+  if (!existsSync(socketDir)) return;
+
+  try {
+    const files = await Array.fromAsync(new Bun.Glob('*.pid').scan(socketDir));
+
+    for (const file of files) {
+      const serverName = file.replace('.pid', '');
+      const pidInfo = readPidFile(serverName);
+      if (pidInfo) killProcess(pidInfo.pid);
+      removePidFile(serverName);
+      removeSocketFile(serverName);
+    }
+  } catch (error) {
+    debug(`[daemon-client] stopAllDaemons failed: ${(error as Error).message}`);
+  }
+}

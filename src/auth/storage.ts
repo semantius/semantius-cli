@@ -57,6 +57,7 @@ export function createSecretStorage(
   name: string,
   secrets: SecretsApi = _secretsForTests ??
     (Bun.secrets as unknown as SecretsApi),
+  opts: { quiet?: boolean } = {},
 ): Storage<TokenSet> {
   const dir = join(getUserConfigDir(), 'sessions');
   const sessionDir = join(dir, safeName(name));
@@ -68,9 +69,15 @@ export function createSecretStorage(
     if (!fallback) fallback = fileStorage<TokenSet>({ dir: sessionDir });
     if (announce && !announced) {
       announced = true;
-      console.error(
-        `[semantius] no OS keyring available; storing the session in ${sessionDir}`,
-      );
+      // "semantius hosts" opens one of these per indexed host to probe for a
+      // session (see hasStoredSessionFor / getSessionExpiryFor): without
+      // `quiet` that would print this line once per host on a keyring-less
+      // machine, for a fact the table already conveys per-row.
+      if (!opts.quiet) {
+        console.error(
+          `[semantius] no OS keyring available; storing the session in ${sessionDir}`,
+        );
+      }
     }
     return fallback;
   }

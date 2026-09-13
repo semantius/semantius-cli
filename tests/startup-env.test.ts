@@ -7,11 +7,29 @@
  * with exit 5 when it authenticates.
  */
 
-import { describe, test, expect } from 'bun:test';
+import { afterEach, beforeEach, describe, test, expect } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setEnvPrefix } from '../src/config';
+import { recordHost, setDefaultHost, setHostsIndexDirForTests } from '../src/hosts-index';
 
 describe('Startup env variable validation', () => {
   const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
+
+  // A spawned CLI reads the real user config dir (APPDATA / HOME) for the
+  // stored default host (hosts.json) unless redirected — without this, a
+  // developer's own recorded default would leak into these "no host
+  // configured" expectations.
+  let configDir: string;
+
+  beforeEach(async () => {
+    configDir = await mkdtemp(join(tmpdir(), 'semantius-startup-env-'));
+  });
+
+  afterEach(async () => {
+    await rm(configDir, { recursive: true, force: true });
+  });
 
   /**
    * Run the CLI with explicit control over SEMANTIUS_API_KEY, SEMANTIUS_ORG,
@@ -40,6 +58,8 @@ describe('Startup env variable validation', () => {
       SEMANTIUS_ORG: '',
       SEMANTIUS_JWT: '',
       SEMANTIUS_HOST: '',
+      APPDATA: configDir,
+      HOME: configDir,
     };
     for (const [key, value] of Object.entries({ ...baseEnv, ...envOverrides })) {
       if (value !== undefined) {
@@ -229,6 +249,87 @@ describe('Startup env variable validation', () => {
       });
       expect(result.exitCode).toBe(1); // PROD_ORG is missing
       expect(result.stderr).toContain('MISSING_ENV_VAR');
+    });
+  });
+
+  describe('binding, the default host, and conflicts', () => {
+    let configDir: string;
+    let savedAppData: string | undefined;
+    let savedHome: string | undefined;
+
+    beforeEach(async () => {
+      configDir = await mkdtemp(join(tmpdir(), 'semantius-startup-hosts-'));
+      savedAppData = process.env.APPDATA;
+      savedHome = process.env.HOME;
+    });
+
+    afterEach(async () => {
+      if (savedAppData !== undefined) process.env.APPDATA = savedAppData;
+      else delete process.env.APPDATA;
+      if (savedHome !== undefined) process.env.HOME = savedHome;
+      else delete process.env.HOME;
+      setHostsIndexDirForTests(undefined);
+      await rm(configDir, { recursive: true, force: true });
+    });
+
+    /**
+     * Records `host` as the default in configDir's hosts.json (the same dir
+     * every spawned child in this describe block is pointed at via
+     * runWithConfigDir), so a startup check against it sees a real default.
+     */
+    function seedDefaultHost(host: string): void {
+      process.env.APPDATA = configDir;
+      process.env.HOME = configDir;
+      setHostsIndexDirForTests(undefined); // force a re-read under the dir just set
+      setEnvPrefix('SEMANTIUS');
+      recordHost(host, { mode: 'selfhosted', org: null });
+      setDefaultHost(host);
+    }
+
+    async function runWithConfigDir(
+      args: string[],
+      envOverrides: Record<string, string | undefined>,
+    ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+      return runCliWithEnv(args, {
+        ...envOverrides,
+        APPDATA: configDir,
+        HOME: configDir,
+      });
+    }
+
+    test('an org-prefixed credential alone passes the startup check (the binding rung)', async () => {
+      const result = await runWithConfigDir(['grep', 'nonexistent-tool-xyz'], {
+        SEMANTIUS_API_KEY: 'test-org:test-key',
+      });
+      expect(result.stderr).not.toContain('MISSING_ENV_VAR');
+    });
+
+    test('a recorded default host alone passes the startup check', async () => {
+      seedDefaultHost('x.example.com');
+      const result = await runWithConfigDir(['grep', 'nonexistent-tool-xyz'], {});
+      expect(result.stderr).not.toContain('MISSING_ENV_VAR');
+    });
+
+    test('a bare API key next to the default host is CREDENTIAL_WITHOUT_HOST', async () => {
+      seedDefaultHost('x.example.com');
+      const result = await runWithConfigDir(['grep', '*'], {
+        SEMANTIUS_API_KEY: 'bare-key',
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('Error [CREDENTIAL_WITHOUT_HOST]:');
+      expect(result.stderr).toContain('SEMANTIUS_API_KEY');
+      expect(result.stderr).toContain('x.example.com');
+    });
+
+    test('SEMANTIUS_HOST plus an org-bound credential naming a different host is a HOST_CONFLICT', async () => {
+      const result = await runWithConfigDir(['grep', '*'], {
+        SEMANTIUS_HOST: 'self.example.com',
+        SEMANTIUS_API_KEY: 'acme:test-key',
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('Error [HOST_CONFLICT]:');
+      expect(result.stderr).toContain('acme.semantius.cloud');
+      expect(result.stderr).toContain('self.example.com');
     });
   });
 });
