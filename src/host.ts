@@ -386,7 +386,11 @@ export function getHostCachePath(host: string): string {
 
 interface HostCacheEntry {
   fetched_at: string;
-  record: ControlPlaneRecord;
+  /**
+   * The control-plane record. Absent on a self-hosted host, which has no
+   * control plane to consult: there the entry exists only to cache `oauth`.
+   */
+  record?: ControlPlaneRecord;
   /** Discovered OAuth endpoints; absent until a login or a session refresh. */
   oauth?: OAuthMetadata;
 }
@@ -397,7 +401,15 @@ function readHostCacheEntry(host: string): HostCacheEntry | null {
   if (!existsSync(path)) return null;
   try {
     const entry = JSON.parse(readFileSync(path, 'utf8')) as HostCacheEntry;
-    if (Date.now() - Date.parse(entry.fetched_at) >= HOST_CACHE_TTL_MS) {
+    const fetchedAt = Date.parse(entry.fetched_at);
+    // Without this an unparseable date makes every comparison below false, so
+    // the entry would never expire. It governs the self-hosted OAuth metadata
+    // too, which has no record whose own check would have caught it.
+    if (Number.isNaN(fetchedAt)) {
+      debug(`Host cache has an unreadable date: ${path}`);
+      return null;
+    }
+    if (Date.now() - fetchedAt >= HOST_CACHE_TTL_MS) {
       debug(`Host cache expired: ${path}`);
       return null;
     }
@@ -424,18 +436,32 @@ export function readCachedOAuthMetadata(host: string): OAuthMetadata | null {
 }
 
 /**
- * Store discovered OAuth endpoints alongside the host's control-plane record,
- * sharing its 24 h TTL and --reset-cache. Never called for a host without a
- * cache entry (self-hosted), where discovery simply runs per invocation.
+ * Store discovered OAuth endpoints for a host, sharing the 24 h TTL and
+ * --reset-cache of its control-plane record.
+ *
+ * A self-hosted host has no record to hang them on, so the entry is created
+ * holding only the endpoints. Without this, discovery re-ran on every single
+ * invocation there: the write was dropped, so the read could never hit.
  */
 export function writeCachedOAuthMetadata(
   host: string,
   oauth: OAuthMetadata,
 ): void {
   const entry = readHostCacheEntry(host);
-  if (!entry) return;
   // Keep fetched_at: caching endpoints must not extend the record's TTL.
-  writeHostCacheEntry(host, { ...entry, oauth });
+  // Without an entry there is no record whose TTL could be extended, so the
+  // endpoints start their own 24 h window here.
+  //
+  // readHostCacheEntry reports an absent, expired and unreadable file alike,
+  // so a file that cannot be read is replaced rather than preserved. On a
+  // cloud host that discards a record which was expired or corrupt anyway:
+  // the next invocation refetches it (one request) and rewrites the entry.
+  writeHostCacheEntry(
+    host,
+    entry
+      ? { ...entry, oauth }
+      : { fetched_at: new Date().toISOString(), oauth },
+  );
 }
 
 function readHostCache(host: string): ControlPlaneRecord | null {
@@ -445,9 +471,13 @@ function readHostCache(host: string): ControlPlaneRecord | null {
     const entry = JSON.parse(readFileSync(path, 'utf8')) as HostCacheEntry;
     const fetchedAt = Date.parse(entry.fetched_at);
     const { record } = entry;
+    // An entry written for its `oauth` alone carries no record. Only cloud
+    // hosts reach this function, and theirs is always written record-first,
+    // so treat it as a miss rather than as corruption.
+    if (!record) return null;
     if (
       Number.isNaN(fetchedAt) ||
-      typeof record?.id !== 'string' ||
+      typeof record.id !== 'string' ||
       typeof record.postgrest_url !== 'string'
     ) {
       debug(`Host cache has an invalid shape: ${path}`);

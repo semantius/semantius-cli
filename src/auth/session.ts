@@ -16,6 +16,7 @@ import {
   deleteHostCache,
   resolveHost,
 } from '../host.js';
+import { logTokenEvent } from '../logger.js';
 import { buildScope, getOAuthMetadata } from './provider.js';
 import {
   createSecretStorage,
@@ -28,6 +29,15 @@ const CALLBACK_PORTS = [53682, 53683, 53684];
 
 /** How long the browser flow may take before the CLI gives up. */
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Seconds of remaining lifetime below which a cached access token counts as
+ * expired. This is cli-auth's own default, named here because two code paths
+ * must agree on it: the cache-only read in getSessionToken and the full Auth
+ * it falls back to. If they disagreed, the cache-only read could serve a
+ * token the refreshing path considers stale, or skip a refresh that is due.
+ */
+const TOKEN_REFRESH_THRESHOLD_S = 300;
 
 type Auth = ReturnType<typeof createCliAuth<'authorization-code'>>;
 
@@ -99,8 +109,18 @@ export async function getSessionExpiry(
 
 /**
  * A bearer token from the stored session, or null when no session is stored.
- * cli-auth refreshes on its own 300 s before expiry; `forceRefresh` expires
- * the cached access token first so the refresh token is spent immediately.
+ *
+ * A cached access token that is still fresh is served without the
+ * authorization server's metadata: only a refresh needs the token endpoint,
+ * so only a refresh should pay for discovering it. Before this, every
+ * invocation built an Auth — and therefore ran discovery — one line before
+ * asking whether a refresh was needed at all. On a cloud host that was a read
+ * of the on-disk host cache; on a self-hosted host, which has no such cache
+ * entry, it was two HTTP round trips per command whose result was discarded.
+ *
+ * cli-auth refreshes on its own TOKEN_REFRESH_THRESHOLD_S before expiry;
+ * `forceRefresh` expires the cached access token first so the refresh token is
+ * spent immediately.
  */
 export async function getSessionToken(
   host: HostFacts,
@@ -110,11 +130,62 @@ export async function getSessionToken(
   const stored = await storage.load();
   if (!stored || Object.keys(stored.tokens ?? {}).length === 0) return null;
 
-  if (opts.forceRefresh) await expireStoredAccessTokens(storage);
+  if (opts.forceRefresh) {
+    await expireStoredAccessTokens(storage);
+  } else {
+    const cached = freshAccessToken(host, stored);
+    if (cached) {
+      debug(`Using the cached access token stored for ${host.host}`);
+      return cached;
+    }
+  }
 
   const auth = await createAuth(host, storage);
   debug(`Using the OAuth session stored for ${host.host}`);
   return auth.getToken(tokenOptions(host));
+}
+
+/**
+ * The stored access token while it is still fresh, or null when a refresh is
+ * due (or nothing usable is cached). Pure and synchronous: the token set is
+ * already in hand, so this costs no storage read, no lock and no network.
+ *
+ * This reads the cache itself rather than asking cli-auth for the token with
+ * its refresh hook withheld. That alternative makes cli-auth throw
+ * `token.refresh_failed` to mean "a refresh is due" — and although the throw
+ * is awaited and caught, Bun reports the momentarily-unhandled rejection and
+ * aborts the CLI before the catch resumes. A control-flow signal must not
+ * depend on an exception the runtime may treat as fatal.
+ *
+ * Both halves of the rule belong to cli-auth and must track it: the cache key
+ * (see cacheKey) and the freshness test — expired once within
+ * TOKEN_REFRESH_THRESHOLD_S of expiry, the same constant the Auth is built
+ * with, so the two paths cannot disagree.
+ *
+ * cacheKey must stay derived from tokenOptions(): that is what makes it the
+ * key the fallback would ask cli-auth for. Do not assume a mismatch is merely
+ * a slow cache miss — a lookup under a key missing a component can *find* an
+ * entry written for different parameters and serve a token minted for another
+ * audience. Change tokenOptions and cacheKey together.
+ */
+function freshAccessToken(host: HostFacts, stored: TokenSet): string | null {
+  const cached = stored.tokens?.[cacheKey(host)];
+  if (!cached?.access_token || typeof cached.expires_at !== 'number') {
+    return null;
+  }
+  const refreshDueAt = cached.expires_at - TOKEN_REFRESH_THRESHOLD_S * 1000;
+  return Date.now() >= refreshDueAt ? null : cached.access_token;
+}
+
+/**
+ * How cli-auth keys a cached access token within the token set: the request
+ * options rendered as "resource=<uri>", empty when there is no resource
+ * indicator (every self-hosted host, which has no tenant id). The CLI never
+ * passes extraParams, the key's other ingredient.
+ */
+function cacheKey(host: HostFacts): string {
+  const { resource } = tokenOptions(host);
+  return resource ? `resource=${resource}` : '';
 }
 
 // ============================================================================
@@ -131,7 +202,9 @@ export async function login(
 ): Promise<void> {
   const facts = await requireLoginableHost(host);
   const storage = storageFor(facts);
-  const metadata = await getOAuthMetadata(facts);
+  // Rediscover: a login is rare, and starting it from a cached issuer would
+  // fail the callback check below against endpoints the host may have changed.
+  const metadata = await getOAuthMetadata(facts, { rediscover: true });
   const open = opts.openUrl ?? openBrowser;
 
   // The callback is checked as it arrives (so the browser sees the outcome),
@@ -296,8 +369,77 @@ async function createAuth(
     clientId: host.clientId as string,
     scope: buildScope(metadata),
     storage,
+    tokenRefreshThreshold: TOKEN_REFRESH_THRESHOLD_S,
+    fetch: tokenLoggingFetch(metadata.tokenEndpoint),
     ...(resourceIndicator(host) ? { resource: resourceIndicator(host) } : {}),
   });
+}
+
+/**
+ * A `fetch` that records each request to the token endpoint. cli-auth performs
+ * the refresh and the code exchange inside `getToken()`, so wrapping its fetch
+ * is the only place the CLI can observe that a credential was actually spent —
+ * and telling "served from cache" apart from "minted a new token" is exactly
+ * what the log was missing.
+ *
+ * Only the token endpoint is logged, and only its grant type: the request body
+ * carries the refresh token or the authorization code, and is never recorded.
+ */
+function tokenLoggingFetch(tokenEndpoint: string): typeof fetch {
+  return (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    if (url !== tokenEndpoint) return globalThis.fetch(input, init);
+
+    const grant = grantType(init?.body);
+    const started = Date.now();
+    debug(`Token request: POST ${url} (grant_type=${grant})`);
+    try {
+      const response = await globalThis.fetch(input, init);
+      const durationMs = Date.now() - started;
+      logTokenEvent({
+        grant,
+        url,
+        outcome: response.ok ? 'success' : 'failure',
+        status: response.status,
+        durationMs,
+      });
+      debug(`Token request: ${response.status} in ${durationMs} ms`);
+      return response;
+    } catch (error) {
+      logTokenEvent({
+        grant,
+        url,
+        outcome: 'failure',
+        durationMs: Date.now() - started,
+        error: (error as Error).message,
+      });
+      throw error;
+    }
+  }) as typeof fetch;
+}
+
+/** The grant_type of a token request, read without retaining the body. */
+function grantType(
+  body: unknown,
+): 'refresh_token' | 'authorization_code' | 'other' {
+  const text =
+    typeof body === 'string'
+      ? body
+      : body instanceof URLSearchParams
+        ? body.toString()
+        : '';
+  const grant = new URLSearchParams(text).get('grant_type');
+  return grant === 'refresh_token' || grant === 'authorization_code'
+    ? grant
+    : 'other';
 }
 
 /**

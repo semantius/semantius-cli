@@ -50,7 +50,6 @@ import {
   deleteHostCache,
   getHost,
   getHostMode,
-  isCloudHost,
   normalizeHost,
   propagateOrg,
 } from './host.js';
@@ -862,7 +861,9 @@ async function main(): Promise<void> {
         console.error(`JWT cache reset: ${getCachePath(parsed.id, host)}`);
       }
     }
-    if (host && isCloudHost(host)) {
+    // Self-hosted hosts have a cache entry too (their discovered OAuth
+    // endpoints), so --reset-cache must clear theirs as well.
+    if (host) {
       console.error(`Host cache reset: ${deleteHostCache(host)}`);
     }
   }

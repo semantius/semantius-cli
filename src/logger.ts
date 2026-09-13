@@ -432,6 +432,50 @@ export function logRetryEvent(event: {
 }
 
 /**
+ * Append a structured JSONL line for a request to an authorization server's
+ * token endpoint: a refresh, an authorization-code exchange, or an API-key
+ * exchange. These are the calls that actually spend a credential to mint a
+ * new one — without them a cached token and a freshly minted one look
+ * identical in the log, which is what hid a per-invocation refresh from view.
+ *
+ * Emitted whenever logging is enabled, regardless of LOG_LEVELS (like
+ * 'retry_transient'): the entry names the endpoint and the grant type only,
+ * never the token it returned nor the credential it was given.
+ *
+ * `outcome` is the HTTP outcome, not the credential's: a 2xx whose body the
+ * client then rejects (no access_token, unparseable JSON) still logs
+ * 'success'. The failure surfaces as the command's error, not here.
+ */
+export function logTokenEvent(event: {
+  grant: 'refresh_token' | 'authorization_code' | 'api_key' | 'other';
+  url: string;
+  outcome: 'success' | 'failure';
+  status?: number;
+  durationMs?: number;
+  error?: string;
+}): void {
+  if (!_enabled) return;
+  if (!_logFileValue && !_logToConsole) return;
+
+  const entry = {
+    ts: new Date().toISOString(),
+    log_type: 'event',
+    event: 'token_request',
+    grant: event.grant,
+    token_url: event.url,
+    outcome: event.outcome,
+    ...(typeof event.status === 'number' ? { status: event.status } : {}),
+    ...(typeof event.durationMs === 'number'
+      ? { duration_ms: event.durationMs }
+      : {}),
+    ...(event.error ? { error: event.error } : {}),
+  };
+
+  appendLogLine(`${JSON.stringify(entry)}
+`);
+}
+
+/**
  * Append a structured JSONL line for a daemon lifecycle transition. Emitted
  * whenever logging is enabled, regardless of LOG_LEVELS (like
  * 'retry_transient'): the events are rare — one start and one stop per daemon

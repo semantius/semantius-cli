@@ -37,6 +37,7 @@ import { setAuthFlag, setEnvPrefix, setHostFlag } from '../src/config';
 import {
   type HostFacts,
   SELF_HOSTED_CLIENT_ID,
+  readCachedOAuthMetadata,
   resolveHost,
   setHostCacheDirForTests,
 } from '../src/host';
@@ -413,6 +414,89 @@ describe('oauth login', () => {
       await getSessionToken(host);
 
       expect(provider.tokenGrants.length).toBe(before);
+    });
+
+    test('a fresh token is served without the .well-known documents', async () => {
+      await login(loginHost, { openUrl });
+
+      // A host name this process has not discovered for: discovery is memoized
+      // per host, so asking under the logged-in name would hide the fetch that
+      // a real (one-command-per-process) invocation pays for. Copy the session
+      // across, so only the cached-token path can answer.
+      const probe: HostFacts = { ...host, host: 'fresh-probe.example' };
+      secrets.store.set(
+        `semantius:SEMANTIUS:${probe.host}`,
+        secrets.store.get(`semantius:SEMANTIUS:${host.host}`) as string,
+      );
+      provider.paths.length = 0;
+
+      expect(await getSessionToken(probe)).toBe('access-1');
+
+      // The endpoints are only needed to spend the refresh token. Fetching
+      // them to hand back a cached one cost two round trips per invocation.
+      expect(provider.paths.filter((p) => p.includes('.well-known'))).toEqual(
+        [],
+      );
+    });
+
+    test('a cloud host serves its token under the resource key', async () => {
+      await login(loginHost, { openUrl });
+      // Spend the refresh once, so a token exists under the resource key:
+      // the login itself stores the first one under the empty key.
+      await getSessionToken(loginHost);
+
+      // Its own host name, so a miss has to rediscover (see the test above).
+      const probe: HostFacts = { ...loginHost, host: 'cloud-probe.example' };
+      secrets.store.set(
+        `semantius:SEMANTIUS:${probe.host}`,
+        secrets.store.get(`semantius:SEMANTIUS:${loginHost.host}`) as string,
+      );
+      provider.paths.length = 0;
+
+      expect(await getSessionToken(probe)).toBeTruthy();
+
+      // A cache key that did not match cli-auth's own "resource=<uri>" form
+      // would miss here and rediscover — reintroducing, for cloud users only
+      // and with the suite still green, the cost this change exists to remove.
+      expect(provider.paths.filter((p) => p.includes('.well-known'))).toEqual(
+        [],
+      );
+    });
+
+    test('a token inside the refresh threshold is refreshed', async () => {
+      await login(loginHost, { openUrl });
+      const before = provider.tokenGrants.length;
+
+      // 60 s of life left: still valid, but inside the 300 s threshold, so a
+      // refresh is due. The cache read must decline it rather than serve a
+      // token that could expire in flight.
+      const name = `semantius:SEMANTIUS:${host.host}`;
+      const stored = JSON.parse(secrets.store.get(name) as string);
+      for (const token of Object.values(stored.tokens) as {
+        expires_at: number;
+      }[]) {
+        token.expires_at = Date.now() + 60_000;
+      }
+      secrets.store.set(name, JSON.stringify(stored));
+
+      const token = await getSessionToken(host);
+
+      expect(provider.tokenGrants.slice(before)).toEqual(['refresh_token']);
+      expect(token).not.toBe('access-1');
+    });
+
+    test('endpoints are cached for a host with no control-plane record', async () => {
+      // A self-hosted host has no record, and the endpoints used to be written
+      // only alongside one — so the write was dropped and every invocation
+      // rediscovered. Its own host name: discovery is memoized per host, and
+      // only a discovery that actually runs can write the cache.
+      const probe: HostFacts = { ...loginHost, host: 'cache-probe.example' };
+      expect(readCachedOAuthMetadata(probe.host)).toBeNull();
+
+      await login(probe, { openUrl });
+
+      const cached = readCachedOAuthMetadata(probe.host);
+      expect(cached?.tokenEndpoint).toBe(`${provider.origin}/token`);
     });
 
     test('logout revokes and clears', async () => {

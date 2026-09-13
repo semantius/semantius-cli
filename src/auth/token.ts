@@ -30,6 +30,7 @@ import {
   readCachedToken,
   writeCachedToken,
 } from '../jwt-cache.js';
+import { logTokenEvent } from '../logger.js';
 
 /**
  * No credential source is configured for the host. The message starts with
@@ -209,6 +210,7 @@ async function exchangeApiKey(
 ): Promise<CachedToken> {
   const { method, url } = host.tokenExchange;
   debug(`Exchanging the API key for a token: ${method} ${url}`);
+  const started = Date.now();
 
   let response: Response;
   try {
@@ -226,10 +228,24 @@ async function exchangeApiKey(
         : { method, headers: { 'x-api-key': apiKey } },
     );
   } catch (error) {
+    logTokenEvent({
+      grant: 'api_key',
+      url,
+      outcome: 'failure',
+      durationMs: Date.now() - started,
+      error: (error as Error).message,
+    });
     throw new Error(
       `Token exchange failed: could not reach ${url}: ${(error as Error).message}${notSemantiusHint(host)}`,
     );
   }
+  logTokenEvent({
+    grant: 'api_key',
+    url,
+    outcome: response.ok ? 'success' : 'failure',
+    status: response.status,
+    durationMs: Date.now() - started,
+  });
 
   if (!response.ok) {
     // A JSON body is the auth server's own error; anything else (empty, an

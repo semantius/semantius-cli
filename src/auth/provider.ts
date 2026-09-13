@@ -9,9 +9,11 @@
  *                → authorization, token and revocation endpoints
  *
  * The client id is in neither document: it comes from the control plane
- * (HostFacts.clientId). Results are cached with the host's control-plane
- * record — same file, same 24 h TTL, same --reset-cache — because every call
- * that uses a stored session may need the token endpoint for a refresh.
+ * (HostFacts.clientId). Results are cached in the host's cache file — beside
+ * its control-plane record where there is one, alone on a self-hosted host —
+ * sharing the 24 h TTL and --reset-cache, because a refresh needs the token
+ * endpoint and would otherwise rediscover on every invocation. `login` passes
+ * rediscover and never reads that cache.
  *
  * RFC 8414 §3.3: the metadata must name the issuer it was fetched for, so the
  * document and the issuer that led to it are bound together. The matching
@@ -37,9 +39,22 @@ const _pending = new Map<string, Promise<OAuthMetadata>>();
  * per host for the life of the process (an invocation talks to one host), so
  * parallel connections share a single discovery.
  */
-export function getOAuthMetadata(host: HostFacts): Promise<OAuthMetadata> {
-  const cached = readCachedOAuthMetadata(host.host);
-  if (cached) return Promise.resolve(cached);
+export function getOAuthMetadata(
+  host: HostFacts,
+  opts: { rediscover?: boolean } = {},
+): Promise<OAuthMetadata> {
+  if (opts.rediscover) {
+    // A login re-establishes trust in the host from scratch and must not build
+    // on endpoints cached up to 24 h ago. An instance that has changed its
+    // OAuth configuration would otherwise send the browser to a stale
+    // authorization endpoint, and the callback's issuer check would compare
+    // against the stale issuer — reporting a mismatch that blames the server
+    // for what is really a stale cache.
+    _pending.delete(host.host);
+  } else {
+    const cached = readCachedOAuthMetadata(host.host);
+    if (cached) return Promise.resolve(cached);
+  }
 
   let pending = _pending.get(host.host);
   if (!pending) {
