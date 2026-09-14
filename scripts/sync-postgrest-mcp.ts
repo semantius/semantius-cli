@@ -7,10 +7,11 @@
  * under src/vendor/postgrest-mcp/ by hand — change them upstream and re-sync.
  *
  * Usage:
- *   bun run sync         copy the upstream files, regenerate instructions.ts and
- *                        registry.ts, rewrite the upstream bulk test, write UPSTREAM
- *   bun run sync:check   exit 1 (listing the paths) if the vendored copy differs
- *                        from upstream; writes nothing. Release-only gate.
+ *   bun run sync-mcp-tools         copy the upstream files, regenerate instructions.ts
+ *                                  and registry.ts, rewrite the upstream bulk test,
+ *                                  write UPSTREAM
+ *   bun run sync-mcp-tools:check   exit 1 (listing the paths) if the vendored copy
+ *                                  differs from upstream; writes nothing. Release-only gate.
  *
  * Upstream checkout: $POSTGREST_MCP_DIR, default <repo root>/../postgrest-mcp.
  * It must be a clean git checkout. Files are read from its HEAD commit rather
@@ -310,11 +311,11 @@ function main(): void {
 
     if (problems.length > 0) {
       console.error(
-        `sync:check: src/vendor/postgrest-mcp differs from ${UPSTREAM_DIR} (${from}):\n${problems.join('\n')}\nRun \`bun run sync\` and commit the result.`,
+        `sync-mcp-tools:check: src/vendor/postgrest-mcp differs from ${UPSTREAM_DIR} (${from}):\n${problems.join('\n')}\nRun \`bun run sync-mcp-tools\` and commit the result.`,
       );
       process.exit(1);
     }
-    console.log(`sync:check: vendored copy is current (${from})`);
+    console.log(`sync-mcp-tools:check: vendored copy is current (${from})`);
     return;
   }
 
@@ -344,7 +345,7 @@ function main(): void {
 
   writeFile(
     join(VENDOR_DIR, UPSTREAM_FILE),
-    `# postgrest-mcp commit this tree was copied from (written by \`bun run sync\`)\n${head}\n`,
+    `# postgrest-mcp commit this tree was copied from (written by \`bun run sync-mcp-tools\`)\n${head}\n`,
   );
 
   if (!existsSync(join(VENDOR_DIR, REPLACEMENT_FILE))) {

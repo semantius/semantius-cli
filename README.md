@@ -633,6 +633,11 @@ Create `semantius/SKILL.md` in your skills directory.
 
 - [Bun](https://bun.sh/) >= 1.0.0
 
+Bun is the only supported package manager and script runner (`bun.lock`,
+CI and releases all use it). Do not use `npm`, `pnpm` or `yarn`: e.g.
+`pnpm <script>` runs its own `pnpm install` first, which fails and leaves
+`pnpm-lock.yaml` / `pnpm-workspace.yaml` behind.
+
 ### Setup
 
 ```bash
@@ -765,6 +770,36 @@ bun test tests/integration/
 Integration tests need valid `SEMANTIUS_API_KEY` / `SEMANTIUS_ORG` and a
 reachable platform; they skip automatically when the server is
 unreachable.
+
+### Vendored crud tools (`postgrest-mcp`)
+
+The crud tools the CLI runs in-process are owned by the
+[`postgrest-mcp`](https://github.com/semantius/postgrest-mcp) repo and copied
+unchanged into [src/vendor/postgrest-mcp/](src/vendor/postgrest-mcp/). Never
+edit that tree by hand: change the code upstream, commit it there, then
+re-sync here.
+
+```bash
+# Copy/update the tools from upstream, then commit the result
+bun run sync-mcp-tools
+
+# Check only: fail if the vendored copy differs from upstream (writes nothing)
+bun run sync-mcp-tools:check
+```
+
+- The upstream checkout is expected at `../postgrest-mcp` (next to this repo);
+  set `POSTGREST_MCP_DIR` to point elsewhere.
+- It must be a clean git checkout. Files are read from its `HEAD` commit, so
+  uncommitted upstream edits are not picked up.
+- The synced commit is recorded in
+  [src/vendor/postgrest-mcp/UPSTREAM](src/vendor/postgrest-mcp/UPSTREAM).
+- `src/vendor/postgrest-mcp/src/utils/resetSchemaCache.ts` is the CLI's own
+  replacement and is never overwritten.
+- The release script runs `sync-mcp-tools:check`, so a stale copy blocks a
+  release.
+
+Details (what is copied, excluded and generated) are in the header of
+[scripts/sync-postgrest-mcp.ts](scripts/sync-postgrest-mcp.ts).
 
 ### Releasing
 

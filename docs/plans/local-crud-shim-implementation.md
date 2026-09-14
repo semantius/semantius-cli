@@ -211,8 +211,8 @@ file fails with two `TS18046` errors; the copy may not be edited. **If this is n
 Step 2 starts, exclude `src/utils/apiKeyAuth.ts` and `src/tools/get_cli_token.ts` from the copy set
 instead** (the CLI does the exchange itself in Step 3b; `get_cli_token` is then MCP-only).
 
-- [x] `package.json` scripts: `"sync": "bun run scripts/sync-postgrest-mcp.ts"`,
-      `"sync:check": "bun run scripts/sync-postgrest-mcp.ts --check"`.
+- [x] `package.json` scripts: `"sync-mcp-tools": "bun run scripts/sync-postgrest-mcp.ts"`,
+      `"sync-mcp-tools:check": "bun run scripts/sync-postgrest-mcp.ts --check"`.
 - [x] Source root: `POSTGREST_MCP_DIR` env, default `<repo root>/../postgrest-mcp` (repo root =
       `dirname(import.meta.dir)`), not cwd. Require a clean upstream `git status`; record the
       upstream commit in `src/vendor/postgrest-mcp/UPSTREAM` (sync mode writes it, `--check` only reads).
@@ -255,7 +255,7 @@ instead** (the CLI does the exchange itself in Step 3b; `get_cli_token` is then 
       `sqlToRest.ts` from the copy set, document the tool as MCP-only (`--crud-mcp`). The registry
       test's tool count is 54 with it, 53 without (55 files − echo − sqlToRest).
       **Outcome: failed → excluded, 53 tools (recipe for later: hand-over section).**
-- Done when: `bun run sync && bun run sync:check && bun run lint && bunx tsc --noEmit && bun test`
+- Done when: `bun run sync-mcp-tools && bun run sync-mcp-tools:check && bun run lint && bunx tsc --noEmit && bun test`
   all pass with the vendored tree included.
 
 ## 3. Host / server resolution — `src/host.ts` (new), `src/config.ts`, `src/index.ts` — ✅ done (`2f38c8a`, host format changed in `64ea99b`, credentials rule `619fb77`)
@@ -808,7 +808,7 @@ optional (cloud serves root + `/mcp`).
 | `tests/cli-errors.test.ts` (extended) | all | exit codes 1/2/4/5 and error shape through the local layer (local stub); `--host` never sends the environment's credentials |
 | `tests/auth.test.ts` (new, A2; A2b and A3 extend) | all | Step 5 done-when list (cloud host facts); fake `secrets` only |
 | `tests/integration/parity.test.ts` (new) | gated: `SEMANTIUS_PARITY=1` + creds | local vs `--crud-mcp`, five bench scenarios + scratch-entity write with cleanup (Step 4); `--stream` byte-identical to a direct fetch, CSV (Step 4b) |
-| `bun run sync:check` | `scripts/release.sh` only | vendored copy is current |
+| `bun run sync-mcp-tools:check` | `scripts/release.sh` only | vendored copy is current |
 | `bun run lint`, `bunx tsc --noEmit`, `bun test`; `release.yml` / `release.sh` test lists updated | all | gates |
 
 ## 10. Stop points and Martin's manual list

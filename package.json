@@ -19,8 +19,8 @@
     "test": "bun test",
     "test:integration": "bun test --timeout 30000 tests/integration",
     "typecheck": "tsc --noEmit",
-    "sync": "bun run scripts/sync-postgrest-mcp.ts",
-    "sync:check": "bun run scripts/sync-postgrest-mcp.ts --check",
+    "sync-mcp-tools": "bun run scripts/sync-postgrest-mcp.ts",
+    "sync-mcp-tools:check": "bun run scripts/sync-postgrest-mcp.ts --check",
     "lint": "bunx --bun @biomejs/biome check src/",
     "lint:fix": "bunx --bun @biomejs/biome check --write src/",
     "format": "bunx --bun @biomejs/biome format --write src/"

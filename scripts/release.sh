@@ -56,7 +56,7 @@ fi
 # checkout at ../postgrest-mcp or $POSTGREST_MCP_DIR). Runs before the version
 # bump so a drift failure leaves the working tree untouched.
 echo "Checking vendored postgrest-mcp copy..."
-bun run sync:check
+bun run sync-mcp-tools:check
 
 echo -e "${GREEN}Preparing release v$VERSION${NC}"
 
