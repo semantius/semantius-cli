@@ -127,6 +127,8 @@ bun run typecheck
 bun run lint
 # --timeout is explicit: bun ignores [test].timeout in bunfig.toml, and the
 # default 5 s is too tight for the tests that spawn a CLI subprocess.
+# bun runs the whole suite before exiting non-zero; the release then stops
+# here, before any bump or tag.
 bun test --timeout 60000
 
 if [ "$PRERELEASE" -eq 1 ]; then

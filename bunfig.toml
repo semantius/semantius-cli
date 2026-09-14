@@ -3,3 +3,5 @@
 # Integration tests that start MCP servers via npx may need more than 5 s.
 # The CI overrides this per test-run with --timeout when needed.
 timeout = 30000
+# Output must not depend on whether stdout is a terminal; see tests/setup.ts.
+preload = ["./tests/setup.ts"]
