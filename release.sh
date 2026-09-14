@@ -83,18 +83,25 @@ if [ -n "$(git ls-remote --tags origin "refs/tags/$VERSION")" ]; then
   die "tag $VERSION already exists on origin"
 fi
 
-# Highest existing v* tag by semver precedence, and whether $NUMBER beats it.
+# Decisions come back from bun as an exit code, never as printed text to
+# compare: console.log output is not plain data (under FORCE_COLOR it wraps
+# numbers in ANSI codes). The only text read back is a tag name or a version
+# string, written with process.stdout.write.
+
+# Highest existing v* tag by semver precedence.
 LATEST="$(git tag --list 'v*' | bun -e '
-  const tags = (await Bun.stdin.text()).split("\n").map((t) => t.trim())
+  const tags = (await Bun.stdin.text()).split(/\r?\n/).map((t) => t.trim())
     .filter((t) => /^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(t));
   tags.sort((a, b) => Bun.semver.order(a.slice(1), b.slice(1)));
-  console.log(tags.at(-1) ?? "");
+  process.stdout.write(tags.at(-1) ?? "");
 ')"
-if [ -n "$LATEST" ] && [ "$(bun -e "console.log(Bun.semver.order('$NUMBER', '${LATEST#v}'))")" != "1" ]; then
+if [ -n "$LATEST" ] && ! NUMBER="$NUMBER" LATEST="${LATEST#v}" bun -e '
+  process.exit(Bun.semver.order(process.env.NUMBER, process.env.LATEST) > 0 ? 0 : 1);
+'; then
   die "$VERSION is not newer than the latest tag $LATEST"
 fi
 
-pkg_version() { bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).version)'; }
+pkg_version() { bun -e 'process.stdout.write(String(JSON.parse(await Bun.file("package.json").text()).version))'; }
 CURRENT="$(pkg_version)"
 
 # Advisory only. It cannot gate — `gh` may be absent, the run may still be in
