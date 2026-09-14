@@ -17,12 +17,12 @@ Watch for these, which have all broken Linux CI before while passing on Windows:
 Always use the release script — it handles everything (version bumps, tests, annotated tag, push):
 
 ```
-./scripts/release.sh 0.x.x
+./release.sh v0.x.x        # or 0.x.x; pre-releases: v0.x.x-rc.1; -y skips the prompt
 ```
 
-The script bumps the `version` in `package.json` — the single source of version truth, imported directly into the binary (`src/index.ts`, `src/client.ts`), so there is no separate `src/version.ts` to maintain. It then runs lint and tests, commits the bump, creates an annotated tag, and pushes branch + tag. Do NOT do any of these steps manually — manual releases have repeatedly caused the binary to report the wrong version or the release workflow to not trigger.
+`release.sh` lives at the repository root, with the same checks as semantius-idp's. It refuses to run with uncommitted changes, when HEAD differs from its upstream, when the tag already exists locally or on origin, or when the version is not newer than the latest tag. It then runs the local gates: vendored drift check, typecheck, lint, full test suite. Next it prints a summary that includes the CI status of the commit, and asks for confirmation. Only then does it bump `version` in `package.json`, commit and push the bump, create the tag (signed if a key is configured) and push it. `package.json` is the single source of version truth, imported directly into the binary (`src/index.ts`, `src/client.ts`), and `release.yml` refuses a tag that disagrees with it. A pre-release is published as a GitHub pre-release, so `releases/latest`, which the install scripts download, is untouched.
 
-The script requires a clean working tree, so commit your actual code changes first; it only commits the version bump itself.
+Do NOT do any of these steps manually — manual releases have repeatedly caused the binary to report the wrong version or the release workflow to not trigger. Commit and push your actual code changes first; the script only commits the version bump itself. The local gates prove only your own OS, so check that the summary's CI line shows green runs on the commit being tagged.
 
 ## Vendored code
 

@@ -803,10 +803,11 @@ Details (what is copied, excluded and generated) are in the header of
 
 ### Releasing
 
-Releases are automated via GitHub Actions. Use the release script:
+Releases are automated via GitHub Actions. Use the release script at the
+repository root (`v0.2.0` or `0.2.0`; pre-releases like `v0.3.0-rc.1`):
 
 ```bash
-./scripts/release.sh 0.2.0
+./release.sh v0.2.0
 ```
 
 ### Error Messages
