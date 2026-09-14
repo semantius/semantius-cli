@@ -36,6 +36,7 @@ import {
 } from '../src/auth/token';
 import { transformConfigWithJwt } from '../src/client';
 import {
+  getUserConfigDir,
   setAuthFlag,
   setEnvPrefix,
   setHostFlag,
@@ -322,26 +323,16 @@ describe('oauth login', () => {
       await storage.save({ refresh_token: 'r', tokens: {} });
 
       expect(await storage.load()).toEqual({ refresh_token: 'r', tokens: {} });
+      expect(getUserConfigDir().startsWith(configDir)).toBe(true);
       expect(
         existsSync(
           join(
-            configDir,
-            'semantius',
+            getUserConfigDir(),
             'sessions',
             'SEMANTIUS_example.test',
             'credentials.json',
           ),
-        ) ||
-          existsSync(
-            join(
-              configDir,
-              '.config',
-              'semantius',
-              'sessions',
-              'SEMANTIUS_example.test',
-              'credentials.json',
-            ),
-          ),
+        ),
       ).toBe(true);
     });
   });
@@ -809,14 +800,14 @@ describe('oauth login', () => {
     }
 
     test('records the host with loggedInAt', async () => {
-      await loginCommand();
+      await loginCommand({ openUrl });
       const entry = listHosts().find((h) => h.host === host.host);
       expect(entry).toMatchObject({ mode: 'selfhosted', org: null });
       expect(entry?.loggedInAt).toMatch(/^\d{4}-/);
     });
 
     test('prints the login confirmation', async () => {
-      const lines = await captureLog(loginCommand);
+      const lines = await captureLog(() => loginCommand({ openUrl }));
       expect(lines.some((l) => l.includes(`Logged in to ${host.host}`))).toBe(
         true,
       );
@@ -832,11 +823,11 @@ describe('oauth login', () => {
     // thing being tested: whether loginCommand leaves it alone.
     test('never sets or changes the current host', async () => {
       expect(getCurrentHost()).toBeNull();
-      await loginCommand();
+      await loginCommand({ openUrl });
       expect(getCurrentHost()).toBeNull();
 
       setCurrentHost(host.host);
-      await loginCommand();
+      await loginCommand({ openUrl });
       expect(getCurrentHost()).toBe(host.host);
     });
   });

@@ -27,11 +27,21 @@ function safeName(name: string): string {
   return name.replace(/[:/\\]/g, '_');
 }
 
+/**
+ * The semantius config dir a child spawned with APPDATA=HOME=configDir
+ * resolves (getUserConfigDir): %APPDATA%\semantius on Windows,
+ * ~/.config/semantius elsewhere.
+ */
+function semantiusDir(configDir: string): string {
+  return process.platform === 'win32'
+    ? join(configDir, 'semantius')
+    : join(configDir, '.config', 'semantius');
+}
+
 /** Seeds a session for `host`, in cli-auth's file-fallback format. */
 async function seedSession(configDir: string, host: string, prefix = 'SEMANTIUS'): Promise<void> {
   const sessionDir = join(
-    configDir,
-    'semantius',
+    semantiusDir(configDir),
     'sessions',
     safeName(`${prefix}:${host}`),
   );
@@ -47,7 +57,7 @@ async function seedSession(configDir: string, host: string, prefix = 'SEMANTIUS'
 
 /** Seeds a cloud host's control-plane record so resolving it needs no network. */
 async function seedHostCache(configDir: string, host: string, postgrestUrl: string): Promise<void> {
-  const dir = join(configDir, 'semantius', 'hosts');
+  const dir = join(semantiusDir(configDir), 'hosts');
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, `${host.replace(/[:/]/g, '_')}.json`),

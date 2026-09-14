@@ -95,6 +95,7 @@ export function createSecretStorage(
   async function run<T>(
     viaKeyring: () => Promise<T>,
     viaFile: (storage: Storage<TokenSet>) => Promise<T>,
+    { storing = false } = {},
   ): Promise<T> {
     if (keyringUsable) {
       try {
@@ -106,7 +107,9 @@ export function createSecretStorage(
         keyringUsable = false;
       }
     }
-    return viaFile(fileBackend(true));
+    // Only a save announces the fallback: a load or clear stores nothing, and
+    // a lookup that finds no session must not print "storing the session".
+    return viaFile(fileBackend(storing));
   }
 
   return {
@@ -140,6 +143,7 @@ export function createSecretStorage(
             value: JSON.stringify(prune(credential)),
           }),
         (storage) => storage.save(prune(credential)),
+        { storing: true },
       ),
 
     // Log out means log out: clear both places a session can live.

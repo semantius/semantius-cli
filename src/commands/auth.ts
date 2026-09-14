@@ -13,10 +13,13 @@ import { recordHost, removeHost } from '../hosts-index.js';
  * Stores only the session and the hosts-index entry — it never sets or
  * changes the current host; `semantius use <host>` is the one command that
  * does that (see commands/hosts.ts), for first-time users too.
+ * `openUrl` is passed through to login() so tests never open a real browser.
  */
-export async function loginCommand(): Promise<void> {
+export async function loginCommand(
+  opts: { openUrl?: (url: string) => void } = {},
+): Promise<void> {
   const host = await resolveHost();
-  await login(host);
+  await login(host, opts);
   recordHost(
     host.host,
     { mode: host.mode, org: host.org },

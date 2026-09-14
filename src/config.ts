@@ -502,12 +502,14 @@ export function isSessionOnlyHost(): boolean {
  * Linux/macOS: ~/.config/semantius
  */
 export function getUserConfigDir(): string {
-  const home = homedir();
   if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || join(home, 'AppData', 'Roaming');
+    const appData =
+      process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
     return join(appData, 'semantius');
   }
-  return join(home, '.config', 'semantius');
+  // HOME is read at call time, like Node's os.homedir(): Bun's homedir() is
+  // fixed at startup, so an in-process change to HOME would be ignored.
+  return join(process.env.HOME || homedir(), '.config', 'semantius');
 }
 
 // ============================================================================

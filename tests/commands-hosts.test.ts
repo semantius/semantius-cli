@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { hasStoredSessionFor } from '../src/auth/session';
 import { hostsCommand, useCommand } from '../src/commands/hosts';
 import { type SecretsApi, setSecretsForTests } from '../src/auth/storage';
-import { setEnvPrefix, setHostFlag } from '../src/config';
+import { getUserConfigDir, setEnvPrefix, setHostFlag } from '../src/config';
 import { setHostCacheDirForTests } from '../src/host';
 import {
   getCurrentHost,
@@ -174,8 +174,7 @@ describe('commands/hosts (in-process)', () => {
 
     test('one-time sessions scan indexes an unindexed host and reverses a mangled port', async () => {
       const sessDir = join(
-        configDir,
-        'semantius',
+        getUserConfigDir(),
         'sessions',
         'SEMANTIUS_x.example.com_8443',
       );
@@ -193,8 +192,7 @@ describe('commands/hosts (in-process)', () => {
       const scannedAt = sessionsScannedAt();
 
       const lateDir = join(
-        configDir,
-        'semantius',
+        getUserConfigDir(),
         'sessions',
         'SEMANTIUS_late.example.com',
       );
