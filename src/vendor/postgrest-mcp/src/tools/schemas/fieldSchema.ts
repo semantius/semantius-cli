@@ -4,6 +4,16 @@
  */
 
 import { z } from 'zod/v4'
+import formats from './formats.json' with { type: 'json' }
+
+/**
+ * The only valid field formats, taken verbatim from sem-schema's format catalog.
+ * `src/tools/schemas/formats.json` is a copy: never edit it here, change it in
+ * sem-schema and copy the file again.
+ *
+ * Every field must have a format; `null` is not one of them.
+ */
+export const FIELD_FORMATS = Object.keys(formats) as [string, ...string[]]
 
 export const fieldSchema = z.looseObject({
   id: z.string().optional().describe('Generated identifier (table_name.field_name) - Auto-generated'),
@@ -11,15 +21,8 @@ export const fieldSchema = z.looseObject({
   field_name: z.string().describe('Physical column name in database'),
   title: z.string().describe('Human-readable display name for the field'),
   description: z.string().optional().describe('Detailed description of the field'),
-  format: z.enum([
-    'json', 'html', 'text', 'multiline', 'code', 'jsonata', 'parent', 'reference', 'enum',
-    'date', 'time', 'date-time', 'duration', 'uri', 'uri-reference',
-    'uri-template', 'url', 'email', 'hostname', 'ipv4', 'ipv6',
-    'regex', 'uuid', 'json-pointer', 'json-pointer-uri-fragment',
-    'relative-json-pointer', 'byte', 'int32', 'int64', 'float',
-    'double', 'password', 'binary', 'string', 'number', 'integer',
-    'boolean', 'object', 'array', 'null'
-  ]).optional().describe('JSON Schema format or primitive type'),
+  format: z.enum(FIELD_FORMATS).optional()
+    .describe('JSON Schema format or primitive type'),
   is_pk: z.boolean().optional().describe('Whether this field is the primary key'),
   default_value: z.string().optional().describe('Default value for the field'),
   field_order: z.number().int().optional().describe('Display order for the field'),

@@ -567,7 +567,7 @@ export const instructions = `   ---
    | **Composition** | \`parent\` (ownership/composition, child lifecycle bound to parent — default delete: \`cascade\`; also used for M:N junction FKs) |
    | **Choice** | \`enum\` (requires \`enum_values\` array) |
    | **Boolean** | \`boolean\` |
-   | **Structured** | \`json\`, \`object\`, \`array\` |
+   | **Structured** | \`json\`, \`jsonlogic\`, \`object\`, \`array\` |
    | **Identifiers** | \`uuid\`, \`email\`, \`uri\`, \`url\` |
 
    ---
@@ -583,11 +583,11 @@ export const instructions = `   ---
    | \`integer\`, \`int32\`, \`int64\` | INTEGER / BIGINT | \`0\` | NOT NULL |
    | \`number\`, \`float\`, \`double\` | NUMERIC / REAL | \`0.0\` | NOT NULL |
    | \`boolean\` | BOOLEAN | \`FALSE\` | NOT NULL |
-   | \`json\`, \`object\`, \`array\` | JSONB | \`'{}'\` | NOT NULL |
+   | \`json\`, \`jsonlogic\`, \`object\`, \`array\` | JSONB | \`'{}'\` | NOT NULL |
    | \`date-time\` | TIMESTAMPTZ | \`CURRENT_TIMESTAMP\` | NULL allowed |
    | \`date\` | DATE | \`CURRENT_DATE\` | NULL allowed |
-   | \`reference\` | FK (UUID) | — | NULL allowed |
-   | \`parent\` | FK (UUID) | — | NOT NULL |
+   | \`reference\` | FK, type of the referenced entity's key (INTEGER) | none | NULL allowed |
+   | \`parent\` | FK, type of the referenced entity's key (INTEGER) | none | NOT NULL |
 
    ---
 

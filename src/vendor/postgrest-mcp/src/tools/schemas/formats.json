@@ -1,0 +1,194 @@
+{
+  "json": {
+    "type": [
+      "object",
+      "array",
+      "string",
+      "number",
+      "integer",
+      "boolean",
+      "null"
+    ],
+    "description": "JSON value, or JSON text that parses to one"
+  },
+  "html": {
+    "type": "string",
+    "description": "HTML markup; must contain at least one tag"
+  },
+  "text": {
+    "type": "string",
+    "description": "Single-line text; no format check"
+  },
+  "multiline": {
+    "type": "string",
+    "description": "Multi-line text; no format check"
+  },
+  "code": {
+    "type": "string",
+    "description": "Source code; no format check"
+  },
+  "jsonata": {
+    "type": "string",
+    "description": "JSONata expression; no format check"
+  },
+  "jsonlogic": {
+    "type": [
+      "object",
+      "array",
+      "string",
+      "number",
+      "integer",
+      "boolean",
+      "null"
+    ],
+    "description": "JsonLogic rule, checked against the operators of the Semantius backend"
+  },
+  "reference": {
+    "type": "integer",
+    "description": "Key of a record in another entity"
+  },
+  "parent": {
+    "type": "integer",
+    "description": "Key of the record that owns this one"
+  },
+  "enum": {
+    "type": "string",
+    "description": "One of the values listed in enum"
+  },
+  "date": {
+    "type": "string",
+    "description": "Full date, RFC 3339 (2026-09-15)"
+  },
+  "time": {
+    "type": "string",
+    "description": "Time of day, RFC 3339 (14:30:00Z)"
+  },
+  "date-time": {
+    "type": "string",
+    "description": "Date and time, RFC 3339 (2026-09-15T14:30:00Z)"
+  },
+  "duration": {
+    "type": "string",
+    "description": "Duration, ISO 8601 (P3DT4H)"
+  },
+  "uri": {
+    "type": "string",
+    "description": "Absolute URI, RFC 3986; Unicode allowed as in an IRI (https://müller.de/straße); validates the same as iri"
+  },
+  "uri-reference": {
+    "type": "string",
+    "description": "URI or relative reference, RFC 3986; Unicode allowed as in an IRI (/straße, #top); validates the same as iri-reference"
+  },
+  "iri": {
+    "type": "string",
+    "description": "Absolute IRI, RFC 3987 (https://müller.de/straße); validates the same as uri"
+  },
+  "iri-reference": {
+    "type": "string",
+    "description": "IRI or relative reference, RFC 3987 (/straße, #top); validates the same as uri-reference"
+  },
+  "uri-template": {
+    "type": "string",
+    "description": "URI template, RFC 6570 (/users/{id})"
+  },
+  "url": {
+    "type": "string",
+    "description": "URL with an http, https or ftp scheme"
+  },
+  "email": {
+    "type": "string",
+    "description": "Email address, RFC 5321; Unicode allowed as in RFC 6531 (jörg@müller.de); validates the same as idn-email"
+  },
+  "idn-email": {
+    "type": "string",
+    "description": "Internationalized email address, RFC 6531 (jörg@müller.de); validates the same as email"
+  },
+  "hostname": {
+    "type": "string",
+    "description": "Host name, RFC 1123; Unicode allowed as in RFC 5890 (müller.de, xn--mller-kva.de); validates the same as idn-hostname"
+  },
+  "idn-hostname": {
+    "type": "string",
+    "description": "Internationalized host name, RFC 5890 (müller.de, xn--mller-kva.de); validates the same as hostname"
+  },
+  "ipv4": {
+    "type": "string",
+    "description": "IPv4 address"
+  },
+  "ipv6": {
+    "type": "string",
+    "description": "IPv6 address"
+  },
+  "regex": {
+    "type": "string",
+    "description": "Regular expression"
+  },
+  "uuid": {
+    "type": "string",
+    "description": "UUID, RFC 4122"
+  },
+  "json-pointer": {
+    "type": "string",
+    "description": "JSON Pointer, RFC 6901 (/a/0)"
+  },
+  "json-pointer-uri-fragment": {
+    "type": "string",
+    "description": "JSON Pointer as a URI fragment (#/a/0)"
+  },
+  "relative-json-pointer": {
+    "type": "string",
+    "description": "Relative JSON Pointer (1/a)"
+  },
+  "byte": {
+    "type": "string",
+    "description": "Base64-encoded data"
+  },
+  "binary": {
+    "type": "string",
+    "description": "Binary data; no format check"
+  },
+  "password": {
+    "type": "string",
+    "description": "Password; no format check"
+  },
+  "int32": {
+    "type": "integer",
+    "description": "Signed 32-bit integer"
+  },
+  "int64": {
+    "type": "integer",
+    "description": "Signed 64-bit integer"
+  },
+  "float": {
+    "type": "number",
+    "description": "Single-precision floating-point number"
+  },
+  "double": {
+    "type": "number",
+    "description": "Double-precision floating-point number"
+  },
+  "string": {
+    "type": "string",
+    "description": "Any string"
+  },
+  "number": {
+    "type": "number",
+    "description": "Any number"
+  },
+  "integer": {
+    "type": "integer",
+    "description": "Any integer"
+  },
+  "boolean": {
+    "type": "boolean",
+    "description": "true or false"
+  },
+  "object": {
+    "type": "object",
+    "description": "Any JSON object"
+  },
+  "array": {
+    "type": "array",
+    "description": "Any JSON array"
+  }
+}
