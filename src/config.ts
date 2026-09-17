@@ -2,7 +2,7 @@
  * semantius Configuration Types and Loader
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
@@ -493,15 +493,21 @@ export function isSessionOnlyHost(): boolean {
 }
 
 // ============================================================================
-// User Config Directory
+// User Directories
 // ============================================================================
 
 /**
- * Returns the platform-appropriate user config directory for semantius.
- * Windows: %APPDATA%\semantius
- * Linux/macOS: ~/.config/semantius
+ * `semantius` is the vendor; this is the product inside it. Every file the CLI
+ * owns lives under <vendor root>/semantius/cli, so a second semantius program
+ * on the same machine gets its own directory beside this one rather than
+ * interleaving its state with the CLI's. Set once, here: a name that appears
+ * in one constant can be reasoned about, one spread across four join() calls
+ * cannot.
  */
-export function getUserConfigDir(): string {
+const PRODUCT_DIR = 'cli';
+
+/** The vendor directory for configuration: %APPDATA%, or ~/.config. */
+function vendorConfigRoot(): string {
   if (process.platform === 'win32') {
     const appData =
       process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
@@ -513,38 +519,98 @@ export function getUserConfigDir(): string {
 }
 
 /**
- * Where credentials are kept — the stored sessions and their lock files.
+ * The vendor directory for credentials.
  *
- * Windows: %LOCALAPPDATA%\semantius, deliberately *not* the %APPDATA% the
- * config dir uses. Roaming is the half of the profile built to travel: a
- * roaming profile copies it to a server, and profile migration and backup
- * tooling take it by default. A credential belongs on the side that stays on
- * the machine, next to the keyring that holds its key.
+ * Windows: %LOCALAPPDATA%, deliberately not the %APPDATA% configuration uses.
+ * Roaming is the half of the profile built to travel: a roaming profile copies
+ * it to a server, and profile migration and backup tooling take it by default.
+ * A credential belongs on the side that stays on the machine, next to the
+ * keyring that holds its key.
  *
- * Linux/macOS: the config dir, unchanged. XDG has no separate secrets
- * directory, ~/.config is already user-private (0700), and moving an existing
- * path would buy nothing there.
- *
- * Tests redirect this the same way they redirect the config dir: LOCALAPPDATA
- * on Windows, HOME elsewhere. A spawned CLI that is given only APPDATA and
- * HOME would write its session into the developer's real profile.
+ * Linux/macOS: the same root as configuration. XDG has no separate secrets
+ * directory and ~/.config is already user-private (0700).
  */
-export function getUserSecretsDir(): string {
+function vendorSecretsRoot(): string {
   if (process.platform === 'win32') {
     const localAppData =
       process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local');
     return join(localAppData, 'semantius');
   }
-  return getUserConfigDir();
+  return vendorConfigRoot();
 }
 
 /**
- * Where sessions used to be kept, or null where that is still the live
- * location. Read once per session load, to move a session that predates the
- * split (see createSecretStorage) and delete the copy left behind.
+ * This CLI's configuration directory — `hosts.json`, the host cache, the
+ * global `.env`.
+ *
+ * Windows: %APPDATA%\semantius\cli. Linux/macOS: ~/.config/semantius/cli.
  */
-export function getLegacyUserSecretsDir(): string | null {
-  return process.platform === 'win32' ? getUserConfigDir() : null;
+export function getUserConfigDir(): string {
+  return join(vendorConfigRoot(), PRODUCT_DIR);
+}
+
+/**
+ * This CLI's credentials directory — the stored sessions and their lock files.
+ *
+ * Windows: %LOCALAPPDATA%\semantius\cli. Linux/macOS: the config dir.
+ *
+ * Tests redirect this the same way they redirect the config dir: LOCALAPPDATA
+ * on Windows, HOME elsewhere. A spawned CLI given only APPDATA and HOME would
+ * write its session into the developer's real profile.
+ */
+export function getUserSecretsDir(): string {
+  return join(vendorSecretsRoot(), PRODUCT_DIR);
+}
+
+/**
+ * Directories a session may be sitting in from an older version, newest
+ * layout first. Read on a session load, which moves what it finds (see
+ * createSecretStorage) and deletes the copy left behind.
+ *
+ * Two entries on Windows because credentials have moved twice: out of the
+ * roaming profile, and then into the product directory.
+ */
+export function getLegacyUserSecretsDirs(): string[] {
+  const dirs =
+    process.platform === 'win32'
+      ? [vendorSecretsRoot(), vendorConfigRoot()]
+      : [vendorConfigRoot()];
+  return dirs.filter((dir) => dir !== getUserSecretsDir());
+}
+
+/** The CLI's own files, as they sit directly in the vendor directory. */
+const MIGRATED_ENTRIES = ['hosts.json', 'hosts', '.env'];
+
+/**
+ * Move configuration written before the CLI had a directory of its own out of
+ * the vendor directory and into it.
+ *
+ * Called once at startup rather than lazily from `getUserConfigDir()`: that is
+ * read in help text and error messages, and a getter that moves files as a
+ * side effect of being asked a question is a trap for the next reader.
+ *
+ * Sessions are not moved here. They carry a key and may need re-sealing, so
+ * storage.ts migrates them on load, where that logic already lives.
+ */
+export function migrateUserConfigDir(): void {
+  const target = getUserConfigDir();
+  const source = vendorConfigRoot();
+  if (source === target) return;
+
+  for (const entry of MIGRATED_ENTRIES) {
+    const from = join(source, entry);
+    const to = join(target, entry);
+    if (!existsSync(from) || existsSync(to)) continue;
+    try {
+      mkdirSync(target, { recursive: true });
+      renameSync(from, to);
+      debug(`Moved ${from} to ${to}`);
+    } catch (error) {
+      // Not fatal: the CLI carries on with an empty config dir, which costs a
+      // "semantius use" at worst. Failing startup over a tidy-up would not.
+      debug(`Could not move ${from} to ${to}: ${(error as Error).message}`);
+    }
+  }
 }
 
 // ============================================================================

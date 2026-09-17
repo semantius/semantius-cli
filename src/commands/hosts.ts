@@ -16,7 +16,7 @@ import {
 import {
   debug,
   getEnvPrefix,
-  getLegacyUserSecretsDir,
+  getLegacyUserSecretsDirs,
   getUserSecretsDir,
 } from '../config.js';
 import {
@@ -94,8 +94,8 @@ async function scanSessionsOnce(): Promise<void> {
   if (sessionsScannedAt() !== null) return;
 
   const prefix = getEnvPrefix();
-  const roots = [getUserSecretsDir(), getLegacyUserSecretsDir()].filter(
-    (root, i, all): root is string => root !== null && all.indexOf(root) === i,
+  const roots = [getUserSecretsDir(), ...getLegacyUserSecretsDirs()].filter(
+    (root, i, all) => all.indexOf(root) === i,
   );
   for (const root of roots) {
     const sessionsDir = join(root, 'sessions');

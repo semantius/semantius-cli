@@ -33,6 +33,7 @@ import {
   isCrudMcp,
   isSessionOnlyHost,
   loadDotEnv,
+  migrateUserConfigDir,
   prefixedEnvName,
   setAuthFlag,
   setCrudMcpFlag,
@@ -1000,6 +1001,11 @@ async function main(): Promise<void> {
   // (parse errors, missing env vars) get a log entry when <PREFIX>_LOG_FILE
   // is set in the shell environment.
   initLogger();
+
+  // Before anything reads hosts.json, the host cache or a stored session: move
+  // what an older version left directly in the vendor directory into this
+  // product's own. One stat when there is nothing to move.
+  migrateUserConfigDir();
 
   const args = parseArgs(argv);
 

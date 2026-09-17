@@ -28,15 +28,15 @@ function safeName(name: string): string {
 }
 
 /**
- * The semantius config dir a child spawned with APPDATA=LOCALAPPDATA=HOME=
- * configDir resolves (getUserConfigDir, and getUserSecretsDir, which such a
- * child points at the same place): %APPDATA%\semantius on Windows,
- * ~/.config/semantius elsewhere.
+ * The directory a child spawned with APPDATA=LOCALAPPDATA=HOME=configDir
+ * resolves (getUserConfigDir, and getUserSecretsDir, which such a child points
+ * at the same place): <vendor>/semantius/cli, i.e. %APPDATA%\semantius\cli on
+ * Windows and ~/.config/semantius/cli elsewhere.
  */
 function semantiusDir(configDir: string): string {
   return process.platform === 'win32'
-    ? join(configDir, 'semantius')
-    : join(configDir, '.config', 'semantius');
+    ? join(configDir, 'semantius', 'cli')
+    : join(configDir, '.config', 'semantius', 'cli');
 }
 
 /** Seeds a session for `host`, in cli-auth's file-fallback format. */

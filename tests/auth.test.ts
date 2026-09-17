@@ -585,36 +585,60 @@ describe('oauth login', () => {
       expect(JSON.parse(readFileSync(path, 'utf8')).refresh_token).toBe('r');
     });
 
-    // Windows only: elsewhere the secrets dir is the config dir, so there is
-    // no older location to move anything out of.
+    /** Seed a plaintext session in a directory an older version used. */
+    function seedLegacySession(vendorDir: string, marker: string): string {
+      const dir = join(vendorDir, 'sessions', 'SEMANTIUS_example.test');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'credentials.json'),
+        JSON.stringify({ refresh_token: marker, tokens: {} }),
+      );
+      return dir;
+    }
+
+    /** What a migrated session must look like once it has landed. */
+    async function expectMigrated(from: string, marker: string): Promise<void> {
+      const storage = createSecretStorage('SEMANTIUS:example.test');
+      expect(await storage.load()).toEqual({
+        refresh_token: marker,
+        tokens: {},
+      });
+
+      // Nothing left behind: the file it superseded is a plaintext credential,
+      // and an empty session directory in the old layout is what makes someone
+      // wonder which copy is live (and what the hosts scan still indexes).
+      expect(existsSync(join(from, 'credentials.json'))).toBe(false);
+      expect(existsSync(from)).toBe(false);
+      expect(existsSync(dirname(from))).toBe(false);
+
+      const moved = readFileSync(
+        credentialsPath('SEMANTIUS:example.test'),
+        'utf8',
+      );
+      expect(moved).not.toContain(marker);
+      expect(JSON.parse(moved).alg).toBe('A256GCM');
+    }
+
+    test('moves a session out of the vendor directory into the product one', async () => {
+      // dirname(config dir) is the vendor directory — where everything sat
+      // before the CLI had one of its own.
+      const from = seedLegacySession(dirname(getUserConfigDir()), 'vendor-dir');
+
+      await expectMigrated(from, 'vendor-dir');
+    });
+
+    // Windows only: elsewhere the secrets root is the config root, so the case
+    // above is already this one.
     const windowsOnly = process.platform === 'win32' ? test : test.skip;
     windowsOnly(
-      'moves a session out of the roaming profile, leaving nothing behind',
+      'moves a session out of the vendor secrets directory too',
       async () => {
-        const legacyDir = join(
-          getUserConfigDir(),
-          'sessions',
-          'SEMANTIUS_example.test',
-        );
-        mkdirSync(legacyDir, { recursive: true });
-        writeFileSync(
-          join(legacyDir, 'credentials.json'),
-          JSON.stringify({ refresh_token: 'roaming', tokens: {} }),
+        const from = seedLegacySession(
+          dirname(getUserSecretsDir()),
+          'vendor-secrets',
         );
 
-        const storage = createSecretStorage('SEMANTIUS:example.test');
-        expect(await storage.load()).toEqual({
-          refresh_token: 'roaming',
-          tokens: {},
-        });
-
-        expect(existsSync(join(legacyDir, 'credentials.json'))).toBe(false);
-        const moved = readFileSync(
-          credentialsPath('SEMANTIUS:example.test'),
-          'utf8',
-        );
-        expect(moved).not.toContain('roaming');
-        expect(JSON.parse(moved).alg).toBe('A256GCM');
+        await expectMigrated(from, 'vendor-secrets');
       },
     );
   });

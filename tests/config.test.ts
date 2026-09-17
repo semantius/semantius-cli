@@ -3,9 +3,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   loadConfig,
   getServerConfig,
@@ -21,6 +22,8 @@ import {
   splitOrgPrefix,
   normalizeCredentialEnv,
   getUserConfigDir,
+  getUserSecretsDir,
+  migrateUserConfigDir,
   getJwtOrgInfo,
   getApiKeyOrgInfo,
   setTokenArg,
@@ -805,6 +808,78 @@ describe('config', () => {
       } else {
         expect(dir).toContain('.config/semantius');
       }
+    });
+  });
+
+  describe('the product directory', () => {
+    const DIR_VARS = ['APPDATA', 'LOCALAPPDATA', 'HOME'];
+    let root: string;
+    let saved: Record<string, string | undefined>;
+
+    beforeEach(async () => {
+      saved = {};
+      for (const v of DIR_VARS) saved[v] = process.env[v];
+      root = await mkdtemp(join(tmpdir(), 'semantius-product-'));
+      for (const v of DIR_VARS) process.env[v] = root;
+    });
+
+    afterEach(async () => {
+      for (const v of DIR_VARS) {
+        if (saved[v] !== undefined) process.env[v] = saved[v];
+        else delete process.env[v];
+      }
+      await rm(root, { recursive: true, force: true });
+    });
+
+    /** The vendor directory — what the CLI's own directory sits inside. */
+    const vendorDir = (): string => dirname(getUserConfigDir());
+
+    test('the CLI gets a directory of its own inside the vendor one', () => {
+      expect(basename(vendorDir())).toBe('semantius');
+      expect(basename(getUserConfigDir())).toBe('cli');
+      // Credentials land in the product directory too, under their own root.
+      expect(basename(getUserSecretsDir())).toBe('cli');
+      expect(basename(dirname(getUserSecretsDir()))).toBe('semantius');
+    });
+
+    test('moves config left in the vendor directory into the product one', async () => {
+      await mkdir(join(vendorDir(), 'hosts'), { recursive: true });
+      await writeFile(join(vendorDir(), 'hosts.json'), '{"version":1}');
+      await writeFile(join(vendorDir(), 'hosts', 'a.example.json'), '{}');
+      await writeFile(join(vendorDir(), '.env'), 'SEMANTIUS_ORG=acme\n');
+
+      migrateUserConfigDir();
+
+      const target = getUserConfigDir();
+      expect(readFileSync(join(target, 'hosts.json'), 'utf8')).toBe(
+        '{"version":1}',
+      );
+      expect(existsSync(join(target, 'hosts', 'a.example.json'))).toBe(true);
+      expect(readFileSync(join(target, '.env'), 'utf8')).toContain('acme');
+
+      // Nothing readable left behind: a hosts.json in both places would be two
+      // answers to "what is the current host", and the stale one wins as soon
+      // as someone reads the vendor directory by hand.
+      expect(existsSync(join(vendorDir(), 'hosts.json'))).toBe(false);
+      expect(existsSync(join(vendorDir(), 'hosts'))).toBe(false);
+      expect(existsSync(join(vendorDir(), '.env'))).toBe(false);
+    });
+
+    test('never overwrites what the product directory already holds', async () => {
+      await mkdir(getUserConfigDir(), { recursive: true });
+      await writeFile(join(getUserConfigDir(), 'hosts.json'), '{"which":"new"}');
+      await writeFile(join(vendorDir(), 'hosts.json'), '{"which":"old"}');
+
+      migrateUserConfigDir();
+
+      expect(
+        readFileSync(join(getUserConfigDir(), 'hosts.json'), 'utf8'),
+      ).toContain('new');
+    });
+
+    test('is a no-op, and no error, with nothing to move', () => {
+      migrateUserConfigDir();
+      expect(existsSync(join(getUserConfigDir(), 'hosts.json'))).toBe(false);
     });
   });
 });

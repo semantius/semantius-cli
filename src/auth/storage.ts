@@ -24,12 +24,12 @@
  */
 
 import { existsSync, mkdirSync, rmdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { type Storage, type TokenSet, fileLock, fileStorage } from 'cli-auth';
 import {
   debug,
   getEnvPrefix,
-  getLegacyUserSecretsDir,
+  getLegacyUserSecretsDirs,
   getUserSecretsDir,
 } from '../config.js';
 import {
@@ -96,10 +96,9 @@ export function createSecretStorage(
 ): Storage<TokenSet> {
   const dir = join(getUserSecretsDir(), 'sessions');
   const sessionDir = join(dir, safeName(name));
-  const legacyRoot = getLegacyUserSecretsDir();
-  const legacyDir = legacyRoot
-    ? join(legacyRoot, 'sessions', safeName(name))
-    : null;
+  const legacyDirs = getLegacyUserSecretsDirs().map((root) =>
+    join(root, 'sessions', safeName(name)),
+  );
   const aad = envelopeAad(name);
 
   let keyringUsable = true;
@@ -202,35 +201,57 @@ export function createSecretStorage(
   }
 
   /**
-   * Move a session written before credentials moved out of the roaming profile
-   * (see getUserSecretsDir). Done on load because that is the first thing any
-   * command does, and it must leave nothing behind: the file it supersedes is
-   * the plaintext one this whole change exists to be rid of.
+   * Move a session written by a version that kept credentials somewhere else —
+   * in the roaming profile, or directly in the vendor directory rather than
+   * this product's (see getLegacyUserSecretsDirs). Done on load because that
+   * is the first thing any command does, and it must leave nothing behind:
+   * what it supersedes may be the plaintext file this whole change exists to
+   * be rid of.
    *
    * A legacy file that does not decode is left where it is rather than
    * deleted — the keyring may simply be unreachable this run, and a later one
    * can still recover it.
    */
   async function migrateLegacy(): Promise<TokenSet | undefined> {
-    if (!legacyDir || !existsSync(join(legacyDir, 'credentials.json'))) {
-      return undefined;
+    for (const legacyDir of legacyDirs) {
+      if (!existsSync(join(legacyDir, 'credentials.json'))) {
+        tidy(legacyDir);
+        continue;
+      }
+      const legacy = fileStorage<StoredFile>({ dir: legacyDir });
+      const stored = await legacy.load();
+      const session = stored ? await decode(stored) : undefined;
+      if (!session) continue;
+      await save(session);
+      await legacy.clear();
+      tidy(legacyDir);
+      debug(`Moved the session stored for ${name} to ${sessionDir}`);
+      return session;
     }
-    const legacy = fileStorage<StoredFile>({ dir: legacyDir });
-    const stored = await legacy.load();
-    const session = stored ? await decode(stored) : undefined;
-    if (!session) return undefined;
-    await save(session);
-    await legacy.clear();
-    // The directory itself is what the sessions scan reads as "a host was
-    // logged in here" (commands/hosts.ts), so an empty one left behind would
-    // outlive the session it held.
-    try {
-      rmdirSync(legacyDir);
-    } catch {
-      // Not empty, or already gone: either way there is nothing to tidy.
+    return undefined;
+  }
+
+  /**
+   * Remove an emptied directory from an older layout, and the `sessions`
+   * directory above it once it holds nothing either.
+   *
+   * Not housekeeping for its own sake: a session directory is what the hosts
+   * scan reads as "a host was logged in here" (commands/hosts.ts), so one left
+   * behind outlives the session it held — and a profile that still shows the
+   * old layout after an upgrade invites someone to wonder which copy is live.
+   */
+  function tidy(legacyDir: string): void {
+    for (const dir of [legacyDir, dirname(legacyDir)]) {
+      try {
+        rmdirSync(dir);
+      } catch (error) {
+        // Already gone: keep going, because the level above can still be an
+        // empty leftover — the last host to move out of it takes it with them,
+        // and the hosts that follow find nothing at their own level. Anything
+        // else (not empty, in use) means this is as far as it goes.
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return;
+      }
     }
-    debug(`Moved the session stored for ${name} to ${sessionDir}`);
-    return session;
   }
 
   async function save(credential: TokenSet): Promise<void> {
@@ -266,7 +287,9 @@ export function createSecretStorage(
     // permanently unreadable once its key is gone.
     clear: async () => {
       await file().clear();
-      if (legacyDir) await fileStorage<StoredFile>({ dir: legacyDir }).clear();
+      for (const legacyDir of legacyDirs) {
+        await fileStorage<StoredFile>({ dir: legacyDir }).clear();
+      }
       if (!keyringUsable) return;
       try {
         await secrets.delete({ service: SERVICE, name });
