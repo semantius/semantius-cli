@@ -10,10 +10,16 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, writeFileSync } from 'node:fs';
+import type { TokenSet } from 'cli-auth';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   clearPlatformMemoForTests,
   getPlatformConfig,
@@ -42,6 +48,7 @@ import {
 import { transformConfigWithJwt } from '../src/client';
 import {
   getUserConfigDir,
+  getUserSecretsDir,
   setAuthFlag,
   setEnvPrefix,
   setHostFlag,
@@ -272,6 +279,30 @@ function fakeSecrets(): SecretsApi & { store: Map<string, string> } {
   };
 }
 
+/**
+ * The session stored for a host name, as the CLI itself would load it.
+ *
+ * Tests used to reach into the fake keyring for this, back when the token set
+ * lived there. It is now sealed in a file under a key the keyring holds, and
+ * bound to the name it was written for, so the storage API is the only way in
+ * or out — which is the point of the binding.
+ */
+async function storedSession(host: string): Promise<TokenSet | undefined> {
+  return createSecretStorage(`SEMANTIUS:${host}`).load();
+}
+
+/** Store a session for a host name, sealed to it as a real save would be. */
+async function storeSession(host: string, session: TokenSet): Promise<void> {
+  await createSecretStorage(`SEMANTIUS:${host}`).save(session);
+}
+
+/** Give a host name this process has not resolved a copy of another's session. */
+async function copySessionTo(from: string, to: string): Promise<void> {
+  const session = await storedSession(from);
+  if (!session) throw new Error(`no session stored for ${from}`);
+  await storeSession(to, session);
+}
+
 // ============================================================================
 
 const VARS = [
@@ -280,6 +311,7 @@ const VARS = [
   'SEMANTIUS_API_KEY',
   'SEMANTIUS_JWT',
   'APPDATA',
+  'LOCALAPPDATA',
   'HOME',
 ];
 
@@ -287,6 +319,7 @@ describe('oauth login', () => {
   let provider: ProviderState;
   let saved: Record<string, string | undefined>;
   let configDir: string;
+  let secretsDir: string;
   let cacheDir: string;
   let secrets: ReturnType<typeof fakeSecrets>;
   /** What the CLI resolves for the loopback host: self-hosted facts. */
@@ -310,10 +343,16 @@ describe('oauth login', () => {
       delete process.env[v];
     }
     configDir = await mkdtemp(join(tmpdir(), 'semantius-auth-cfg-'));
+    secretsDir = await mkdtemp(join(tmpdir(), 'semantius-auth-sec-'));
     cacheDir = await mkdtemp(join(tmpdir(), 'semantius-auth-cache-'));
-    // getUserConfigDir() derives from these, so the lock file and any file
-    // fallback stay inside the temp dir.
+    // getUserConfigDir() and getUserSecretsDir() derive from these, so the
+    // stored session, its lock file and the .env stay inside the temp dirs.
+    // The two are kept distinct on purpose: on Windows they really are
+    // different directories (%APPDATA% vs %LOCALAPPDATA%), and a test that
+    // conflated them could not tell a session that moved from one that never
+    // had to.
     process.env.APPDATA = configDir;
+    process.env.LOCALAPPDATA = secretsDir;
     process.env.HOME = configDir;
     setEnvPrefix('SEMANTIUS');
     setHostFlag(undefined);
@@ -354,6 +393,7 @@ describe('oauth login', () => {
       else delete process.env[v];
     }
     await rm(configDir, { recursive: true, force: true });
+    await rm(secretsDir, { recursive: true, force: true });
     await rm(cacheDir, { recursive: true, force: true });
   });
 
@@ -364,18 +404,154 @@ describe('oauth login', () => {
 
   // --------------------------------------------------------------------
   describe('storage', () => {
-    test('saves, loads and clears through the keyring', async () => {
+    /** Where the session stored under a name actually lands. */
+    const credentialsPath = (name: string): string =>
+      join(
+        getUserSecretsDir(),
+        'sessions',
+        name.replace(/[:/\\]/g, '_'),
+        'credentials.json',
+      );
+
+    /** A keyring that refuses anything larger than `limit`, as Windows does. */
+    function cappedSecrets(limit: number): SecretsApi {
+      const inner = fakeSecrets();
+      return {
+        ...inner,
+        async set(options) {
+          if (options.value.length > limit) {
+            throw new Error('The stub received bad data. (code: 1783)');
+          }
+          return inner.set(options);
+        },
+      };
+    }
+
+    test('seals the session into the file; the keyring holds only the key', async () => {
       const storage = createSecretStorage('SEMANTIUS:example.test');
       expect(await storage.load()).toBeUndefined();
 
-      await storage.save({ refresh_token: 'r', tokens: {} });
-      expect(secrets.store.get('semantius:SEMANTIUS:example.test')).toContain(
-        'refresh_token',
+      await storage.save({ refresh_token: 'refresh-secret', tokens: {} });
+
+      const entry = secrets.store.get('semantius:SEMANTIUS:example.test') ?? '';
+      expect(entry).not.toContain('refresh-secret');
+      expect(typeof JSON.parse(entry).k).toBe('string');
+
+      const onDisk = readFileSync(
+        credentialsPath('SEMANTIUS:example.test'),
+        'utf8',
       );
-      expect(await storage.load()).toEqual({ refresh_token: 'r', tokens: {} });
+      expect(onDisk).not.toContain('refresh-secret');
+      expect(JSON.parse(onDisk).alg).toBe('A256GCM');
+
+      expect(await storage.load()).toEqual({
+        refresh_token: 'refresh-secret',
+        tokens: {},
+      });
+    });
+
+    test('clearing removes the file and the key', async () => {
+      const storage = createSecretStorage('SEMANTIUS:example.test');
+      await storage.save({ refresh_token: 'r', tokens: {} });
 
       await storage.clear();
+
       expect(await storage.load()).toBeUndefined();
+      expect(existsSync(credentialsPath('SEMANTIUS:example.test'))).toBe(false);
+      // Deleting the key is what reaches a copy of the file that already
+      // escaped — into a backup, or a roaming profile.
+      expect(secrets.store.has('semantius:SEMANTIUS:example.test')).toBe(false);
+    });
+
+    test('a session too large for the keyring is stored, and still encrypted', async () => {
+      // Windows Credential Manager refuses a blob over 2560 bytes and an Entra
+      // session is ~3.4 KB. Keeping the payload there is what used to put the
+      // whole token set in a plaintext file — silently, and only on Windows.
+      const storage = createSecretStorage(
+        'SEMANTIUS:big.test',
+        cappedSecrets(2560),
+      );
+      const big = {
+        refresh_token: `refresh-secret-${'r'.repeat(1800)}`,
+        tokens: {
+          'resource=api://x': {
+            access_token: 'a'.repeat(1600),
+            expires_at: Date.now() + 3_600_000,
+          },
+        },
+      };
+
+      await storage.save(big);
+
+      const onDisk = readFileSync(credentialsPath('SEMANTIUS:big.test'), 'utf8');
+      expect(onDisk.length).toBeGreaterThan(2560);
+      expect(onDisk).not.toContain('refresh-secret');
+      expect(await storage.load()).toEqual(big);
+    });
+
+    test('a keyring entry from the old layout is honoured, then replaced by a key', async () => {
+      // Sessions used to live in the keyring itself. One left there must not
+      // outlive the next save: a stale entry shadowing a newer file session is
+      // what sent a long-dead refresh token to the IdP on every command.
+      secrets.store.set(
+        'semantius:SEMANTIUS:example.test',
+        JSON.stringify({ refresh_token: 'old', tokens: {} }),
+      );
+
+      const storage = createSecretStorage('SEMANTIUS:example.test');
+      expect(await storage.load()).toEqual({
+        refresh_token: 'old',
+        tokens: {},
+      });
+
+      await storage.save({ refresh_token: 'new', tokens: {} });
+
+      const entry = secrets.store.get('semantius:SEMANTIUS:example.test') ?? '';
+      expect(entry).not.toContain('old');
+      expect(entry).not.toContain('new');
+      expect(await createSecretStorage('SEMANTIUS:example.test').load()).toEqual(
+        { refresh_token: 'new', tokens: {} },
+      );
+    });
+
+    test('a sealed session whose key is gone reads as no session', async () => {
+      await createSecretStorage('SEMANTIUS:example.test').save({
+        refresh_token: 'r',
+        tokens: {},
+      });
+
+      secrets.store.delete('semantius:SEMANTIUS:example.test');
+
+      expect(
+        await createSecretStorage('SEMANTIUS:example.test').load(),
+      ).toBeUndefined();
+    });
+
+    test('a sealed session does not open in another slot', async () => {
+      const source = 'SEMANTIUS:a.test';
+      const target = 'SEMANTIUS:b.test';
+      await createSecretStorage(source).save({
+        refresh_token: 'r',
+        tokens: {},
+      });
+
+      // Both halves copied under another host's name. The envelope is bound to
+      // the name it was written for, so it still does not open.
+      mkdirSync(dirname(credentialsPath(target)), { recursive: true });
+      writeFileSync(
+        credentialsPath(target),
+        readFileSync(credentialsPath(source), 'utf8'),
+      );
+      secrets.store.set(
+        `semantius:${target}`,
+        secrets.store.get(`semantius:${source}`) ?? '',
+      );
+
+      expect(await createSecretStorage(target).load()).toBeUndefined();
+      expect(await createSecretStorage(source).load()).toEqual({
+        refresh_token: 'r',
+        tokens: {},
+      });
     });
 
     test('a corrupt entry reads as "no session", not as a keyring failure', async () => {
@@ -384,7 +560,9 @@ describe('oauth login', () => {
       expect(await storage.load()).toBeUndefined();
     });
 
-    test('falls back to a file when there is no keyring', async () => {
+    test('writes the file in the clear when there is no keyring at all', async () => {
+      // Headless Linux: nowhere to keep a key, so nothing to encrypt with. The
+      // file is the whole store, as it always was.
       const broken: SecretsApi = {
         async get() {
           throw new Error('libsecret not available');
@@ -400,18 +578,45 @@ describe('oauth login', () => {
       await storage.save({ refresh_token: 'r', tokens: {} });
 
       expect(await storage.load()).toEqual({ refresh_token: 'r', tokens: {} });
-      expect(getUserConfigDir().startsWith(configDir)).toBe(true);
-      expect(
-        existsSync(
-          join(
-            getUserConfigDir(),
-            'sessions',
-            'SEMANTIUS_example.test',
-            'credentials.json',
-          ),
-        ),
-      ).toBe(true);
+      const path = credentialsPath('SEMANTIUS:example.test');
+      expect(path.startsWith(secretsDir) || path.startsWith(configDir)).toBe(
+        true,
+      );
+      expect(JSON.parse(readFileSync(path, 'utf8')).refresh_token).toBe('r');
     });
+
+    // Windows only: elsewhere the secrets dir is the config dir, so there is
+    // no older location to move anything out of.
+    const windowsOnly = process.platform === 'win32' ? test : test.skip;
+    windowsOnly(
+      'moves a session out of the roaming profile, leaving nothing behind',
+      async () => {
+        const legacyDir = join(
+          getUserConfigDir(),
+          'sessions',
+          'SEMANTIUS_example.test',
+        );
+        mkdirSync(legacyDir, { recursive: true });
+        writeFileSync(
+          join(legacyDir, 'credentials.json'),
+          JSON.stringify({ refresh_token: 'roaming', tokens: {} }),
+        );
+
+        const storage = createSecretStorage('SEMANTIUS:example.test');
+        expect(await storage.load()).toEqual({
+          refresh_token: 'roaming',
+          tokens: {},
+        });
+
+        expect(existsSync(join(legacyDir, 'credentials.json'))).toBe(false);
+        const moved = readFileSync(
+          credentialsPath('SEMANTIUS:example.test'),
+          'utf8',
+        );
+        expect(moved).not.toContain('roaming');
+        expect(JSON.parse(moved).alg).toBe('A256GCM');
+      },
+    );
   });
 
   // --------------------------------------------------------------------
@@ -511,10 +716,7 @@ describe('oauth login', () => {
       // a real (one-command-per-process) invocation pays for. Copy the session
       // across, so only the cached-token path can answer.
       const probe: HostFacts = { ...host, host: 'fresh-probe.example' };
-      secrets.store.set(
-        `semantius:SEMANTIUS:${probe.host}`,
-        secrets.store.get(`semantius:SEMANTIUS:${host.host}`) as string,
-      );
+      await copySessionTo(host.host, probe.host);
       provider.paths.length = 0;
 
       expect(await getSessionToken(probe)).toBe('access-1');
@@ -534,10 +736,7 @@ describe('oauth login', () => {
 
       // Its own host name, so a miss has to rediscover (see the test above).
       const probe: HostFacts = { ...loginHost, host: 'cloud-probe.example' };
-      secrets.store.set(
-        `semantius:SEMANTIUS:${probe.host}`,
-        secrets.store.get(`semantius:SEMANTIUS:${loginHost.host}`) as string,
-      );
+      await copySessionTo(loginHost.host, probe.host);
       provider.paths.length = 0;
 
       expect(await getSessionToken(probe)).toBeTruthy();
@@ -557,14 +756,11 @@ describe('oauth login', () => {
       // 60 s of life left: still valid, but inside the 300 s threshold, so a
       // refresh is due. The cache read must decline it rather than serve a
       // token that could expire in flight.
-      const name = `semantius:SEMANTIUS:${host.host}`;
-      const stored = JSON.parse(secrets.store.get(name) as string);
-      for (const token of Object.values(stored.tokens) as {
-        expires_at: number;
-      }[]) {
+      const stored = await storedSession(host.host);
+      for (const token of Object.values(stored?.tokens ?? {})) {
         token.expires_at = Date.now() + 60_000;
       }
-      secrets.store.set(name, JSON.stringify(stored));
+      await storeSession(host.host, stored as TokenSet);
 
       const token = await getSessionToken(host);
 
@@ -755,12 +951,8 @@ describe('oauth login', () => {
     const named = (name: string): HostFacts => ({ ...host, host: name });
 
     /** Move a stored session to a host name this process has not resolved. */
-    const copySession = (from: HostFacts, to: HostFacts) => {
-      secrets.store.set(
-        `semantius:SEMANTIUS:${to.host}`,
-        secrets.store.get(`semantius:SEMANTIUS:${from.host}`) as string,
-      );
-    };
+    const copySession = (from: HostFacts, to: HostFacts) =>
+      copySessionTo(from.host, to.host);
 
     test('a document configures the login in one OIDC discovery hop', async () => {
       provider.cfg.platformDoc = bundledDoc();
@@ -807,10 +999,10 @@ describe('oauth login', () => {
 
       await login(target, { openUrl });
 
-      const stored = JSON.parse(
-        secrets.store.get(`semantius:SEMANTIUS:${target.host}`) as string,
-      );
-      expect(Object.keys(stored.tokens)).toEqual(['resource=semantius://api']);
+      const stored = await storedSession(target.host);
+      expect(Object.keys(stored?.tokens ?? {})).toEqual([
+        'resource=semantius://api',
+      ]);
     });
 
     test('an absolute discovery URL is taken as given, with the document scope verbatim', async () => {
@@ -1103,7 +1295,7 @@ describe('oauth login', () => {
 
       // A later process, with no memo and no cache entry for this name.
       const probe = named('platform-rolled.example');
-      copySession(source, probe);
+      await copySession(source, probe);
       provider.paths.length = 0;
       provider.resources.length = 0;
 
@@ -1124,7 +1316,7 @@ describe('oauth login', () => {
       // is an absence the fetch layer cannot tell from an un-upgraded host.
       provider.cfg.platformDoc = null;
       const probe = named('platform-audience-gone.example');
-      copySession(source, probe);
+      await copySession(source, probe);
       const before = provider.tokenGrants.length;
 
       // No forceRefresh: this is the path every ordinary command takes, and
@@ -1164,7 +1356,7 @@ describe('oauth login', () => {
       await login(source, { openUrl });
 
       const probe = named('platform-legacy-probe.example');
-      copySession(source, probe);
+      await copySession(source, probe);
 
       // Cached: served without resolving anything at all.
       expect(await getSessionToken(probe)).toBe('access-1');

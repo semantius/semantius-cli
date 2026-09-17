@@ -59,6 +59,7 @@ describe('Startup env variable validation', () => {
       SEMANTIUS_JWT: '',
       SEMANTIUS_HOST: '',
       APPDATA: configDir,
+      LOCALAPPDATA: configDir,
       HOME: configDir,
     };
     for (const [key, value] of Object.entries({ ...baseEnv, ...envOverrides })) {
@@ -255,17 +256,22 @@ describe('Startup env variable validation', () => {
   describe('binding, the current host, and conflicts', () => {
     let configDir: string;
     let savedAppData: string | undefined;
+    let savedLocalAppData: string | undefined;
     let savedHome: string | undefined;
 
     beforeEach(async () => {
       configDir = await mkdtemp(join(tmpdir(), 'semantius-startup-hosts-'));
       savedAppData = process.env.APPDATA;
+      savedLocalAppData = process.env.LOCALAPPDATA;
       savedHome = process.env.HOME;
     });
 
     afterEach(async () => {
       if (savedAppData !== undefined) process.env.APPDATA = savedAppData;
       else delete process.env.APPDATA;
+      if (savedLocalAppData !== undefined) {
+        process.env.LOCALAPPDATA = savedLocalAppData;
+      } else delete process.env.LOCALAPPDATA;
       if (savedHome !== undefined) process.env.HOME = savedHome;
       else delete process.env.HOME;
       setHostsIndexDirForTests(undefined);
@@ -279,6 +285,7 @@ describe('Startup env variable validation', () => {
      */
     function seedCurrentHost(host: string): void {
       process.env.APPDATA = configDir;
+      process.env.LOCALAPPDATA = configDir;
       process.env.HOME = configDir;
       setHostsIndexDirForTests(undefined); // force a re-read under the dir just set
       setEnvPrefix('SEMANTIUS');
@@ -293,6 +300,7 @@ describe('Startup env variable validation', () => {
       return runCliWithEnv(args, {
         ...envOverrides,
         APPDATA: configDir,
+        LOCALAPPDATA: configDir,
         HOME: configDir,
       });
     }

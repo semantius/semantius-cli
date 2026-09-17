@@ -1,20 +1,49 @@
 /**
- * Where an OAuth session is persisted: the OS keyring (Bun.secrets — Keychain,
- * Windows Credential Manager, libsecret) with cli-auth's 0600 file storage as
- * the fallback for machines without one (headless Linux).
+ * Where an OAuth session is persisted: ciphertext in an 0600 file, and the key
+ * that opens it in the OS keyring (Bun.secrets — Windows DPAPI, macOS
+ * Keychain, Linux libsecret). See envelope.ts for why the credential itself
+ * never touches the disk in the clear.
  *
- * One entry per (env prefix, host), so a session obtained for one host is
- * never offered to another. Refreshes are serialized across processes with
- * cli-auth's file lock: two concurrent CLI invocations must not both spend the
- * refresh token.
+ * Both halves are per (env prefix, host), under one name, so a session
+ * obtained for one host is never offered to another. Refreshes are serialized
+ * across processes with cli-auth's file lock: two concurrent CLI invocations
+ * must not both spend the refresh token.
+ *
+ * One name, one meaning, one place. The previous design stored the token set
+ * *in* the keyring and kept the file as a fallback for machines without one —
+ * which let the payload's size decide where it landed. Windows Credential
+ * Manager refuses a blob over 2560 bytes and an Entra session is ~3.4 KB, so
+ * on Windows every such login silently took the fallback, wrote the refresh
+ * token to disk in the clear, and left whatever the keyring already held in
+ * place. Loads still preferred the keyring, so the CLI went on presenting a
+ * stale session from an earlier login and never read the one it had just
+ * stored. The keyring now holds ~60 bytes whatever the session's size, so the
+ * two stores cannot disagree: the file is always the payload, the keyring
+ * entry is always its key, and "no OS keyring available" once again means what
+ * it says.
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Storage, type TokenSet, fileLock, fileStorage } from 'cli-auth';
-import { debug, getEnvPrefix, getUserConfigDir } from '../config.js';
+import {
+  debug,
+  getEnvPrefix,
+  getLegacyUserSecretsDir,
+  getUserSecretsDir,
+} from '../config.js';
+import {
+  type Envelope,
+  envelopeAad,
+  isEnvelope,
+  keyFromRecord,
+  keyRecord,
+  newKey,
+  open,
+  seal,
+} from './envelope.js';
 
-/** Service name under which every session is stored in the OS keyring. */
+/** Service name under which every session key is stored in the OS keyring. */
 const SERVICE = 'semantius';
 
 /** The part of Bun.secrets this module uses; tests inject a fake. */
@@ -49,9 +78,15 @@ function safeName(name: string): string {
 }
 
 /**
- * A cli-auth Storage over Bun.secrets, falling back to an 0600 file once the
- * keyring turns out to be unusable. The fallback is per session name, so each
- * host keeps its own credentials.json.
+ * What the file may hold: the envelope, or — on a machine with no keyring, and
+ * in anything written before the envelope existed — a plaintext token set.
+ */
+type StoredFile = Envelope | TokenSet;
+
+/**
+ * A cli-auth Storage that seals the session under a key held in the OS
+ * keyring. Where there is no keyring at all (headless Linux) the file is
+ * written in the clear, as it always was, and the CLI says so.
  */
 export function createSecretStorage(
   name: string,
@@ -59,105 +94,188 @@ export function createSecretStorage(
     (Bun.secrets as unknown as SecretsApi),
   opts: { quiet?: boolean } = {},
 ): Storage<TokenSet> {
-  const dir = join(getUserConfigDir(), 'sessions');
+  const dir = join(getUserSecretsDir(), 'sessions');
   const sessionDir = join(dir, safeName(name));
+  const legacyRoot = getLegacyUserSecretsDir();
+  const legacyDir = legacyRoot
+    ? join(legacyRoot, 'sessions', safeName(name))
+    : null;
+  const aad = envelopeAad(name);
+
   let keyringUsable = true;
-  let fallback: Storage<TokenSet> | undefined;
+  let keyringError = '';
   let announced = false;
+  let backend: Storage<StoredFile> | undefined;
 
-  function fileBackend(announce = false): Storage<TokenSet> {
-    if (!fallback) fallback = fileStorage<TokenSet>({ dir: sessionDir });
-    if (announce && !announced) {
-      announced = true;
-      // "semantius hosts" opens one of these per indexed host to probe for a
-      // session (see hasStoredSessionFor / getSessionExpiryFor): without
-      // `quiet` that would print this line once per host on a keyring-less
-      // machine, for a fact the table already conveys per-row.
-      if (!opts.quiet) {
-        console.error(
-          `[semantius] no OS keyring available; storing the session in ${sessionDir}`,
-        );
-      }
-    }
-    return fallback;
-  }
-
-  /** Whether a session was ever written to the file fallback. */
-  function hasFile(): boolean {
-    return existsSync(join(sessionDir, 'credentials.json'));
+  function file(): Storage<StoredFile> {
+    if (!backend) backend = fileStorage<StoredFile>({ dir: sessionDir });
+    return backend;
   }
 
   /**
-   * Run `viaKeyring`; if the keyring itself is unavailable, switch to the file
-   * backend for good and run `viaFile` instead. Errors from the file backend
-   * are never swallowed — a session that cannot be saved must not look saved.
+   * Said once per storage, and only when a session is actually written
+   * unencrypted — "semantius hosts" opens one of these per indexed host to
+   * probe for a session, and must not narrate a machine's keyring once per
+   * row for a fact no row depends on.
    */
-  async function run<T>(
-    viaKeyring: () => Promise<T>,
-    viaFile: (storage: Storage<TokenSet>) => Promise<T>,
-    { storing = false } = {},
-  ): Promise<T> {
-    if (keyringUsable) {
-      try {
-        return await viaKeyring();
-      } catch (error) {
+  function announcePlaintext(): void {
+    if (announced || opts.quiet) return;
+    announced = true;
+    console.error(
+      `[semantius] no OS keyring available (${keyringError}); the session is stored unencrypted in ${sessionDir}`,
+    );
+  }
+
+  /** The keyring is out for the rest of this process; remember why. */
+  function unusable(error: unknown): void {
+    keyringError = (error as Error).message;
+    keyringUsable = false;
+    debug(`OS keyring unavailable (${keyringError})`);
+  }
+
+  /** Whatever the keyring holds under this name, parsed; undefined if nothing usable. */
+  async function readKeyring(): Promise<unknown> {
+    if (!keyringUsable) return undefined;
+    try {
+      const raw = await secrets.get({ service: SERVICE, name });
+      if (!raw) return undefined;
+      const parsed = parseJson(raw);
+      if (parsed === undefined) {
+        // A corrupt entry is not a keyring failure: treat it as "nothing
+        // stored" so the next login overwrites it.
         debug(
-          `OS keyring unavailable (${(error as Error).message}); using file storage`,
+          `Stored keyring entry for ${name} is not valid JSON; ignoring it`,
         );
-        keyringUsable = false;
       }
+      return parsed;
+    } catch (error) {
+      unusable(error);
+      return undefined;
     }
-    // Only a save announces the fallback: a load or clear stores nothing, and
-    // a lookup that finds no session must not print "storing the session".
-    return viaFile(fileBackend(storing));
+  }
+
+  /**
+   * The key to seal with: the stored one, or a new one stored now. Null only
+   * when this machine has no usable keyring.
+   *
+   * Writing the key is also what retires the old layout — an entry still
+   * holding a whole token set is replaced here, so no machine is left keeping
+   * two things that both look like a session.
+   *
+   * Deliberately unlocked. cli-auth calls load() — and so, on an upgrade,
+   * migrateLegacy and this — from inside the storage lock it takes around a
+   * refresh, so taking it again would deadlock on a lock that is not
+   * reentrant. The race that leaves is two first saves at once each minting a
+   * key: the last one written wins and the other's file then reads as no
+   * session. That costs a login, never a token from the wrong key.
+   */
+  async function sessionKey(): Promise<Buffer | null> {
+    const existing = keyFromRecord(await readKeyring());
+    if (existing) return existing;
+    if (!keyringUsable) return null;
+    const key = newKey();
+    try {
+      await secrets.set({
+        service: SERVICE,
+        name,
+        value: JSON.stringify(keyRecord(key)),
+      });
+      return key;
+    } catch (error) {
+      unusable(error);
+      return null;
+    }
+  }
+
+  /** A stored file as a token set: opened if sealed, taken as-is if not. */
+  async function decode(stored: StoredFile): Promise<TokenSet | undefined> {
+    if (!isEnvelope(stored)) return asTokenSet(stored);
+    const key = keyFromRecord(await readKeyring());
+    if (!key) {
+      debug(
+        `The session stored for ${name} is sealed, but the keyring holds no key for it; treating it as no session`,
+      );
+      return undefined;
+    }
+    const plaintext = open(stored, key, aad);
+    return plaintext === null ? undefined : asTokenSet(parseJson(plaintext));
+  }
+
+  /**
+   * Move a session written before credentials moved out of the roaming profile
+   * (see getUserSecretsDir). Done on load because that is the first thing any
+   * command does, and it must leave nothing behind: the file it supersedes is
+   * the plaintext one this whole change exists to be rid of.
+   *
+   * A legacy file that does not decode is left where it is rather than
+   * deleted — the keyring may simply be unreachable this run, and a later one
+   * can still recover it.
+   */
+  async function migrateLegacy(): Promise<TokenSet | undefined> {
+    if (!legacyDir || !existsSync(join(legacyDir, 'credentials.json'))) {
+      return undefined;
+    }
+    const legacy = fileStorage<StoredFile>({ dir: legacyDir });
+    const stored = await legacy.load();
+    const session = stored ? await decode(stored) : undefined;
+    if (!session) return undefined;
+    await save(session);
+    await legacy.clear();
+    // The directory itself is what the sessions scan reads as "a host was
+    // logged in here" (commands/hosts.ts), so an empty one left behind would
+    // outlive the session it held.
+    try {
+      rmdirSync(legacyDir);
+    } catch {
+      // Not empty, or already gone: either way there is nothing to tidy.
+    }
+    debug(`Moved the session stored for ${name} to ${sessionDir}`);
+    return session;
+  }
+
+  async function save(credential: TokenSet): Promise<void> {
+    const pruned = prune(credential);
+    const key = await sessionKey();
+    if (!key) {
+      announcePlaintext();
+      await file().save(pruned);
+      return;
+    }
+    await file().save(seal(JSON.stringify(pruned), key, aad));
   }
 
   return {
-    load: () =>
-      run(
-        async () => {
-          const raw = await secrets.get({ service: SERVICE, name });
-          if (!raw) {
-            // An earlier run may have fallen back to a file; that session is
-            // still the user's.
-            return hasFile() ? fileBackend().load() : undefined;
-          }
-          try {
-            return JSON.parse(raw) as TokenSet;
-          } catch {
-            // A corrupt entry is not a keyring failure: treat it as "no
-            // session" so the next login overwrites it.
-            debug(`Stored session for ${name} is not valid JSON; ignoring it`);
-            return undefined;
-          }
-        },
-        (storage) => storage.load(),
-      ),
+    load: async () => {
+      const stored = await file().load();
+      if (stored) return decode(stored);
 
-    save: (credential) =>
-      run(
-        () =>
-          secrets.set({
-            service: SERVICE,
-            name,
-            value: JSON.stringify(prune(credential)),
-          }),
-        (storage) => storage.save(prune(credential)),
-        { storing: true },
-      ),
+      const migrated = await migrateLegacy();
+      if (migrated) return migrated;
 
-    // Log out means log out: clear both places a session can live.
-    clear: async () => {
-      if (hasFile()) await fileBackend().clear();
-      return run(
-        async () => {
-          await secrets.delete({ service: SERVICE, name });
-        },
-        () => Promise.resolve(),
-      );
+      // No file at all: a session from a version that kept the token set in
+      // the keyring itself. Honour it — the next save seals it into the file
+      // and replaces the entry with a key.
+      return asTokenSet(await readKeyring());
     },
 
-    // Created lazily: nothing should touch the config dir until a refresh
+    save,
+
+    // Log out means log out. The key goes too, and deleting it is the part
+    // that reaches copies of the file this process cannot: a credentials.json
+    // that had already escaped into a backup or a roaming profile becomes
+    // permanently unreadable once its key is gone.
+    clear: async () => {
+      await file().clear();
+      if (legacyDir) await fileStorage<StoredFile>({ dir: legacyDir }).clear();
+      if (!keyringUsable) return;
+      try {
+        await secrets.delete({ service: SERVICE, name });
+      } catch (error) {
+        unusable(error);
+      }
+    },
+
+    // Created lazily: nothing should touch the secrets dir until a refresh
     // actually needs the lock.
     lock: async () => {
       mkdirSync(dir, { recursive: true });
@@ -166,13 +284,29 @@ export function createSecretStorage(
   };
 }
 
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A stored value as a token set, or undefined when it is something else. */
+function asTokenSet(value: unknown): TokenSet | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const set = value as TokenSet;
+  return typeof set.tokens === 'object' && set.tokens !== null
+    ? set
+    : undefined;
+}
+
 /**
  * What actually goes into the store: the refresh token and the access tokens
  * still in date. The `id_token` is dropped — nothing reads it (identity comes
- * from the server) and it is ~600 bytes of a budget that is not generous:
- * Windows Credential Manager rejects a credential over 2560 bytes, which a
- * set with an id_token and two access tokens exceeds, and the whole session
- * would then land in the file fallback.
+ * from the server), and a credential nothing reads should not be kept at all.
+ * Size is no longer a reason: the keyring only ever sees a 32-byte key, so the
+ * session itself may be any length.
  */
 function prune(credential: TokenSet): TokenSet {
   const now = Date.now();

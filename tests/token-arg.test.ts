@@ -40,6 +40,7 @@ describe('--token / --token-file', () => {
         SEMANTIUS_NO_DAEMON: '1',
         SEMANTIUS_MAX_RETRIES: '0',
         APPDATA: configDir,
+        LOCALAPPDATA: configDir,
         HOME: configDir,
         ...env,
       },

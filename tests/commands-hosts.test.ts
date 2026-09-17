@@ -63,6 +63,7 @@ describe('commands/hosts (in-process)', () => {
   beforeEach(async () => {
     configDir = await mkdtemp(join(tmpdir(), 'semantius-hosts-cmd-'));
     process.env.APPDATA = configDir;
+    process.env.LOCALAPPDATA = configDir;
     process.env.HOME = configDir;
     setEnvPrefix('SEMANTIUS');
     setHostFlag(undefined);
@@ -347,6 +348,7 @@ describe('commands/hosts CLI surface (spawned)', () => {
         SEMANTIUS_HOST: '',
         SEMANTIUS_NO_DAEMON: '1',
         APPDATA: configDir,
+        LOCALAPPDATA: configDir,
         HOME: configDir,
       },
       stdin: null,

@@ -13,7 +13,12 @@ import {
   hasStoredSessionFor,
   login,
 } from '../auth/session.js';
-import { debug, getEnvPrefix, getUserConfigDir } from '../config.js';
+import {
+  debug,
+  getEnvPrefix,
+  getLegacyUserSecretsDir,
+  getUserSecretsDir,
+} from '../config.js';
 import {
   type HostSource,
   getHost,
@@ -74,35 +79,45 @@ function unsafeHostName(safe: string): string {
 
 /**
  * One-time migration, run once per profile: index every host with a session
- * directory under <user config dir>/sessions/ that the hosts-index doesn't
+ * directory under <user secrets dir>/sessions/ that the hosts-index doesn't
  * already know about. A keyring-only session self-heals on its own next use
  * (see session.ts's getSessionToken), but a session that has sat unused
  * since before hosts.json existed — or that only ever lived in the file
  * fallback — would otherwise never appear in "semantius hosts".
+ *
+ * The old location is scanned too: a session there has not been used since
+ * credentials moved out of the roaming profile, so nothing has migrated it
+ * yet (storage.ts does that on its next load), and it is exactly the kind of
+ * long-unused session this scan exists to surface.
  */
 async function scanSessionsOnce(): Promise<void> {
   if (sessionsScannedAt() !== null) return;
 
   const prefix = getEnvPrefix();
-  const sessionsDir = join(getUserConfigDir(), 'sessions');
-  try {
-    const entries = await readdir(sessionsDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !entry.name.startsWith(`${prefix}_`)) {
-        continue;
+  const roots = [getUserSecretsDir(), getLegacyUserSecretsDir()].filter(
+    (root, i, all): root is string => root !== null && all.indexOf(root) === i,
+  );
+  for (const root of roots) {
+    const sessionsDir = join(root, 'sessions');
+    try {
+      const entries = await readdir(sessionsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !entry.name.startsWith(`${prefix}_`)) {
+          continue;
+        }
+        let host: string;
+        try {
+          host = normalizeHost(
+            unsafeHostName(entry.name.slice(prefix.length + 1)),
+          );
+        } catch {
+          continue; // not a recognizable host directory name; skip it
+        }
+        if (!hasHost(host)) recordHost(host, factsFromHostName(host));
       }
-      let host: string;
-      try {
-        host = normalizeHost(
-          unsafeHostName(entry.name.slice(prefix.length + 1)),
-        );
-      } catch {
-        continue; // not a recognizable host directory name; skip it
-      }
-      if (!hasHost(host)) recordHost(host, factsFromHostName(host));
+    } catch (error) {
+      debug(`Sessions directory scan skipped: ${(error as Error).message}`);
     }
-  } catch (error) {
-    debug(`Sessions directory scan skipped: ${(error as Error).message}`);
   }
   markSessionsScanned();
 }

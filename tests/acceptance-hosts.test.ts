@@ -28,8 +28,9 @@ function safeName(name: string): string {
 }
 
 /**
- * The semantius config dir a child spawned with APPDATA=HOME=configDir
- * resolves (getUserConfigDir): %APPDATA%\semantius on Windows,
+ * The semantius config dir a child spawned with APPDATA=LOCALAPPDATA=HOME=
+ * configDir resolves (getUserConfigDir, and getUserSecretsDir, which such a
+ * child points at the same place): %APPDATA%\semantius on Windows,
  * ~/.config/semantius elsewhere.
  */
 function semantiusDir(configDir: string): string {
@@ -97,6 +98,7 @@ async function runCli(
       SEMANTIUS_CONNECT_TIMEOUT: '5',
       SEMANTIUS_DISABLE_JWT_CACHE: '1', // each test's key is fresh; never serve a cached token
       APPDATA: configDir,
+      LOCALAPPDATA: configDir,
       HOME: configDir,
       ...env,
     },

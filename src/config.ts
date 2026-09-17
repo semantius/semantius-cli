@@ -512,6 +512,41 @@ export function getUserConfigDir(): string {
   return join(process.env.HOME || homedir(), '.config', 'semantius');
 }
 
+/**
+ * Where credentials are kept — the stored sessions and their lock files.
+ *
+ * Windows: %LOCALAPPDATA%\semantius, deliberately *not* the %APPDATA% the
+ * config dir uses. Roaming is the half of the profile built to travel: a
+ * roaming profile copies it to a server, and profile migration and backup
+ * tooling take it by default. A credential belongs on the side that stays on
+ * the machine, next to the keyring that holds its key.
+ *
+ * Linux/macOS: the config dir, unchanged. XDG has no separate secrets
+ * directory, ~/.config is already user-private (0700), and moving an existing
+ * path would buy nothing there.
+ *
+ * Tests redirect this the same way they redirect the config dir: LOCALAPPDATA
+ * on Windows, HOME elsewhere. A spawned CLI that is given only APPDATA and
+ * HOME would write its session into the developer's real profile.
+ */
+export function getUserSecretsDir(): string {
+  if (process.platform === 'win32') {
+    const localAppData =
+      process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local');
+    return join(localAppData, 'semantius');
+  }
+  return getUserConfigDir();
+}
+
+/**
+ * Where sessions used to be kept, or null where that is still the live
+ * location. Read once per session load, to move a session that predates the
+ * split (see createSecretStorage) and delete the copy left behind.
+ */
+export function getLegacyUserSecretsDir(): string | null {
+  return process.platform === 'win32' ? getUserConfigDir() : null;
+}
+
 // ============================================================================
 // .env File Loading
 // ============================================================================
