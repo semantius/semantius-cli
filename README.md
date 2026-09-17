@@ -444,7 +444,12 @@ Semantius control plane and cached for 24 hours in
 pasting the web app's address works. Any other host (`--host semantius.example.com`)
 is **self-hosted**: PostgREST is expected at `https://<host>/rest`, the token
 exchange at `https://<host>/api/auth/token`, and there is no `cube` (analytics)
-server and no cloud MCP server, so `--crud-mcp` is not available.
+server and no cloud MCP server, so `--crud-mcp` is not available. Those paths are
+fixed, so resolving a self-hosted host needs no network at all. What a browser
+login needs on top of them — the OAuth client id, the audience, the identity
+provider — comes from `https://<host>/.well-known/semantius.json`, which is read
+only when a login or a token refresh actually happens (see
+[Browser login](#browser-login)).
 
 With `--host`, or on the current host (see below), only credentials stored for
 that host (a browser session) are used — see [Set up credentials](#2-set-up-credentials).
@@ -506,16 +511,21 @@ semantius whoami                             # auth_method: oauth
 semantius logout                             # revokes and deletes the session
 ```
 
+`logout` deletes the session locally, and revokes it at the provider first
+where the provider publishes a revocation endpoint — some, including Microsoft
+Entra, publish none, and there the session is simply deleted.
+
 `login` opens your browser (OAuth 2.0 authorization code with PKCE), receives
 the response on `127.0.0.1`, and stores the session in your OS keyring
 (Keychain, Windows Credential Manager, libsecret) under the host's name. Where
 there is no keyring — a headless Linux box, for example — it falls back to a
 `0600` file in `<user config dir>/sessions/` and says so.
 
-The login is verified against the host you named: the authorization server's
-metadata must declare the issuer the host's resource metadata points at, and
-the issuer on the browser's response must match it exactly (RFC 9207). A
-mismatch fails the login and stores nothing.
+The login is verified against the host you named. The identity provider's
+metadata must be served over HTTPS (or loopback, for local development), and it
+must send the browser to an authorization endpoint on the same origin as the
+issuer it declares; the issuer on the browser's response must then match that
+issuer exactly (RFC 9207). A mismatch fails the login and stores nothing.
 
 One session per host: `semantius login --host b.semantius.cloud` leaves the
 session for `a.semantius.cloud` untouched, and each command uses the session of
@@ -527,13 +537,45 @@ an API key or JWT is configured; it needs an interactive terminal. Besides
 `login` and `use` (see [Hosts](#hosts-managed-cloud-and-self-hosted)), nothing
 else opens a browser on its own: without credentials a command exits `5`.
 
-A self-hosted instance needs two things for this to work: it must serve
-`https://<host>/.well-known/oauth-protected-resource` (naming its authorization
+**Self-hosted instances.** An instance configures the CLI by serving
+`https://<host>/.well-known/semantius.json`:
+
+```json
+{
+  "version": 1,
+  "idp_well_known": "/.well-known/openid-configuration",
+  "client_id_cli": "semantius-cli",
+  "redirect_uris": ["http://127.0.0.1:53682/callback"],
+  "scope": "",
+  "audience": "semantius://api"
+}
+```
+
+`idp_well_known` is fetched as given (relative URLs resolve against the document
+itself), and is the only discovery hop — it names the issuer and every endpoint.
+`client_id_cli` is the OAuth client the browser is sent with, so an instance
+backed by an external identity provider can name that provider's own client id.
+`audience` is the RFC 8707 resource indicator the CLI asks its tokens for, and an
+empty `scope` means "whatever the provider advertises".
+
+The redirect URIs must be registered for `http://127.0.0.1`, **not**
+`http://localhost`: the CLI receives the callback on `127.0.0.1` and cannot send
+any other address. (Microsoft Entra's portal offers `localhost` on its
+desktop-platform form; `127.0.0.1` reply URLs are added by editing the app
+manifest.) A document listing only `localhost` fails the login with that
+explanation rather than an opaque error from the provider. Listing no redirect
+URIs at all means the CLI uses `http://127.0.0.1:{53682,53683,53684}/callback`.
+
+An instance that serves no such document — it answers 404, or its web app
+catches the path — falls back to the legacy chain:
+`https://<host>/.well-known/oauth-protected-resource` names the authorization
 server, whose own `/.well-known/oauth-authorization-server` metadata the CLI
-reads next), and it must have the CLI registered as the public native client
-`semantius-cli` with the redirect URIs `http://127.0.0.1:{53682,53683,53684}/callback`.
-Without either, `login` fails naming the document or the client; an API key or a
-static JWT still works.
+reads next, and the CLI must be registered there as the public native client
+`semantius-cli` with those three redirect URIs. A *failure* to fetch the
+document — a timeout, a 5xx — is not that fallback: it fails the login naming
+the document, because guessing would mean signing in with the wrong client.
+
+Either way, an API key or a static JWT works without any of it.
 
 ### Token cache
 

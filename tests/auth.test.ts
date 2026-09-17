@@ -1,18 +1,23 @@
 /**
  * Tests for the OAuth login (src/auth/): the session storage adapter and its
- * file fallback, endpoint discovery (RFC 9728 → RFC 8414), the PKCE login /
- * refresh / logout cycle against a mock provider, credential precedence
- * including --auth, and the MCP route's bearer for a session-only login.
+ * file fallback, endpoint discovery (the platform document, and the legacy
+ * RFC 9728 → RFC 8414 chain), the PKCE login / refresh / logout cycle against
+ * a mock provider, credential precedence including --auth, and the MCP route's
+ * bearer for a session-only login.
  *
  * Hermetic: a local Bun.serve is the provider, the keyring is a fake object
  * (never Bun.secrets), and the user config dir is redirected to a temp dir.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  clearPlatformMemoForTests,
+  getPlatformConfig,
+} from '../src/auth/platform';
 import { buildScope, getOAuthMetadata } from '../src/auth/provider';
 import {
   LoginUnavailableError,
@@ -45,7 +50,9 @@ import { loginCommand, logoutCommand } from '../src/commands/auth';
 import {
   type HostFacts,
   SELF_HOSTED_CLIENT_ID,
+  getHostCachePath,
   readCachedOAuthMetadata,
+  readCachedPlatformConfig,
   resolveHost,
   setHostCacheDirForTests,
 } from '../src/host';
@@ -68,6 +75,10 @@ interface ProviderState {
   tokenGrants: string[];
   /** The `resource` seen on each authorize / token request ('' when absent). */
   resources: string[];
+  /** The `redirect_uri`, `client_id` and `scope` of each authorize request. */
+  redirectUris: string[];
+  clientIds: string[];
+  scopes: string[];
   revoked: string[];
   /** Mutable knobs for the issuer cases; reset() restores the sound values. */
   cfg: ProviderConfig;
@@ -82,6 +93,14 @@ interface ProviderConfig {
   metadataIssuer: string | undefined;
   /** Whether the metadata promises an iss on every authorization response. */
   advertiseIss: boolean;
+  /**
+   * What /.well-known/semantius.json answers. `null` — the default — is 404,
+   * the un-upgraded deployment, so every test that predates the platform
+   * document keeps exercising the legacy chain unchanged.
+   */
+  platformDoc: 'html' | 'broken' | Record<string, unknown> | null;
+  /** Serve the Entra-shaped metadata with an authorize endpoint elsewhere. */
+  entraCrossOrigin: boolean;
 }
 
 /** A tenant-shaped OAuth provider: discovery, authorize, token, revoke. */
@@ -90,10 +109,15 @@ function startProvider(): ProviderState {
     callbackIss: undefined,
     metadataIssuer: undefined,
     advertiseIss: true,
+    platformDoc: null,
+    entraCrossOrigin: false,
   };
   const paths: string[] = [];
   const tokenGrants: string[] = [];
   const resources: string[] = [];
+  const redirectUris: string[] = [];
+  const clientIds: string[] = [];
+  const scopes: string[] = [];
   const revoked: string[] = [];
   let issued = 0;
 
@@ -104,6 +128,46 @@ function startProvider(): ProviderState {
       const url = new URL(req.url);
       const { origin } = url;
       paths.push(url.pathname);
+
+      if (url.pathname === '/.well-known/semantius.json') {
+        const doc = cfg.platformDoc;
+        if (doc === null) return new Response('not found', { status: 404 });
+        // The front door is up but broken: not an answer, so not an absence.
+        if (doc === 'broken') return new Response('boom', { status: 502 });
+        // The un-upgraded deployment: the SPA catches the path.
+        if (doc === 'html') {
+          return new Response('<!doctype html><title>app</title>', {
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          });
+        }
+        return Response.json(doc);
+      }
+
+      // The bundled idp's shape: the document sits at the origin root while
+      // the issuer has a path, which is why no OIDC §4.3 check is possible.
+      if (url.pathname === '/.well-known/openid-configuration') {
+        return Response.json({
+          issuer: `${origin}/api/auth`,
+          authorization_endpoint: `${origin}/api/auth/oauth2/authorize`,
+          token_endpoint: `${origin}/token`,
+          revocation_endpoint: `${origin}/api/auth/oauth2/revoke`,
+          scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
+          authorization_response_iss_parameter_supported: cfg.advertiseIss,
+        });
+      }
+
+      // The Entra shape: an issuer on a path of its own, no iss-parameter
+      // promise and no revocation endpoint at all.
+      if (url.pathname === '/entra/tid/v2.0/.well-known/openid-configuration') {
+        return Response.json({
+          issuer: `${origin}/entra/tid/v2.0`,
+          authorization_endpoint: cfg.entraCrossOrigin
+            ? 'http://127.0.0.1:1/api/auth/oauth2/authorize'
+            : `${origin}/api/auth/oauth2/authorize`,
+          token_endpoint: `${origin}/token`,
+          scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
+        });
+      }
 
       if (url.pathname === '/.well-known/oauth-protected-resource') {
         return Response.json({
@@ -126,6 +190,9 @@ function startProvider(): ProviderState {
 
       if (url.pathname === '/api/auth/oauth2/authorize') {
         resources.push(url.searchParams.get('resource') ?? '');
+        redirectUris.push(url.searchParams.get('redirect_uri') ?? '');
+        clientIds.push(url.searchParams.get('client_id') ?? '');
+        scopes.push(url.searchParams.get('scope') ?? '');
         const redirectUri = url.searchParams.get('redirect_uri') as string;
         const back = new URL(redirectUri);
         back.searchParams.set('code', 'auth-code-1');
@@ -163,6 +230,9 @@ function startProvider(): ProviderState {
     paths,
     tokenGrants,
     resources,
+    redirectUris,
+    clientIds,
+    scopes,
     revoked,
     cfg,
     // One server for the file, but each test starts from access-1.
@@ -170,10 +240,15 @@ function startProvider(): ProviderState {
       cfg.callbackIss = undefined;
       cfg.metadataIssuer = undefined;
       cfg.advertiseIss = true;
+      cfg.platformDoc = null;
+      cfg.entraCrossOrigin = false;
       issued = 0;
       paths.length = 0;
       tokenGrants.length = 0;
       resources.length = 0;
+      redirectUris.length = 0;
+      clientIds.length = 0;
+      scopes.length = 0;
       revoked.length = 0;
     },
     stop: () => server.stop(true),
@@ -255,8 +330,10 @@ describe('oauth login', () => {
     const hostname = provider.origin.replace('http://', '');
     process.env.SEMANTIUS_HOST = hostname;
     host = await resolveHost();
-    // Cloud is the only mode A2 logs in to; the session is keyed by host name,
-    // so the resolved facts still find what this login stores.
+    // For the cloud-specific cases. A session is keyed by host name, but its
+    // access token is keyed by the audience the login asked for, so a test
+    // that logs in as cloud must read as cloud too — the resolved (self-hosted)
+    // facts name no audience and would rightly refuse the token.
     loginHost = {
       ...host,
       mode: 'cloud',
@@ -389,7 +466,7 @@ describe('oauth login', () => {
     test('stores a session that getSessionToken serves', async () => {
       expect(await hasStoredSession(host)).toBe(false);
 
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
 
       expect(await hasStoredSession(host)).toBe(true);
       expect(provider.tokenGrants).toContain('authorization_code');
@@ -408,7 +485,7 @@ describe('oauth login', () => {
     });
 
     test('forceRefresh spends the refresh token', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
       const before = provider.tokenGrants.length;
 
       const token = await getSessionToken(host, { forceRefresh: true });
@@ -418,7 +495,7 @@ describe('oauth login', () => {
     });
 
     test('a fresh token is served without contacting the provider', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
       const before = provider.tokenGrants.length;
 
       await getSessionToken(host);
@@ -427,7 +504,7 @@ describe('oauth login', () => {
     });
 
     test('a fresh token is served without the .well-known documents', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
 
       // A host name this process has not discovered for: discovery is memoized
       // per host, so asking under the logged-in name would hide the fetch that
@@ -451,8 +528,8 @@ describe('oauth login', () => {
 
     test('a cloud host serves its token under the resource key', async () => {
       await login(loginHost, { openUrl });
-      // Spend the refresh once, so a token exists under the resource key:
-      // the login itself stores the first one under the empty key.
+      // No refresh needed to get there: a login now stores its token under the
+      // key for the audience it asked for (see labelStoredTokens).
       await getSessionToken(loginHost);
 
       // Its own host name, so a miss has to rediscover (see the test above).
@@ -474,7 +551,7 @@ describe('oauth login', () => {
     });
 
     test('a token inside the refresh threshold is refreshed', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
       const before = provider.tokenGrants.length;
 
       // 60 s of life left: still valid, but inside the 300 s threshold, so a
@@ -640,6 +717,465 @@ describe('oauth login', () => {
   });
 
   // --------------------------------------------------------------------
+  describe('platform document', () => {
+    /** What the bundled deployment serves today, field for field. */
+    const bundledDoc = (over: Record<string, unknown> = {}) => ({
+      version: 1,
+      host_type: 'selfhost',
+      idp_type: 'semantius',
+      idp_well_known: '/.well-known/openid-configuration',
+      client_id_cli: 'semantius-cli',
+      redirect_uris: [
+        'http://127.0.0.1:53682/callback',
+        'http://127.0.0.1:53683/callback',
+        'http://127.0.0.1:53684/callback',
+      ],
+      scope: '',
+      audience: 'semantius://api',
+      gateway_url: '/gateway/rest',
+      api_url: '/rest',
+      ...over,
+    });
+
+    /** The Entra shape: an absolute discovery URL, a GUID, an explicit scope. */
+    const GUID = '11111111-2222-3333-4444-555555555555';
+    const entraDoc = (over: Record<string, unknown> = {}) => ({
+      version: 1,
+      host_type: 'selfhost',
+      idp_type: 'entra',
+      idp_well_known: `${provider.origin}/entra/tid/v2.0/.well-known/openid-configuration`,
+      client_id_cli: GUID,
+      redirect_uris: ['http://127.0.0.1:53682/callback'],
+      scope: 'openid profile email offline_access api://app-id/access_as_user',
+      audience: 'api://app-id',
+      ...over,
+    });
+
+    /** A host name no other case uses: discovery is memoized per host. */
+    const named = (name: string): HostFacts => ({ ...host, host: name });
+
+    /** Move a stored session to a host name this process has not resolved. */
+    const copySession = (from: HostFacts, to: HostFacts) => {
+      secrets.store.set(
+        `semantius:SEMANTIUS:${to.host}`,
+        secrets.store.get(`semantius:SEMANTIUS:${from.host}`) as string,
+      );
+    };
+
+    test('a document configures the login in one OIDC discovery hop', async () => {
+      provider.cfg.platformDoc = bundledDoc();
+      const target = named('platform-bundled.example');
+
+      await login(target, { openUrl });
+
+      expect(provider.paths).toContain('/.well-known/semantius.json');
+      expect(provider.paths).toContain('/.well-known/openid-configuration');
+      // The legacy chain is not walked at all: no RFC 9728 hop, and no
+      // RFC 8414 path-suffix transform of the issuer.
+      expect(
+        provider.paths.filter((p) => p.includes('oauth-protected-resource')),
+      ).toEqual([]);
+      expect(
+        provider.paths.filter((p) => p.includes('oauth-authorization-server')),
+      ).toEqual([]);
+      expect(provider.clientIds).toEqual(['semantius-cli']);
+      // An empty scope means "whatever discovery advertises" — the base scopes.
+      expect(provider.scopes).toEqual(['openid profile email offline_access']);
+      // cli-auth sends the resource on the token request, never on authorize.
+      expect(provider.resources).toEqual(['', 'semantius://api']);
+    });
+
+    test('the first read after a login costs nothing', async () => {
+      // cli-auth's login() saves its token under the *empty* cache key whatever
+      // resource it asked for, which would leave this host with two entries for
+      // its one audience — and make the very next read miss and spend the
+      // refresh token to mint a duplicate. labelStoredTokens files it under the
+      // audience it was actually minted for, so the first read finds it.
+      provider.cfg.platformDoc = bundledDoc();
+      const target = named('platform-firstread.example');
+
+      await login(target, { openUrl });
+
+      expect(await getSessionToken(target)).toBe('access-1');
+      expect(provider.tokenGrants).toEqual(['authorization_code']);
+      expect(provider.resources).toEqual(['', 'semantius://api']);
+    });
+
+    test('a login leaves exactly one access token, keyed by the audience', async () => {
+      provider.cfg.platformDoc = bundledDoc();
+      const target = named('platform-onekey.example');
+
+      await login(target, { openUrl });
+
+      const stored = JSON.parse(
+        secrets.store.get(`semantius:SEMANTIUS:${target.host}`) as string,
+      );
+      expect(Object.keys(stored.tokens)).toEqual(['resource=semantius://api']);
+    });
+
+    test('an absolute discovery URL is taken as given, with the document scope verbatim', async () => {
+      provider.cfg.platformDoc = entraDoc();
+      // No iss on the callback, and metadata that promises none: sound.
+      provider.cfg.callbackIss = null;
+      const target = named('platform-entra.example');
+
+      await login(target, { openUrl });
+
+      expect(provider.paths).toContain(
+        '/entra/tid/v2.0/.well-known/openid-configuration',
+      );
+      expect(
+        provider.paths.filter((p) => p.includes('oauth-authorization-server')),
+      ).toEqual([]);
+      expect(provider.clientIds).toEqual([GUID]);
+      expect(provider.scopes).toEqual([
+        'openid profile email offline_access api://app-id/access_as_user',
+      ]);
+      expect(provider.resources).toEqual(['', 'api://app-id']);
+    });
+
+    test('logout succeeds against metadata with no revocation endpoint', async () => {
+      provider.cfg.platformDoc = entraDoc();
+      provider.cfg.callbackIss = null;
+      const target = named('platform-entra-logout.example');
+      await login(target, { openUrl });
+      provider.paths.length = 0;
+
+      expect(await logout(target)).toBe(true);
+
+      expect(provider.revoked).toEqual([]);
+      expect(await hasStoredSession(target)).toBe(false);
+      // Nothing to revoke is known from the cached metadata, so the logout
+      // makes no request at all — not even to rediscover endpoints it would
+      // then have no use for.
+      expect(provider.paths).toEqual([]);
+    });
+
+    test('an authorization endpoint on another origin than the issuer is refused', async () => {
+      provider.cfg.platformDoc = entraDoc();
+      provider.cfg.entraCrossOrigin = true;
+      const target = named('platform-crossorigin.example');
+
+      await expect(login(target, { openUrl })).rejects.toThrow(
+        /different origin/,
+      );
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a 404 falls back to the legacy chain', async () => {
+      const target = named('platform-404.example');
+
+      await login(target, { openUrl });
+
+      expect(provider.paths).toContain('/.well-known/semantius.json');
+      expect(provider.paths).toContain('/.well-known/oauth-protected-resource');
+      expect(provider.clientIds).toEqual([SELF_HOSTED_CLIENT_ID as string]);
+      expect(provider.resources).toEqual(['', '']);
+    });
+
+    test('an un-upgraded deployment answering 200 text/html falls back too', async () => {
+      provider.cfg.platformDoc = 'html';
+      const target = named('platform-html.example');
+
+      await login(target, { openUrl });
+
+      expect(provider.paths).toContain('/.well-known/oauth-protected-resource');
+      expect(provider.clientIds).toEqual([SELF_HOSTED_CLIENT_ID as string]);
+      expect(provider.resources).toEqual(['', '']);
+    });
+
+    test('a catch-all route answering JSON that is not an object is an absence', async () => {
+      // A PostgREST-shaped deployment answers `[]` for every unknown path with
+      // Content-Type: application/json. That is a host with no document, not a
+      // host whose document is broken.
+      provider.cfg.platformDoc = [] as unknown as Record<string, unknown>;
+      const target = named('platform-array.example');
+
+      await login(target, { openUrl });
+
+      expect(provider.paths).toContain('/.well-known/oauth-protected-resource');
+      expect(provider.clientIds).toEqual([SELF_HOSTED_CLIENT_ID as string]);
+    });
+
+    test('a front door that fails is not an absent document', async () => {
+      provider.cfg.platformDoc = 'broken';
+      const target = named('platform-broken.example');
+
+      await expect(login(target, { openUrl })).rejects.toThrow(
+        /semantius\.json returned 502/,
+      );
+      // Not a silent fallback: the legacy chain is never reached, so a login
+      // cannot quietly proceed with the wrong client id.
+      expect(
+        provider.paths.filter((p) => p.includes('oauth-protected-resource')),
+      ).toEqual([]);
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a document whose fields are empty names them, and does not blame the version', async () => {
+      // Shape before version: this document is *both* empty and from the
+      // future, and a front door that serves it with its variables
+      // unsubstituted is the likely cause of both. Reporting the version would
+      // send the operator to upgrade a CLI that is not the problem.
+      provider.cfg.platformDoc = {
+        version: 2,
+        host_type: 'selfhost',
+        idp_type: '',
+        idp_well_known: '',
+        client_id_cli: '',
+        scope: '',
+        audience: '',
+      };
+      const target = named('platform-empty.example');
+
+      const error = await login(target, { openUrl }).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(
+        /idp_well_known and client_id_cli are empty/,
+      );
+      expect((error as Error).message).not.toMatch(/version/i);
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a document from the future refuses rather than guesses', async () => {
+      provider.cfg.platformDoc = bundledDoc({ version: 2 });
+      const target = named('platform-v2.example');
+
+      const error = await login(target, { openUrl }).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(LoginUnavailableError);
+      expect((error as Error).message).toMatch(/UNSUPPORTED_VERSION/);
+      expect((error as Error).message).toMatch(/Upgrade semantius-cli/);
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('the callback is the first free URI the document lists, port and path together', async () => {
+      // No hardcoded ports: one listener held open is busy, one bound and
+      // stopped is known free.
+      const busy = Bun.listen({
+        hostname: '127.0.0.1',
+        port: 0,
+        socket: { data() {} },
+      });
+      const free = Bun.listen({
+        hostname: '127.0.0.1',
+        port: 0,
+        socket: { data() {} },
+      });
+      const freePort = free.port;
+      free.stop(true);
+      try {
+        provider.cfg.platformDoc = bundledDoc({
+          redirect_uris: [
+            `http://127.0.0.1:${busy.port}/callback`,
+            `http://127.0.0.1:${freePort}/cb`,
+          ],
+        });
+        const target = named('platform-ports.example');
+
+        await login(target, { openUrl });
+
+        // Both halves of the second entry: its port *and* its path.
+        expect(provider.redirectUris).toEqual([
+          `http://127.0.0.1:${freePort}/cb`,
+        ]);
+      } finally {
+        busy.stop(true);
+      }
+    });
+
+    test('a document listing no redirect URIs falls back to the registered ports', async () => {
+      provider.cfg.platformDoc = bundledDoc({ redirect_uris: [] });
+      const target = named('platform-noredirects.example');
+
+      await login(target, { openUrl });
+
+      expect(provider.redirectUris[0]).toMatch(
+        /^http:\/\/127\.0\.0\.1:5368[234]\/callback$/,
+      );
+    });
+
+    test('a localhost redirect URI is refused, not silently replaced', async () => {
+      // cli-auth binds 127.0.0.1 and builds its redirect_uri from it, so a
+      // "localhost" registration cannot be honoured. Falling back to the
+      // default ports would send an unregistered redirect_uri and earn an
+      // error from the IdP that blames the wrong thing.
+      provider.cfg.platformDoc = bundledDoc({
+        redirect_uris: ['http://localhost:53682/callback'],
+      });
+      const target = named('platform-localhost.example');
+
+      const error = await login(target, { openUrl }).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(LoginUnavailableError);
+      expect((error as Error).message).toMatch(/semantius\.json/);
+      expect((error as Error).message).toMatch(/http:\/\/localhost:53682/);
+      expect(provider.redirectUris).toEqual([]);
+    });
+
+    test('a non-loopback http discovery URL is refused before it is fetched', async () => {
+      // .invalid is reserved and never resolves (RFC 2606), so if this check
+      // ever regresses the suite fails instead of reaching out of the sandbox.
+      provider.cfg.platformDoc = bundledDoc({
+        idp_well_known: 'http://idp.invalid/.well-known/openid-configuration',
+      });
+      const target = named('platform-insecure.example');
+
+      // "Before it is fetched" is the claim, so watch every request the login
+      // makes: provider.paths only records what reaches the mock, and would be
+      // empty whether or not the CLI called out to idp.invalid.
+      const realFetch = globalThis.fetch;
+      const requested: string[] = [];
+      globalThis.fetch = (async (
+        input: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1],
+      ) => {
+        requested.push(String(input instanceof Request ? input.url : input));
+        return realFetch(input, init);
+      }) as typeof fetch;
+
+      try {
+        // The specific refusal, not merely "it failed": a DNS error would
+        // carry a different message, and would mean the fetch was attempted.
+        await expect(login(target, { openUrl })).rejects.toThrow(
+          /names a non-HTTPS idp_well_known/,
+        );
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+
+      expect(requested).toContain(
+        `${provider.origin}/.well-known/semantius.json`,
+      );
+      expect(requested.filter((u) => u.includes('idp.invalid'))).toEqual([]);
+      expect(await hasStoredSession(target)).toBe(false);
+    });
+
+    test('a platform slot written before docVersion existed is refetched', async () => {
+      const target = named('platform-shape.example');
+      writeFileSync(
+        getHostCachePath(target.host),
+        JSON.stringify({
+          fetched_at: new Date().toISOString(),
+          platform: {
+            docUrl: 'http://x.example/.well-known/semantius.json',
+            idpWellKnown: 'http://x.example/.well-known/openid-configuration',
+            clientId: 'semantius-cli',
+          },
+        }),
+      );
+
+      expect(readCachedPlatformConfig(target.host)).toBeNull();
+    });
+
+    test('an absent document is remembered, so the fallback costs one request', async () => {
+      const target = named('platform-negative.example');
+
+      expect(await getPlatformConfig(target)).toBeNull();
+      expect(readCachedPlatformConfig(target.host)).toEqual({ absent: true });
+
+      // Forget the in-process memo, so what answers the second call is the
+      // marker on disk — which is the thing that saves a later invocation a
+      // request, and the thing the shape guard could wrongly reject.
+      clearPlatformMemoForTests();
+
+      const before = provider.paths.filter((p) =>
+        p.includes('semantius.json'),
+      ).length;
+      expect(await getPlatformConfig(target)).toBeNull();
+      expect(
+        provider.paths.filter((p) => p.includes('semantius.json')).length,
+      ).toBe(before);
+      expect(before).toBe(1);
+    });
+
+    test('a rolled-over platform cache is refetched, and the refresh still carries the resource', async () => {
+      // The 24 h TTL drops the whole cache entry, so the sync read in
+      // getSessionToken misses while the document is perfectly healthy. If the
+      // resource were taken from that miss rather than re-derived from the
+      // fetch below, cli-auth would refresh with no resource at all and store
+      // the result under the empty key.
+      provider.cfg.platformDoc = bundledDoc();
+      const source = named('platform-rollover.example');
+      await login(source, { openUrl });
+      await getSessionToken(source);
+
+      // A later process, with no memo and no cache entry for this name.
+      const probe = named('platform-rolled.example');
+      copySession(source, probe);
+      provider.paths.length = 0;
+      provider.resources.length = 0;
+
+      const token = await getSessionToken(probe, { forceRefresh: true });
+
+      expect(provider.paths).toContain('/.well-known/semantius.json');
+      expect(provider.resources.at(-1)).toBe('semantius://api');
+      expect(token).toBe('access-2');
+    });
+
+    test('a document that goes absent does not send an audience-bearing session back to the empty key', async () => {
+      provider.cfg.platformDoc = bundledDoc();
+      const source = named('platform-audience.example');
+      await login(source, { openUrl });
+      await getSessionToken(source);
+
+      // The dangerous shape: the document stops being served *cleanly*, which
+      // is an absence the fetch layer cannot tell from an un-upgraded host.
+      provider.cfg.platformDoc = null;
+      const probe = named('platform-audience-gone.example');
+      copySession(source, probe);
+      const before = provider.tokenGrants.length;
+
+      // No forceRefresh: this is the path every ordinary command takes, and
+      // the one where the stored empty-key token is still fresh and would be
+      // served if the cache-only read guessed "no resource".
+      await expect(getSessionToken(probe)).rejects.toThrow(
+        /no longer serves .*semantius\.json/,
+      );
+      // And the same on the refreshing path.
+      await expect(
+        getSessionToken(probe, { forceRefresh: true }),
+      ).rejects.toThrow(/no longer serves .*semantius\.json/);
+      expect(provider.tokenGrants.length).toBe(before);
+    });
+
+    test('logging in again clears a token keyed for an audience that is gone', async () => {
+      // Without this the refusal above would be unrecoverable: cli-auth merges
+      // into the stored token set, so the old "resource=" entry would survive a
+      // fresh login and keep tripping the check.
+      provider.cfg.platformDoc = bundledDoc();
+      const target = named('platform-relogin.example');
+      await login(target, { openUrl });
+      await getSessionToken(target);
+
+      provider.cfg.platformDoc = null;
+      await login(target, { openUrl });
+
+      expect(await getSessionToken(target, { forceRefresh: true })).toBe(
+        'access-3',
+      );
+    });
+
+    test('a session with no audience still works when the document is absent', async () => {
+      // The other half of the rule above: a host that never had a document
+      // keeps its tokens under the empty key, and must keep working.
+      const source = named('platform-legacy.example');
+      await login(source, { openUrl });
+
+      const probe = named('platform-legacy-probe.example');
+      copySession(source, probe);
+
+      // Cached: served without resolving anything at all.
+      expect(await getSessionToken(probe)).toBe('access-1');
+      // And refreshed: still under the empty key, which is correct here.
+      expect(await getSessionToken(probe, { forceRefresh: true })).toBe(
+        'access-2',
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------
   describe('credential precedence', () => {
     test('the environment JWT wins over a stored session', async () => {
       await login(loginHost, { openUrl });
@@ -650,7 +1186,7 @@ describe('oauth login', () => {
     });
 
     test('--auth oauth uses the session even with a JWT set', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
       process.env.SEMANTIUS_JWT = 'static-jwt';
       setAuthFlag('oauth');
 
@@ -659,7 +1195,7 @@ describe('oauth login', () => {
     });
 
     test('the session is used when the environment has no credential', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
 
       expect(await getAccessToken(host)).toBe('access-1');
       expect(getUsedCredentialSource()).toBe('oauth');
@@ -893,7 +1429,7 @@ describe('oauth login', () => {
     };
 
     test('an empty x-api-key becomes the session bearer', async () => {
-      await login(loginHost, { openUrl });
+      await login(host, { openUrl });
 
       const resolved = await transformConfigWithJwt('cube', config);
 

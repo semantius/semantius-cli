@@ -32,8 +32,11 @@ The CLI needs a **host** and a **credential**:
   JWT and org from the environment are ignored. Pair a host with an API key via `SEMANTIUS_HOST`.
 - `semantius login` opens a browser (PKCE) and stores the session in the OS keyring under the host's
   name; `semantius logout` revokes and deletes it. Agents should not run `login` themselves: it needs
-  a human at an interactive terminal. Self-hosted instances can use it too, if they serve
-  `/.well-known/oauth-protected-resource` and have registered the `semantius-cli` OAuth client.
+  a human at an interactive terminal. Self-hosted instances can use it too: they configure it by
+  serving `/.well-known/semantius.json` (which names their OAuth client id — not necessarily
+  `semantius-cli` — their identity provider and their API audience), or, on an instance that serves
+  no such document, through the older `/.well-known/oauth-protected-resource` chain with the
+  `semantius-cli` client registered.
 
 ```bash
 # Option 1: Export in shell

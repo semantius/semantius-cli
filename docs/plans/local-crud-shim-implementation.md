@@ -693,6 +693,10 @@ pointing at the real IdP and running `getOAuthMetadata()`: issuer, the three end
 serves `/.well-known/oauth-authorization-server/idp` with the matching `issuer`. So **no self-hosted
 discovery branch is needed**; do not add one. The document:
 
+> **Superseded (2026-09-17):** a self-hosted discovery branch *was* added, reading
+> `/.well-known/semantius.json`. The chain described here remains the fallback for an
+> instance that serves no such document. See CLAUDE.md and `src/auth/platform.ts`.
+
 ```json
 GET /.well-known/oauth-protected-resource
 {

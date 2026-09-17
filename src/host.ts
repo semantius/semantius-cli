@@ -21,6 +21,12 @@
  * label and the control plane supplies the tenant's PostgREST URL, tenant id
  * and CLI OAuth client id (cached on disk for 24 h). Any other host is
  * self-hosted and resolves from fixed paths without network I/O.
+ *
+ * A self-hosted instance may also publish /.well-known/semantius.json, which
+ * names its CLI client id, audience and IdP. That document is an auth-layer
+ * concern (src/auth/platform.ts), deliberately not part of host resolution:
+ * resolving a self-hosted host stays synchronous and network-free. Only its
+ * cache slot lives here, beside the OAuth endpoints and under the same TTL.
  */
 
 import {
@@ -68,17 +74,28 @@ export interface HostFacts {
 }
 
 /**
- * OAuth client id of the CLI on self-hosted instances. Unlike the cloud, where
- * the control plane publishes a per-org client id, every instance registers the
- * CLI under this same fixed id (a public native client with the loopback
- * redirect URIs). A host that has not registered it cannot be logged in to.
+ * Pre-discovery placeholder and legacy fallback for the CLI's client id on
+ * self-hosted instances: the id every instance registered before
+ * /.well-known/semantius.json existed (a public native client with the
+ * loopback redirect URIs).
+ *
+ * An instance that serves the platform document names its own client id there
+ * — a GUID, on an Entra-backed deployment — and that one wins. This value is
+ * what a host without the document logs in with, and what makes the
+ * pre-discovery "can this host be logged in to at all" gate vacuous for
+ * self-hosted hosts.
  */
 export const SELF_HOSTED_CLIENT_ID: string | null = 'semantius-cli';
 
 /**
- * The OAuth endpoints of a host, discovered from its .well-known documents:
- * the issuer and resource scopes come from the RFC 9728 protected-resource
- * document, the endpoints from that issuer's RFC 8414 metadata.
+ * The OAuth endpoints of a host, discovered from its .well-known documents by
+ * one of two chains (src/auth/provider.ts):
+ *
+ *   - the platform document names an OIDC discovery URL, which carries the
+ *     issuer and the endpoints in one hop; or
+ *   - the legacy chain: the issuer and the resource scopes come from the
+ *     RFC 9728 protected-resource document, the endpoints from that issuer's
+ *     RFC 8414 metadata.
  */
 export interface OAuthMetadata {
   issuer: string;
@@ -93,6 +110,45 @@ export interface OAuthMetadata {
    */
   issParameterSupported: boolean;
 }
+
+/**
+ * What /.well-known/semantius.json told us about a self-hosted instance.
+ *
+ * Client-registration facts, not endpoints — which is why they are not folded
+ * into OAuthMetadata: the two have different invalidation needs (a stale
+ * endpoint fails loudly, a stale client id fails as unauthorized_client) and
+ * only one of them is re-resolved by `login`'s rediscover.
+ *
+ * Declared here rather than in src/auth/platform.ts so the cache layer does
+ * not depend on the auth layer, exactly as OAuthMetadata is.
+ */
+export interface PlatformConfig {
+  /** The document's own URL: error messages, and the base for relative URLs. */
+  docUrl: string;
+  /** The document's `version`. Also the cache shape guard. */
+  docVersion: number;
+  /** ADVISORY. Logged and quoted in errors; never branched on. */
+  idpType: string;
+  /** OIDC discovery URL, already absolute. */
+  idpWellKnown: string;
+  clientId: string;
+  /** Loopback callbacks the instance registered, in the document's order. */
+  redirects: ReadonlyArray<{ port: number; path: string }>;
+  /** Verbatim scope string; '' means "whatever discovery advertises". */
+  scope: string;
+  /** RFC 8707 resource indicator for this instance's API. */
+  audience?: string;
+  /** Recorded, not consumed — see src/auth/platform.ts. */
+  gatewayUrl?: string;
+  apiUrl?: string;
+}
+
+/**
+ * A cached platform slot: the config, or the marker that this host serves no
+ * document at all. The marker is what keeps an un-upgraded deployment to one
+ * request per 24 h instead of one per invocation.
+ */
+export type CachedPlatform = { absent: true } | PlatformConfig;
 
 const CLOUD_SUFFIX = '.semantius.cloud';
 const CONTROL_PLANE_URL = 'https://api.semantius.cloud';
@@ -179,8 +235,11 @@ function invalidHostError(value: string, reason: string): Error {
   );
 }
 
-/** Hostnames reached over plain HTTP: local dev and test servers. */
-function isLoopback(hostname: string): boolean {
+/**
+ * Hostnames reached over plain HTTP: local dev and test servers. Exported for
+ * the transport floor in src/auth/provider.ts, which allows http: only here.
+ */
+export function isLoopback(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
     hostname.endsWith('.localhost') ||
@@ -646,6 +705,11 @@ interface HostCacheEntry {
   record?: ControlPlaneRecord;
   /** Discovered OAuth endpoints; absent until a login or a session refresh. */
   oauth?: OAuthMetadata;
+  /**
+   * The instance's platform document, or the marker that it serves none.
+   * Self-hosted only: a cloud host is configured by the control plane.
+   */
+  platform?: CachedPlatform;
 }
 
 /** The cache entry if it exists and is still within the TTL. */
@@ -715,6 +779,77 @@ export function writeCachedOAuthMetadata(
       ? { ...entry, oauth }
       : { fetched_at: new Date().toISOString(), oauth },
   );
+}
+
+/**
+ * The cached platform slot for a host: the config, the `{absent:true}` marker,
+ * or null when nothing usable is cached (never written, expired, or written by
+ * a version before the shape below).
+ *
+ * The marker is checked first and returned as-is. Testing the shape guard
+ * against it would report it as malformed, and an un-upgraded deployment would
+ * then refetch on every single invocation — which is the one thing the
+ * negative cache exists to prevent.
+ */
+export function readCachedPlatformConfig(host: string): CachedPlatform | null {
+  const platform = readHostCacheEntry(host)?.platform;
+  if (!platform) return null;
+  if ('absent' in platform) return platform.absent === true ? platform : null;
+  if (
+    typeof platform.docVersion !== 'number' ||
+    !platform.docUrl ||
+    !platform.idpWellKnown ||
+    !platform.clientId
+  ) {
+    // Written before a field existed: refetch rather than assume.
+    debug(`Cached platform config for ${host} has an old shape; refetching`);
+    return null;
+  }
+  return {
+    ...platform,
+    redirects: platform.redirects ?? [],
+    scope: platform.scope ?? '',
+  };
+}
+
+/**
+ * Store the platform config — or the absence marker — for a host, sharing the
+ * 24 h TTL and --reset-cache of everything else in the entry. Mirrors
+ * writeCachedOAuthMetadata, including preserving fetched_at so caching this
+ * cannot extend a control-plane record's TTL.
+ */
+export function writeCachedPlatformConfig(
+  host: string,
+  platform: CachedPlatform,
+): void {
+  const entry = readHostCacheEntry(host);
+  if (!entry) {
+    writeHostCacheEntry(host, {
+      fetched_at: new Date().toISOString(),
+      platform,
+    });
+    return;
+  }
+  // Which chain discovered the cached endpoints is decided by this config, so
+  // a config that changes the answer invalidates them. Without this, a host
+  // that starts — or stops — serving the document keeps up to 24 h of
+  // endpoints found by the other chain, and pairs them with this one's client
+  // id and audience.
+  const next = { ...entry, platform };
+  if (platformSignature(entry.platform) !== platformSignature(platform)) {
+    debug(
+      `Platform configuration for ${host} changed; rediscovering endpoints`,
+    );
+    next.oauth = undefined;
+  }
+  writeHostCacheEntry(host, next);
+}
+
+/** What about a cached platform slot decides where the endpoints come from. */
+function platformSignature(value: CachedPlatform | undefined): string {
+  if (!value) return '(none)';
+  if ('absent' in value) return '(absent)';
+  return `${value.idpWellKnown}\u0000${value.clientId}`;
 }
 
 function readHostCache(host: string): ControlPlaneRecord | null {

@@ -1,23 +1,43 @@
 /**
- * OAuth endpoint discovery — the chain MCP clients use against the same
- * server, because cli-auth has none of its own:
+ * OAuth endpoint discovery. Two chains, picked by whether the host serves a
+ * platform document (src/auth/platform.ts):
  *
- *   1. RFC 9728  GET <host>/.well-known/oauth-protected-resource
+ *   platform  GET <idp_well_known>, an OIDC discovery URL taken verbatim
+ *             → the issuer and every endpoint, in one hop
+ *
+ *   legacy    1. RFC 9728  GET <host>/.well-known/oauth-protected-resource
  *                → authorization_servers[0] (the issuer) and the resource's
  *                  scopes (tenant:<tenant id>:user)
- *   2. RFC 8414  GET <issuer origin>/.well-known/oauth-authorization-server<issuer path>
+ *             2. RFC 8414  GET <issuer origin>/.well-known/oauth-authorization-server<issuer path>
  *                → authorization, token and revocation endpoints
  *
- * The client id is in neither document: it comes from the control plane
- * (HostFacts.clientId). Results are cached in the host's cache file — beside
- * its control-plane record where there is one, alone on a self-hosted host —
- * sharing the 24 h TTL and --reset-cache, because a refresh needs the token
- * endpoint and would otherwise rediscover on every invocation. `login` passes
- * rediscover and never reads that cache.
+ * Which trust check applies where:
  *
- * RFC 8414 §3.3: the metadata must name the issuer it was fetched for, so the
- * document and the issuer that led to it are bound together. The matching
- * check on the login callback lives in session.ts.
+ *  - Both: the transport floor — issuer, authorization_endpoint and
+ *    token_endpoint must be https:, or http: on a loopback host.
+ *  - Legacy only: RFC 8414 §3.3 — the metadata must claim the issuer it was
+ *    fetched for, binding the document to the issuer that led to it.
+ *  - Platform only: issuer and authorization_endpoint must share an origin.
+ *    §3.3 has nothing to bind here (there is no second document to agree
+ *    with; the trust root is the origin the user typed), and the OIDC §4.3
+ *    equivalent — document URL == issuer + the well-known path — is failed by
+ *    our own bundled idp, which serves its document at the origin root while
+ *    its issuer is <origin>/idp. The origin check is strictly weaker than
+ *    §3.3, and covers the mix-up that matters: PKCE cannot protect a login
+ *    whose browser leg and whose code exchange go to different servers. It is
+ *    deliberately not extended to token_endpoint, which legitimately differs
+ *    (Google's issuer is accounts.google.com, its token endpoint
+ *    oauth2.googleapis.com), and which the login callback check cannot reach
+ *    anyway.
+ *
+ * The client id is in none of these documents: it comes from the platform
+ * document, or from the control plane (HostFacts.clientId). Results are cached
+ * in the host's cache file — beside its control-plane record where there is
+ * one, alone on a self-hosted host — sharing the 24 h TTL and --reset-cache,
+ * because a refresh needs the token endpoint and would otherwise rediscover on
+ * every invocation. `login` passes rediscover and never reads that cache.
+ *
+ * The matching check on the login callback (RFC 9207) lives in session.ts.
  */
 
 import { debug, getConnectTimeoutMs } from '../config.js';
@@ -25,23 +45,25 @@ import {
   type HostFacts,
   HostResolutionError,
   type OAuthMetadata,
+  isLoopback,
   readCachedOAuthMetadata,
   writeCachedOAuthMetadata,
 } from '../host.js';
+import type { PlatformConfig } from './platform.js';
 
-/** Scopes every login asks for, before the resource's own scopes are added. */
 const BASE_SCOPES = ['openid', 'profile', 'email', 'offline_access'];
 
+/** In-flight discovery per host, so one invocation never fetches twice. */
 const _pending = new Map<string, Promise<OAuthMetadata>>();
 
 /**
- * The host's OAuth endpoints, from the disk cache or by discovery. Memoized
- * per host for the life of the process (an invocation talks to one host), so
- * parallel connections share a single discovery.
+ * The host's OAuth endpoints: from the disk cache, from an in-flight fetch, or
+ * discovered now. `platform` is the already-resolved platform config (null on
+ * a host that serves no document), which decides the chain.
  */
 export function getOAuthMetadata(
   host: HostFacts,
-  opts: { rediscover?: boolean } = {},
+  opts: { rediscover?: boolean; platform?: PlatformConfig | null } = {},
 ): Promise<OAuthMetadata> {
   if (opts.rediscover) {
     // A login re-establishes trust in the host from scratch and must not build
@@ -58,19 +80,96 @@ export function getOAuthMetadata(
 
   let pending = _pending.get(host.host);
   if (!pending) {
-    pending = discover(host);
+    pending = discover(host, opts.platform ?? null);
     _pending.set(host.host, pending);
     pending.catch(() => _pending.delete(host.host));
   }
   return pending;
 }
 
-/** The scope string for a login: the base scopes plus the resource's own. */
-export function buildScope(metadata: OAuthMetadata): string {
+/**
+ * The scope string for a login.
+ *
+ * A platform document's non-empty `scope` is sent verbatim: it is the
+ * operator's explicit statement of what this deployment's API needs, and the
+ * same string its web app sends. An empty one means "whatever discovery
+ * advertises", which is today's behaviour.
+ */
+export function buildScope(
+  metadata: OAuthMetadata,
+  platform?: PlatformConfig | null,
+): string {
+  if (platform?.scope) {
+    if (!platform.scope.split(/\s+/).includes('offline_access')) {
+      debug(
+        `The platform document's scope omits offline_access: this login will succeed but receive no refresh token`,
+      );
+    }
+    return platform.scope;
+  }
   return [...new Set([...BASE_SCOPES, ...metadata.resourceScopes])].join(' ');
 }
 
-async function discover(host: HostFacts): Promise<OAuthMetadata> {
+function discover(
+  host: HostFacts,
+  platform: PlatformConfig | null,
+): Promise<OAuthMetadata> {
+  return platform ? discoverFromPlatform(host, platform) : discoverLegacy(host);
+}
+
+/** One hop: the OIDC discovery document the platform document names. */
+async function discoverFromPlatform(
+  host: HostFacts,
+  platform: PlatformConfig,
+): Promise<OAuthMetadata> {
+  const url = platform.idpWellKnown;
+  const server = await fetchJson(url);
+
+  const issuer = asString(server.issuer);
+  const authorizationEndpoint = asString(server.authorization_endpoint);
+  const tokenEndpoint = asString(server.token_endpoint);
+  if (!issuer || !authorizationEndpoint || !tokenEndpoint) {
+    throw new HostResolutionError(
+      `${url} is missing issuer, authorization_endpoint or token_endpoint`,
+    );
+  }
+
+  const issuerUrl = requireSecure(issuer, 'issuer', url);
+  const authorizeUrl = requireSecure(
+    authorizationEndpoint,
+    'authorization_endpoint',
+    url,
+  );
+  const tokenUrl = requireSecure(tokenEndpoint, 'token_endpoint', url);
+
+  if (issuerUrl.origin !== authorizeUrl.origin) {
+    throw new HostResolutionError(
+      `${url} declares issuer "${issuer}" but sends the browser to "${authorizationEndpoint}", on a different origin`,
+    );
+  }
+  if (tokenUrl.origin !== issuerUrl.origin) {
+    // Legitimate at some providers; the callback check binds the issuer, and
+    // PKCE binds the exchange, so this is a note rather than a refusal.
+    debug(
+      `${url}: token_endpoint ${tokenEndpoint} is on a different origin than the issuer ${issuer}`,
+    );
+  }
+
+  return record(host, {
+    issuer,
+    authorizationEndpoint,
+    tokenEndpoint,
+    revocationEndpoint: asString(server.revocation_endpoint),
+    // The platform chain never fetches an RFC 9728 document, so there are no
+    // resource scopes to add. The document's own `scope` covers that.
+    resourceScopes: [],
+    issParameterSupported:
+      server.authorization_response_iss_parameter_supported === true,
+  });
+}
+
+/** RFC 9728 → RFC 8414: the chain for a host that serves no platform document. */
+async function discoverLegacy(host: HostFacts): Promise<OAuthMetadata> {
   const resource = await fetchJson(host.discoveryUrl);
   const issuer = asStringArray(resource.authorization_servers)[0];
   if (!issuer) {
@@ -78,6 +177,9 @@ async function discover(host: HostFacts): Promise<OAuthMetadata> {
       `${host.discoveryUrl} names no authorization server (authorization_servers is missing or empty)`,
     );
   }
+
+  // Before the fetch: a plaintext issuer should cost no request at all.
+  requireSecure(issuer, 'issuer', host.discoveryUrl);
 
   const metadataUrl = authorizationServerMetadataUrl(issuer, host);
   const server = await fetchJson(metadataUrl);
@@ -101,7 +203,10 @@ async function discover(host: HostFacts): Promise<OAuthMetadata> {
     );
   }
 
-  const metadata: OAuthMetadata = {
+  requireSecure(authorizationEndpoint, 'authorization_endpoint', metadataUrl);
+  requireSecure(tokenEndpoint, 'token_endpoint', metadataUrl);
+
+  return record(host, {
     issuer,
     authorizationEndpoint,
     tokenEndpoint,
@@ -109,12 +214,37 @@ async function discover(host: HostFacts): Promise<OAuthMetadata> {
     resourceScopes: asStringArray(resource.scopes_supported),
     issParameterSupported:
       server.authorization_response_iss_parameter_supported === true,
-  };
+  });
+}
+
+function record(host: HostFacts, metadata: OAuthMetadata): OAuthMetadata {
   debug(
-    `OAuth endpoints for ${host.host}: authorize ${authorizationEndpoint}, token ${tokenEndpoint}`,
+    `OAuth endpoints for ${host.host}: authorize ${metadata.authorizationEndpoint}, token ${metadata.tokenEndpoint}`,
   );
   writeCachedOAuthMetadata(host.host, metadata);
   return metadata;
+}
+
+/**
+ * The transport floor: a credential may only travel over TLS, or to a loopback
+ * address in local development. Applies to both chains — the legacy one took
+ * its issuer from authorization_servers[0] with no scheme check at all.
+ */
+function requireSecure(value: string, field: string, docUrl: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new HostResolutionError(
+      `${docUrl} names an invalid ${field}: "${value}"`,
+    );
+  }
+  if (url.protocol !== 'https:' && !isLoopback(url.hostname)) {
+    throw new HostResolutionError(
+      `${docUrl} names a ${field} that is not HTTPS: "${value}"`,
+    );
+  }
+  return url;
 }
 
 /**
