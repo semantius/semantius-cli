@@ -53,7 +53,16 @@ describe('CLI Integration Tests', () => {
         },
       })
     );
-  });
+
+    // Pay npx's cold start here rather than in whichever test first reaches
+    // for the server. `npx -y @modelcontextprotocol/server-filesystem`
+    // resolves and downloads the package when the cache is cold, which
+    // outlasts a test's 5 s default timeout — so on a machine that had never
+    // run these tests, the first one to start the server was killed
+    // mid-download and the failure named a CLI command that worked perfectly.
+    // Which test that was depended on run order, so it looked like flake.
+    await runCli([]);
+  }, 120_000);
 
   afterAll(async () => {
     await rm(tempDir, { recursive: true, force: true });
@@ -591,7 +600,7 @@ describe('--single flag Integration Tests', () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed).toMatchObject({ id: moduleId });
     expect(Array.isArray(parsed)).toBe(false);
-  });
+  }, 30000);
 
   test('--single with 0 rows exits 1 and reports error', async () => {
     if (!serverReachable) {
@@ -606,7 +615,7 @@ describe('--single flag Integration Tests', () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('SINGLE_NO_ROWS');
-  });
+  }, 30000);
 
   test('without --single returns array normally (--diag)', async () => {
     if (!serverReachable) {
@@ -624,7 +633,7 @@ describe('--single flag Integration Tests', () => {
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(1);
-  });
+  }, 30000);
 
   test('--single returns object while --diag without --single returns array', async () => {
     if (!serverReachable) {
@@ -651,7 +660,7 @@ describe('--single flag Integration Tests', () => {
     expect(Array.isArray(singleParsed)).toBe(false);
     expect(Array.isArray(normalParsed)).toBe(true);
     expect(singleParsed.id).toBe(normalParsed[0].id);
-  });
+  }, 30000);
 
   test('--single unwraps postgrestRequest envelope to just the row', async () => {
     if (!serverReachable) {
@@ -670,7 +679,7 @@ describe('--single flag Integration Tests', () => {
     expect(parsed).not.toHaveProperty('request');
     expect(parsed).not.toHaveProperty('response');
     expect(parsed).toMatchObject({ id: moduleId });
-  });
+  }, 30000);
 
   test('--single --diag returns the full envelope', async () => {
     if (!serverReachable) {
@@ -688,7 +697,7 @@ describe('--single flag Integration Tests', () => {
     expect(parsed).toHaveProperty('request');
     expect(parsed).toHaveProperty('response');
     expect((parsed.response as { data: { id: number } }).data.id).toBe(moduleId);
-  });
+  }, 30000);
 
   test('--single surfaces real server errors instead of MULTIPLE_ROWS', async () => {
     if (!serverReachable) {
@@ -707,5 +716,5 @@ describe('--single flag Integration Tests', () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).not.toContain('SINGLE_MULTIPLE_ROWS');
     expect(result.stderr).toMatch(/PGRST205|schema cache|not.*table/i);
-  });
+  }, 30000);
 });
