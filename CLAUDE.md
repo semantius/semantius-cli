@@ -57,6 +57,30 @@ A self-hosted instance configures the CLI by serving `/.well-known/semantius.jso
   once per invocation and thread it, rather than deriving it again on a path
   that might come out empty (`resourceIsKnown`, `requireHonestResource`).
 
+## Transfer files carry names, not host ids
+
+`utils/export_entities`, `export_module`, `import_entities` and `import_module`
+(`src/local-tools/transfer/`) move entities and modules between hosts through
+one JSON file. Its rules:
+
+- **Metadata is keyed by name.** `module_id` travels as `module_name`, role ids
+  as the role's `slug`, permissions by `permission_name`. A host id in the
+  metadata of a transfer file is a bug: it means something else on the target.
+  The column lists derive from the vendored schemas (`format.ts`); never edit
+  those to suit the transfer.
+- **Records keep their ids**, and the import upserts by the entity's id column.
+  References to `users` travel as `{"external_id": …}`, found through the
+  fields with `reference_table = 'users'` — never by the shape of a value.
+- **Every read is paged** (`PostgrestClient.pages`): a page shorter than
+  `limit` does not end a read, because PostgREST's `db-max-rows` may cut it;
+  only an empty page does. There is no unpaged GET in the client.
+- **Never trust `Bun.file(p).slice(a, b).stream()` to stop at `b`.** On Windows
+  a small slice of a file over ~75 KB streams on past its end; `sliceStream`
+  (`format.ts`) counts the bytes and cuts it off.
+- **The import needs `fix_id_sequence`** on the target: explicit ids do not move
+  the sequence. Databases on 0.5.0-beta1 lack the RPC until they are rebuilt;
+  the import stops at `PGRST202` before writing any record.
+
 ## Tests that spawn the CLI
 
 Any test that spawns the CLI as a subprocess must redirect `APPDATA`, `LOCALAPPDATA` and `HOME` to a temp dir in the child's env. The user config dir (`getUserConfigDir()`: `hosts.json`, the global `.env`) and the secrets dir (`getUserSecretsDir()`: stored sessions and their lock files) are derived from those vars, so without the redirect a spawned test can silently pick up a real developer's current host or credentials instead of the hermetic state the test set up. The current host is checked right after `--host`/`--token` (see `src/host.ts`'s `resolveHostValue`), ahead of `SEMANTIUS_HOST`/`SEMANTIUS_ORG`, so a leaked one doesn't just affect host-specific tests — it can silently redirect almost any test that resolves a host at all. In-process tests (not spawning a subprocess) need the same isolation via `setHostsIndexDirForTests` from `src/hosts-index.ts`. When a test seeds files into that dir, don't hardcode `<dir>/semantius/cli/...` — that is only the Windows layout (`%APPDATA%\semantius\cli`); Linux/macOS use `<HOME>/.config/semantius/cli`. Use `getUserConfigDir()` / `getUserSecretsDir()` in-process, or a platform-branching helper for a spawned child (see `semantiusDir` in `tests/acceptance-hosts.test.ts`, whose children point both vars at one dir). Do not reach into the fake keyring for a stored session either — it holds a key, and the file is bound to the name it was written for, so `createSecretStorage(...)` is the only way in or out (see `storedSession` / `copySessionTo` in `tests/auth.test.ts`). Never call a login path without an `openUrl` stub: the real one opens a browser, which happens to complete the flow on Windows but hangs to the timeout on a headless Linux runner. See `tests/token-arg.test.ts`, `tests/acceptance-hosts.test.ts`, or `tests/host.test.ts`'s outer `beforeEach`/`afterEach` for the pattern.

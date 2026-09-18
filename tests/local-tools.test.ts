@@ -78,8 +78,16 @@ describe('local-tools', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  test('registry contains get_csvschema', () => {
-    expect(localTools.map((t) => t.name)).toEqual(['get_csvschema']);
+  const TOOL_NAMES = [
+    'get_csvschema',
+    'export_entities',
+    'export_module',
+    'import_entities',
+    'import_module',
+  ];
+
+  test('registry contains get_csvschema and the transfer tools', () => {
+    expect(localTools.map((t) => t.name)).toEqual(TOOL_NAMES);
   });
 
   describe('createBuiltinConnection', () => {
@@ -87,7 +95,7 @@ describe('local-tools', () => {
       const conn = await createBuiltinConnection('utils', BUILTIN_CONFIG);
       try {
         const tools = await conn.listTools();
-        expect(tools.map((t) => t.name)).toEqual(['get_csvschema']);
+        expect(tools.map((t) => t.name)).toEqual(TOOL_NAMES);
         expect(tools[0].description).toBeTruthy();
         const properties = tools[0].inputSchema.properties as Record<
           string,
@@ -116,7 +124,9 @@ describe('local-tools', () => {
         disabledTools: ['get_csvschema'],
       });
       try {
-        expect(await conn.listTools()).toEqual([]);
+        expect((await conn.listTools()).map((t) => t.name)).toEqual(
+          TOOL_NAMES.filter((n) => n !== 'get_csvschema'),
+        );
         await expect(
           conn.callTool('get_csvschema', { path: csvPath }),
         ).rejects.toThrow('disabled by configuration');

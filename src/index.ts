@@ -724,6 +724,10 @@ Built-in servers:
   (--crud-mcp sends them to the Semantius cloud MCP server instead).
   A "utils" server with local tools (get_csvschema) is always
   available alongside configured servers, e.g. semantius call utils/get_csvschema '{"path":"data.csv"}'
+  Its export_entities / export_module write entities or a whole module, schema and records, to one
+  JSON file; import_entities / import_module replay it onto another host as an upsert, e.g.
+    semantius --host stage.example.com call utils/export_module '{"name":"CRM","path":"crm.json"}'
+    semantius --host prod.example.com call utils/import_module '{"path":"crm.json"}'
 
 Credentials (first match wins):
   1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)

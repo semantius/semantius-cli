@@ -341,6 +341,32 @@ fi
 
 ---
 
+## Moving Entities and Modules Between Hosts
+
+The built-in `utils` server exports entities, or a whole module, from one host into a JSON file, and imports that file into another host as an upsert (stage → prod, prod → test). `--host` picks the host each side runs against.
+
+```bash
+semantius --host stage.example.com call utils/export_module '{"name":"CRM","path":"crm.json"}'
+semantius --host prod.example.com  call utils/import_module '{"path":"crm.json"}'
+
+# Single tables: schema and records, or either alone
+semantius call utils/export_entities '{"names":"accounts,contacts","path":"accounts.json"}'
+semantius call utils/export_entities '{"names":"accounts","exclude_schema":true,"path":"data.json"}'
+semantius call utils/import_entities '{"path":"accounts.json"}'
+```
+
+- **What travels.** `export_module` writes the module, its permissions, permission hierarchy, roles and grants, then its entities with their fields and records. `export_entities` writes entities, fields and records. Metadata is keyed by name (`module_name`, role `slug`, `permission_name`), never by a host's ids. Metadata and system tables (`users`, `roles`, `entities`, …) cannot be exported.
+- **Records keep their ids.** The import upserts by the entity's id column, so it overwrites any target row with the same id. References between exported tables keep their values; references to other tables keep their ids too, so their target rows must exist. References to `users` travel as `{"external_id": …}`: a user's numeric id differs between hosts, `external_id` does not. An unknown `external_id` is an error.
+- **Re-runs are cheap.** Every step reads the target first and writes only what differs, so re-running a failed import resumes it, and re-importing unchanged data writes nothing. Nothing is ever deleted, and there is no transaction across requests.
+- **`import_entities` also takes a module file**, importing only its entities (their module must exist on the target). `import_module` needs a module file.
+- **The target needs the `fix_id_sequence` RPC**, which moves each table's id sequence past the imported ids. A target on 0.5.0-beta1 lacks it until it is rebuilt; the import then stops before writing any record.
+- **Validation rules and `select_rule`** are written after the records, so older rows are not rejected by today's rules and no row is hidden from the import. An entity that already exists on the target keeps its current rules while its records are written.
+- **The file** is valid JSON with metadata pretty-printed and one record per line, so a committed file diffs record by record. A re-export of unchanged data is byte-identical.
+- An export contains only the rows this user can see, and is not a snapshot of a source that is written to meanwhile. The tools always talk to the host's PostgREST directly: `--crud-mcp` and a `crud.postgrest` URL in the config file do not apply, and an authentication failure exits 4, not 5. A static `SEMANTIUS_JWT` is not refreshed, so it can expire during a long run.
+- Records are compared as PostgREST prints them, so between hosts whose databases use different time zones every timestamp differs and every row is rewritten. A table with several hundred columns can exceed a proxy's URL limit (nginx: 8 KB), since reads and writes list every column.
+
+---
+
 ## Connection Pooling (Daemon)
 
 The `crud` tools run inside the CLI and call PostgREST directly, so there is no connection to keep open for them. For the other servers (`cube`, and `crud` under `--crud-mcp`), the CLI on Linux and macOS keeps each server's MCP connection open in a lazily spawned background daemon, so repeated calls skip the connect handshake. On Windows there is no daemon; every call opens a fresh connection.
