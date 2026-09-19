@@ -13,8 +13,8 @@ export const permissionSchema = z.looseObject({
       'permission_name must be colon-separated segments of [a-z0-9_-], each starting with a letter or digit'
     )
     .describe(
-      'The permission, and the primary key of the permissions table. Colon-separated segments over the same alphabet module_slug uses, each starting with a letter or digit, e.g. "crm:read" or "service-catalog:view". No spaces, commas or dots: a scope string is split on commas and whitespace, and a dot would make the permission_hierarchy key ambiguous. Every other table names a permission by this value.'
+      'The permission itself, and the key other tables use to name it. Colon-separated segments of a-z, 0-9, - and _, each starting with a letter or digit, e.g. crm:read or service-catalog:view. No spaces, commas or dots: scope strings are split on commas and whitespace, and a dot would make permission_hierarchy ids ambiguous.'
     ),
-  description: z.string().optional().describe('Description of the permission'),
+  description: z.string().optional().describe('What the permission allows'),
   module_id: z.number().int().optional().nullable().describe('Module this permission belongs to'),
 })

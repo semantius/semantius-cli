@@ -210,6 +210,8 @@ function seedCrm(f: FakePostgrest, options: { accounts?: number } = {}) {
       view_permission: 'crm:read',
       edit_permission: 'crm:manage',
       label_column: 'full_name',
+      // Not the default, so the round trip shows it travels.
+      entity_type: 'operational_record',
     },
   ]);
   // A core field whose non-fixed columns were edited.
@@ -1560,6 +1562,27 @@ describe('import: files and schema', () => {
       unchanged: 6,
     });
     expect(target.row('fields', 'accounts.industry')?.title).toBe('Sector');
+  });
+
+  test('entity_type is written on create and updated when it changed', async () => {
+    const source = fake('source.example.test');
+    seedCrm(source);
+    const target = emptyTarget();
+    const path = join(dir, 'crm.json');
+    await call(source, 'export_module', { name: 'CRM', path });
+    await call(target, 'import_module', { path });
+    expect(target.row('entities', 'contacts')?.entity_type).toBe(
+      'operational_record',
+    );
+
+    source.update('entities', 'contacts', { entity_type: 'junction' });
+    await call(source, 'export_module', { name: 'CRM', path });
+    const again = await call(target, 'import_module', { path });
+    expect(target.row('entities', 'contacts')?.entity_type).toBe('junction');
+    expect(again.entities[1]).toMatchObject({
+      table_name: 'contacts',
+      entity: 'updated',
+    });
   });
 
   test('select_rule is written after the records, with the validation rules', async () => {

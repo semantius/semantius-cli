@@ -6,8 +6,8 @@
 import { z } from 'zod/v4'
 
 export const webhook_receiverSchema = z.looseObject({
-  id: z.number().int().optional().describe('Auto-generated identifier'),
-  label: z.string().describe('Webhook receiver label'),
+  id: z.number().int().optional().describe('Internal identifier, assigned automatically'),
+  label: z.string().describe('Name that identifies this webhook receiver'),
   table_name: z.string().optional().describe('Target table for webhook data'),
   description: z.string().optional().describe('Description of webhook receiver purpose'),
   auth_type: z.enum(['none', 'hmac', 'header']).optional().describe('Type of authentication (none, hmac, or custom header)'),

@@ -111,8 +111,6 @@ export const ENTITY_COLUMNS = without(
   'searchable',
   'is_child',
 ).map((c) => (c === 'module_id' ? 'module_name' : c));
-/** Exported, never written. */
-export const ENTITY_READ_ONLY = ['entity_type'];
 export const ENTITY_CREATE_ONLY = [
   'id_column',
   'catalog_entity_code',

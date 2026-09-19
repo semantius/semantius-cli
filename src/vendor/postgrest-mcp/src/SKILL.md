@@ -59,7 +59,7 @@
    |--------|---------|-------------------|
    | **entities** | Domain concept definition | Parent of fields; references module; uses permissions |
    | **fields** | Entity attributes/columns | Belongs to entity; may reference other entities |
-   | **modules** | Domain grouping | Referenced by entities/roles/permissions; carries `module_type` and scaffold FKs (`manage_permission`, `admin_permission`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`) |
+   | **modules** | Domain grouping | Referenced by entities/roles/permissions; carries `module_type` and the permission/role FKs (`manage_permission`, `admin_permission`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`) |
    | **permissions** | Atomic capabilities | Used by entities; granted to roles; can inherit |
    | **permission_hierarchy** | Permission inclusion | Each row says `including_permission_name` *includes* `included_permission_name` (the broader implies the narrower); carries immutable `origin` |
    | **roles** | Permission bundles | Granted permissions; assigned to users; carries `slug` and `origin` |
@@ -419,28 +419,21 @@
 
    Every role carries two metadata fields used by the scaffold and promotion pipelines:
 
-   - **`slug`** — snake_case, unique, NOT NULL. Auto-derived from `role_name` via slugify on INSERT when omitted. Always populated. Immutable when `origin` is `"system"`, `"model"`, or `"model_master"` (platform-owned roles); mutable for `origin = "user"` (admins can rename their own roles freely).
+   - **`slug`** — snake_case, unique, NOT NULL. Auto-derived from `role_name` via slugify on INSERT when omitted. Always populated. Cannot be changed after creation when `origin` is `"system"`; roles of any other origin can be renamed.
    - **`origin`** — one of `"system"`, `"model"`, `"model_master"`, or `"user"`. Defaults to `"user"` for manually created roles. The other three values are reserved for the platform and must never be set by the agent:
      - `"system"` — platform built-ins seeded at DB init (e.g. `Administrator`, `User`). Strictly immutable.
      - `"model"` — scaffold role on a domain module, created by a `*-semantic-model.md` deploy. Slug pattern `<module_slug>_viewer` / `_manager` / `_admin`.
      - `"model_master"` — scaffold role on a master module, created by promotion or master-model deploy. Same slug pattern.
 
-   **Allowed transitions after INSERT** (enforced by validation rule):
-   - `"user"` -> `"model"` — auto-claim into a domain module scaffold.
-   - `"user"` -> `"model_master"` — auto-claim into a master module scaffold.
-   - All other transitions are blocked, including any change involving `"system"`. These auto-claim transitions are performed by the platform, not the agent.
+   **`origin` is set on INSERT and cannot be changed afterwards**: the platform rejects any change with error 90203.
 
-   ### Module scaffolding columns
+   ### Module permission and role columns
 
-   The `modules` table carries scaffold and promotion metadata that is populated by the platform, not by the agent:
+   - **`module_type`** — `"domain"` (default) or `"master"` (promoted for sharing). Read-only.
+   - **`manage_permission`** / **`admin_permission`** — names of the module's manage and admin permissions.
+   - **`default_viewer_role_id`** / **`default_manager_role_id`** / **`default_admin_role_id`** — FKs to `roles.id` for the module's default viewer, manager and admin roles.
 
-   - **`module_type`** — `"domain"` (default) or `"master"`. Set to `"master"` only by the promotion flow; never assign manually.
-   - **`manage_permission`** — the manage permission's name, populated by the scaffold pass.
-   - **`admin_permission`** — the admin permission's name, populated by the scaffold pass only when any entity in the module carries `edit_permission: "admin"`.
-   - **`default_viewer_role_id`** / **`default_manager_role_id`** — FKs to `roles.id`, populated by the scaffold pass.
-   - **`default_admin_role_id`** — FK to `roles.id`, populated by the scaffold pass when `admin_permission` is present.
-
-   Leave all six fields unset when calling `create_module` / `update_module` — the scaffold pass owns them.
+   The last five are regular fields: set them with `create_module` or `update_module`. They are foreign keys, so the permissions and roles they name must already exist.
 
    ### Permission hierarchy columns
 
@@ -464,7 +457,7 @@
    - `"model_master"` — auto-created by the deployer as a side effect of promotion or Branch A wire-up; covers both the master's internal chain (`<master>:manage -> <master>:read`) and cross-module bridges (`<consumer>:read -> <master>:read`).
    - `"user"` — manually added by an admin.
 
-   `permission_hierarchy.origin` is **strictly immutable after INSERT — no upgrade paths**. The auto-claim path applies only to `roles`.
+   `permission_hierarchy.origin` is **strictly immutable after INSERT**, like `roles.origin` (error 90205).
 
    ---
 

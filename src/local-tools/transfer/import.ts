@@ -28,7 +28,6 @@ import {
   ENTITY_COLUMNS,
   ENTITY_CREATE_ONLY,
   ENTITY_DEFERRED,
-  ENTITY_READ_ONLY,
   FIELD_COLUMNS,
   FIELD_CREATE_ONLY,
   FIELD_READ_ONLY,
@@ -526,7 +525,6 @@ async function importSchema(
   const writable = ENTITY_COLUMNS.filter(
     (c) =>
       c !== 'module_name' &&
-      !ENTITY_READ_ONLY.includes(c) &&
       !ENTITY_DEFERRED.includes(c) &&
       !ENTITY_AFTER_DATA.includes(c),
   );
