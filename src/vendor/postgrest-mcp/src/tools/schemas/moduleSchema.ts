@@ -64,11 +64,14 @@ export const moduleSchema = z.looseObject({
   home_page: z.string().optional().describe('Default home page path for module'),
   module_slug: z
     .string()
+    // Same rule as the platform's (90702). Empty is allowed: the platform then
+    // derives the slug from module_name.
     .regex(
-      /^[a-z0-9_-]+$/,
-      'module_slug must be lowercase alphanumeric, underscore, or hyphen'
+      /^([a-z0-9][a-z0-9_-]*)?$/,
+      "module_slug must be lowercase, start with a letter or digit, and contain only a-z, 0-9, '-' and '_'"
     )
-    .describe('URL-safe unique identifier for the module: lowercase, starting with a letter or digit, using only a-z, 0-9, - and _.'),
+    .optional()
+    .describe('URL-safe unique identifier for the module: lowercase, starting with a letter or digit, using only a-z, 0-9, - and _. Derived from the module name when left empty.'),
   settings: z.unknown().optional().describe('Module-specific settings and configuration (JSON)'),
   dashboard_config: z.unknown().optional().describe('Layout and widgets of the module dashboard (JSON)'),
   catalog_module_code: z
@@ -87,6 +90,6 @@ export const moduleSchema = z.looseObject({
     .enum(['basic', 'full'])
     .optional()
     .describe(
-      'Access tier: "basic" for simple read/edit; "full" for role tiers, approvals & gating.'
+      'Access tier: basic (simple read/edit) or full (role tiers, approvals and gating). Omitted, it is basic.'
     ),
 })

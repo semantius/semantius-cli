@@ -102,8 +102,8 @@
 
    2. **If not found, create the module** with:
       - `module_name` (lowercase, snake_case identifier, e.g., `crm`, `inventory`)
-      - `label` (human-readable, e.g., "CRM", "Inventory")
       - `description`
+      - Optional: `module_slug` — the module's identifier in UI links (`{ui_baseurl}/{module_slug}/...`). Leave unset: it is derived from `module_name`.
       - Optional: `access_scope` — `"basic"` (default) for simple read/edit modules; `"full"` only when the module needs role tiers, approvals, and gating. Leave unset for ordinary modules.
       - Optional: `icon_name` — name of the icon to show for the module in navigation; leave unset unless the user requests a specific icon.
 
@@ -119,7 +119,7 @@
 
    **Agent actions:**
    - Call `read_module` to check for existing modules — none found
-   - Call `create_module` with `module_name: "service_catalog"`, `label: "Service Catalog"`
+   - Call `create_module` with `module_name: "service_catalog"` and a `description` (the slug `service_catalog` is derived from the name)
    - Call `create_permission` once with `data: [{ permission_name: "service_catalog:read" }, { permission_name: "service_catalog:manage" }]` (one bulk call instead of two)
    - Proceed to create entity with the new `module_id`
 

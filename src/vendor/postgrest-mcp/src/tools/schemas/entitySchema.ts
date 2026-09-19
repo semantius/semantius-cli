@@ -6,11 +6,11 @@
 import { z } from 'zod/v4'
 
 export const entitySchema = z.looseObject({
-  table_name: z.string().describe('Physical table name in database (Primary Key)'),
+  table_name: z.string().describe('Physical table name in database: lowercase letters, digits and _, starting with a letter or _. Primary key.'),
   singular: z.string().optional().describe('Singular form of table name (auto-derived from table_name when blank)'),
   plural: z.string().optional().describe('Plural form of table name, auto-assigned to table_name'),
-  singular_label: z.string().describe('Human-readable singular label for UI/reports'),
-  plural_label: z.string().optional().describe('Human-readable plural label for UI/reports'),
+  singular_label: z.string().describe('Human-readable singular label for UI/reports (e.g. Customer)'),
+  plural_label: z.string().optional().describe('Human-readable plural label for UI/reports (e.g. Customers)'),
   icon_url: z.string().optional().describe('Optional URL or path to icon for this table'),
   description: z.string().optional().describe('What the entity represents'),
   module_id: z.number().int().describe('Module this entity belongs to'),
@@ -26,20 +26,20 @@ export const entitySchema = z.looseObject({
     .describe(
       'Permission required to INSERT/UPDATE/DELETE from this table, by name. Same foreign key as view_permission: the permission must already exist. A permission an entity names cannot be deleted while the entity stands.'
     ),
-  id_column: z.string().optional().describe('Name of primary key column'),
-  label_column: z.string().optional().describe('Name of label/display column'),
+  id_column: z.string().optional().describe('Name of the primary key column, created automatically'),
+  label_column: z.string().optional().describe('Name of the label/display column, created automatically'),
   label_parent: z.string().optional()
     .describe('Reference or parent field of this entity whose record label the composed _label is built from (the identity spine). Empty = self-identifying: the composed label is the local label. Not allowed on a junction entity, and the spine must stay acyclic.'),
   order_column: z.string().optional()
     .describe('Name of an integer column that stores a fixed row order. Setting it creates the column, and a record inserted without a value gets MAX + 10. Empty = no fixed order.'),
-  managed: z.boolean().optional().describe('When false, automatic DDL execution is disabled'),
+  managed: z.boolean().optional().describe('When false, automatic DDL execution for table and field changes is disabled'),
   searchable: z.boolean().optional().describe('Whether table is included in full-text search (auto-computed)'),
   is_child: z.boolean().optional().describe('Whether table has any parent relationships (auto-computed)'),
   edit_mode: z.enum(['auto', 'sidebar', 'modal', 'page']).optional().describe('UI edit mode for records of this table: auto, sidebar, modal, or page'),
   cube_mode: z.enum(['disabled', 'auto']).optional().describe('Cube mode for OLAP cube generation'),
   audit_log: z.boolean().optional().describe('When TRUE, DML operations on this table are logged to audit_record_logs'),
-  computed_fields: z.array(z.any()).optional().describe('JsonLogic derivations evaluated on every write'),
-  validation_rules: z.array(z.any()).optional().describe('JsonLogic invariants that must hold for the write to succeed'),
+  computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries, evaluated and stored on every insert and update: each entry derives the named field from the same record before the write'),
+  validation_rules: z.array(z.any()).optional().describe('Ordered list of {code, message, jsonlogic, description?} entries; each must evaluate truthy for the write to succeed'),
   select_rule: z.record(z.string(), z.any()).optional()
     .describe('JsonLogic rule evaluated per row for the FOR SELECT RLS policy: true = the current user may see the record. Empty = no per-row rule.'),
   entity_type: z.enum(['operational_workflow', 'operational_record', 'catalog', 'junction', 'computed', 'unclassified']).optional()

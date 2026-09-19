@@ -9,6 +9,7 @@ export const webhook_receiver_logSchema = z.looseObject({
   id: z.number().int().optional().describe('Internal identifier, assigned automatically'),
   webhook_receiver_id: z.number().int().describe('Parent webhook receiver this log belongs to (FK to webhook_receivers.id)'),
   message_id: z.string().optional().describe('The sender\'s webhook-id header, or a key derived from the request when it sends none. A delivery whose message_id already succeeded is skipped.'),
+  label: z.string().optional().describe('Name that identifies this webhook receiver log'),
   webhook_timestamp: z.string().optional().describe('Timestamp from webhook source (ISO 8601)'),
   received_timestamp: z.string().optional().describe('Timestamp when webhook was received (ISO 8601)'),
   payload: z.unknown().optional().describe('Webhook payload data (JSON)'),
