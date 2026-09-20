@@ -324,9 +324,9 @@ By default the CLI uses a lazy-spawn background daemon to avoid MCP server start
 
 **Control via environment:**
 ```bash
-MCP_NO_DAEMON=1 semantius info      # Force fresh connection every time
-MCP_DAEMON_TIMEOUT=120 semantius    # 2-minute idle timeout
-MCP_DEBUG=1 semantius info          # Show daemon debug output
+SEMANTIUS_NO_DAEMON=1 semantius info      # Force fresh connection every time
+SEMANTIUS_DAEMON_TIMEOUT=120 semantius    # 2-minute idle timeout
+SEMANTIUS_DEBUG=1 semantius info          # Show daemon debug output
 ```
 
 ### Other Environment Variables
@@ -335,11 +335,11 @@ MCP_DEBUG=1 semantius info          # Show daemon debug output
 |----------|---------|-------------|
 | `SEMANTIUS_API_KEY` | (required) | API key |
 | `SEMANTIUS_ORG` | (required) | Organization name |
-| `MCP_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
-| `MCP_CONCURRENCY` | `5` | Servers processed in parallel |
-| `MCP_MAX_RETRIES` | `3` | Retry attempts for transient errors |
-| `MCP_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
-| `MCP_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
+| `SEMANTIUS_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
+| `SEMANTIUS_CONCURRENCY` | `5` | Servers processed in parallel |
+| `SEMANTIUS_MAX_RETRIES` | `3` | Retry attempts for transient errors |
+| `SEMANTIUS_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
+| `SEMANTIUS_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
 
 ---
 
