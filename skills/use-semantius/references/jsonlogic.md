@@ -174,7 +174,7 @@ INSERT passes trivially (no `$old`); UPDATE / DELETE passes when the caller is t
 
 #### Cross-entity lookups inside JsonLogic (`let`, `set_record`, `throw_error`)
 
-`computed_fields` and `validation_rules` are no longer limited to the post-write record. The platform exposes three additional JsonLogic operators that bind values into the data context **before** the rest of the expression evaluates, opening the door to FK traversal, parent-state gates, inherited values, and merged labels that previously had to live in cube views or per-model service code.
+Three JsonLogic operators bind values into the data context **before** the rest of the expression evaluates, so `computed_fields` and `validation_rules` can reach beyond the post-write record: FK traversal, parent-state gates, inherited values, and merged labels.
 
 | Operator | Shape | Effect |
 |---|---|---|

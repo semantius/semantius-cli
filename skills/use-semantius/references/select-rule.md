@@ -78,7 +78,7 @@ A caller sees a row when they own it OR when the row is marked public.
 }
 ```
 
-**Broadening visibility for elevated roles — `has_permission` is the canonical mechanism.** The previous version of this section claimed permission-based visibility could not be encoded inside `select_rule`; that was wrong. The platform exposes `{"has_permission": "<code>"}` (documented in `jsonlogic.md` § Platform-extension operators) specifically so a per-row SELECT rule can check the caller's permissions and broaden the visible row set without throwing. The two patterns:
+**Broadening visibility for elevated roles — `has_permission` is the canonical mechanism.** The platform exposes `{"has_permission": "<code>"}` (documented in `jsonlogic.md` § Platform-extension operators) specifically so a per-row SELECT rule can check the caller's permissions and broaden the visible row set without throwing. The two patterns:
 
 **Example — tiered audience (uniform per-row OR elevated-permission bypass):** A ticket is visible to its submitter, its assignee, unassigned tickets are visible to everyone, AND holders of `helpdesk:view_all_tickets` see every row regardless:
 

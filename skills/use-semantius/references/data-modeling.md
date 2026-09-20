@@ -43,9 +43,7 @@ Every entity **must** belong to a module.
 A module has two name fields with distinct jobs:
 
 - **`module_name`** is the unique, human-facing display name shown in the UI module selector and on the module landing page. Keep acronyms as acronyms (`CRM`, `ITSM`, `CMDB`), this is what users read. Matches the source model's `system_name`.
-- **`module_slug`** is the lowercase, URL-safe handle — **required and non-empty** (regex `^[a-z0-9_-]+$`; lowercase letters, digits, `_`, and `-`, hyphen now allowed). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A missing, empty, or malformed slug is rejected with `module_slug must be lowercase alphanumeric, underscore, or hyphen`.
-
-> ⚠️ **`alias` is gone.** Earlier schemas had an `alias` column on modules. It has been removed. Use `module_name` for the display name and `module_slug` for the URL/permission handle.
+- **`module_slug`** is the lowercase, URL-safe handle — **required and non-empty** (regex `^[a-z0-9_-]+$`; lowercase letters, digits, `_`, and `-`). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A missing, empty, or malformed slug is rejected with `module_slug must be lowercase alphanumeric, underscore, or hyphen`.
 
 **Check before creating** (filter on `module_slug` for the URL handle, or on `module_name` for the display name):
 ```bash
@@ -178,7 +176,7 @@ Platform meta-schema. **Never declare in a domain model.** The deployer manages 
 | `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. |
 | `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
 | `plural_label` | e.g. "Products" |
-| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title |
+| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`: set it on every entity that has a natural local label; omit it for a junction table, whose `_label` the platform composes from the parent legs (see "Junction tables" below). |
 | `module_id` | Required on `create_entity` — must be a valid (non-null) integer module id; `null` is rejected. Find with `read_module`. On `update_entity` it stays optional, but a provided value must still be a non-null integer. |
 | `view_permission` | Required, name string (e.g. `"catalog:read"`) |
 | `edit_permission` | Required, name string (e.g. `"catalog:manage"`) |
@@ -210,7 +208,7 @@ When `create_entity` is called, the system automatically creates:
 
 ### Platform provenance / meta columns (core-provided; stamp VALUES only, never create)
 
-Base schema **v0.1.2** ships a set of **core provenance columns** on `entities`, `modules`, and `roles`. They are **registered by core with `ctype = 'core'`** — there is **no `is_core` boolean**; `is_core` is *derived* as `ctype <> ''` and still surfaces in `get_schema()`, so anything reading `is_core` keeps working. Every column is **NOT NULL with an empty default** (`''` for text, `'{}'` for a json object, `'[]'` for a json array, `'unclassified'` for the `entity_type` enum); "absent" is the empty value, never SQL `NULL`.
+The base schema ships a set of **core provenance columns** on `entities`, `modules`, and `roles`. They are **registered by core with `ctype = 'core'`** — there is **no `is_core` boolean**; `is_core` is *derived* as `ctype <> ''` and still surfaces in `get_schema()`, so anything reading `is_core` keeps working. Every column is **NOT NULL with an empty default** (`''` for text, `'{}'` for a json object, `'[]'` for a json array, `'unclassified'` for the `entity_type` enum); "absent" is the empty value, never SQL `NULL`.
 
 | Table | Column | Type / default | Meaning |
 |---|---|---|---|
@@ -463,10 +461,10 @@ The platform manages nullability internally based on format and delete-mode; the
 | Required link to independent entity | `reference` | `restrict` |
 | Child is owned by parent (**shared permission scope** — child tier == parent tier) | `parent` | `cascade` |
 | M:N junction FK, **both parents share the junction's tier** (per-leg test, not table-wide) | `parent` | `cascade` |
-| **Lifecycle-bound child with divergent permission scope** (analyst v1.13+) — overrides the two rows above | `reference` | `restrict` (default) or `clear` |
+| **Lifecycle-bound child with divergent permission scope** — overrides the two rows above | `reference` | `restrict` (default) or `clear` |
 | Lifecycle-bound child with divergent permission scope, accepting silent cascade-delete (high-risk) — overrides the two rows above | `reference` | `cascade` |
 
-**Divergent-permission-scope rule (analyst v1.13+).** `format: parent` semantically asserts that the child shares the parent's permission model. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `require_permission` (see `jsonlogic.md`) against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), `parent` is the wrong shape. Use `format: reference` instead. Pick the delete mode by lifecycle behavior: `restrict` when children must be explicitly cleaned up before the parent (recommended default for audit-logged decision evidence like scorecards or signed offers), `clear` when orphan-survival is acceptable (e.g. an authored note may survive its application being deleted), `cascade` only when the user explicitly accepts the silent cascade-delete trade-off (the shape says "permission scope is divergent" but the platform deletes anyway when the lifecycle owner goes).
+**Divergent-permission-scope rule.** `format: parent` semantically asserts that the child shares the parent's permission model. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `require_permission` (see `jsonlogic.md`) against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), `parent` is the wrong shape. Use `format: reference` instead. Pick the delete mode by lifecycle behavior: `restrict` when children must be explicitly cleaned up before the parent (recommended default for audit-logged decision evidence like scorecards or signed offers), `clear` when orphan-survival is acceptable (e.g. an authored note may survive its application being deleted), `cascade` only when the user explicitly accepts the silent cascade-delete trade-off (the shape says "permission scope is divergent" but the platform deletes anyway when the lifecycle owner goes).
 
 ### `reference`: Cross-Entity Link (Independent Lifecycle)
 

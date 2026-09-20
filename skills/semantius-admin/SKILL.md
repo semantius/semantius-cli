@@ -30,15 +30,15 @@ Every output this skill produces (chat, and the artifacts it writes) follows the
 
 ## Core invariants
 
-A handful of rules govern this skill end-to-end. They are stated ONCE here and referred to as "(INV-n)" throughout; sections that touch them defer to these statements instead of re-explaining them.
+A handful of rules govern this skill end-to-end. They are stated ONCE here; the sections below refer back with a short reminder ("single write gate", "copy, never move", "the plan is the task list") instead of re-explaining them.
 
-- **INV-1 — Single write gate / informational plans.** The modeler's own pre-execute yes/no is the ONLY confirmation before a live-model write. The admin never fires an up-front "Proceed?" gate; every plan it prints is informational (print, then run). This suppresses the deploy *confirmation* only, never the scope *questions* (INV-3).
-- **INV-2 — Copy, never move.** A pre-existing artifact (especially one at the repo root) is COPIED up front into the convention folder (`semantius/blueprints/` or `semantius/specs/`); that copy becomes the working path and every edit targets it; the root original is read once and never moved, renamed, overwritten, edited, or deleted. The only files the admin relocates are ones it downloaded this run (`.tmp_admin/` into the convention folder). The Step 1.1 "Slug present in BOTH" compare-and-choose procedure and its widget are separate logic, not a restatement of this rule.
-- **INV-3 — Scope flags before the plan.** `customize` (blueprint), `review` (spec), and `deploy` (both) are resolved — inferred from intent, then asked only where ambiguous (Step 6.4) — BEFORE any plan that contains them is rendered. A bare "deploy this" still fires the customize question. Greenfield builds and catalog clones short-circuit: no scope questions, because the architect's Create pass IS the design and `deploy` is implied.
-- **INV-4 — Internal mechanics never reach chat.** Preflight, the org probe, file staging, `curl` / `jq` / `yq` plumbing, stage transitions, run-ids, and skill-internal vocabulary go to the per-run diagnostic log, never to chat. The "surface / never-surface" lists, the narration-restraint rules, and the banned-vocabulary list in Output discipline below are the resident expression of this.
-- **INV-5 — Plan rendering format.** Render every plan as markdown prose (a short heading, a numbered list, one trailing sentence), NEVER inside a triple-backtick code block. The trailing sentence names which line(s) write to the live model, or states that nothing is applied.
-- **INV-6 — Never `WebFetch`.** Fetch remote artifacts with `curl -s -L` only; `WebFetch` runs an HTML-to-markdown pass that silently strips YAML front-matter.
-- **INV-7 — `.tmp_admin/` is gitignored and ephemeral.** The run folder persists after the run; the user manages cleanup; nothing in it is committed.
+- **Single write gate / informational plans.** The modeler's own pre-execute yes/no is the ONLY confirmation before a live-model write. The admin never fires an up-front "Proceed?" gate; every plan it builds is informational (build the task list, then run). Creating tasks is never a pause. This suppresses the deploy *confirmation* only, never the scope *questions* (next rule).
+- **Copy, never move.** A pre-existing artifact (especially one at the repo root) is COPIED up front into the convention folder (`semantius/blueprints/` or `semantius/specs/`); that copy becomes the working path and every edit targets it; the root original is read once and never moved, renamed, overwritten, edited, or deleted. The only files the admin relocates are ones it downloaded this run (`.tmp_admin/` into the convention folder). The Step 1.1 "Slug present in BOTH" compare-and-choose procedure and its widget are separate logic, not a restatement of this rule. Staging and copying are internal mechanics: never a task, never narrated.
+- **Scope flags before the plan.** `customize` (blueprint), `review` (spec), and `deploy` (both) are resolved (inferred from intent, then asked only where ambiguous, Step 6.4) BEFORE the pipeline tasks are created. The flag questions are question-ledger tasks (`Q:`), and the pipeline tasks may be created only once `TaskList` shows no `Q:` task pending or in progress; that check is the gate. A bare "deploy this" still fires the customize question. Greenfield builds and catalog clones short-circuit: no scope questions, because the architect's Create pass IS the design and `deploy` is implied.
+- **Internal mechanics never reach chat.** Preflight, the org probe, file staging, `curl` / `jq` / `yq` plumbing, stage transitions, run-ids, and skill-internal vocabulary go to the per-run diagnostic log, never to chat and never into a task subject. Task descriptions may hold working state (a one-line step summary, the flag values, the verbatim failure message); diagnostic detail stays in the log. The "surface / never-surface" lists, the narration-restraint rules, and the banned-vocabulary list in Output discipline below are the resident expression of this.
+- **The plan is the task list.** The admin never renders a numbered plan in chat. It creates one task per plan line (Step 6.5 line shapes as subjects, chained in pipeline order with `blockedBy`) and emits ONE lead-in sentence in chat that names the steps by what they do, cues which step asks questions, and says which step writes to the live model (or that nothing is applied). Never a numbered list, never a code fence. Rules: [`references/task-tracking.md`](./references/task-tracking.md); wording and worked examples: [`references/plan-shapes.md`](./references/plan-shapes.md).
+- **Never `WebFetch`.** Fetch remote artifacts with `curl -s -L` only; `WebFetch` runs an HTML-to-markdown pass that silently strips YAML front-matter.
+- **`.tmp_admin/` is gitignored and ephemeral.** The run folder persists after the run; the user manages cleanup; nothing in it is committed.
 
 ---
 
@@ -48,37 +48,50 @@ Everything this skill prints to chat is read by a casual user who does not know 
 
 **Surface to chat ONLY:**
 
-- Plain-English statements of what's about to happen (the plan).
+- The download milestone: ONE result-shaped line per URL the user named, emitted when the fetch has validated (Step 2 / 6.1): *"Downloaded the Hiring Starter blueprint from semantius.com."* Display name (front-matter `system_name`) and host only; nothing about paths, folders, staging, or validation. It reports what happened, never what is about to happen or what machinery ran. Local sources get no milestone (the user named the file; the first question or the plan lead-in names the design within a step).
+- The one-sentence plan lead-in (the plan itself is the task list; see the core invariant above).
 - Questions the user must answer (`AskUserQuestion`: scope flags, sub-skill decisions).
 - Results the user cares about: what's now live, where produced files landed, and any failure they must act on (with the failing sub-skill's verbatim message).
 - The close-out (Step 8).
 
+**The task list is a sanctioned surface, not chat.** Task subjects follow the same plain-language bar as chat (Writing Convention 8: no internal vocabulary, no stage names, no raw slugs where a display name exists); task descriptions are working memory (flag values, one-line step summaries, verbatim failure messages) and may carry internal keys but never diagnostic detail. Task tool calls need no narration.
+
 **Never surface to chat** (write to `$DIAG_LOG` instead):
 
-- **The fact that any setup is happening at all.** Do not announce that you're running checks, preflight, or setup. **Never write the words "preflight" or "silent" in chat** — they name machinery the user doesn't know exists, and "silent" in particular reads as ominous. Your FIRST words to the user are either the first `AskUserQuestion` or the plan; the tool-call rows ("Ran N commands") are the only trace the setup is allowed to leave.
+- **The fact that any setup is happening at all.** Do not announce that you're running checks, preflight, or setup. **Never write the words "preflight" or "silent" in chat** — they name machinery the user doesn't know exists, and "silent" in particular reads as ominous. Your FIRST words to the user are the download milestone (only when the request named a URL), the first `AskUserQuestion`, or the plan lead-in; the tool-call rows ("Ran N commands") and the task list are the only other trace the setup is allowed to leave. Fetching a URL the user named is the first step of their request, not setup: its *result* gets the one milestone line; the fetch mechanics (`curl`, staging, validation, the copy into the convention folder) stay out of chat.
 - Preflight: the org probe, the `adenin` halt check passing, the customizations-path computation, the toolchain (Bun / jq / yq) and CLI install checks. A *successful* tool install gets at most one plain line ("Installing jq..."); only a *firing* halt guard (org is `adenin`, or a required tool could not be installed) produces a halt message.
 - Internal transitions: "running preflight", "setting up the per-org customizations path", "assigning run id", phase announcements like "now inspecting the workspace".
 - CLI / tool mechanics: command names, `.tmp_admin/` paths, `curl` / `jq` / `yq` invocations, staging locations.
-- Skill-internal vocabulary: `customizations.yaml`, `run_id`, decision-path names, sub-skill mode names, raw flag tokens. (The single terse inferred-flags line from Step 6.4.2 is the one deliberate exception.)
+- Skill-internal vocabulary: `customizations.yaml`, `run_id`, decision-path names, sub-skill mode names, raw flag tokens (never *"Inferred: customize=no, deploy=yes"*; the plan lead-in already states the resolved scope in plain words, and 6.4.3 lets the user correct it).
 - Pipeline jargon: "reconcile", "reconciliation", "reconcile-then-apply", "normalization", "legacy location", "fact-sheet version". In user prose say "match (it) against your live semantic model", "build the spec", "the blueprint has N entities". The user never needs the internal stage names or the front-matter field labels.
 
 Bash `description` fields obey the same rule (they render as "Ran <description>" in chat): neutral plain English ("Checking the workspace", "Reading the artifact"), never "Probe org", "adenin guard", "yq check", "Append to customizations.yaml".
 
-**Pipeline hand-offs are not narrated.** When the admin advances from one sub-skill to the next inside an item's pipeline (e.g. the analyst finishes the spec and the modeler is next), emit only the single sanctioned per-item line from Step 6.7, nothing more. Do **not** add a transition sentence announcing the next phase or pre-explaining what it will do: no *"Now applying it to your live model"*, no *"The deploy step will show you what it creates and ask you to confirm"*. Each sub-skill narrates its own work and gates its own writes, so an admin-level preamble in front of it is redundant narration the user did not ask for. The per-item line plus the sub-skill's own output is the complete trace.
+**Pipeline hand-offs are not narrated.** When the admin advances from one sub-skill to the next inside an item's pipeline (e.g. the analyst finishes the spec and the modeler is next), emit nothing in chat: the pipeline task going to `in_progress` (Step 6.7) is the trace. Do **not** add a transition sentence announcing the next phase or pre-explaining what it will do: no *"Now applying it to your live model"*, no *"The deploy step will show you what it creates and ask you to confirm"*. Each sub-skill narrates its own work and gates its own writes, so an admin-level preamble in front of it is redundant narration the user did not ask for. The task list plus the sub-skill's own output is the complete trace.
 
 **The admin never duplicates a sub-skill's execution play-by-play.** The deploy, verification, and sample-data steps belong to the modeler sub-skill, which runs inline (Step 6.7) and narrates in ITS own restrained voice. While following the modeler's instructions, obey the modeler's "Narration restraint" rules and add no second layer of admin narration on top: no *"Matching step done"*, *"Confirming the artifact before applying"*, *"Seeding sample data now"*, *"Seven of eight tables confirm cleanly…"*, and no narration of a transient error and its self-correction (*"that ERR was a transient blip"*). Those are exactly the lines the modeler's "Narration restraint" section deletes; emitting extra admin-level narration reintroduces the noise that restraint exists to remove. If you are narrating what the deploy is doing as it happens beyond what the modeler's own rules permit, you are doing the modeler's job in the wrong voice; stop, and let the sub-skill's voice stand.
 
-**Technical / DBA vocabulary is banned in admin chat too**, the same standard as the modeler's banned-token list. Keep these out of user-facing prose: `FK`, `orphan(s)`, `idempotent`, `non-destructive`, `NOT-NULL` and constraint talk, `junction`, `FK-dependency order`, `spec` / `blueprint` / version numbers (`v5.2`, `blueprint v3.0`), and raw `snake_case` identifiers. Say "links between records", "safe to re-run", "the connecting records", "your live model" instead. The reader is a domain expert (HR director, operations lead), not a data modeler.
+**Technical / DBA vocabulary is banned in admin chat too**, the same standard as the modeler's banned-token list. Keep these out of user-facing prose: `FK`, `orphan(s)`, `idempotent`, `non-destructive`, `NOT-NULL` and constraint talk, `junction`, `FK-dependency order`, `spec` / `blueprint` version numbers (`v5.2`, `blueprint v3.0`), and raw `snake_case` identifiers. Say "links between records", "safe to re-run", "the connecting records", "your live model" instead. The reader is a domain expert (HR director, operations lead), not a data modeler.
 
 ### Per-run diagnostic log
 
-Internal mechanics go to a per-run diagnostic log, never to chat (INV-4). The admin samples the run-id ONCE at the top of Preflight (`RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"`) and never re-samples it; every stage writes `.tmp_admin/<run_id>/diag-<role>.log` into that one folder (`diag-admin.log`, `diag-architect.log`, ...). The logs are best-effort (a failed write never blocks the run), diagnostics only (NOT a decision log — that is `customizations.yaml` plus git), and never named in chat except the run-folder path on a failed run (Step 6.8). Full mechanics — the `log_diag` helper, the per-role file-naming table, and the log rules — are in [`references/output-discipline.md`](./references/output-discipline.md).
+Internal mechanics go to a per-run diagnostic log, never to chat. The admin samples the run-id ONCE at the top of Preflight (`RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"`) and never re-samples it; every stage writes `.tmp_admin/<run_id>/diag-<role>.log` into that one folder (`diag-admin.log`, `diag-architect.log`, ...). The logs are best-effort (a failed write never blocks the run), diagnostics only (NOT a decision log — that is `customizations.yaml` plus git), and never named in chat except the run-folder path on a failed run (Step 6.8). Full mechanics — the `log_diag` helper, the per-role file-naming table, and the log rules — are in [`references/output-discipline.md`](./references/output-discipline.md).
+
+---
+
+## Task tracking (resident summary; rules in `references/task-tracking.md`)
+
+The admin uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`) for two things. Full mechanics, the response sequence, and the wording rules are the canonical text in [`references/task-tracking.md`](./references/task-tracking.md); this section only says what the admin's tasks are.
+
+**Pipeline tasks (the plan).** After Step 1.1 / 1.3 have resolved and every scope-flag question is answered, create one task per plan line, in pipeline order, subjects from the Step 6.5 line-shape table verbatim (they carry the slug or display name, which is how the final report identifies items). No prefix. Then chain them: every pipeline task after the first gets `addBlockedBy: [<the previous pipeline task's id>]`, continuous across items, so the order is in the list itself, not in numbering. Sub-skills point their own stage tasks at the pipeline task with `addBlocks`, so a pipeline task shows as blocked until its sub-skill's stages are done. Admin-only operations (Step 5, including Get started) create no tasks. Sub-skills create their own `Design › / Match › / Apply ›` stage tasks when they enter; the admin never creates, edits, or completes those. When a sub-skill's output artifact is verified, the admin sets its pipeline task `completed` with the one-line summary in the description; on failure the task stays `in_progress` with the verbatim message.
+
+**Ledger stage: scope flags (Step 6.4).** Every flag question that inference leaves at `?` becomes a `Q:` task (subject = `Q: ` + the exact 6.4 question wording, one question object per flag, up to four per `AskUserQuestion` call). These `Q:` tasks precede the pipeline tasks, so they have no stage task to block; the gate is the rule itself: the pipeline tasks may be created only when `TaskList` shows no `Q:` task pending or in progress. Standalone (no ledger task, unchanged): the Step 0 clarifying question, the 1.1 collision widget, the 1.3 match widget and its follow-ups, "audit both, no name". 1.1 and 1.3 always resolve before the flag ledger starts.
 
 ---
 
 ## Preflight (runs before Step 0, every invocation)
 
-**Preflight produces no chat output** (see Output discipline above). Do not announce it; never write the words "preflight" or "silent" to the user. Sample `$RUN_ID` and set up `$DIAG_LOG` (`diag-admin.log`) first, then run the four shared preflight checks with NO chat narration, writing their results to the log. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a required tool, or supplying their API key). On all-pass with every tool already installed and the CLI authenticated, say nothing and let your first user-facing line be the first question or the plan. The `$RUN_ID` sampled here is the one reused by Step 6.2 — never re-sample it.
+**Preflight produces no chat output** (see Output discipline above). Do not announce it; never write the words "preflight" or "silent" to the user. Sample `$RUN_ID` and set up `$DIAG_LOG` (`diag-admin.log`) first, then run the four shared preflight checks with NO chat narration, writing their results to the log. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a required tool, or supplying their API key). On all-pass with every tool already installed and the CLI authenticated, say nothing and let your first user-facing line be the download milestone (URL requests only), the first question, or the plan. The `$RUN_ID` sampled here is the one reused by Step 6.2 — never re-sample it.
 
 **Run the shared preflight: [`references/preflight.md`](./references/preflight.md).** The canonical checks live there as the single source of truth shared by the admin and all three sub-skills:
 
@@ -116,7 +129,7 @@ If the request is ambiguous, ask one clarifying question via `AskUserQuestion`. 
 
 1. Derive the candidate slug from the named source (the URL/file's own filename: `it-ops-starter-semantic-blueprint.md` → `it-ops-starter`; `related_modules`/other metadata is not needed for this, just the filename stem).
 2. Run ONE targeted **exact-filename** existence check against the convention folders only — `test -f semantius/blueprints/<slug>-semantic-blueprint.md` / `semantius/specs/<slug>-semantic-spec.md`. **Exact filename, never a glob, never a substring/prefix/suffix match.** A file is either named `it-ops-starter-semantic-blueprint.md` and is the artifact, or it is named anything else (`v0-it-ops-starter-semantic-blueprint.md`, `it-ops-starter-v2-semantic-blueprint.md`, `my-it-ops-starter-semantic-blueprint.md`) and is **not a match** — full stop, it does not get read, opened, `cmp`'d, or mentioned. A blueprint's name is its filename; `*<slug>*` glob matching treats "contains the slug as a substring" as "is the artifact," which is exactly backwards — it pulls in prefixed/suffixed variants nobody named and burns a read-and-compare cycle on each one. If the exact-name file is absent, that's a miss: proceed to Step 2 (fetch the named URL) or build fresh, same as if the workspace were empty. Do not fall back to searching for "something close."
-3. Do **not** run the legacy root-level scan at all for a named-source request. Root-level legacy placement is a migration-era concern for artifacts nobody named explicitly; it has no bearing on a request that already says exactly what to fetch and deploy. If the user separately mentions a root-level file by name, that's a *named* source too and step 2's exact-filename check (pointed at root instead) covers it — still not a scan, still exact-match only.
+3. Do **not** run the workspace-root scan at all for a named-source request. Root-level placement is a concern for artifacts nobody named explicitly; it has no bearing on a request that already says exactly what to fetch and deploy. If the user separately mentions a root-level file by name, that's a *named* source too and step 2's exact-filename check (pointed at root instead) covers it — still not a scan, still exact-match only.
 
 **Only when the request does NOT name an explicit source** (status checks, "what's deployed", a bare "deploy this" with nothing else in the workspace to disambiguate, onboarding) does a general inventory make sense, because there IS something to discover — which artifact, if any, the vague request could mean:
 
@@ -124,7 +137,7 @@ If the request is ambiguous, ask one clarifying question via `AskUserQuestion`. 
 # Primary location (the convention): semantius/blueprints/ and semantius/specs/
 find semantius/blueprints semantius/specs -maxdepth 1 -name '*.md' 2>/dev/null
 
-# Legacy locations: blueprints/specs left at the workspace root by older runs.
+# Workspace-root locations: blueprints/specs sitting at the workspace root.
 # Still scope this to any slug hints the request text does contain (e.g. "the ATS
 # blueprint" → scope to *ats*), never a blanket `*-semantic-blueprint.md` glob —
 # that pulls every unrelated file at the repo root into consideration for zero
@@ -135,7 +148,7 @@ find . -maxdepth 1 -name '*-semantic-blueprint.md' -o -name '*-semantic-spec.md'
 
 ### 1.1 Locate artifacts in place, and COPY (never move) the deployed artifact into the convention folder
 
-Per INV-2, the skill reads artifacts wherever they are and **copies** (never moves) the deployed artifact into the convention folder. The mechanics for every deploy:
+Copy, never move: the skill reads artifacts wherever they are and **copies** (never moves) the deployed artifact into the convention folder. The mechanics for every deploy:
 
 - **Copy up front, with `cp`, before any edit.** As soon as a root-level artifact is resolved for this run, copy it into `semantius/blueprints/` or `semantius/specs/` (created on demand with `mkdir -p`) *immediately*, before the customize / extend / rebuild pass or the analyst runs. The convention-folder copy becomes the **working path**: every edit targets it, so it still matches exactly what was deployed; the root original is read once and never modified (editing it is a bug).
 - **Existing differing convention copy:** if a convention copy of this slug already exists and differs from the root, resolve via the "Slug present in BOTH" widget below *first*, then make the chosen version the working copy. Never blind-overwrite.
@@ -164,7 +177,7 @@ After 1.1, blueprints and specs are read wherever they live (convention folder o
 
 ### 1.2 Workspace summary
 
-A slug may live in the convention folder, at the repo root (legacy), or both; the skill reads it wherever it is and never moves it (per 1.1). When the same slug appears in both locations, prefer the convention-folder copy as a defensive fallback for the summary, unless the user picked the root copy via the 1.1 collision widget.
+A slug may live in the convention folder, at the repo root, or both; the skill reads it wherever it is and never moves it (per 1.1). When the same slug appears in both locations, prefer the convention-folder copy as a defensive fallback for the summary, unless the user picked the root copy via the 1.1 collision widget.
 
 For each candidate file, read **only the front-matter** (the first 30 lines is enough). Extract:
 
@@ -219,9 +232,9 @@ A request can produce zero, one, or many match candidates. **All must be surface
   3. label `"Start over (build new)"`, description: *"Ignore `<file>` and build a fresh design from scratch. You'll be asked where to move the existing file so it isn't accidentally re-used (the admin never deletes a file it didn't create)."*
   4. label `"Cancel"`, description: *"Stop without doing anything."*
 
-**Multiple match candidates.** When the workspace has more than one matching artifact (e.g. both a blueprint and a spec for the same slug, or two distinct slugs that both could be what the user meant), enumerate them in the question body and let the user pick which one to act on (`AskUserQuestion` with one option per candidate plus "Start over" and "Cancel"). Never silently pick "the newer one" or "the one that matches more closely" — picking is the user's decision.
+**Multiple match candidates.** When the workspace has more than one matching artifact (e.g. both a blueprint and a spec for the same slug, or two distinct slugs that both could be what the user meant), enumerate them in the question body and let the user pick which one to act on (`AskUserQuestion`, `multiSelect: false`, one option per candidate plus "Start over" and "Cancel"). The tool accepts 2 to 4 options per question, so list **at most 2 candidates** as options (the two whose slug or system name match the request most closely); when there are more, name every candidate in the question body and end it with *"Type the file name of another candidate if it isn't listed."* (the tool adds its own free-text slot; never list an "Other" option). Once the user has picked a candidate, the single-match widget above fires for that file (deploy / audit / start over / cancel). Never silently pick "the newer one" or "the one that matches more closely" — picking is the user's decision.
 
-**On option 3 (Start over).** Fire a follow-up `AskUserQuestion` asking where to move the pre-existing artifact: an archive folder (`semantius/archive/`), a user-specified path, or "leave in place and I'll rename my new build's slug to avoid the collision." The admin never deletes pre-existing files (per the rules at the bottom of this SKILL); it can only move them, and only with explicit user direction.
+**On option 3 (Start over).** Fire a follow-up `AskUserQuestion` (`multiSelect: false`, 2 options) asking where to move the pre-existing artifact: `"Move it to semantius/archive/ (Recommended)"` or `"Leave it in place; I'll give the new build a different slug"`. A different folder is typed into the tool's free-text slot, not listed as an option. The admin never deletes pre-existing files (per the rules at the bottom of this SKILL); it can only move them, and only with explicit user direction.
 
 **On option 1 / 2.** Skip Step 0's classification result and route directly to the appropriate pipeline (deploy through Step 6 for option 1; architect Audit or analyst Audit for option 2). The user's choice here overrides whatever Step 0 originally classified the request as.
 
@@ -233,9 +246,11 @@ A request can produce zero, one, or many match candidates. **All must be surface
 
 ## Step 2: Fetch remote artifacts (only when input is a URL)
 
-When the user gives an `http(s)://` URL, fetch it before any other step using the canonical fetch-validate-place procedure in **Step 6.1**: `curl -s -L` into `.tmp_admin/<run_id>/incoming/`, validate the first 30 lines parse as front-matter with a known `artifact:` value, then move to `semantius/blueprints/<system_slug>-semantic-blueprint.md` or `semantius/specs/<system_slug>-semantic-spec.md` (folders created on demand). Never `WebFetch` (INV-6).
+When the user gives an `http(s)://` URL, fetch it before any other step using the canonical fetch-validate-place procedure in **Step 6.1**: `curl -s -L` into `.tmp_admin/<run_id>/incoming/`, validate the first 30 lines parse as front-matter with a known `artifact:` value, then move to `semantius/blueprints/<system_slug>-semantic-blueprint.md` or `semantius/specs/<system_slug>-semantic-spec.md` (folders created on demand). Never `WebFetch`.
 
 On any fetch failure (curl non-zero exit, empty file, no front-matter, unknown `artifact:` value), halt and report the failure verbatim; do not guess. The `semantius/` folder at the workspace root is the committed home for these artifacts (distinct from the plugin install, which lives in the user's Claude Code plugin folder, not their project repo).
+
+**On success, emit the download milestone** (Output discipline): one line per URL, as soon as its front-matter has validated, naming the design by its `system_name` and the source host, e.g. *"Downloaded the Hiring Starter blueprint from semantius.com."* (for a spec: *"Downloaded the Hiring Starter spec from semantius.com."*). That line is this step's ONLY chat output; where the file landed, the staging folder, and the validation are `$DIAG_LOG` material. Do not pre-announce the fetch ("Fetching the blueprint...") and do not add a second line when the file was already present and byte-identical (Step 1.3 bypass): the milestone still reads "Downloaded ...", because it was.
 
 ---
 
@@ -254,7 +269,7 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 | **Deploy existing** | **Any (1 or N blueprints/specs)** | **Hand off to Step 6.** This is the universal deploy path regardless of how many items. Scope flags (`customize` / `review`, plus `deploy`) are resolved FIRST per "Resolve scope flags BEFORE presenting the plan" below (inference in 6.4.1, asked when ambiguous), so a bare "deploy this" still fires the customize question before anything runs. |
 | Audit | Blueprint named | `architect (Audit)` on the blueprint (does NOT route through Step 6). |
 | Audit | Spec named | `analyst (Audit)` on the spec (does NOT route through Step 6). |
-| Audit | Both, no name | Ask user which to audit, or audit both serially. |
+| Audit | Both, no name | Ask which to audit (`AskUserQuestion`, `multiSelect: false`, 3 options: the blueprint, the spec, both one after the other). |
 | Status | n/a | Admin-only (Step 5). |
 | Admin (backup, list, ...) | n/a | Admin-only (Step 5). |
 
@@ -262,27 +277,24 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 
 ### Resolve scope flags before presenting the plan
 
-Scope flags are resolved before any plan that contains them is rendered (INV-3). They are routing decisions, not confirmations: `customize=yes` makes a blueprint architect → analyst → modeler, `customize=no` makes it analyst → modeler, so a plan cannot be correct until they are resolved. Greenfield builds and catalog clones short-circuit (no scope question fires; the bug guard: "create a task list" must NEVER produce *"Deploy the task-list design as designed, or edit it first?"*). For an existing artifact (a workspace file, a Step 1.3 match, or a URL fetched in Step 2):
+Scope flags are resolved before the pipeline tasks are created (scope flags before the plan). They are routing decisions, not confirmations: `customize=yes` makes a blueprint architect → analyst → modeler, `customize=no` makes it analyst → modeler, so a plan cannot be correct until they are resolved. Greenfield builds and catalog clones short-circuit (no scope question fires; the bug guard: "create a task list" must NEVER produce *"Deploy the task-list design as designed, or edit it first?"*). For an existing artifact (a workspace file, a Step 1.3 match, or a URL fetched in Step 2):
 
-- **Single identified artifact** (one named file, one fetched URL, one Step 1.3 match): resolve its flags HERE, before the plan is rendered. The front-matter (`system_name`) is in hand, so the question wording is fully formed.
-- **Multi-source / glob** (items only enumerated in Step 6.1): resolve each item's flags in Step 6.4, still before that item's plan line is rendered in Step 6.6.
+- **Single identified artifact** (one named file, one fetched URL, one Step 1.3 match): resolve its flags HERE, before the pipeline tasks are created. The front-matter (`system_name`) is in hand, so the question wording is fully formed.
+- **Multi-source / glob** (items only enumerated in Step 6.1): resolve each item's flags in Step 6.4, still before that item's pipeline tasks are created in Step 6.6.
 
-Use the inference-then-ask procedure in Step 6.4 (intent table 6.4.1, exact wording 6.4, procedure 6.4.2); do not re-derive it here. These are scope questions, not the deploy confirmation, so INV-1 never suppresses them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize question.
+Use the inference-then-ask procedure in Step 6.4 (intent table 6.4.1, exact wording 6.4, procedure 6.4.2); do not re-derive it here. These are scope questions, not the deploy confirmation, so the single-write-gate rule never suppresses them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize question. The flag questions run through the question ledger (Task tracking above): `TaskList` must show no open `Q:` task before any pipeline task exists.
 
 ### Presenting the plan
 
-By this point the scope flags are resolved, so the plan reflects them and shows the right number of steps. **Pipeline flows (build, clone, deploy) do NOT render-and-run their plan here** — they hand off to Step 6, which renders the runnable plan in Step 6.6 after Step 6.4 resolves each item's flags. Step 3 renders a runnable plan only for flows that bypass Step 6 (audit, admin). Never render a deploy plan and jump straight to spawning a sub-skill from Step 3: that skips Step 6.4.
+By this point the scope flags are resolved, so the plan reflects them and shows the right number of steps. **Pipeline flows (build, clone, deploy) do NOT build-and-run their plan here** — they hand off to Step 6, which creates the pipeline tasks in Step 6.6 after Step 6.4 resolves each item's flags. Step 3 builds a runnable plan only for flows that bypass Step 6 (audit, admin). Never build a deploy plan and jump straight to entering a sub-skill from Step 3: that skips Step 6.4.
 
-Render per INV-1 (informational; no up-front Proceed? gate; the modeler is the single write gate) and INV-5 (markdown prose, never code-fenced). The full plan-line authoring rules, the four plan patterns (read-only / write-bound / network-fetch / greenfield), and the worked multi-item examples are in [`references/plan-shapes.md`](./references/plan-shapes.md). The canonical write-bound shape:
+The plan is the task list: create one task per plan line, then emit the one-sentence lead-in in chat (single write gate: no up-front Proceed? widget; the modeler asks its own yes/no). The plan-line authoring rules, the four plan patterns (read-only / write-bound / network-fetch / greenfield), and the worked multi-item examples are in [`references/plan-shapes.md`](./references/plan-shapes.md). The canonical write-bound shape is two tasks plus one sentence:
 
-> **Plan:**
->
-> 1. Match `ats-candidate-crm` against your live semantic model and write the spec.
-> 2. Apply `ats-candidate-crm` to your live semantic model.
->
-> Step 1 is the spec-building step: it produces the deployable spec file and asks you a few merge / reuse / promote questions; it doesn't touch your live model. Step 2 applies that spec; the modeler shows what it will change and asks a final yes/no before it updates the live model.
+- Task: `Match ats-candidate-crm against your live semantic model and write the spec.`
+- Task: `Apply ats-candidate-crm to your live semantic model.`
+- Chat: *"Here is the plan. The matching step asks you a few merge / reuse questions and writes nothing; the apply step updates your live model after it shows you what changes and you say yes."*
 
-Then run the pipeline; the modeler is the single write gate (INV-1). If the user wants to change scope or stop after seeing the plan, they say so in chat; re-resolve the flags (Step 6.4) and re-render, or stop cleanly ("Cancelled. No changes made."). Nothing has run, and the modeler still gates every write, so no unintended write can slip through.
+Then run the pipeline; the modeler is the single write gate. If the user wants to change scope or stop after seeing the plan, they say so in chat; re-resolve the flags (Step 6.4), set the obsolete pipeline tasks `deleted` and create the new ones, or stop cleanly ("Cancelled. No changes made."). Nothing has run, and the modeler still gates every write, so no unintended write can slip through.
 
 ---
 
@@ -296,10 +308,10 @@ For each step in the plan, run the corresponding sub-skill **inline in the main 
 
 For each step:
 
-1. **Pre-flight**: confirm the input artifact exists at the expected path.
-2. **Invoke inline**: establish the run context (Step 7.3) in the conversation, then enter the sub-skill in this same context and follow its `SKILL.md`. Let its `AskUserQuestion` prompts surface to the user; answer nothing on the user's behalf. The sub-skill produces its output artifact.
+1. **Pre-flight**: confirm the input artifact exists at the expected path. `TaskList`, then set the step's pipeline task `in_progress`.
+2. **Invoke inline**: establish the run context (Step 7.3) in the conversation, then enter the sub-skill in this same context and follow its `SKILL.md`. Let its `AskUserQuestion` prompts surface to the user; answer nothing on the user's behalf. The sub-skill creates and drives its own stage tasks; the admin does not touch them. The sub-skill produces its output artifact.
 3. **Verify**: confirm the expected output artifact appeared in the workspace at the expected path.
-4. **Surface**: tell the user the step succeeded, with a one-line summary (output path, key metrics).
+4. **Record**: `TaskList`, then set the pipeline task `completed` with a one-line summary (output path, key metrics) in its description. Nothing in chat; the final report (Step 6.8) or the close-out (Step 8, for audit runs that bypass Step 6) is where the summary reaches the user.
 
 If any sub-skill halts, surfaces an error, or asks the user a question the admin can't answer on its behalf, **stop the pipeline at that point** and surface the sub-skill's last message verbatim. The admin does not try to recover or guess.
 
@@ -365,9 +377,9 @@ Decisions the user makes inside one item (cross-module collisions, host-master p
 
 Walk the deploy sources named in the request left-to-right (when invoked as a plugin command they arrive as the command arguments; standalone, read them from the user's message). Each source is one of:
 
-- `http(s)://...` URL: download via `curl -s -L` (never `WebFetch`). Land in `.tmp_admin/run-<id>/incoming/<derived-filename>.md` for validation; on success, move to the workspace artifact folder (`semantius/blueprints/<system_slug>-semantic-blueprint.md` or `semantius/specs/<system_slug>-semantic-spec.md`).
-- Local file path: accept both the convention folders (`semantius/blueprints/<file>`, `semantius/specs/<file>`) and bare workspace-root paths (legacy). A root-only artifact is **copied into the convention folder up front per Step 1.1's copy rule, before any sub-skill runs**, and the convention-folder copy becomes the resolved working path for the rest of the run; the root original is read once and then never edited. (copy, never move; never edit the root.)
-- Glob pattern: expand against the workspace. Sensible glob shapes include `semantius/blueprints/*.md`, `semantius/specs/*.md`, or `./*.md` for legacy roots. Order is whatever the shell returns; user can re-order by listing sources explicitly.
+- `http(s)://...` URL: download via `curl -s -L` (never `WebFetch`). Land in `.tmp_admin/run-<id>/incoming/<derived-filename>.md` for validation; on success, move to the workspace artifact folder (`semantius/blueprints/<system_slug>-semantic-blueprint.md` or `semantius/specs/<system_slug>-semantic-spec.md`) and emit the one download milestone line per Step 2 (*"Downloaded the Hiring Starter blueprint from semantius.com."*), the only chat output the fetch produces.
+- Local file path: accept both the convention folders (`semantius/blueprints/<file>`, `semantius/specs/<file>`) and bare workspace-root paths. A root-only artifact is **copied into the convention folder up front per Step 1.1's copy rule, before any sub-skill runs**, and the convention-folder copy becomes the resolved working path for the rest of the run; the root original is read once and then never edited. (copy, never move; never edit the root.)
+- Glob pattern: expand against the workspace. Sensible glob shapes include `semantius/blueprints/*.md`, `semantius/specs/*.md`, or `./*.md` for the workspace root. Order is whatever the shell returns; user can re-order by listing sources explicitly.
 
 Build a flat list of resolved file paths (validated, final locations). Validate each one:
 
@@ -406,7 +418,7 @@ The full file goes to the sub-skill by path reference. Do not read the body into
 
 **Greenfield and clone items skip 6.4 entirely.** When the item is a blueprint this run's architect just created (a greenfield build or a catalog clone), scope flags do NOT apply: the Create pass was the interactive design, `deploy` is implied, and `customize` / `review` are N/A. Route such items straight to analyst → modeler (Step 6.5) without asking anything. Resolve scope flags ONLY for artifacts that pre-existed the run (a workspace file or a URL fetched in Step 2).
 
-**Ordering (hard rule) for pre-existing artifacts: scope flags are resolved BEFORE the plan is rendered in 6.6.** For a single identified pre-existing artifact this already happened in Step 3 ("Resolve scope flags BEFORE presenting the plan"); re-read those resolved values here and validate they fit the item's artifact type (a blueprint takes `customize` + `deploy`; a spec takes `review` + `deploy`). For items first enumerated in Step 6.1 (multi-source / glob), resolve them here. These are routing / scope questions, NOT the deploy confirmation, so the "no up-front gate" rule does not suppress them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize `AskUserQuestion` before the plan and before any sub-skill is spawned.
+**Ordering (hard rule) for pre-existing artifacts: scope flags are resolved BEFORE the pipeline tasks are created in 6.6.** For a single identified pre-existing artifact this already happened in Step 3 ("Resolve scope flags BEFORE presenting the plan"); re-read those resolved values here and validate they fit the item's artifact type (a blueprint takes `customize` + `deploy`; a spec takes `review` + `deploy`). For items first enumerated in Step 6.1 (multi-source / glob), resolve them here. These are routing / scope questions, NOT the deploy confirmation, so the "no up-front gate" rule does not suppress them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize `AskUserQuestion` before the plan and before any sub-skill is entered. The mechanical form of this rule: the flag questions are `Q:` ledger tasks, and 6.6 may not create a pipeline task while `TaskList` shows a `Q:` task pending or in progress.
 
 Up to three flags apply per item. Which two are in play depends on the artifact type:
 
@@ -474,20 +486,20 @@ The classification is lenient on `deploy` (favor inferring) and strict on `custo
 0. **Greenfield / clone short-circuit.** If the item is a blueprint this run's architect created (greenfield build or catalog clone), STOP: scope flags are N/A, `deploy` is implied, route it straight to analyst → modeler. Do not run the steps below for it.
 1. Read the user's full request text (the message that triggered the run).
 2. For each item, pick the half of the table (blueprint or spec) matching the artifact, then walk it top-to-bottom; first match wins.
-3. For every flag that remains `?` after inference, fire `AskUserQuestion` using that flag's exact wording from 6.4 above (the question, both options with their impact-explicit descriptions, and the default option marked Recommended). One question per flag, never combined.
-4. Narrate the inferred flags in one line before continuing, listing ONLY the flags that came from inference (not the ones the user was just asked): *"Inferred: customize=no, deploy=yes."* If everything was asked, or everything came from explicit phrasing, skip the line.
+3. For every flag that remains `?` after inference, ask it through the question ledger (`references/task-tracking.md`, Pattern B): one `Q:` task per flag whose subject is `Q: ` + that flag's exact 6.4 question wording, then batches of up to four question objects per `AskUserQuestion` call, each question carrying its 6.4 header, both options with their impact-explicit descriptions, and the default option marked Recommended. One question object per flag, never two flags merged into one question. The answer is recorded on the item (in the pipeline task's description once it exists) and the `Q:` task set `completed`. `TaskList` clean of `Q:` tasks is the precondition for 6.6.
+4. Inferred flags are NOT narrated (no *"Inferred: customize=no, deploy=yes."*): raw flag tokens are internal vocabulary. The resolved scope reaches the user through the plan lead-in, which names the steps and says which one writes to the live model, and 6.4.3 covers a correction. The flag values go into the pipeline tasks' descriptions and `$DIAG_LOG`.
 
 #### 6.4.3 Changing scope before the run
 
-There is no up-front confirmation gate to pick "change" from. If the user asks to change scope after seeing the plan (in chat), re-resolve the in-play flags for the run and re-render the plan. The intent inference doesn't run again on an explicit correction (the user is overriding it).
+There is no up-front confirmation gate to pick "change" from. If the user asks to change scope after seeing the plan (in chat), re-resolve the in-play flags for the run, set the obsolete pipeline tasks `deleted`, and create the new ones. The intent inference doesn't run again on an explicit correction (the user is overriding it).
 
 ### 6.5 Build the checklist
 
-For each item, derive its pipeline by artifact type and the **already-resolved** flags (Step 3 / 6.4 resolved them before this point; 6.5 only reads them, it never asks or re-resolves). **Each sub-skill in an item's pipeline is rendered as its OWN numbered line in the plan; do NOT collapse multiple sub-skills into one line.** A blueprint with customize=yes and deploy=yes is three numbered lines, not one.
+For each item, derive its pipeline by artifact type and the **already-resolved** flags (Step 3 / 6.4 resolved them before this point; 6.5 only reads them, it never asks or re-resolves). **Each sub-skill in an item's pipeline is its OWN task; do NOT collapse multiple sub-skills into one task.** A blueprint with customize=yes and deploy=yes is three tasks, not one.
 
 **Pipeline per item:**
 
-| Input artifact | edit-first flag | deploy | Pipeline (each step = one numbered line) |
+| Input artifact | edit-first flag | deploy | Pipeline (each step = one task) |
 |---|---|---|---|
 | `semantic-blueprint` | `customize=no` | `yes` | analyst Reconcile → modeler |
 | `semantic-blueprint` | `customize=no` | `no` | analyst Reconcile |
@@ -498,34 +510,36 @@ For each item, derive its pipeline by artifact type and the **already-resolved**
 | `semantic-spec` | `review=yes` | `yes` | analyst Review → modeler |
 | `semantic-spec` | `review=yes` | `no` | analyst Review |
 
-Render the checklist as a numbered list using each file's `system_slug` (or filename if slug is missing), per the plan-line authoring rules in [`references/plan-shapes.md`](./references/plan-shapes.md) (action-first, "your semantic model", filenames surfaced in the close-out not the plan line; INV-5). The plan is informational (INV-1: no confirmation widget at the end).
+The plan is the task list: one `TaskCreate` per pipeline step, in item order, subject from the table below using each file's `system_slug` (or filename if slug is missing), per the plan-line authoring rules in [`references/plan-shapes.md`](./references/plan-shapes.md) (action-first, "your semantic model", filenames surfaced in the close-out not the subject). The plan is informational (single write gate: no confirmation widget at the end; creating tasks is not a pause).
 
-**Per-sub-skill line shapes:**
+**Per-sub-skill task subjects:**
 
-| Sub-skill | Line shape |
+| Sub-skill | Task subject |
 |---|---|
+| architect Create (greenfield) | `"Design the data model for your <system>, mapping out its entities and how they relate (interactive)."` |
+| architect Catalog-Clone | `"Clone the \`<source>\` design as a starting point (interactive)."` |
 | architect Customize | `"Review and edit \`<slug>\`."` |
 | analyst Reconcile (from a blueprint) | `"Match \`<slug>\` against your live semantic model and write the spec."` |
 | analyst Review (from a spec) | `"Review \`<slug>\` against your live semantic model."` |
 | modeler | `"Apply \`<slug>\` to your live semantic model."` |
 
-For multi-item runs, numbering is continuous across items (item one is lines 1..k; item two is lines k+1..m; ...). Each line stands alone; don't compress repeated phrases.
+For multi-item runs, create item one's tasks, then item two's, and so on, and chain every task after the first with `addBlockedBy: [<previous pipeline task id>]` (one chain across all items; that is the order, and the reason numbering is never used: ids interleave with the sub-skills' own stage tasks and with `Q:` tasks). Each subject stands alone; don't compress repeated phrases.
 
-Worked examples for every flag combination (multi-item analyst → modeler, dry-run, customize, direct spec deploy, review-then-deploy) are in [`references/plan-shapes.md`](./references/plan-shapes.md). Render them per INV-1 and INV-5; the modeler shows its own summary and asks a final yes/no before writing each item.
+Worked examples for every flag combination (multi-item analyst → modeler, dry-run, customize, direct spec deploy, review-then-deploy) are in [`references/plan-shapes.md`](./references/plan-shapes.md). The modeler shows its own summary and asks a final yes/no before writing each item.
 
-**Trailing-sentence rule:** the last sentence in the plan tells the user what gets written. If any line is a modeler apply, end with "*Line N (and N2, ...) update the live model.*" listing the apply-line numbers. If no apply lines exist, end with "*Nothing is applied to your semantic model; specs are written to `semantius/specs/`.*"
+**Lead-in sentence rule:** the one chat sentence that accompanies the tasks tells the user which step asks questions and what gets written, naming steps by what they do (never by number). If any task is a modeler apply: *"Here is the plan. The matching step asks you a few merge / reuse questions and writes nothing; the apply step updates your live model after it shows you what changes and you say yes."* If no apply task exists: *"Here is the plan. The matching step asks you a few merge / reuse questions; nothing is applied to your semantic model, and the spec is written to `semantius/specs/`."* Drop the matching clause when no analyst step exists; add *"The editing step is interactive and ends when you say you are done."* when an architect step exists.
 
-**Spec + `deploy=no` + `review=no` is refused.** If an item resolves to that combination, narrate one line — *"`<slug>` is a spec with deploy=no and review=no; nothing would happen. Skipping."* — and drop the item from the run before rendering the plan.
+**Spec + `deploy=no` + `review=no` is refused.** If an item resolves to that combination, narrate one line — *"`<slug>` is a spec with deploy=no and review=no; nothing would happen. Skipping."* — and drop the item from the run before creating any task.
 
 ### 6.6 Present the plan and run
 
-Render the checklist per 6.5, then run (INV-1: no up-front confirmation widget, one item or many; INV-5: markdown prose).
+Precondition: `TaskList` shows no `Q:` task pending or in progress (every scope flag answered). Then create the pipeline tasks per 6.5 and chain them (`TaskCreate` all, then `TaskUpdate ... addBlockedBy` on each after the first, in the same response), emit the lead-in sentence, and run (single write gate: no up-front confirmation widget, one item or many).
 
-- **Run includes writes** (`deploy=yes` for any item): per INV-1 each item's modeler step shows its own plan summary and asks a final yes/no before it writes — one modeler confirmation per deploying item, fired when that item's spec is ready.
-- **Read-only run** (`deploy=no`): announce the plan and run.
-- **Changing scope or cancelling:** if the user asks to change scope or stop after seeing the plan, re-resolve the flags (6.4) and re-render, or stop cleanly. No widget needed; nothing has run yet and the modeler still gates every write.
+- **Run includes writes** (`deploy=yes` for any item): each item's modeler step shows its own plan summary and asks a final yes/no before it writes — one modeler confirmation per deploying item, fired when that item's spec is ready.
+- **Read-only run** (`deploy=no`): create the tasks, emit the lead-in, run.
+- **Changing scope or cancelling:** if the user asks to change scope or stop after seeing the plan, re-resolve the flags (6.4), set the obsolete tasks `deleted` and create the new ones, or stop cleanly. No widget needed; nothing has run yet and the modeler still gates every write.
 
-If a URL fetch happened in 6.1, print the URLs and run the fetch first (it writes nothing to the live model), then continue.
+If a URL fetch happened in 6.1, print the URLs and run the fetch first (it writes nothing to the live model and is never a task), then continue.
 
 ### 6.7 Execute item by item
 
@@ -533,18 +547,18 @@ Iterate the resolved list in user-given order. Trust the order; do not topologic
 
 For each item:
 
-**Precondition (hard gate):** this item's scope flags are already resolved (Step 3 / Step 6.4) and its plan line rendered (Step 6.6). If `customize` (blueprint) or `review` (spec) is still unresolved, STOP and resolve it first; never spawn the item's first sub-skill with an unresolved scope flag. Never jump from the Step 3 plan straight to spawning the analyst while skipping the customize question.
+**Precondition (hard gate):** this item's scope flags are already resolved (Step 3 / Step 6.4) and its pipeline tasks created (Step 6.6). If `customize` (blueprint) or `review` (spec) is still unresolved, STOP and resolve it first; never enter the item's first sub-skill with an unresolved scope flag. Never jump from the Step 3 plan straight to entering the analyst while skipping the customize question.
 
-1. Print one narration line: `Item N of M: <slug or filename> → <pipeline>`. One line. Do not double-narrate what the sub-skill itself will narrate, and do not add a transition sentence between sub-skills (no *"Now applying it to your live model..."*, no pre-explaining the deploy step), see "Pipeline hand-offs are not narrated" in Output discipline.
+1. `TaskList`, then set the item's first pipeline task `in_progress`. No chat line: the task status is the trace. Do not double-narrate what the sub-skill itself will narrate, and do not add a transition sentence between sub-skills (no *"Now applying it to your live model..."*, no pre-explaining the deploy step), see "Pipeline hand-offs are not narrated" in Output discipline.
 2. Establish the run context per Step 7.3's schema (stated in the conversation, not prepended to an Agent-tool call):
    - Always: `Run context:`, `Customizations file:`.
    - Architect invocation: add `Architect mode:` (one of `create | catalog-clone | audit | extend | customize | rebuild`) and `Input artifact:` — this MUST be the **convention-folder working copy** (`semantius/blueprints/<file>`) resolved in Step 6.1, never the repo-root path. The architect edits the artifact it is handed in place, so handing it the root path is what causes the root file to be mutated; hand it the copy. Derive mode from the resolved flags (table in Step 7.3).
    - Analyst invocation: add `Analyst mode:` (`reconcile` for normal deploys; `audit` / `extend` / `rebuild` for other routes) and `Input artifact:` (the convention-folder working copy, never the root).
    - Modeler invocation: add `Input artifact:` (spec path) and `Deploy flag:` (`yes`/`no` per the resolved deploy choice).
 3. Enter the first sub-skill in the pipeline **inline in the main thread** (Step 4 invocation pattern): state the run context from step 2, then follow the sub-skill's `SKILL.md` in this same context so its `AskUserQuestion` prompts reach the user. Do NOT spawn it as an Agent-tool subagent.
-4. On sub-skill success: advance to the next step in this item's pipeline. **🛑 Exception (interactive customize gate).** When the step that just completed was the **architect in `customize` mode**, do NOT auto-advance to the analyst the moment an edit lands. The customize step is an interactive LOOP that only the user ends (architect Step C5); a single edit landing is NOT proof the user is finished. Before advancing, confirm with the user that the customize pass is complete, e.g. *"That's the change in. Ready for me to match this against your live model and continue, or do you want more changes first?"* Advance to the analyst ONLY after the user explicitly says they are done.
-5. On sub-skill failure: halt the run. Mark this item ✗, mark remaining items ⏸. Carry on to Step 6.8.
-6. When the item's pipeline completes: the convention-folder working copy was already created **up front** (Step 6.1 / Step 1.1) and every edit this run targeted it, so it already matches exactly what was deployed — no post-hoc copy from the root is needed (and copying *from* the root here would be wrong, since the root was deliberately left unedited). Just confirm the convention copy exists (a defensive `cp` from the root is acceptable *only* if the convention copy is somehow absent, e.g. a direct deploy that skipped Step 6.1's resolve). Then mark ✓ and advance to the next item.
+4. On sub-skill success: `TaskList`, set the finished pipeline task `completed` (one-line summary in its description), set the next one `in_progress`, and advance. **🛑 Exception (interactive customize gate).** When the step that just completed was the **architect in `customize` mode**, do NOT auto-advance to the analyst the moment an edit lands. The customize step is an interactive LOOP that only the user ends (architect Step C5); a single edit landing is NOT proof the user is finished. The mechanical check: `TaskList` must show the architect's `Design › Edit the design with you` task `completed` (the architect sets it so only when the user answers its own C5 "done?" question). While that task is `in_progress`, the customize pass is still open: wait for the architect's question and the user's answer; do not ask a second admin-level "ready to continue?" question. Advance to the analyst ONLY after that task is `completed`.
+5. On sub-skill failure: halt the run. The failing pipeline task stays `in_progress` with `halted: <verbatim message>` in its description; the remaining pipeline tasks stay `pending`. Carry on to Step 6.8 (which renders ✗ / ⏸ from those statuses).
+6. When the item's pipeline completes: the convention-folder working copy was already created **up front** (Step 6.1 / Step 1.1) and every edit this run targeted it, so it already matches exactly what was deployed — no post-hoc copy from the root is needed (and copying *from* the root here would be wrong, since the root was deliberately left unedited). Just confirm the convention copy exists (a defensive `cp` from the root is acceptable *only* if the convention copy is somehow absent, e.g. a direct deploy that skipped Step 6.1's resolve). Then advance to the next item.
 
 `customizations.yaml` accumulates across items and across runs; later items consult it before firing their own `AskUserQuestion`s. This is the only cross-item awareness the analyst gets. No multi-item-aware analyst logic exists.
 
@@ -557,7 +571,7 @@ Similarly for chat narration: when the run folder is created, narrate at most on
 
 ### 6.8 Final report
 
-After the last item (or on halt). Render as markdown prose (INV-5):
+After the last item (or on halt). Render as markdown prose, never code-fenced. Item status comes from the **admin pipeline tasks** (`TaskList`): every task of an item `completed` → ✓; a task `in_progress` with `halted:` → ✗ (quote its message); an item whose tasks are all still `pending` → ⏸. The sub-skills' own stage tasks are not consulted.
 
 > **2 of 3 items applied to your semantic model.**
 >
@@ -579,7 +593,7 @@ The authoritative reference for how the admin and sub-skills share standing poli
 
 ### 7.1 Why every answer is policy
 
-The architect and analyst no longer ask the same question twice. Every Stage 3 / authoring-stage answer is written to `semantius/<org>/customizations.yaml` as standing policy *before* the spec or catalog change proceeds. Re-runs of the same blueprint, sibling blueprints that reference the same entity, and brand-new blueprints that share a concept all auto-resolve from this single file.
+The architect and analyst never ask the same question twice. Every Stage 3 / authoring-stage answer is written to `semantius/<org>/customizations.yaml` as standing policy *before* the spec or catalog change proceeds. Re-runs of the same blueprint, sibling blueprints that reference the same entity, and brand-new blueprints that share a concept all auto-resolve from this single file.
 
 There is no "just this run" alternative, no follow-up "remember it?" widget, no opt-out. Decisions are policy unconditionally. The customer's escape hatch is git: revert the line in `customizations.yaml`, re-deploy. Git is the audit log; the file itself carries provenance via trailing comments (`# decided <YYYY-MM-DD> during <blueprint_slug> deploy`).
 
@@ -663,7 +677,7 @@ After successful execution:
 After unsuccessful execution:
 
 - Surface the failing sub-skill's last message verbatim.
-- Suggest the recovery path from `three-skill-workflow-spec.md` § 6 (Failure Modes).
+- Suggest the recovery path from `../../docs/architecture.md` § 6 (Failure Modes).
 - Never try to "fix" the failure by chaining additional sub-skills.
 
 ---
@@ -691,7 +705,7 @@ When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess
 - **Auto-recover from a sub-skill failure.** Surface the failure; let the user choose the next step.
 - **Modify built-in tables silently.** Additive fields are allowed; replacement is not.
 - **Write an `org:` field inside `customizations.yaml`.** The folder name is the org; a duplicate field would drift, the folder path cannot.
-- **Create a `history.jsonl` (or any decision log file).** Git on `customizations.yaml` is the audit trail. Provenance comments inside the file carry per-entry dates. (The per-run `$DIAG_LOG` is NOT a decision log — it's gitignored, ephemeral diagnostics, never a source of truth. Allowed.)
+- **Create a `history.jsonl` (or any decision log file).** Git on `customizations.yaml` is the audit trail. Provenance comments inside the file carry per-entry dates. (The per-run `$DIAG_LOG` is NOT a decision log — it's gitignored, ephemeral diagnostics, never a source of truth. Allowed. The task list and the no-task-tool fallback checklist file are the same class: they track open questions and progress; answers live only in `customizations.yaml` and the artifacts. Allowed.)
 - **Surface internal mechanics in chat.** Preflight guards, org probes, CLI/`yq` plumbing, stage transitions, and skill-internal vocabulary go to `$DIAG_LOG`, never to the user. See the Output discipline section.
 
 ---
@@ -702,10 +716,11 @@ This skill's own references (load on demand):
 
 - `./references/preflight.md` — shared environment preflight (run by all four skills)
 - `./references/writing-conventions.md` — shared writing conventions (canonical copy)
+- `./references/task-tracking.md` — task tools, stage tracking, and the question ledger (canonical copy)
 - `./references/output-discipline.md` — per-run diagnostic-log mechanics
 - `./references/admin-operations.md` — Step 5 admin-op procedures (status / backup / list / health)
 - `./references/plan-shapes.md` — plan-line authoring rules, the four plan patterns, and worked examples
-- `./three-skill-workflow-spec.md` — full architecture spec, failure modes, debugging invariants (co-located in this skill folder)
+- `../../docs/architecture.md` — full architecture spec, failure modes, debugging invariants
 
 Sibling skills:
 

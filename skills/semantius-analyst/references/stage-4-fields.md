@@ -54,7 +54,7 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 > **Reserved field names.** Never draft a `field_name` that starts with `_` (reserves the entity's own `_label`) or ends with `_id_label` (reserves the `<fk>_label` FK companions). The platform rejects both on create and rename. Plain `*_label` names (e.g. `status_label`) remain allowed.
 
-> **`label_column` must be a string field, never a FK.** When `create_entity` runs, Semantius auto-creates a field whose `field_name` equals the `label_column`. Setting `label_column` to a FK field name causes a conflict. Junction tables: the platform auto-combines a junction's parent legs into its composed `_label` (`Alice Chen › Admin`), so a dedicated `string` label field (e.g. `product_tag_label`) is **optional** — add one only when you want a distinct local label beyond the combined legs.
+> **`label_column` must be a string field, never a FK.** When `create_entity` runs, Semantius auto-creates a field whose `field_name` equals the `label_column`. Setting `label_column` to a FK field name causes a conflict. Junction tables: the platform auto-combines a junction's parent legs into its composed `_label` (`Alice Chen › Admin`), so a dedicated `string` label field (e.g. `product_tag_label`) is **optional** — add one only when you want a distinct local label beyond the combined legs. When a junction has no local label, **omit the `**Label column:**` line** from its §3 block (template rule); never invent a synthetic label field just to fill the line. Every non-junction entity still carries the line.
 
 > **Derive `label_parent` — the entity's identity spine.** Each owned entity also gets an optional `**Label parent:**` line in §3 (omit when none). `label_parent` names the one FK whose composed `_label` prefixes this record's `_label`, so a relational record reads as its full parent chain (an interview scorecard shows the candidate, not just "Scorecard 6"). Derive it by this rule:
 >
@@ -71,7 +71,7 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 **Set `relationship_label` for every FK field.** Specific verb in parent voice: `accounts → opportunities` is `"owns"`; `users → tasks` (owner) is `"manages"`. Avoid filler (`"has"`, `"references"`). Self-references: pick `"parent of"` / `"manages"` / `"reports to"`. When same parent has multiple FKs from the same child, verbs must differentiate (`"created"` vs `"assigned"`). Annotate as `relationship_label: "<verb>"` in §3 Notes. §2 Mermaid edge label and this annotation must agree byte-for-byte.
 
-**Optional v5.4 Notes markers (round-trip carriers; author rarely, `semantius-optimizer` emits them from live).** Two field-presentation markers may appear in the Notes cell; both are OPTIONAL with an omit-when-default rule, so a hand-authored spec normally leaves them off and lets the platform defaults stand:
+**Optional Notes markers (round-trip carriers; author rarely, `semantius-optimizer` emits them from live).** Two field-presentation markers may appear in the Notes cell; both are OPTIONAL with an omit-when-default rule, so a hand-authored spec normally leaves them off and lets the platform defaults stand:
 - `width: <s|m|w>` — the field's display width. Bare value, NOT backticked, exactly like `precision: 2`. Emit ONLY when non-default; omit when the platform default (`default`).
 - `` `searchable` `` — backticked bare marker, exactly like `` `unique` ``. Emit ONLY when the field's live `searchable` is true.
 

@@ -22,12 +22,13 @@ These rules apply to chat output, spec markdown files, audit reports, and anythi
 
 **8. Plain language in every user-facing surface.** Anything the user reads — `AskUserQuestion` widgets (question, header, option labels, option descriptions), chat status updates, progress narration, plan summaries, peek-and-verify reports, close-out messages — is written for someone who has never opened a spec file and doesn't know the blueprint vocabulary. The user is a domain expert (HR director, ATS administrator, operations lead), not a data modeler.
 
-This convention covers **two surfaces** equally:
+This convention covers **three surfaces** equally:
 
 - **Surface A: `AskUserQuestion` fields** — question, header, option labels, option descriptions.
 - **Surface B: every other thing the user sees in chat** — status updates ("Let me read the existing entities..."), progress reports ("Skill Profiles already exists in another module..."), plan summaries, the closing message after a write.
+- **Surface C: task subjects and `activeForm`** (the harness task list; see [`task-tracking.md`](./task-tracking.md)). Task *descriptions* are working memory and may carry internal keys; subjects may not.
 
-Both surfaces follow the same ban list and the same "required" list below.
+All three surfaces follow the same ban list and the same "required" list below.
 
 **Banned in any user-facing surface:**
 
@@ -61,6 +62,17 @@ The internal annotation value (`reuse-from <X>.<Y>`, `promote-to-master <host>.<
 | "master / consumer / contributor / embedded role" | (translate per case; usually doesn't need naming) |
 
 **Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending.
+
+**AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response (an edit, a Bash call, a `TaskUpdate`) cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by the question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description. Inside a skill's declared ledger stages, every question is a `Q:` task whose subject is the exact question text, asked in batches of up to four and recorded per the response sequence in [`task-tracking.md`](./task-tracking.md); standalone questions elsewhere are unchanged.
+
+**Option count is 2 to 4 per question object, never 1 and never 5.** The tool rejects the whole call otherwise, every other question in it included. When the options come from data (one per entity, field, property, concept, file, column), count the items (K) and shape the list before firing:
+
+- **K = 2 to 4:** one question object, K options.
+- **K = 5 or more (multiSelect):** several question objects, same header, question text suffixed ` (<i> of <N>)`, filled in source order in chunks of 4; when the last chunk would hold 1, move the last item of the previous chunk into it (5 → 3 + 2, 6 → 4 + 2, 9 → 4 + 3 + 2). At most four question objects per call; the rest go in the next call, after the answers arrive.
+- **K = 1:** a 2-option single-select (the item, plus the "None" / "Skip" option the stage text names), or no widget where the stage text says the one item counts as chosen.
+- **Single-select pick list (the user chooses one candidate):** never split across questions. List at most the 3 best candidates (2 when two fixed options such as "Create new" and "Skip" must stay), keep the stage's fixed alternative so the count never drops to 1, and say in the question text that another can be typed in. With 0 candidates the widget does not fire (the stage text says what happens instead). The tool always adds its own free-text slot: never list an "Other" option.
+- Never pad with a filler option, never merge two items into one option.
+- The tool has no pre-checked or default-selected option; "(Recommended)" on one label is the only default marker, so word a multiSelect so that selecting nothing is the safe outcome.
 
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a reconciled spec. Hard rules:
 

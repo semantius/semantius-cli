@@ -101,7 +101,7 @@ semantius call crud read_module --single '{"filters": "module_slug=eq.<catalog-m
 The sweep is N-to-1: an entity may have accumulated multiple non-catalog prefixes across prior installs (e.g. `hiring-starter:hire_candidate` AND `ats-recruitment-pipeline:hire_candidate` may both exist when `ats-candidate-crm` finally installs). Stage 4n sweeps ALL non-catalog-prefixed permissions for the affected entity's verbs.
 
 ### 2j. Approval gates (no separate cross-check)
-The former `single_approver` / `has_single_approver` pattern-flag mechanism has been retired from the contract. An approval is now a §7 gated transition + its §8.1 `workflow-gate` permission (verified to exist like any other §8.1 row by 2a-scaffold step 2) + the §9 RACI Accountable actor. There is no phantom `approve_<entity>_approval` gate to detect, so this stage performs no approval-specific check; a workflow-gate permission is reconciled as a normal §8.1 permission.
+An approval is a §7 gated transition + its §8.1 `workflow-gate` permission (verified to exist like any other §8.1 row by 2a-scaffold step 2) + the §9 RACI Accountable actor. There is no phantom `approve_<entity>_approval` gate to detect, so this stage performs no approval-specific check; a workflow-gate permission is reconciled as a normal §8.1 permission.
 
 ## Stage 2.5: Access control scope (basic vs full RBAC)
 
@@ -129,7 +129,7 @@ Any row → **default Full** (stay consistent with the modules already using ful
 
 ### The prompt (only at resolution step 3)
 
-`AskUserQuestion`, header `Access control`, the Recommended option leading per the detection (Basic on a fresh instance, Full on one already using RBAC). Plain language, no `access_scope` token, US spelling, no em-dashes:
+A `Q:` ledger task (SKILL.md → Task tracking; subject `Q: Basic or advanced access control?`, `Recorded in: modules.access_scope via Stage 4a`), asked per the ledger sequence, batched with any Stage 3 `Q:` tasks that are already enumerated. `AskUserQuestion` header `Access control`, the Recommended option leading per the detection (Basic on a fresh instance, Full on one already using RBAC). Plain language, no `access_scope` token, US spelling, no em-dashes:
 
 - label `Basic access (read and edit)` — *"Anyone allowed in can read and edit records. No roles to manage, no approval steps, no per-stage gating. The records and their stages still exist; moving a record through its stages just isn't restricted. You can add advanced access control later."*
 - label `Advanced access control` — *"An admin tier, role-based permissions, approval gates on sensitive actions, and per-stage gating of record lifecycles. More to set up, fine-grained control over who can do what."*
@@ -144,7 +144,7 @@ If the resolved scope is `basic` **but the spec is full-shaped** (the backstop c
 |---|---|---|
 | 2a-scaffold / 4a / 4b | create every §8.1 permission, the full hierarchy chain, viewer/manager/admin roles | create only `<slug>:read` + `<slug>:manage`, the single `manage → read` edge, and the `<slug>_viewer` + `<slug>_manager` roles. Skip `<slug>:admin`, every `workflow-gate` / `narrow` / `override` permission, the admin role, and every gate rollup. Leave the module record's admin FK columns null. |
 | 4c (entities) | `edit_permission` per §3 `**Edit permission:**` (`admin` / `<narrow>` / `manage`) | force every entity's `edit_permission` to `<slug>:manage`. Lifecycle `workflow_state` enum fields are still created (the machine exists, ungated). |
-| 4e (write-side rules) | apply all `validation_rules` / `computed_fields` | drop any entry whose JsonLogic gates on a dropped permission (`require_permission` / `has_permission` on a code that no longer exists); keep pure data-integrity / computed entries. |
+| 4e (write-side rules) | apply all `validation_rules` / `computed_fields` | drop any entry whose JsonLogic gates on a dropped permission (`require_permission` / `has_permission` on a code that does not exist); keep pure data-integrity / computed entries. |
 | 4f (read-side rules) | apply `select_rule` / `input_type_rule` | apply none from the spec (treat as absent); for a *live* non-empty `select_rule` follow the existing 4f "model omits, live present → ask" path (never silently clear). Drop any `input_type_rule` that gates on a dropped permission. |
 | 4k / 4l / 4m | personas + RACI, functional-ownership grants, lifecycle handoffs | skip entirely. |
 

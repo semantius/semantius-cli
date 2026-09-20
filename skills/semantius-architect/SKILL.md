@@ -143,6 +143,32 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
 
 **Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine.
 
+**AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
+
+**Option count is 2 to 4 per question object, never 1 and never 5.** The tool rejects the whole call otherwise, every other question in it included. When the options come from data (one per entity, field, property, concept, file, column), count the items (K) and shape the list before firing:
+
+- **K = 2 to 4:** one question object, K options.
+- **K = 5 or more (multiSelect):** several question objects, same header, question text suffixed ` (<i> of <N>)`, filled in source order in chunks of 4; when the last chunk would hold 1, move the last item of the previous chunk into it (5 → 3 + 2, 6 → 4 + 2, 9 → 4 + 3 + 2). At most four question objects per call; the rest go in the next call, after the answers arrive.
+- **K = 1:** a 2-option single-select (the item, plus the "None" / "Skip" option the stage text names), or no widget where the stage text says the one item counts as chosen.
+- **Single-select pick list (the user chooses one candidate):** never split across questions. List at most the 3 best candidates (2 when two fixed options such as "Create new" and "Skip" must stay), keep the stage's fixed alternative so the count never drops to 1, and say in the question text that another can be typed in. With 0 candidates the widget does not fire (the stage text says what happens instead). The tool always adds its own free-text slot: never list an "Other" option.
+- Never pad with a filler option, never merge two items into one option.
+- The tool has no pre-checked or default-selected option; "(Recommended)" on one label is the only default marker, so word a multiSelect so that selecting nothing is the safe outcome.
+
+**Task tracking** (resident summary; the rules are the canonical text in [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md)). The architect uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`); the task list is rendered UI, not chat, so it does not count against narration restraint.
+
+- **Stage tasks.** At Step 0, once the mode is known (from the header or from detection): `TaskList`, then `TaskCreate` the `Design ›` tasks for that mode from the table below (subjects verbatim, `activeForm` = subject, all `pending`); in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's user confirmation landed (Mode A stages end with the user confirming); a halt leaves the task `in_progress` with `halted: <reason>`. Never a task for preflight, file reads, or the pre-save checks.
+
+  | Mode | Task subjects, in order |
+  |---|---|
+  | Create-Greenfield (Mode A) | `Design › Capture what you are building and pick the naming style` (Stages 1-2) · `Design › Agree the things to track and how they relate` (Stages 3, 5) · `Design › Related modules, rules, and who does what` (Stages 6-11) · `Design › Write the design file` (Stage 13) |
+  | Create-Catalog-Clone (Mode A) | `Design › Clone <source> and adjust it with you` · `Design › Write the design file` |
+  | Audit (Mode B) | `Design › Audit the design` |
+  | Extend (Mode C) | `Design › Extend the design` |
+  | Customize (Mode C loop) | `Design › Edit the design with you` (stays `in_progress` for the whole C2 → C5 loop; `completed` only when the user answers the Step C5 question with "done"; the admin reads this status to decide whether it may advance to the analyst) |
+  | Rebuild (Mode D) | `Design › Rebuild the design` |
+
+- **Ledger stage: Stage 2 only.** The naming-style question is a `Q:` task (subject = `Q: How should we name things in this <domain> module?`, `Recorded in: .naming.mode`, gated by `TaskUpdate` on the first stage task with `addBlockedBy: [<the Q: task id>]`), created after the policy consultation (a hit creates no task) and asked per the ledger sequence; being the only Stage 2 question, it is one round of B / A / R. Every other architect question is standalone and unchanged: the Stage 1 and 3 conversational confirmations, the Catalog-Clone "what to change" question, the C3 "does this look right?" gate, the C5 "more changes?" question, the Mode D no-collapsing gates, the tagline confirmation. Stage 6 still asks nothing.
+
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a result. Hard rules:
 
 - **Do not announce what you're about to do** before doing it. No *"Let me peek at the existing blueprint to verify..."* — just peek. No *"Let me check the conventions..."* — just check. The peek/check itself produces a tool-call line in the transcript; that is enough.
@@ -277,18 +303,20 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 
 Follow these stages in order. Do not skip ahead: each stage produces input the next one relies on, and each stage ends with the user confirming before you move on. Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
 
-| Stage | Purpose | Read first |
-|---|---|---|
-| 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
-| 2. Naming | Legacy-vendor vs agent-optimized naming; built-in field alignment | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
-| 3. Entities | Propose the entity list; `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in`) | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
-| 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify; render, don't gate) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
-| 6. Related modules | Two-axis neighborhood walk → `related_modules` | [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) |
-| 7. Handoffs | §6.1-6.4 cross-domain context + event handoffs | [`references/stage-7-handoffs.md`](references/stage-7-handoffs.md) |
-| 8 + 9. Rules & classification | Business-rule intent; `entity_type` ladder + derived write tier; master-cluster hints | [`references/stage-8-9-rules-classification.md`](references/stage-8-9-rules-classification.md) |
-| 10. Workflow perms | W1 / W2 / W6 workflow-gate scan (architect scope) | [`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md) |
-| 11. Governance | Persona discovery; Processes catalog; RACI realization; §9 emission | [`references/stage-11-governance.md`](references/stage-11-governance.md) |
-| 13. Write | Finalize catalog surface (`tagline`, `module_kind`; `description` / `license` only when publishing); template; frontmatter; keep-with-placeholder rule; then the resident Pre-save verification below | [`references/stage-13-write.md`](references/stage-13-write.md) |
+The Task column is the exact subject of the stage task (Task tracking, above); stages sharing a subject are one task.
+
+| Stage | Purpose | Task subject | Read first |
+|---|---|---|---|
+| 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | `Design › Capture what you are building and pick the naming style` | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
+| 2. Naming | Legacy-vendor vs agent-optimized naming (the one ledger question); built-in field alignment | (same task) | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
+| 3. Entities | Propose the entity list; `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in`) | `Design › Agree the things to track and how they relate` | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
+| 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify; render, don't gate) | (same task) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
+| 6. Related modules | Two-axis neighborhood walk → `related_modules` | `Design › Related modules, rules, and who does what` | [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) |
+| 7. Handoffs | §6.1-6.4 cross-domain context + event handoffs | (same task) | [`references/stage-7-handoffs.md`](references/stage-7-handoffs.md) |
+| 8 + 9. Rules & classification | Business-rule intent; `entity_type` ladder + derived write tier; master-cluster hints | (same task) | [`references/stage-8-9-rules-classification.md`](references/stage-8-9-rules-classification.md) |
+| 10. Workflow perms | W1 / W2 / W6 workflow-gate scan (architect scope) | (same task) | [`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md) |
+| 11. Governance | Persona discovery; Processes catalog; RACI realization; §9 emission | (same task) | [`references/stage-11-governance.md`](references/stage-11-governance.md) |
+| 13. Write | Finalize catalog surface (`tagline`, `module_kind`; `description` / `license` only when publishing); template; frontmatter; keep-with-placeholder rule; then the resident Pre-save verification below | `Design › Write the design file` | [`references/stage-13-write.md`](references/stage-13-write.md) |
 
 **Field-level stages live in the analyst, not here.** Stages 4 (fields), 9b (cross-tier FK reconciliation), and 12 / 12.5 (select-rule + view/edit consistency) are not architect stages: the blueprint stops at entity level (only §3 catalog, §5 edges, §7 lifecycle, §8 permissions). The analyst runs those after this skill writes the blueprint, so run `semantius-analyst` next to elicit field-level detail.
 
@@ -337,7 +365,8 @@ Before writing, run these checks **silently** — do NOT narrate them in chat. T
 **Mechanical consistency gate (mandatory — this is enforcement, not eyeballing).** The cross-section rows above (Mermaid ⟺ §3, §2 ⟺ §3, Mermaid ⟺ §5, and the §7 / §6.4 / §8.2 resolution) are NOT verified by re-reading the file. After writing the candidate file, run the bundled deterministic checker shipped alongside this skill and require a clean exit:
 
 ```bash
-bun "${CLAUDE_PLUGIN_ROOT:-.claude/skills/semantius-architect}/references/consistency-check.ts" "<path-to-the-written-blueprint>"
+# <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
+bun "<skill-folder>/references/consistency-check.ts" "<path-to-the-written-blueprint>"
 ```
 
 It parses the file, treats §3 as the entity registry, and byte-compares every other place each entity's identifier / display name / edge appears. It is **content-agnostic** — it never judges language, casing, or word choice, only that every occurrence agrees (reverse a label in *every* section and it passes; change it in *one* and it fails). Exit 0 = consistent; non-zero prints the exact entity, the differing values, and the disagreeing sections. **If it exits non-zero the save is not complete:** fix every reported line and re-run until exit 0, then emit the success line. The same script validates specs (`artifact: semantic-spec`); the analyst runs it at its own pre-save. Do not hand-wave this — blueprints shipped inconsistent precisely because the check was "done carefully" by reading instead of run.

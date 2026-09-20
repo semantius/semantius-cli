@@ -39,7 +39,7 @@ semantius info crud <tool>           # live JSON schema for any tool
 Every `crud` tool returns a JSON **array** by default — including `create_*`/`update_*` (`[{...}]`, not a bare object; a bulk call returns every affected row). Exit 0 with body `[]` means "found nothing", which is success at the protocol layer and not-found at the domain layer — always inspect the body.
 
 - **`--single`**: for reads that must resolve to exactly one row (unique-key lookups). Returns a bare object; exit 1 = none, 2 = ambiguous. **Rejected (exit 1, `SINGLE_ARRAY_INPUT`) when `data` / `body` / `id` / `table_name` is an array** — bulk calls always answer with an array.
-- **Never read a new row's id off its own create response.** Re-read by natural key after the create.
+- **Never read a new row's id off its own create response.** Re-read by its identifying field (`table_name`, `field_name`, ...) after the create.
 
 ## 3. Catalog writes, in mandatory order
 
@@ -90,7 +90,7 @@ Properties the importer uses:
 | `input_type` | `default`, `required` (mandatory in UI), `readonly`, `disabled`, `hidden`. **There is no `required` column and no `is_nullable`** — sending either fails. Never target live `readonly`/`disabled` fields with an import. |
 | `field_order` | Display order; the platform preserves explicit values regardless of creation order. Start at 30 and use increments of 10 (30, 40, 50, ...) to leave insertion room — 10 and 20 are already used by the auto-created fields in every entity. |
 | `width` | `"default"` unless a layout need exists. |
-| `unique_value` | `true` enforces DB-level uniqueness (natural keys for update-mode imports). On an existing field it fails when live duplicates exist. |
+| `unique_value` | `true` enforces DB-level uniqueness (the "mark this field unique" answer; the import then skips rows whose value already exists). On an existing field it fails when live duplicates exist. |
 | `searchable` | `true` adds the field to full-text search. |
 | `default_value` | Only when the platform auto-default is wrong (e.g. a required enum whose starting value is not `enum_values[0]`). |
 | `reference_table` (+ `reference_delete_mode`) | **Mandates `format: "reference"` or `"parent"`** — never combine `reference_table` with a scalar format. Delete modes: `restrict`, `clear`, `cascade`. |

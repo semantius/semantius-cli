@@ -19,7 +19,7 @@ Load the file and walk every section. **Do not rewrite the file** unless the use
 These run on every owned entity (skip `reuse-from` / `dropped`):
 
 - **Entity health**:
-  - `label_column` is a scalar field, not a FK (🔴 if FK).
+  - `label_column` is a scalar field, not a FK (🔴 if FK). Every non-junction entity carries a `**Label column:**` line (🔴 if missing); an `entity_type: junction` entity may omit it (valid — the platform composes its `_label` from the parent legs).
   - No `id` / `created_at` / `updated_at` / auto-label field in the §3 field table (🔴 if present).
   - Every `enum` field has `enum_values` (🔴 if missing).
   - Effective default satisfies all `validation_rules` (🔴 if default would reject on auto-fill).
@@ -36,7 +36,7 @@ These run on every owned entity (skip `reuse-from` / `dropped`):
 - **Permissions consistency** (cross-check §8.1 Permissions catalog + §9.1 hierarchy vs every entity / rule):
   - Every `require_permission` argument is in §8.1 (🔴 if not).
   - Every entity with `**Edit permission:** admin` has the `baseline-admin` row (`<slug>:admin`) declared in §8.1 (🔴 if missing).
-  - Every `workflow-gate (rule)` row is invoked by at least one rule; every `workflow-gate (lifecycle)` row matches a §7 `requires_permission?` state (🟡 if dead).
+  - Every `workflow-gate (rule)` row is invoked by at least one rule; every `workflow-gate (lifecycle)` row is invoked by a `require_permission` rule on the gated entity's `workflow_state` transition or referenced by a §9.1 `process_gates` row (the spec has no lifecycle table; the blueprint's §7 `requires_permission?` states become these) (🟡 if dead).
   - Every `narrow` row is consumed by an entity's `Edit permission:` annotation or a rule (🟡 if dead).
   - No `workflow-gate` permission is included by `<slug>:manage` in §9.1 (🔴 — defeats the gate).
   - Every `narrow` permission rolls up under `<slug>:manage` or higher in §9.1 (🔴 — narrow tier would be unreachable otherwise).
@@ -83,12 +83,12 @@ End with: *"Run `semantius-analyst` Extend mode to fix specific items, or fix ma
 
 When the user wants to add entities, fields, rules, or §6 link rows to an existing spec:
 
-1. Read the current spec. Note its `version` (must be `"5.4"` major; older → Mode D Rebuild first).
+1. Read the current spec. Note its `version` (must be `"5.5"` major; older → Mode D Rebuild first).
 2. Capture what to add (entity / field / rule) via conversation.
-3. **If adding entities**, re-run Stage 2 reconciliation against the live catalog for the new entities only. Same collision detection, same widgets.
+3. **If adding entities**, re-run Stage 2 reconciliation against the live catalog for the new entities only. Same collision detection, same widgets, same ledger: the widgets are `Q:` tasks under the `Match › Extend the design` stage task, and step 4 starts only when `TaskList` shows none pending or in progress.
 4. **If adding fields to an existing owned entity**, apply Stage 4 field elicitation for the new fields. Then re-run Stages 5-10 (scans, consistency gate) on the affected entity.
 5. **If adding rules**, draft the JsonLogic; run the Stage 8 consistency gate.
-6. Stamp `version: "5.4"` (no bump unless skill version bumped).
+6. Stamp `version: "5.5"` (no bump unless skill version bumped).
 7. Write the updated file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input file you read in step 1 sits at the workspace root, leave that file alone; the `semantius/specs/` path is the truth-source. Run the pre-save verification block from Stage 11.
 
 ---
@@ -101,4 +101,4 @@ Use when the blueprint has materially changed (entities added/removed, role clas
 2. Drive a fresh Stage 1-10 pass with the current blueprint as input.
 3. **Carry forward** the preserved decisions where they still apply (e.g. a `promote-to-master` decision for an entity that's still in the blueprint).
 4. Show the user a diff summary: what's new, what's changed, what's removed.
-5. Stamp `version: "5.4"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.
+5. Stamp `version: "5.5"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.

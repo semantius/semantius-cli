@@ -1,0 +1,143 @@
+{
+  "mod": {
+    "id": 7,
+    "module_name": "Demo Ops",
+    "module_slug": "demo-ops",
+    "description": "Demo operations tracker",
+    "icon_name": "wrench",
+    "module_type": "domain",
+    "settings": { "module_kind": "starter", "naming_mode": "agent-optimized" },
+    "access_scope": "basic",
+    "domain_code": "DEMO",
+    "logo_color": "",
+    "home_page": "/",
+    "version": 12,
+    "version_date": "2026-08-01T10:00:00+00:00",
+    "default_viewer_role_id": 71,
+    "default_manager_role_id": 72,
+    "default_admin_role_id": null,
+    "view_permission": "demo-ops:read",
+    "manage_permission_id": 902,
+    "admin_permission_id": null
+  },
+  "ownedRaw": [
+    {
+      "id": 301,
+      "module_id": 7,
+      "table_name": "assets",
+      "singular_label": "Asset",
+      "plural_label": "Assets",
+      "description": "A physical or virtual item the team tracks. Created when procured.",
+      "label_column": "asset_tag",
+      "order_column": "",
+      "id_column": "id",
+      "audit_log": true,
+      "edit_permission": "demo-ops:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "assets",
+      "entity_type": "operational_workflow",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 302,
+      "module_id": 7,
+      "table_name": "vendors",
+      "singular_label": "Vendor",
+      "plural_label": "Vendors",
+      "description": "A supplier the team buys assets from.",
+      "label_column": "vendor_name",
+      "order_column": "",
+      "id_column": "id",
+      "audit_log": false,
+      "edit_permission": "demo-ops:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "vendors",
+      "entity_type": "catalog",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 303,
+      "module_id": 7,
+      "table_name": "asset_vendors",
+      "singular_label": "Asset Vendor",
+      "plural_label": "Asset Vendors",
+      "description": "Links an asset to a secondary vendor.",
+      "label_column": null,
+      "order_column": "",
+      "id_column": "id",
+      "audit_log": false,
+      "edit_permission": "demo-ops:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "asset_vendors",
+      "entity_type": "junction",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    }
+  ],
+  "fieldsByTable": {
+    "assets": [
+      { "field_name": "asset_tag", "format": "text", "title": "Asset", "description": "", "input_type": "required", "unique_value": true, "searchable": false, "ctype": "label", "field_order": 1 },
+      { "field_name": "workflow_state", "format": "enum", "title": "Status", "description": "", "input_type": "required", "enum_values": ["in_stock", "deployed", "retired"], "default_value": "in_stock", "ctype": "custom", "field_order": 2 },
+      { "field_name": "vendor_id", "format": "reference", "title": "Vendor", "description": "", "input_type": "required", "reference_table": "vendors", "reference_delete_mode": "restrict", "relationship_label": "supplies", "ctype": "custom", "field_order": 3 },
+      { "field_name": "owner_id", "format": "reference", "title": "Owner", "description": "", "input_type": "default", "reference_table": "users", "reference_delete_mode": "clear", "relationship_label": "owns", "ctype": "custom", "field_order": 4 },
+      { "field_name": "purchase_cost", "format": "number", "title": "Purchase Cost", "description": "Net of tax.", "input_type": "default", "precision": 2, "ctype": "custom", "field_order": 5 },
+      { "field_name": "notes", "format": "text", "title": "Notes", "description": "", "input_type": "default", "ctype": "custom", "field_order": 6 }
+    ],
+    "vendors": [
+      { "field_name": "vendor_name", "format": "text", "title": "Vendor", "description": "", "input_type": "required", "unique_value": false, "ctype": "label", "field_order": 1 },
+      { "field_name": "website", "format": "text", "title": "Website", "description": "", "input_type": "default", "ctype": "custom", "field_order": 2 }
+    ],
+    "asset_vendors": [
+      { "field_name": "asset_id", "format": "parent", "title": "Asset", "description": "", "input_type": "required", "reference_table": "assets", "reference_delete_mode": "cascade", "ctype": "custom", "field_order": 1 },
+      { "field_name": "vendor_id", "format": "parent", "title": "Vendor", "description": "", "input_type": "required", "reference_table": "vendors", "reference_delete_mode": "cascade", "ctype": "custom", "field_order": 2 }
+    ]
+  },
+  "related": [
+    {
+      "id": 1,
+      "module_id": 1,
+      "table_name": "users",
+      "singular_label": "User",
+      "plural_label": "Users",
+      "description": "Users and agents",
+      "label_column": "email",
+      "entity_type": "catalog"
+    }
+  ],
+  "perms": [
+    { "id": 901, "permission_name": "demo-ops:read", "description": "Read access to every record in the module." },
+    { "id": 902, "permission_name": "demo-ops:manage", "description": "Create and edit records in the module." }
+  ],
+  "allHierarchy": [
+    { "including_permission_id": 902, "included_permission_id": 901 },
+    { "including_permission_id": 5, "included_permission_id": 6 }
+  ],
+  "roles": [
+    { "id": 71, "slug": "demo_ops_viewer", "origin": "model", "catalog_role_code": "" },
+    { "id": 72, "slug": "demo_ops_manager", "origin": "model", "catalog_role_code": "" }
+  ],
+  "processes": [],
+  "relatedModules": [
+    { "id": 1, "module_slug": "semantius", "version": 3 }
+  ]
+}

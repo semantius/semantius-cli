@@ -35,11 +35,11 @@ When the domain is a well-known SaaS category, there is almost always a handful 
 
 Draw on your general knowledge of the market to identify **the top 3 cloud platforms** for the domain, ordered by how widely adopted they are among the kind of organization the user seems to be (check Stage 1 for cues about size, sector, budget). Don't invent vendors you're unsure about; if you only confidently know 2, list 2. For each vendor, know two or three of its headline entity names, use the vendor's own casing (e.g., Salesforce `Account`/`Opportunity`/`Case`, Zendesk `Ticket`/`User`/`Organization`, ServiceNow `Incident`/`Problem`/`Change`, Workday `Worker`/`Position`, Jira `Issue`/`Project`, HubSpot `Contact`/`Company`/`Deal`, Trello `Board`/`List`/`Card`, Notion `Page`/`Database`/`Block`). These names go **inside the option descriptions** in the AskUserQuestion call below, do not list them in prose first.
 
-**You MUST use the AskUserQuestion tool here.** Do not enumerate the vendors or describe the choices in prose before calling the tool, the option descriptions carry all the information the user needs. The only prose preceding the tool call should be one short framing sentence (e.g. *"{Domain} is a well-established category, here's the choice that drives naming for the rest of this session."*).
+**You MUST use the AskUserQuestion tool here, through the question ledger** (SKILL.md → Task tracking): on a policy miss, `TaskCreate` the `Q:` task (subject `Q: How should we name things in this <domain> module?`, description `Recorded in: .naming.mode`) and set it `in_progress` in one response, fire the widget alone in the next, then write the answer to the policy file and complete the task. Do not enumerate the vendors or describe the choices in prose before calling the tool, the option descriptions carry all the information the user needs. The only prose preceding the tool call should be one short framing sentence (e.g. *"{Domain} is a well-established category, here's the choice that drives naming for the rest of this session."*).
 
-Construct exactly one question with **4 options**: "Agent-optimized" first (the recommended default), followed by the 3 named vendors. The runtime auto-adds an "Other" option for free-text input, that's how a user picks a vendor outside your top 3.
+Construct exactly one question with **2 to 4 options**: "Agent-optimized" first (the recommended default), followed by the named vendors, **at most 3** (so 4 options with 3 vendors, 3 with 2, 2 with 1; never a 5th). The runtime auto-adds an "Other" option for free-text input, that's how a user picks a vendor outside your list; never list "Other" yourself. With zero confident vendors, skip the widget entirely (last paragraph of this section).
 
-Use this exact structure:
+Use this exact structure, dropping the vendor rows you do not have (the option count follows the vendor count above):
 
 - **question**: `"How should we name things in this {domain} module?"`
 - **header**: `"Naming style"`
@@ -54,14 +54,14 @@ The example entity names inside the vendor descriptions must be in **lowercase p
 
 The "(Recommended)" suffix on Agent-optimized is intentional, it's the better default for new builds.
 
-**After the AskUserQuestion tool returns**, your very first sentence MUST start with the chosen option name in **bold** so the transcript stays readable (the harness only records the answer ordinal like "A: 2"). Examples:
+**After the user's answer arrives** (as a `<user_answers>` input block mapping each question text to the chosen label; there is no `user_answers` tool to call, and the widget must have been the only tool call of its response), your very first sentence MUST start with the chosen option name in **bold** so the transcript stays readable. Examples:
 - *"**Greenhouse-style names**, I'll mirror Greenhouse's core object model..."*
 - *"**Modern, self-describing names**, I'll use clear names from first principles..."*
 - *"**Workday-style names**, I'll adopt their canonical entity names..."*
 
 Then map the choice to a `naming_mode` value for the rest of the session (this value is internal — never shown to the user):
 - Named vendor → `naming_mode: template:<vendor>`
-- Modern / self-describing → `naming_mode: agent-optimized` (keeps the legacy slug for backward compatibility; do NOT use this phrase in any user-facing prose)
+- Modern / self-describing → `naming_mode: agent-optimized` (internal token only; never use this phrase in user-facing prose)
 - "Other" + vendor name → `naming_mode: template:<that-vendor>`
 - "Other" + something else (e.g. "blend Salesforce and HubSpot") → resolve in conversation, then commit to one `naming_mode` value before continuing.
 

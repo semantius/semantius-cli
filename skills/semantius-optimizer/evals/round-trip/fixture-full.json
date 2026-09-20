@@ -1,0 +1,158 @@
+{
+  "mod": {
+    "id": 8,
+    "module_name": "Demo Ops Pro",
+    "module_slug": "demo-ops-pro",
+    "description": "Demo operations tracker (governed)",
+    "icon_name": "wrench",
+    "module_type": "domain",
+    "settings": { "module_kind": "domain", "naming_mode": "agent-optimized" },
+    "access_scope": "full",
+    "domain_code": "DEMOPRO",
+    "logo_color": "#2563eb",
+    "home_page": "",
+    "version": 4,
+    "version_date": "2026-08-02T09:30:00+00:00",
+    "default_viewer_role_id": 81,
+    "default_manager_role_id": 82,
+    "default_admin_role_id": 83,
+    "view_permission": "demo-ops-pro:read",
+    "manage_permission_id": 912,
+    "admin_permission_id": 913
+  },
+  "ownedRaw": [
+    {
+      "id": 401,
+      "module_id": 8,
+      "table_name": "assets",
+      "singular_label": "Asset",
+      "plural_label": "Assets",
+      "description": "A physical or virtual item the team tracks.",
+      "label_column": "asset_tag",
+      "order_column": "sort_key",
+      "id_column": "id",
+      "audit_log": true,
+      "edit_permission": "demo-ops-pro:manage",
+      "edit_mode": "sidebar",
+      "cube_mode": "auto",
+      "icon_url": "https://example.invalid/asset.svg",
+      "catalog_entity_code": "assets",
+      "entity_type": "operational_workflow",
+      "catalog_owner_module": "",
+      "label_parent": "vendor_id",
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [
+        {
+          "code": "retire_needs_permission",
+          "message": "Only asset managers can retire an asset.",
+          "description": "Retiring is a gated transition.",
+          "jsonlogic": { "if": [ { "==": [ { "var": "workflow_state" }, "retired" ] }, { "require_permission": "demo-ops-pro:retire_asset" }, true ] }
+        }
+      ],
+      "select_rule": { "or": [ { "==": [ { "var": "owner_id" }, { "var": "$user_id" } ] }, { "has_permission": "demo-ops-pro:view_all_assets" } ] }
+    },
+    {
+      "id": 402,
+      "module_id": 8,
+      "table_name": "vendors",
+      "singular_label": "Vendor",
+      "plural_label": "Vendors",
+      "description": "A supplier the team buys assets from.",
+      "label_column": "vendor_name",
+      "order_column": "",
+      "id_column": "id",
+      "audit_log": false,
+      "edit_permission": "demo-ops-pro:admin",
+      "edit_mode": "auto",
+      "cube_mode": "disabled",
+      "icon_url": "",
+      "catalog_entity_code": "vendors",
+      "entity_type": "catalog",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 403,
+      "module_id": 8,
+      "table_name": "asset_vendors",
+      "singular_label": "Asset Vendor",
+      "plural_label": "Asset Vendors",
+      "description": "Links an asset to a secondary vendor.",
+      "label_column": null,
+      "order_column": "",
+      "id_column": "id",
+      "audit_log": false,
+      "edit_permission": "demo-ops-pro:link",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "asset_vendors",
+      "entity_type": "junction",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    }
+  ],
+  "fieldsByTable": {
+    "assets": [
+      { "field_name": "asset_tag", "format": "text", "title": "Asset", "description": "", "input_type": "required", "unique_value": true, "searchable": true, "ctype": "label", "field_order": 1 },
+      { "field_name": "workflow_state", "format": "enum", "title": "Status", "description": "", "input_type": "required", "enum_values": ["in_stock", "deployed", "retired"], "default_value": "in_stock", "ctype": "custom", "field_order": 2 },
+      { "field_name": "vendor_id", "format": "reference", "title": "Vendor", "description": "", "input_type": "required", "reference_table": "vendors", "reference_delete_mode": "restrict", "relationship_label": "supplies", "ctype": "custom", "field_order": 3 },
+      { "field_name": "owner_id", "format": "reference", "title": "Owner", "description": "", "input_type": "default", "reference_table": "users", "reference_delete_mode": "clear", "relationship_label": "owns", "ctype": "custom", "field_order": 4, "input_type_rule": { "if": [ { "==": [ { "var": "workflow_state" }, "retired" ] }, "readonly", "default" ] } },
+      { "field_name": "sort_key", "format": "integer", "title": "Sort Key", "description": "", "input_type": "default", "ctype": "custom", "field_order": 5, "width": "s" }
+    ],
+    "vendors": [
+      { "field_name": "vendor_name", "format": "text", "title": "Vendor", "description": "", "input_type": "required", "unique_value": false, "ctype": "label", "field_order": 1 },
+      { "field_name": "tier", "format": "enum", "title": "Tier", "description": "", "input_type": "default", "enum_values": ["preferred", "approved", "blocked"], "ctype": "custom", "field_order": 2, "cube_type": "dimension" }
+    ],
+    "asset_vendors": [
+      { "field_name": "asset_id", "format": "parent", "title": "Asset", "description": "", "input_type": "required", "reference_table": "assets", "reference_delete_mode": "cascade", "ctype": "custom", "field_order": 1 },
+      { "field_name": "vendor_id", "format": "parent", "title": "Vendor", "description": "", "input_type": "required", "reference_table": "vendors", "reference_delete_mode": "cascade", "ctype": "custom", "field_order": 2 }
+    ]
+  },
+  "related": [
+    {
+      "id": 1,
+      "module_id": 1,
+      "table_name": "users",
+      "singular_label": "User",
+      "plural_label": "Users",
+      "description": "Users and agents",
+      "label_column": "email",
+      "entity_type": "catalog"
+    }
+  ],
+  "perms": [
+    { "id": 911, "permission_name": "demo-ops-pro:read", "description": "Read access to every record in the module." },
+    { "id": 912, "permission_name": "demo-ops-pro:manage", "description": "Create and edit records in the module." },
+    { "id": 913, "permission_name": "demo-ops-pro:admin", "description": "Administer reference data and settings." },
+    { "id": 914, "permission_name": "demo-ops-pro:retire_asset", "description": "Retire an asset." },
+    { "id": 915, "permission_name": "demo-ops-pro:view_all_assets", "description": "See every asset, not only your own." },
+    { "id": 916, "permission_name": "demo-ops-pro:approve_vendor", "description": "Approve a vendor for use." },
+    { "id": 917, "permission_name": "demo-ops-pro:link", "description": "Link assets to secondary vendors." }
+  ],
+  "allHierarchy": [
+    { "including_permission_id": 913, "included_permission_id": 912 },
+    { "including_permission_id": 912, "included_permission_id": 911 },
+    { "including_permission_id": 913, "included_permission_id": 914 },
+    { "including_permission_id": 913, "included_permission_id": 915 },
+    { "including_permission_id": 912, "included_permission_id": 917 }
+  ],
+  "roles": [
+    { "id": 81, "slug": "demo_ops_pro_viewer", "origin": "model", "catalog_role_code": "demo_ops_pro_viewer" },
+    { "id": 82, "slug": "demo_ops_pro_manager", "origin": "model", "catalog_role_code": "" },
+    { "id": 83, "slug": "demo_ops_pro_admin", "origin": "model", "catalog_role_code": "" }
+  ],
+  "processes": [
+    { "process_key": "asset_lifecycle", "name": "Asset lifecycle", "description": "Procure, deploy, and retire assets.", "ordering": 10 }
+  ],
+  "relatedModules": []
+}

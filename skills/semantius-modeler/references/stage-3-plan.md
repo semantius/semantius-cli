@@ -114,15 +114,17 @@ Example master-data plan block (Branch B promotion + Branch A wire-up + cluster 
 
 **Print the link-proposal summary as prose first** (the same `🔗 Connections to other modules` block from the normal plan), so the user has the list in front of them before any widget appears.
 
-**Resolve Ambiguous rows first.** Any rows marked 🟡 Ambiguous in Stage 2g (multiple plausible targets matched the `To` concept) gate which proposals are even askable. Batch one question per ambiguous row into a single `AskUserQuestion` call. Each question's options list the candidate target tables (with their owning module for context) plus a "skip this row" option. After the user picks, the Ambiguous rows that resolved promote into the ✨ Proposed list and the rest drop out.
+**These questions run through the question ledger** (SKILL.md → Task tracking; sequence in `../../semantius-admin/references/task-tracking.md`): enumerate every ambiguous row, every field-name collision, and (when it applies) the four-or-more-proposals question into `Q:` tasks first, then ask them in batches of up to four per `AskUserQuestion` call, apply each answer to the in-memory plan, complete the task, and repeat until `TaskList` shows no open `Q:` task. Only then render the plan and fire Gate A.
 
-**Resolve Field-name collisions next.** Any row marked 🛑 Field-name collision in Stage 2g (the auto-generated `<target_singular>_id` already exists on `from_table`) is also batched into the same `AskUserQuestion` call. Options: provide an alternative field name (the runtime's "Other" slot accepts free text) or skip the row. Unresolved-source rows are also surfaced here for the user to fix the model via the analyst skill before this stage retries.
+**Resolve Ambiguous rows first.** Any rows marked 🟡 Ambiguous in Stage 2g (multiple plausible targets matched the `To` concept) gate which proposals are even askable. One `Q:` task per ambiguous row (`Q: Which table should <From Label> link to for "<To>"?`), batched up to four per call. Each question is `multiSelect: false` with **at most 3 candidate target tables** as options (label `"<Plural Label> in <Module Display Name>"`; when more than 3 matched, list the 3 whose owning module is closest to the model's expected context and end the question text with `" Type the name of another table if it isn't listed."`; the tool adds its own free-text slot, never list an "Other" option) plus a `"Skip this link"` option, so every question holds 2 to 4 options. After the user picks, the Ambiguous rows that resolved promote into the ✨ Proposed list and the rest drop out.
+
+**Resolve Field-name collisions next.** Any row marked 🛑 Field-name collision in Stage 2g (the auto-generated `<target_singular>_id` already exists on `from_table`) is one `Q:` task each (`Q: <From Label> already has a field named <fk>. Use another name for the link, or skip it?`), batched with the ambiguous rows. `multiSelect: false`, exactly 2 options: `"Name the link linked_<target_singular>_id instead (Recommended)"` (the deployer derives the name, checks it is free on `from_table` against the field list Stage 2g already read, and appends `_2` if it is taken) and `"Skip this link"`; any other field name is typed into the tool's free-text slot (never list an "Other" option; a 1-option question is rejected by the tool) and gets the same free-name check, re-asked once if taken. Unresolved-source rows are also surfaced here for the user to fix the model via the analyst skill before this stage retries.
 
 **Then approve the Proposed list.**
 
 - **0 proposals**, skip this section entirely; nothing to ask.
-- **1–3 proposals**, present inline with one combined confirmation: *"Apply these N cross-model link suggestions? [yes / review each / skip all]"*. Default branch on `yes` is "apply all".
-- **4 or more proposals**, call `AskUserQuestion`:
+- **1–3 proposals**, present inline with one combined confirmation (a standalone question, not a ledger task): *"Apply these N cross-model link suggestions? [yes / review each / skip all]"*. Default branch on `yes` is "apply all".
+- **4 or more proposals**, one `Q:` task (`Q: Add all <N> connections to other modules, or review each one?`), asked as:
 
   - **question**: `"Found N possible connections between this module and other modules already deployed. How should we handle them?"`
   - **header**: `"Module connections"`
@@ -134,7 +136,7 @@ Example master-data plan block (Branch B promotion + Branch A wire-up + cluster 
 
 **On `Apply all`**, Stage 4h executes every Proposed row without further prompts.
 
-**On `Review each one`**, fall back to one batched `AskUserQuestion` with one question per proposal (yes / skip), then Stage 4h executes only the accepted ones.
+**On `Review each one`**, create one `Q:` task per proposal (`Q: Add the link from <From Label> to <To Label>? (<i> of <N>)`, yes / skip), asked in batches of up to four per call until the ledger is clean; then Stage 4h executes only the accepted ones.
 
 **On `Skip all`**, Stage 4h is a no-op. The dormant rows and the explicitly-skipped ones are noted in the verification summary so the user knows nothing was wired up.
 
@@ -148,7 +150,7 @@ The modeler does NOT drive `AskUserQuestion` widgets for cross-module collisions
 
 > *"Plan shown above. Proceed with execution?"*
 
-A `select_rule` create / modify or an `edit_permission` tier flip still pauses for explicit confirmation (medium-risk: read-visibility or write-tier change). The **Stage 2.5 access-control prompt** is the one other permitted mid-flow prompt, and it is bounded the same way: it fires **only** when the access-control choice is genuinely undecided (no `access_scope` in the spec frontmatter, no `access_scope` on the module). When the spec encodes the choice — the hybrid path — no prompt fires; the modeler obeys, exactly as it obeys a `**Reconciliation:**` annotation. The prompt is a deploy-time decision the spec deliberately left open (same category as the §6 cross-model-link prompt), not a re-litigation of a decision the spec already made. These are the only mid-flow prompts.
+A `select_rule` create / modify or an `edit_permission` tier flip still pauses for explicit confirmation (medium-risk: read-visibility or write-tier change; standalone questions, not ledger tasks, like the pre-execute yes/no, the 4e-merge conflict prompt, and the 4f live-present prompt in Stage 4). The **Stage 2.5 access-control prompt** is the one other permitted mid-flow prompt (a `Q:` ledger task), and it is bounded the same way: it fires **only** when the access-control choice is genuinely undecided (no `access_scope` in the spec frontmatter, no `access_scope` on the module). When the spec encodes the choice — the hybrid path — no prompt fires; the modeler obeys, exactly as it obeys a `**Reconciliation:**` annotation. The prompt is a deploy-time decision the spec deliberately left open (same category as the §6 cross-model-link prompt), not a re-litigation of a decision the spec already made. These are the only mid-flow prompts.
 
 ### Merge / rename rules (informational)
 

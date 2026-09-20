@@ -8,6 +8,34 @@ Entries below are newest first.
 
 ---
 
+## Analyst 5.4 → 5.5 (spec-contract clarifications); `EXPECTED_MAJOR = 5` unchanged
+
+2026-08-19. Parser-side delta for the analyst's 5.5 minor (see the analyst CHANGELOG). All changes are tolerant of 5.4 files; nothing in the deploy procedure changes.
+
+1. **Stage 1 parse.** H1 is `# <name>: Semantic Model` (legacy `—` accepted; frontmatter `system_name` authoritative). `persona` is optional (absent under `basic`); the actor cross-check runs only when present. `**Label column:**` is read when present: required on non-junction entities (absent → 🛑), optional on `entity_type: junction` (omit `label_column` on `create_entity`, skip title-correction / uniqueness passes). §6: the link table is the first table under `## 6.` (may carry a `Reconciliation` column); `### Outbound handoffs` / `### Inbound handoffs` are parsed **when present** into a handoff list (9 blueprint columns; `to_state` check on Outbound `lifecycle` rows against the `payload` entity's `workflow_state` enum; Inbound payloads not checked). RACI `consult_mode` `(none)` / legacy `—` / blank ⇒ `null` on the living-mode POST. The `workflow-gate (lifecycle)` cross-check and the lifecycle-field rule no longer cite a spec "§7 lifecycle table" (the spec has none; the blueprint's §7 arrives as `workflow_state` enum values / `process_gates` rows).
+2. **Stage 4a.** `settings.module_kind` is written only when the frontmatter carries a non-empty, non-null value (payload checklist + template comment updated); never `null`.
+3. **Stage 4m.** Input is the spec's §6 handoff sub-sections (no-op when absent); the deploy-boundary `to_state` re-check reads the `payload` entity's `workflow_state` enum.
+4. **Stage 5.** `settings.module_kind` compared only when the frontmatter carried it; `label_column is set` skipped for a junction whose spec omitted the line.
+5. **SKILL.md** gains a "Minor-version tolerance (5.4 ↔ 5.5)" paragraph under Schema compatibility listing every surface that may differ between the two.
+
+Files: SKILL.md, `references/stage-1-parse.md`, `references/stage-4-execute.md`, `references/stage-5-verify.md`.
+
+## Unreleased: task-tool call economy
+
+Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (resident "Task tracking" section, stage tasks and the 2.5 / Stage 3 gates). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
+
+## Unreleased: task tracking and the question ledger
+
+Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-08-18). The modeler now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): a resident "Task tracking" paragraph in SKILL.md; the High-Level Workflow table gains a Task subject column (four `Apply ›` stage tasks created at Step 0, Stage 4 always one task, the sample-data task created only on the user's yes); Stages 2.5 and 3 are ledger stages (the access-control question, ambiguous cross-model rows, field-name collisions, the four-or-more-proposals question and its "Review each one" fallback become `Q:` tasks with fixed subject templates, asked in batches of up to four per call, completed only after the answer is applied to the plan; Gate A requires the ledger clean); the pre-execute yes/no, the 1-3-proposals inline confirmation, the tier-flip confirmations, the 4e-merge and 4f prompts, and the sample-data question stay standalone. Closing Contract: the Verify task is completed in the response before the closing block. Files: SKILL.md, `stage-2-reconcile.md` (2.5 prompt), `stage-3-plan.md` (link flow, standalone list), `stage-4-execute.md` (halt marks the task), `stage-6-sample-data.md`, `conflict-resolution.md` (two rows).
+
+## Unreleased: `AskUserQuestion` call mechanics
+
+Guidance only, no contract change, `EXPECTED_MAJOR` unchanged. The resident writing conventions in SKILL.md (mirroring `semantius-admin/references/writing-conventions.md`) gain an unnumbered "AskUserQuestion mechanics" paragraph: call the widget alone in its own response after edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
+
+## Unreleased: historical / version-stamp narration removed from runtime files
+
+No behavior change. Removed the retired `single_approver` pattern-flag note, the `alias` note, "legacy" labels on current states (two-permission baseline, `readonly` fields, entries without `source_module`), "no longer" / "used to fail" phrasings, and "Older 5.3 specs" / "v5.4 specs" wording (kept as version-free tolerance rules) from SKILL.md and `references/*`. History lives here and in git only.
+
 ## Unreleased: bulk (array) writes, entities before fields, preflight fix for the `anyOf` tool schemas
 
 2026-08-17. The crud server (postgrest-mcp "array inserts") and the CLI ("add array support") now take `data` on every typed `create_*` as one object **or a non-empty array** (one request, one transaction, all-or-nothing; items may have different keys — the server sends `?columns=<union>` + `Prefer: missing=default`; the response is always an array), and `id` / `table_name` on every `update_*` / `delete_*` as one value or an array (`in.(...)`, same `data` for all). `--single` is rejected (exit 1, `SINGLE_ARRAY_INPUT`) when any of those is an array. The platform's new golden rule: more than one record of the same kind pending → ONE call. Deployer-side only; `EXPECTED_MAJOR` stays `5`, `SCAFFOLD_LIB_MAJOR` stays `5` (additive).

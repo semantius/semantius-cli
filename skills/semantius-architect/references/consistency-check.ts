@@ -325,7 +325,8 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
     s2entities.set(sm[1], (row[2] || "").trim());
   }
 
-  // §3 sub-section headings: ### 3.N `table` — Singular
+  // §3 sub-section headings: ### 3.N `table` - Singular (canonical separator is the
+  // plain hyphen; the en/em-dash alternatives are accepted for pre-5.4 files only).
   const s3singular = new Map<string, string>();
   for (const l of lines) {
     const m = l.match(/^###\s+3\.\d+\s+`([^`]+)`\s*[—–-]\s*(.+?)\s*$/);
@@ -384,14 +385,26 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
     }
   }
 
-  // §5 enum headings: ### 5.N `table.field`
-  for (const l of lines) {
-    const m = l.match(/^###\s+5\.\d+\s+`([^.\`]+)\.[^`]+`/);
+  // §5 enum headings: unnumbered ``### `table.field` `` (template v5.4+) or the legacy
+  // numbered ``### 5.N `table.field` ``. Scoped to the §5 body so a backticked
+  // `x.y` heading elsewhere is never mistaken for an enum block.
+  for (const l of topSection(lines, 5)) {
+    const m = l.match(/^###\s+(?:5\.\d+\s+)?`([^.`]+)\.[^`]+`/);
     if (m && !known(m[1])) issues.push({ check: "§5 ⟺ entities", detail: `§5 enumeration is declared on \`${m[1]}\` which is not a declared entity` });
   }
 
-  // §8.2 business rules data_object resolves
-  for (const row of tableRows(subSection(topSection(lines, 8), /^##?#?\s*8\.2/))) {
+  // §6 Outbound handoffs: the `payload` cell names an entity this spec owns
+  // (Inbound rows name the SOURCE module's entity, so they are not checked).
+  // Columns: source module | target domain | target module | trigger_event | transition | payload | ...
+  for (const row of tableRows(subSection(topSection(lines, 6), /^###\s+Outbound handoffs\b/))) {
+    const id = firstBacktick(row[5] || "");
+    if (id && !known(id)) issues.push({ check: "§6 handoffs ⟺ entities", detail: `§6 Outbound handoff payload \`${id}\` is not a declared entity` });
+  }
+
+  // §8.2 business rules data_object resolves. The spec numbers `## 8.1` / `## 8.2` as
+  // sibling H2s (no `## 8.` parent), so address `## 8.2` directly: topSection(8) would
+  // stop at `## 8.2` and return §8.1's body.
+  for (const row of tableRows(subSection(lines, /^##\s+8\.2\b/))) {
     const id = firstBacktick(row[1] || "");
     if (id && !known(id)) issues.push({ check: "§8.2 ⟺ entities", detail: `§8.2 references \`${id}\` which is not a declared entity` });
   }
@@ -443,7 +456,7 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
 
 /**
  * Parse every §3.N field-level relationship annotation into a
- * "<table> <field>" -> relationship_label map. This is the ONLY place
+ * "<table>\u0000<field>" -> relationship_label map. This is the ONLY place
  * verb text is allowed to come from; §4 carries structure (From/To/Cardinality/
  * Kind), never the verb.
  */
@@ -461,7 +474,7 @@ function parseSpecRelationshipLabels(lines: string[]): Map<string, string> {
     if (!field || (format !== "reference" && format !== "parent")) continue;
     const note = row[5] || "";
     const vm = note.match(/relationship_label:\s*"([^"]*)"/);
-    if (vm) out.set(`${currentTable} ${field}`, vm[1]);
+    if (vm) out.set(`${currentTable}\u0000${field}`, vm[1]);
   }
   return out;
 }
@@ -537,7 +550,7 @@ function emitSpecMermaid(lines: string[], fm: ReturnType<typeof frontmatter>): s
   for (const row of rows) {
     referenced.add(row.from);
     referenced.add(row.to);
-    const verb = relLabels.get(`${row.from} ${row.field}`) ?? null;
+    const verb = relLabels.get(`${row.from}\u0000${row.field}`) ?? null;
     if (/^1:1$/i.test(row.cardinality)) {
       edgeLines.push(verb ? `    ${row.from} ---|${verb}| ${row.to}` : `    ${row.from} --- ${row.to}`);
     } else if (/^1:n$/i.test(row.cardinality)) {

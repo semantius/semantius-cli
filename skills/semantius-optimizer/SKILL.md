@@ -2,7 +2,7 @@
 name: semantius-optimizer
 description: >-
   Reverse-engineers a `*-semantic-spec.md` file (the analyst artifact, version
-  "5.4") from a live Semantius module: reads the module's entities, fields,
+  "5.5") from a live Semantius module: reads the module's entities, fields,
   enum values, permissions, roles, and permission hierarchy via `semantius`,
   pulls in referenced built-ins (e.g. `users`) so the output is
   self-contained, and writes a spec byte-compatible with the template
@@ -65,7 +65,7 @@ from live state, which then feeds `semantius-analyst` Extend/Audit or a
 
 ## Schema compatibility
 
-This skill writes files at `version: "5.4"` (the analyst's `CURRENT_VERSION`; the
+This skill writes files at `version: "5.5"` (the analyst's `CURRENT_VERSION`; the
 `SPEC_VERSION` constant in `spec-extract-lib.ts`). The `semantius-modeler` carries
 an `EXPECTED_MAJOR` and rejects a mismatched major, so the constant must track the
 analyst. A major analyst bump (section renumber, table-shape change, new required
@@ -73,8 +73,14 @@ key) forces a coordinated update of the analyst template, this skill's extractor
 and the modeler.
 
 The authoritative output shape is
-`semantius-plugin/skills/semantius-analyst/references/semantic-spec-template.md`.
-Read it before changing the extractor.
+`semantius-plugin/skills/semantius-analyst/references/semantic-spec-template.md`
+(its "Skeleton" fence is the emitted surface, byte-for-byte). Read it before
+changing the extractor, and run `bun evals/round-trip/check.ts` afterwards: it
+renders the fixtures offline via `--from-fixture`, diffs them against the committed
+goldens, runs `consistency-check.ts` on the output, and lints the template skeleton
+against the extractor (zero em-dashes; every skeleton heading and emitted table
+header appears as a literal in `spec-extract-lib.ts`). Regenerate the goldens with
+`--update` after an intentional change and review the diff.
 
 ---
 
@@ -229,26 +235,39 @@ to this reader, and in one line — never a key-by-key list.
 
 **Category A — faithful from live (trust; nothing to flag):** all platform
 frontmatter; §2 table & labels; the Mermaid edge set; every §3 entity annotation
-(plural label, label column, audit log, edit permission, entity type, label parent,
-reconciliation); every §3 field's name / format / required / Notes; §3 Relationships
-prose; §4 rows; §5 enumerations; §8.1 permissions; §8.2 and §9 governance; §9.1
-hierarchy. Entity order is the canonical `entity_type` tier then `table_name` A->Z, so
-it round-trips against a convention-compliant spec.
+(plural label, label column — omitted on a junction whose live value is null, audit
+log, edit permission, entity type, label parent, reconciliation); every §3 field's
+name / format / required / Notes; §3 Relationships prose; §4 rows; §5 enumerations;
+§8.1 permission names, descriptions, and `included in :admin?` (derived from the live
+hierarchy); §9.1 baseline roles (with `♻ exists`, since live is the source), §9.1
+hierarchy, §9.1 Processes catalog. Entity order is the canonical `entity_type` tier
+then `table_name` A->Z, so it round-trips against a convention-compliant spec.
 
 **Category B — best-effort or omitted (this is your fix-by-hand source):**
 1. Authored frontmatter keys — `description` block, `blueprint_version`, `license`,
    `created_at`, `reconciled_*`, `source_blueprint`, `related_modules`,
-   `related_domains`, `departments`, `initial_request`, `persona`. Omitted (not
-   persisted).
+   `related_domains`, `departments`, `initial_request`, `persona`,
+   `raci_mode` / `raci_mode_source`. Omitted (not persisted).
 2. §1 Overview — seeded from the tagline.
 3. §2 Purpose column — first sentence of each entity description.
 4. §3 label-column titles — humanized field name (`contract_title` → "Contract
    Title"); irregulars like `app_name` → "Application Name" are not recoverable.
 5. §3 field Description — live truth, often empty.
 6. Built-in entity description (e.g. `users`) — live value, not authored prose.
-7. §6 / §7.1 / §7.2 — emitted `_(none)_`.
-8. A junction M:N's hand-authored business verb — the structure round-trips (canonical
-   "`X` ↔ `Y` is many-to-many through the `<junction>` junction table"), the verb does not.
+7. §6 link table, §6 `### Outbound handoffs` / `### Inbound handoffs`, §7.1, §7.2 —
+   emitted as `_(none: …)_` placeholders (the platform exposes no handoff registry).
+8. §8.1 `tier` — a heuristic (narrow / override / workflow-gate (rule) /
+   workflow-gate (lifecycle)) over what the spec can prove, always a value the
+   modeler accepts; `reconciliation` is `(none)` (a `re-prefixed-from` origin is not
+   recoverable).
+9. §8.2 Business rules and §9.2 Functional ownership — `_(none: …)_` placeholders
+   (the `basic` reason under `access_scope: basic`, "not extracted" otherwise).
+10. The RACI surface (`**RACI mode:**`, `**RACI realization:**`, the RACI plan) — NOT
+    emitted at all (not even as placeholders; `consistency-check.ts` keys its
+    `raci_mode` provenance gate on the `**RACI realization:**` literal). Author by
+    hand under `access_scope: full`.
+11. A junction M:N's hand-authored business verb — the structure round-trips (canonical
+    "`X` ↔ `Y` is many-to-many through the `<junction>` junction table"), the verb does not.
 
 **Drift check (only when comparing against an authored source spec).** If a value the
 platform *does* persist differs from the source spec, that is a forward-pipeline
@@ -294,14 +313,21 @@ faithfully match live?" is a different question, answered by re-running the extr
 
 ## Verifying the extractor (for maintainers)
 
-A reference module (`it-ops-starter`) and its hand-authored master spec
-(`semantius/specs/master-it-ops-starter-semantic-spec.md`) anchor a round-trip
-check: regenerate `it-ops-starter-semantic-spec.md` from live and confirm every
-diff against the master falls in Category B. The master predates the canonical
-entity-order convention, so its entity/section sequence differs from the extractor's
-canonical order (compare Mermaid/§2/§3/§4/§5 order as sets, not line-by-line); a
-value diff outside Category B is an extractor defect. Re-run this after any change to
-`spec-extract-lib.ts` or a bump of the analyst template.
+Two checks, run both after any change to `spec-extract-lib.ts` or a bump of the
+analyst template:
+
+1. **Offline round-trip (always available):** `bun evals/round-trip/check.ts` from
+   this skill folder. It renders `evals/round-trip/fixture-*.json` (JSON snapshots of
+   the live reads, one `basic` and one `full` module) via `--from-fixture`, diffs
+   each against its committed `expected-*.md` golden, runs the architect's
+   `consistency-check.ts` on the render, and lints the analyst template's skeleton
+   against the extractor. Exit 0 means green. After an intentional extractor change,
+   `--update` regenerates the goldens; review the diff before committing.
+2. **Live round-trip (needs an instance):** a reference module (`it-ops-starter`) and
+   its committed spec (`semantius/specs/it-ops-starter-semantic-spec.md`, itself an
+   extractor output) anchor a drift check: regenerate from live and confirm every
+   diff falls in Category B or is an intentional extractor change already reflected
+   in the goldens. A value diff outside that is an extractor defect.
 
 ## What this skill does not do
 

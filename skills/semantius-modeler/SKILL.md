@@ -72,6 +72,23 @@ The internal annotation values (`reuse-from`, `promote-to-master`, etc.) still g
 
 **Pre-emit check** (mandatory): before sending any chat message, before firing any `AskUserQuestion`, before printing any plan or verification summary, scan the assembled text for any banned token. Rewrite before sending.
 
+**AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
+
+**Option count is 2 to 4 per question object, never 1 and never 5.** The tool rejects the whole call otherwise, every other question in it included. When the options come from data (one per entity, field, property, concept, file, column), count the items (K) and shape the list before firing:
+
+- **K = 2 to 4:** one question object, K options.
+- **K = 5 or more (multiSelect):** several question objects, same header, question text suffixed ` (<i> of <N>)`, filled in source order in chunks of 4; when the last chunk would hold 1, move the last item of the previous chunk into it (5 → 3 + 2, 6 → 4 + 2, 9 → 4 + 3 + 2). At most four question objects per call; the rest go in the next call, after the answers arrive.
+- **K = 1:** a 2-option single-select (the item, plus the "None" / "Skip" option the stage text names), or no widget where the stage text says the one item counts as chosen.
+- **Single-select pick list (the user chooses one candidate):** never split across questions. List at most the 3 best candidates (2 when two fixed options such as "Create new" and "Skip" must stay), keep the stage's fixed alternative so the count never drops to 1, and say in the question text that another can be typed in. With 0 candidates the widget does not fire (the stage text says what happens instead). The tool always adds its own free-text slot: never list an "Other" option.
+- Never pad with a filler option, never merge two items into one option.
+- The tool has no pre-checked or default-selected option; "(Recommended)" on one label is the only default marker, so word a multiSelect so that selecting nothing is the safe outcome.
+
+**Task tracking** (resident summary; the rules are the canonical text in [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md)). The modeler uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`) so the user can see where the deploy is without chat narration; the task list is rendered UI, not prose, so it does not count against narration restraint.
+
+- **Stage tasks.** At Step 0 (after the run context is read, standalone or under the admin): `TaskList`, then `TaskCreate` the four `Apply ›` tasks from the High-Level Workflow table below, subjects verbatim, `activeForm` = subject, all `pending`; in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call so that task cannot complete before the deploy's stages do; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's procedure ran; a halt (Stage 4's loud halt, a refused spec) leaves the task `in_progress` with `halted: <verbatim message>` in its description. Stage 4 is one task however many sub-stages run inside the deploy script; a second script pass (living-mode RACI batches) may add one more `Apply › Update your live model (second pass)` task at that point. The sample-data task is created only when the user says yes to the Stage 6 question (see the Closing Contract sequencing there); nothing is created on a decline. Never a task for Step 0 reads, preflight, or script scaffolding.
+- **Ledger stages: 2.5 and 3.** The access-control question (Stage 2.5) and every Stage 3 ambiguity question (a cross-model row with several plausible targets, a field-name collision on an auto-generated link field, the four-or-more-proposals question and its "Review each one" fallback) are `Q:` tasks: enumerated before the first widget and gated with one `TaskUpdate` on the stage task, `addBlockedBy: [<the Q: ids>]` (2.5 → the check task, Stage 3 → the plan task), asked in batches of up to four per `AskUserQuestion` call, and completed only after the answer is applied to the in-memory plan. Templates (fill placeholders, never reword): `Q: Basic or advanced access control?`; `Q: Which table should <From Label> link to for "<To>"?`; `Q: <From Label> already has a field named <fk>. Use another name for the link, or skip it?`; `Q: Add all <N> connections to other modules, or review each one?`; `Q: Add the link from <From Label> to <To Label>? (<i> of <N>)`. Gate A and the plan render require `TaskList` clean of open `Q:` tasks.
+- **Standalone (no ledger task, unchanged):** the one-to-three-proposals inline confirmation, the pre-execute yes/no, the 4e-merge conflict prompt, the 4f live-present prompt, the tier-flip confirmations, and the sample-data question. The modeler still never asks catalog-decision questions; the ledger does not widen its scope.
+
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the deploy; they asked for a deployed module. Hard rules:
 
 - **Do not announce what you're about to do** before doing it. No *"Let me verify the reconciliation annotations..."*, no *"Let me check the live catalog..."*. Just do it.
@@ -182,7 +199,7 @@ This skill emits shell and Bun (TypeScript) helper scripts during a deploy (e.g.
 - Do **not** write to `$TMPDIR` / `/tmp/` / `$env:TEMP`. Those paths resolve differently between Git Bash and Windows-native runtimes, and the user cannot inspect them by path if a run fails.
 
 **Where they must not go:**
-- ❌ The skill folder (`.claude/skills/semantius-modeler/`). The skill folder is read-only at runtime; only the maintainer edits it. Never leak deploy scratch files here.
+- ❌ The skill folder (the directory this SKILL.md was read from). The skill folder is read-only at runtime; only the maintainer edits it. Never leak deploy scratch files here.
 - ❌ The user's working directory. Pollutes the project, surfaces in `git status`, and survives across sessions.
 - ❌ Any path under the model file's directory. Same reasons.
 
@@ -202,15 +219,17 @@ A file lacking reconciliation annotations on any entity (the v3.x format) is rej
 
 The spec also carries `blueprint_version` (the blueprint artifact version the analyst worked against; default `"3.0"`). The modeler does not re-validate it against the architect; the analyst did.
 
+**Minor-version tolerance (5.4 ↔ 5.5).** Analyst 5.5 specs differ from 5.4 only additively, and Stage 1 reads both: the H1 is `# <name>: Semantic Model` (5.5) or `# <name> — Semantic Model` (older); §6 may carry `### Outbound handoffs` / `### Inbound handoffs` sub-sections after the link table (absent on older specs → Stage 4m is a no-op); the §6 link table may carry a `Reconciliation` column; `**Label column:**` may be absent on an `entity_type: junction`; `persona` and `module_kind` are optional keys (never `null`); §8.1 / §9.1 empty cells are `(none)` (older specs wrote `—`); §9.1 reconciliation cells are `✨ to create` / `♻ exists` / `🟡 drift on module_id` (older specs also wrote `✨ to add`; the cell is not consumed).
+
 Cross-entity JsonLogic primitives (`set_record`, `let`, `throw_error`) are passed through byte-for-byte inside `validation_rules` / `computed_fields` and (with care) `select_rule`. The "column must exist on this entity" parse check skips column references qualified by a `set_record` / `let` binding (the bound variable's columns resolve against the bound entity). See `references/conflict-resolution.md`.
 
 **Permission-prefix resolution rule (the "entity-owning-module rule").** Workflow gates and row-scope overrides for entity E are prefixed by E's CURRENT owning module slug, not by the installing unit. The rule fires on every install regardless of `module_kind`. Stage 4a-scaffold honors it when minting gates / overrides for entities with re-prefixed-from annotations; Stage 4n handles the master-install reconciliation when a Branch-B promotion moves an entity to a new owning module (sweep every non-catalog-prefixed permission for the entity's verbs, mint sibling catalog-prefixed permissions and `role_permissions` rows, re-emit hierarchy edges; no deletes, per the no-auto-deletion rule).
 
 The history of the deployer's contract changes lives in [`CHANGELOG.md`](./CHANGELOG.md) — what each analyst-lockstep bump changed in the deployer's parser, stage numbering, and audit checks. That file is not loaded at runtime; the body of this SKILL.md is the **current contract**, the CHANGELOG is the **history**.
 
-- **Older major** (e.g. file is `"0.x"`, this skill expects `"1.x"`), the file was written by an older analyst version using a structure this deployer no longer understands. Tell the user to run the analyst skill; its archived-knowledge mode reads the older file and re-authors a current-major file from the same semantic content.
+- **Older major** (e.g. file is `"0.x"`, this skill expects `"1.x"`), the file was written by an older analyst version using a structure this deployer does not understand. Tell the user to run the analyst skill; its archived-knowledge mode reads the older file and re-authors a current-major file from the same semantic content.
 - **Newer major** (e.g. file is `"2.x"`, this skill expects `"1.x"`), the file was written by a newer analyst than this deployer knows about. Tell the user to update this deployer skill before retrying.
-- **Missing `version` key** (legacy, pre-versioning), treat as major `0`; same response as older-major above.
+- **Missing `version` key**: treat as major `0`; same response as older-major above.
 
 ## Your role: thin executor of a reconciled spec
 
@@ -355,17 +374,17 @@ This is not a stylistic preference. A natural-key read can succeed while a surro
 1. Parse spec  →  2. Inspect Semantius  →  2.5 Access-control scope  →  3. Plan & Present  →  4. Execute  →  5. Verify  →  6. Sample Data?
 ```
 
-Work through the stages in order. **Before executing each stage, read its reference file** (column below); each holds the full procedure this spine only names. Narrate tersely per the Writing conventions.
+Work through the stages in order. **Before executing each stage, read its reference file** (column below); each holds the full procedure this spine only names. Narrate tersely per the Writing conventions. The Task column is the exact subject of the stage task (Task tracking, above); stages sharing a task row are one task.
 
-| Stage | What it does | Read first |
-|---|---|---|
-| 1. Parse | Version + consistency gate, then extract every section of the spec (entities, fields, permissions, RACI, ...). All parse-time rejections live here. | `references/stage-1-parse.md` |
-| 2. Reconcile | Verify each reconciliation annotation still holds against the live catalog; resolve cross-model links; scaffold the module. | `references/stage-2-reconcile.md` |
-| 2.5 Access scope | Resolve basic vs full RBAC (frontmatter, then live setting, then ask). The two-permission projection table lives here. | `references/stage-2-reconcile.md` |
-| 3. Plan | Render the plan + ambiguity decisions; the cross-model-link flow. **Gate A** (pre-write integrity) fires here. | `references/stage-3-plan.md` |
-| 4. Execute | All writes, sub-stages 4a-4n (module, permissions, entities, fields, rules, master-data, personas/RACI, reconciliation). **Gate B** fires here. Provenance, fail-loud, and no-deletion (above) govern every write. | `references/stage-4-execute.md` |
-| 5. Verify | Structured verification report + per-area FK and text-fidelity round-trips. On a clean deploy, Stage 5b stamps the deployed `modules.version` / `version_date` (and each reused/promoted module's version) back into the spec front-matter — the analyst's drift gate reads it next run. | `references/stage-5-verify.md` |
-| 6. Sample data | Consent-gated seeding (see the consent gate above). | `references/stage-6-sample-data.md` |
+| Stage | What it does | Task subject | Read first |
+|---|---|---|---|
+| 1. Parse | Version + consistency gate, then extract every section of the spec (entities, fields, permissions, RACI, ...). All parse-time rejections live here. | `Apply › Check the design against your live model` | `references/stage-1-parse.md` |
+| 2. Reconcile | Verify each reconciliation annotation still holds against the live catalog; resolve cross-model links; scaffold the module. | (same task) | `references/stage-2-reconcile.md` |
+| 2.5 Access scope | Resolve basic vs full RBAC (frontmatter, then live setting, then ask via the ledger). The two-permission projection table lives here. | (same task) | `references/stage-2-reconcile.md` |
+| 3. Plan | Render the plan + ambiguity decisions (ledger); the cross-model-link flow. **Gate A** (pre-write integrity) fires here, then the pre-execute yes/no. | `Apply › Show the plan and get your go-ahead` | `references/stage-3-plan.md` |
+| 4. Execute | All writes, sub-stages 4a-4n (module, permissions, entities, fields, rules, master-data, personas/RACI, reconciliation). **Gate B** fires here. Provenance, fail-loud, and no-deletion (above) govern every write. | `Apply › Update your live model` | `references/stage-4-execute.md` |
+| 5. Verify | Structured verification report + per-area FK and text-fidelity round-trips. On a clean deploy, Stage 5b stamps the deployed `modules.version` / `version_date` (and each reused/promoted module's version) back into the spec front-matter — the analyst's drift gate reads it next run. | `Apply › Verify what is live` | `references/stage-5-verify.md` |
+| 6. Sample data | Consent-gated seeding (see the consent gate above). | `Apply › Add sample data` (created only on the user's yes) | `references/stage-6-sample-data.md` |
 
 Whenever any stage hits a conflict, ambiguity, format mismatch, or collision, consult `references/conflict-resolution.md` on demand.
 
@@ -382,6 +401,8 @@ For a clean, fully-completed deploy, the final assistant message is a **call-to-
 3. The Stage 6 sample-data question, on its own line and clearly marked as a question (a real `(yes / no)` prompt that states the per-table count, the eligible-table count, and the resulting total as visible math, e.g. `10 records × 6 tables = 60 records`, never blended into the status line or the recap). This is an **unanswered gate**: the message ends with the question and waits. Per Stage 6's consent gate, NO sample records are written until the user replies with an explicit, unambiguous "yes" to this specific question. A bare continuation word (`continue`, `ok`, `proceed`, `go on`) or a vague / bundled "yes" is NOT consent; re-ask and wait. **A reply that specifies sample-data counts (e.g. "ok, but 30 customers", "20 each") IS consent and sets those counts (a global `COUNT` plus per-table overrides), honored without re-asking — the count beats the continuation word (see Stage 6's consent gate).**
 
 Everything else, what was created, what was skipped, why built-ins were reused, counts, per-entity links, caveats, justifications, belongs in the Stage 5 verification summary **before** this closing block, separated by a horizontal rule (`---`). Do not mix the two. The closing must not contain reasoning, parentheticals, or "by the way" notes; those dilute the call to action.
+
+**Task sequencing around the closing block.** Set the `Apply › Verify what is live` task `completed` (`TaskList`, then `TaskUpdate`) in the response *before* the one that emits the closing block; the closing response contains the report and the three lines and no tool call after the text (a trailing tool call would keep the turn going past the question). After the user answers: on yes, the next response's first calls create `Apply › Add sample data` (`in_progress`, `addBlockedBy: [<the Verify task id>]`, and under the admin `addBlocks: [<pipeline task id>]`) and Stage 6 runs; on no, nothing is created and no task changes.
 
 This block is **sticky, but only while the sample-data question is unanswered.** If a follow-up turn (audit, "did I miss anything?", fix-up, clarification) interrupts before the user has answered it, **re-emit the same three lines at the end of the follow-up reply**. Treat them as a footer that re-attaches itself until the user accepts sample data, declines it, or explicitly closes the session ("we're done", "thanks, that's all"). Before sending any assistant message that comes after a **clean** Stage 4 completion **and before the user has answered the sample-data question**, scan the draft: if it does not contain both the module landing-page link and the sample-data question, append the closing block.
 

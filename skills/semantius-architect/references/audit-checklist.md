@@ -10,7 +10,8 @@
 - Check the reference files (`data-modeling.md`, `jsonlogic.md`, `select-rule.md`) for any other platform constraints added since this skill was written
 
 **Front-matter (YAML block)**
-- Required keys present: `artifact`, `version`, `blueprint_version`, `system_name`, `system_slug`, `tagline`, `naming_mode` (greenfield only), `module_kind`, `persona`, `created_at`, `entities`, `initial_request`
+- Required keys present: `artifact`, `version`, `blueprint_version`, `system_name`, `system_slug`, `tagline`, `naming_mode` (greenfield only), `module_kind`, `created_at`, `entities`, `initial_request`
+- Conditional key: `persona` is present iff §9.1 carries a RACI realization (auto-populated from its actors, Stage 11 Step 7); when there is no RACI matrix the key is omitted and its absence is not a finding (🟡 only if present with no RACI rows, or absent with RACI rows)
 - Publish-only keys: `description` and `license` travel together — both present on a publish-ready blueprint, both absent on an internal-only one. Absence is not a finding; an empty stub (`description: ""`) or a lone one of the pair is 🟡
 - Optional keys: `icon_name`, `domain`, `departments`, `industries`, `related_modules` (advisory; omit when not applicable; do not flag absence)
 - `artifact` is `semantic-blueprint`

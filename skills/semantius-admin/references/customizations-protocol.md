@@ -24,7 +24,7 @@ Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZAT
 | Analyst Stage 3b.2 | Claim new owner module | `.collisions.<entity>.new_owner` | scalar (when outcome=claim) |
 | Analyst Stage 3b.2 sub | Shared-master manager scope | `.shared_master_managers` | scalar |
 | Analyst Stage 3c | Similar-name → reuse / rename | `.aliases.<incoming_slug>` | object (slug, singular_label, plural_label) |
-| Analyst Stage 3d | Missing-owner default | `.on_missing_owner` | scalar (`embed_locally` \| `skip`). Legacy `wait` entries are coerced to `embed_locally` at consult time. |
+| Analyst Stage 3d | Missing-owner default | `.on_missing_owner` | scalar (`embed_locally` \| `skip`). A `wait` value is read as `embed_locally`. |
 | Analyst Stage 3d sub | Slug-collision local naming | `.slug_collision_naming` | scalar (`context-prefix` \| `module-prefix` \| `reuse-existing`) |
 | Analyst Stage 3e | Cross-scope link target | `.links.<blueprint_slug>.<field_name>` | scalar |
 | Analyst Stage 3f.1 | Field-name drift | `.drift.field_name.<entity>.<field>` | scalar |
@@ -38,6 +38,8 @@ When extending: prefer fewer, broader keys. The whole point is to deduplicate; o
 ## 7.5 Consultation pattern (sub-skill side)
 
 Before any `AskUserQuestion` call site that maps to a row above, the sub-skill consults `$CUSTOMIZATIONS_FILE`. After a cache miss, it writes the answer back atomically with a provenance comment, BEFORE proceeding with the spec / catalog change.
+
+**With the question ledger** ([`task-tracking.md`](./task-tracking.md), Pattern B): the lookup below runs twice, at **E** (a policy hit means no `Q:` task is created) and again at **B** for every still-pending `Q:` task (an earlier batch or an earlier item may have written the entry since; a hit sets the task `completed` with `Answer: policy` and narrates the one cache-hit line). Step 3 (the write) happens at **R**, before the `TaskUpdate` that completes the task; the yq path is the task description's `Recorded in:` value. When one `Q:` task decides several items (a multiSelect of optional entities), write one entry per item, including the negative verdicts the registry records.
 
 ```bash
 # Inputs: $CUSTOMIZATIONS_FILE (path), $DECISION_PATH (yq path from 7.4),
@@ -98,6 +100,6 @@ Not a paragraph. Not a section header. One line. The user sees that policy resol
 ## 7.6 What is NOT written to the file
 
 - **Modeler's pre-execute `y/n`.** The modeler always asks before writing. Policy does not change this.
-- **Free-text "Other" answers** that the user typed in. The slug-collision-naming widget (3d sub) has an "Other" option; when picked, use the value for the current decision but do NOT write to `.slug_collision_naming` — the next collision should re-ask. The user's typed value is a one-off, not a standing rule.
+- **Free-text "Other" answers** that the user typed in. The slug-collision-naming widget (3d sub) lists no "Other" option (the tool adds its own free-text slot); a name typed into that slot is used for the current decision but is NOT written to `.slug_collision_naming` — the next collision should re-ask. The user's typed value is a one-off, not a standing rule.
 - **Explicit-cancel selections.** Master-vs-master option 4 ("Stop, I want to think about it") and any other cancel-style choice halts the run without writing.
 - **Decisions inside the modeler.** The modeler consumes specs only; the spec already carries every decision by the time the modeler runs.

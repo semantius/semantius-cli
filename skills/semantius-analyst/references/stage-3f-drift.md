@@ -2,6 +2,8 @@
 
 *Reference for `semantius-analyst`. Invoked from the 3g step (see [`stage-3-confirm.md`](stage-3-confirm.md)). Its "Policy path:" lines depend on [`customizations-consultation.md`](customizations-consultation.md).*
 
+> **Ledger stage.** Every 3f widget (one per drifted property, per entity) is a `Q:` task (SKILL.md → Task tracking; template `Q: <Plural Label>: keep the live <property>, or apply the design's?`, or the widget's own question text where this file specifies one). Enumerate all of them when 3f starts, ask in batches of up to four per `AskUserQuestion` call, record each answer at its Policy path before completing the task, and return to 3g only when `TaskList` shows no `Q:` task pending or in progress. Informational widgets (3f.4 same-primitive) are still tasks; a blocker surfaced as a §7.1 entry with no widget is not.
+
 ### 3f. Adopted-entity drift resolution (run from the 3g confirmation step, before field drafting)
 
 **Fires when** a per-entity comparison surfaced any drift between the live entity and the **intended** definition, on ANY property: field-name (3f.1), enum-value (3f.2), permission-tier (3f.3), format/required-ness (3f.4), every other scalar property (3f.6), and every JsonLogic rule block (3f.7). The scan is property-exhaustive (see 2h) — no property is skipped. One widget fires per drift kind per affected entity. Resolution is recorded as either an annotation that the analyst applies to the spec being drafted, or as a 🔴 §7.1 blocker that the user must accept before the spec is written.
@@ -48,7 +50,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
 - Option 3 → keep both `<spec_field>` and `<live_field>` in the spec; add a 🟡 §7.2 note flagging the unusual choice.
 - Option 4 → halt the run, no spec written.
 
-**Lifecycle state field exception.** When `<spec_field>` is `workflow_state` (the fixed lifecycle state field, see Stage 4) and the live entity holds the state under a legacy name (`status` / `state` / `lifecycle_state` / `lifecycle_stage`), do **not** offer Option 1 ("keep the live name"): the deployer rejects any lifecycle state stored outside `workflow_state`, so keeping `status` would only produce a spec the modeler refuses to deploy. Offer the rename-to-`workflow_state` migration (Option 2) as the recommended path. When the live entity already uses `workflow_state`, there is no name drift to resolve.
+**Lifecycle state field exception.** When `<spec_field>` is `workflow_state` (the fixed lifecycle state field, see Stage 4) and the live entity holds the state under a different name (`status` / `state` / `lifecycle_state` / `lifecycle_stage`), do **not** offer Option 1 ("keep the live name"): the deployer rejects any lifecycle state stored outside `workflow_state`, so keeping `status` would only produce a spec the modeler refuses to deploy. Offer the rename-to-`workflow_state` migration (Option 2) as the recommended path. When the live entity already uses `workflow_state`, there is no name drift to resolve.
 
 #### 3f.2 Enum-value drift (with live records in use)
 
@@ -84,7 +86,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
 - **question**: `"`<Entity Plural Label>` is currently edit-gated by `<live_perm>` in the live model. The spec proposes `<spec_perm>` (which is a `<change kind: downgrade | upgrade | rename>`). What should we do?"`
 - **header**: `"Permission tier drift"`
 - **multiSelect**: `false`
-- **options** (3 + Cancel; rendered conditionally on change kind — downgrade shows the warning, upgrade is mostly safe, rename is informational):
+- **options** (3 + Cancel; the descriptions adapt to the change kind — downgrade shows the warning, upgrade is mostly safe, rename is informational. Options 1, 2, and 4 are always present; option 3 may be dropped when no hierarchy edge makes sense, so the count is 3 or 4, never fewer):
   1. label: `"Keep live `<live_perm>` (Recommended)"`
      description: `"Preserves existing access. The spec is updated to reference `<live_perm>` in §3 and in every JsonLogic that named `<spec_perm>`. Pick this when the live tier is correct or you're not sure."`
   2. label: `"Apply the spec's `<spec_perm>`"`
@@ -107,7 +109,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
 **Fires when** the blueprint declares a different `format` or `required` value than the live entity for a field that already exists. Distinguish two cases:
 
 - **Same-primitive format variation** (text ↔ string ↔ multiline ↔ html, integer ↔ int32 ↔ int64): the platform usually accepts these via `update_field`. The widget is informational — recommends aligning to spec (live can be updated) with a "keep live" escape hatch.
-- **Cross-primitive format change** (text → integer, text → date, integer → number, etc.): this is a 🔴 hard blocker. The widget surfaces it AS a blocker, not as a choice — the only options are "add a 🔴 §7.1 blocker and let the user decide whether to migrate" or "cancel."
+- **Cross-primitive format change** (text → integer, text → date, integer → number, etc.): this is a 🔴 hard blocker and there is nothing to choose, so **no widget fires**. Write a 🔴 §7.1 blocker into the spec and name it in the 3g plan summary's blockers line (stage-3-confirm.md, authoring rule 10) so the user sees it before the file is written.
 
 For same-primitive variation:
 
@@ -116,7 +118,7 @@ For same-primitive variation:
   1. `"Apply the spec's `<spec_format>` (Recommended)"` — `update_field` to switch format.
   2. `"Keep live `<live_format>`"` — spec aligns to live.
 
-For cross-primitive change: surface as a 🔴 §7.1 blocker in the spec, no widget. User must fix the blueprint or plan a migration manually before re-running.
+For cross-primitive change: no widget; the 🔴 §7.1 blocker in the spec plus the plan summary's blockers line are the whole surfacing. The user must fix the blueprint or plan a migration manually before re-running.
 
 #### 3f.5 JsonLogic cascade (mandatory after any rename in 3f.1 or 3f.3)
 
@@ -162,7 +164,7 @@ function rename_in_jsonlogic(node, renames):
 | Rename kind | Apply across |
 |---|---|
 | Field rename on entity E | Every JsonLogic on E. Also every JsonLogic on any OTHER entity that references `E.<old_field>` (the dotted form). |
-| Permission code rename | Every JsonLogic across all entities (permission codes are global). Also every §8.1 Permissions catalog row, §3 `Edit permission:` annotation, §7 lifecycle states' `requires_permission?` column, §8 hierarchy rows. |
+| Permission code rename | Every JsonLogic across all entities (permission codes are global). Also every §8.1 Permissions catalog row, §3 `Edit permission:` annotation, §9.1 permission-hierarchy row, §9.1 RACI realization grant list, and §9.1 `process_gates` / enforcement-rule row that names the code. |
 | Enum value rename (3f.2 option 1 won't trigger this; option 2's migration table might) | Every JsonLogic that compares against the renamed enum literal (`{"==": [{"var": "field"}, "<old_value>"]}` patterns). Also the field's `enum_values` and `default`. |
 
 **Post-cascade verification** (catches incomplete walks, runs as part of Stage 11):
@@ -179,7 +181,11 @@ For every renamed `<old_token>`, grep the entire assembled spec text for `"<old_
 
 **This is the catch-all that guarantees EVERY property is validated, not just the specialized five.** Fires when any captured property outside 3f.1–3f.4 differs between live and intended. Covers, at minimum: `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` — entity- or field-level as applicable. Grade each divergence by risk, then resolve; **nothing is auto-applied silently — every drifted property is shown and decided.**
 
-- **Cosmetic / zero-data-risk** (`description`, `title`, `width`, `searchable`, `order_column`, `id_column`, `label_column`, `icon_url`, `edit_mode`, `cube_mode`, `unique_value` true→false, `precision`/`scale` INCREASE, `default_value` on a field with **no** live records): batch ALL of these for the entity into ONE consolidated review widget (multiSelect) so the user isn't clicking through dozens, while still seeing the full set. Each row: `"<Entity>.<field>.<property>: live=<L> / spec=<S>"`. Pre-checked = adopt the live value into the spec (the safe align-to-live default); unchecked = keep the spec value (written to prod on deploy).
+- **Cosmetic / zero-data-risk** (`description`, `title`, `width`, `searchable`, `order_column`, `id_column`, `label_column`, `icon_url`, `edit_mode`, `cube_mode`, `unique_value` true→false, `precision`/`scale` INCREASE, `default_value` on a field with **no** live records): batch these per entity into consolidated multiSelect review questions so the user isn't clicking through dozens of single-property widgets, while still seeing the full set. **Shape** (SKILL.md → AskUserQuestion mechanics: 2 to 4 options per question object, never 1, never 5; the tool has no pre-checked option, so the safe default must be what an *unselected* row does). Count the entity's cosmetic divergences (K):
+  - **K = 1**: no consolidated widget; one keep-live / apply-spec question for that property: `"Keep the live <L> (Recommended)"` / `"Apply the design's <S>"` / `"Cancel"` (3 options), subject per the per-property `Q:` template (`Q: <Plural Label>: keep the live <property>, or apply the design's?`).
+  - **K = 2 to 4**: one question. **question**: `"<Plural Label>: keep the design's value for which of these? Anything you leave unselected takes the live value."` **header**: `"Minor drift"` **multiSelect**: `true` **options**: one per divergence, label `"<Field Label>: <property in plain words>"` (entity-level properties: just the property, e.g. `"icon"`), description `"Live: <L>. Design: <S>."`.
+  - **K = 5 or more**: several questions, same header, the question text suffixed ` (<i> of <N>)`, filled in field order in chunks of 4 with the last item of the previous chunk moved into the last chunk when it would otherwise hold 1 (5 → 3 + 2, 6 → 4 + 2, 9 → 4 + 3 + 2). Each question object is its own `Q:` ledger task (subject = the exact question text); the ledger batches up to four per call.
+  - **Meaning of the answer**: selected = keep the spec value (written to prod on deploy); unselected = adopt the live value into the spec (the safe align-to-live default). Never merge two divergences into one option, never pad with a filler option.
 - **Value-change with a consequence** (`default_value` change on a field WITH live records, `unique_value` false→true with no live duplicates, `view_permission` tier change, `reference_delete_mode` change): one keep-live / apply-spec widget PER property (same 3-option shape as 3f.3), spelling out the consequence (new records get a different default; a read-visibility change; a delete-cascade change).
 - **Potentially destructive** (`precision`/`scale` REDUCTION where live values exceed the new precision, `unique_value` false→true where live duplicates exist): 🔴 §7.1 blocker, no silent apply — same posture as the cross-primitive format blocker in 3f.4. Document the required data reconciliation.
 

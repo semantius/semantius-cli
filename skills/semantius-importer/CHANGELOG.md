@@ -2,6 +2,34 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Unreleased: task-tool call economy
+
+Guidance only, no contract change (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (writing convention 7 "Stage tasks" and "Ledger stages"; Stage 2 review-loop step 1, E). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
+
+## Unreleased: helpers run from `<cwd>` by path, never from inside the run folder
+
+Fix (2026-08-18). The workspace setup block ended with `cd "<cwd>/.tmp_import/run-<ts>" && bun add csv-parse` and every helper was documented as "run inside the run folder", contradicting shared preflight check 1 (never `cd`: the CLI reads `.env` from cwd). `create-fields.ts` and `import.ts` spawn `semantius call crud …`, and a child inherits the shell's cwd, so from inside the run folder the CLI looked for `.env` where none exists; on an API-key install every field create and every batch insert fails with exit 5 (an auth error that reads like a CLI bug). It went unnoticed only because the test harness authenticated by JWT injection.
+
+- The scripts never needed the run folder as cwd: `mapping.json`, `import-summary.json`, and `failed-batches.json` resolve via `import.meta.url`, `csv-parse` via Bun's upward `node_modules` lookup from the script file (verified: run by path from a parent directory, both resolve; the spawned child inherits the parent's cwd). So the fix is the modeler's shape: `bun run <run-folder>/<helper>` from `<cwd>`, and the dependency install becomes `bun add --cwd <run-folder> csv-parse` (the one step that needs the run folder as its working directory; `--cwd` is a `bun add` flag). No `.env` hunting in the scripts, no carve-out in check 1, no `.env` copied into gitignored scratch.
+- Docs: import-script-template.md (setup block, a "Never `cd` into the run folder" paragraph, run commands by path); SKILL.md (a Preflight paragraph binding check 1 to the helpers, the mandatory-commands table and every `bun run` site now `bun run <run-folder>/…`, Stage 2 / 4 / 5 notes); shared `preflight.md` check 1 now states explicitly that it covers the staged Bun scripts under `.tmp_deploy/` / `.tmp_import/` / `.tmp_admin/`, the by-path invocation, `bun add --cwd`, and never copying `.env` into a scratch folder.
+- Scripts: header comments give the by-path invocation; `create-fields.ts` and `import.template.ts` print an `AUTH_HINT` on exit 5 (the CLI's `.env` cwd and the by-path form), so a run started from the wrong directory names its likely cause instead of looking like a CLI bug. `render-plan.ts` header only (offline). All three pass `bun build`.
+
+## Unreleased: task tracking and the question ledger
+
+Guidance only, no contract change (2026-08-18). The importer now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): new writing convention 7; the Workflow table gains a Task subject column (five `Import ›` stage tasks, created at Step 0 for the operating mode) and `TaskList` as a mandatory command of Stages 2-4; Stages 2, 3, and 4 are ledger stages: every open decision becomes a `Q:` task before the first widget (subject = the exact question text, from a fixed template list), questions are asked in batches of up to four per `AskUserQuestion` call, and a task is completed only after its answer is in `mapping.json`; the pre-write gate and the diff report require `TaskList` clean of open `Q:` tasks. Standalone (unchanged): the mode question, the previous-run-folder question, the pre-write gate. Motivated by the 4-questions-per-call cap: reviews with more open decisions than that had no durable record of what was still unasked. `schema-mapping.md` §2 carries a one-paragraph pointer.
+
+## Unreleased
+
+`AskUserQuestion` mechanics (guidance only, no contract change): call the widget alone in its own response after mapping edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. New writing convention 6, plus sequencing sentences in the Stage 2 review loop and the Stage 4 pre-write gate. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
+
+## 1.5
+
+Update mode postponed; the "natural key" wording replaced by a plain "mark this field unique?" question.
+
+- **Insert-only.** The `insert` / `update` write-mode question is gone, and with it `on_exists` from `mapping.json`. `import.template.ts` no longer preloads mapped fields, diffs, or `PATCH`es; it preloads only the key values and skips rows already present (`skipped`), and exits 4 if a mapping still carries `on_exists: "update"`. Summary shape is now `parsed / inserted / skipped / failed`. `render-plan.ts` warns on a stale `on_exists` and on a `natural_key` column that lacks `unique_value: true`.
+- **User-facing wording.** Semantius has no "natural key" concept; the user's decision is whether the identifying column is **unique** (`unique_value: true`). SKILL.md Stage 2 and schema-mapping.md section 4 now prescribe the exact question ("Mark `<field>` as unique so re-running this import skips rows that are already there?" — Unique (Recommended) / Not unique). `natural_key` stays as the internal `mapping.json` name for the field the script dedupes on and never appears in a question or plan; the plan line reads "unique key: …".
+- README: update mode moved from "Works today" to a new "Postponed" section with the re-enable prerequisite (batched upsert); the 1.1 update-mode design lives in git history.
+
 ## 1.4
 
 Bulk field creation: one `create_field` call instead of one per column.

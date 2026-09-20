@@ -1,299 +1,198 @@
 # Semantic Spec Template
 
-Use this template verbatim for the final semantic-spec output in Stage 11. Each `{{placeholder}}` gets replaced with the value gathered during the workflow. Keep the section order and the table columns identical, downstream agents rely on the structure to parse entities and fields deterministically.
+Use the skeleton below verbatim for the final semantic-spec output in Stage 11. Each `{{placeholder}}` gets replaced with the value gathered during the workflow. Keep the section order and the table columns identical, downstream agents rely on the structure to parse entities and fields deterministically. The skeleton is the complete emitted surface; everything that explains it lives in the **Authoring guidance** below the skeleton, organized per section, and is never emitted.
+
+## Placeholder conventions
+
+- `{{…}}` is a value to fill. A placeholder whose text is a `|`-separated list (`{{yes | no}}`) is an enum: emit exactly one of the listed values.
+- A placeholder ending in `?` (`{{order_column?}}`) marks an **optional line or key**: emit the whole line only when the value is set (per that line's rule in the guidance); otherwise omit the line entirely, never emit an empty value or `null`. On a list, map, or block-scalar key (`related_modules:`, `deployed_related_versions:`, `promotion_decisions:`, `description: |`) the `?` on the first item / body placeholder means omit the whole key (its header line included) when there is nothing to carry. Inside a fenced `json` block the `?` marks the block **and its `**Heading**`** as omit-when-empty.
+- `{{mermaid_block}}` is the whole §2 diagram (the ```` ```mermaid ```` fence included), produced by the generator in Stage 11, never hand-authored.
+- Table rows in the skeleton are representative: emit one row per data item (zero rows means the canonical `_(none: <short reason>)_` placeholder in place of the table, see "Empty-section convention").
+- The skeleton contains **zero em-dashes** (U+2014) and is emitted byte-for-byte; the only prose it carries is what the spec itself carries (§1 body, §3 `**Description:**`, §3 Relationships bullets, §7 questions, table cells). An empty or not-applicable table cell is written `(none)` where the skeleton shows `(none)`; cells the skeleton leaves blank stay blank.
 
 ---
 
-## Template starts below this line
+## Skeleton starts below this line (emit exactly this)
 
 ```markdown
 ---
 artifact: semantic-spec
-version: "{{analyst_skill_version}}"  # currently "5.4"
-blueprint_version: "{{from blueprint}}"  # currently "3.0"; carried through from the blueprint
-license: {{from blueprint, e.g. MIT}}  # v4.1+
-system_name: {{System display name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
-tagline: {{from blueprint; the ≤40-char selector-chip text shown beside system_name in the UI module selector. For acronyms use the plain English expansion (CRM → "Customer Relationship Management"). For non-acronym names use a 2-4 word disambiguating phrase.}}  # v4.1+; → modules.description
-icon_name: {{from blueprint; module icon as an icon-set handle, not a URL, e.g. briefcase, users, ticket}}  # → modules.icon_name
-description: |  # v4.1+; longer marketing-voice prose for the catalog page
-  {{from blueprint; multi-line YAML block}}
+version: "{{analyst_skill_version}}"
+blueprint_version: "{{blueprint_version}}"
+license: {{license?}}
+system_name: {{system_name}}
+tagline: {{tagline}}
+icon_name: {{icon_name}}
+description: |
+  {{description?}}
 system_slug: {{system_slug}}
-module_type: {{domain | master}}  # optional, analyst v3.0+; omit for the default "domain". Set to "master" when authoring a master model.
-module_kind: {{domain | master | starter | …}}  # v4.1+; informational label, NOT a behavior switch
-access_scope: {{basic | full}}  # v5.3+; the access-control scope the analyst resolved after Stage 2. `basic` = two-permission fallback (read + edit, no admin tier / gates / lifecycle gating / personas / RACI); `full` = complete governance. OMIT only on a non-interactive run that couldn't resolve it (the modeler's Stage 2.5 backstop then resolves it at deploy time). The modeler honors a present value without re-asking.
-raci_mode: {{living | documentation}}  # v4.2+; REQUIRED when §9 carries a RACI matrix. Auto-derived at analyst Stage 9.5 Step 0 from instance state (living iff another module already uses RACI), not a user prompt; must match the §9 "RACI mode:" line. OMIT under access_scope: basic.
-raci_mode_source: {{computed-default | non-interactive}}  # v4.2+; REQUIRED alongside raci_mode. How the mode was derived — `computed-default` for the value auto-derived from instance state on an interactive run; `non-interactive` for headless runs. (The legacy `user-answer` value is retired: raci_mode is no longer a user prompt.) consistency-check.ts rejects a RACI spec missing either key.
-domain_code: {{from blueprint; uppercase TLA / short code, e.g. ATS, HCM, ITSM, CRM}}
-naming_mode: {{template:<vendor> | agent-optimized}}
-logo_color: {{hex color, e.g. #2563eb}}  # v5.4+; OPTIONAL → modules.logo_color. Emit ONLY when set (non-empty). The modeler honors a provided value and random-fills only when this key is ABSENT. Omit the key entirely when unset.
-home_page: {{path, e.g. /dashboard}}  # v5.4+; OPTIONAL → modules.home_page. The module's default landing path. Emit ONLY when set (non-empty/non-null); omit the key entirely otherwise.
-created_at: {{YYYY-MM-DD}}
-reconciled_at: {{YYYY-MM-DD when analyst ran}}
-reconciled_against_catalog_snapshot: {{ISO 8601 timestamp}}
-source_blueprint: {{relative path to blueprint .md}}
-# --- deploy provenance (v5.4+): MODELER-written at the end of a clean deploy (Stage 5b), NOT authored by the analyst. All three keys are absent until the spec has been deployed once. On a later analyst write they are carried forward verbatim (the analyst never computes them). They describe the LAST deploy; the analyst's 2a.1 gate compares live modules.version against deployed_version to detect prod drift. ---
-deployed_version: {{modules.version after the last clean deploy, integer}}  # omit until first deploy
-deployed_version_date: {{modules.version_date, ISO 8601}}  # omit until first deploy
-deployed_related_versions:  # live modules.version of each module this spec reuses/promotes an entity from; omit the key when none
-  {{other_module_slug}}: {{version}}
+module_type: {{module_type?}}
+module_kind: {{module_kind?}}
+access_scope: {{access_scope?}}
+raci_mode: {{raci_mode?}}
+raci_mode_source: {{raci_mode_source?}}
+domain_code: {{domain_code}}
+naming_mode: {{naming_mode}}
+logo_color: {{logo_color?}}
+home_page: {{home_page?}}
+created_at: {{created_at}}
+reconciled_at: {{reconciled_at}}
+reconciled_against_catalog_snapshot: {{catalog_snapshot_iso}}
+source_blueprint: {{source_blueprint_path}}
+deployed_version: {{deployed_version?}}
+deployed_version_date: {{deployed_version_date?}}
+deployed_related_versions:
+  {{other_module_slug}}: {{version?}}
 entities:
-  - {{table_name_1}}
-  - {{table_name_2}}
-persona: [{{PERSONA-1, PERSONA-2, ...}}]  # v4.1+; carried forward from blueprint
-related_modules:  # v4.1+; ADVISORY ONLY — never a deployment prerequisite
-  - {{slug_1}}
-  - {{slug_2}}
+  - {{table_name}}
+persona: [{{persona_list?}}]
+related_modules:
+  - {{slug?}}
 related_domains:
-  - {{Title-case domain or acronym, e.g. ITAM, CMDB, Change Management}}
-  - {{...}}
+  - {{domain?}}
 departments:
-  - {{department_name}}
+  - {{department_name?}}
 industries:
-  - {{industry_name}}
+  - {{industry_name?}}
 initial_request: |
-  {{Verbatim user request that kicked off this model — e.g. "I need a basic lead tracker". Captured once at creation and NEVER modified by later audits or extensions.}}
+  {{initial_request}}
 promotion_decisions:
-  - entity: {{table_name}}
+  - entity: {{table_name?}}
     host_module: {{master_slug}}
     manage_option: {{1 | 2 | 3 | 4}}
 ---
 
-# {{System display name}} — Semantic Model
+# {{system_name}}: Semantic Model
 
 ## 1. Overview
 
-{{Two or three sentences describing the system, its users, and the problem it solves. Written for a human reviewer; keep it concrete and avoid marketing tone. §1 is the catalog-readable system narrative — downstream skills (notably semantius-skill-maker) copy it verbatim into their human-facing README. Hard bans: no §-number cross-references (no "see §6", "via §6 hint rows"); no snake_case identifiers or column-shaped tokens (no `cost_center_id`, no `features.cost_center_id`); no platform plumbing words ("Semantius", "deployer", "deploy time", "self-contained"); no scope-deferral or authoring-decision narration ("deliberately out of scope", "moved to a sibling domain", "fully declared even though..."). Deferrals live in `related_domains` plus §6, never in §1 prose. Authoring decisions about platform built-ins are the deployer's concern at deploy time, not §1's. If you find yourself wanting to add a third paragraph that explains a *modeling choice*, delete it: §1 describes the system, not the model file.}}
+{{overview}}
 
 ## 2. Entity summary
 
-**Entity order (canonical).** Sequence entities by `entity_type` tier, then alphabetically by `table_name` within each tier: (1) `catalog` masters/lookups, (2) `operational_record` / `operational_workflow` / `computed` / `unclassified`, (3) `junction`, then (4) reuse-from platform built-ins (`users`, `departments`, …). Use this exact order everywhere entities are sequenced (the `entities:` frontmatter list, this §2 table, §3, §4, §5). It is deterministic from `entity_type` + `table_name` alone, so the reverse pass (`semantius-optimizer`) reproduces it identically; never order by discovery or authoring convenience.
-
 | # | Table name | Singular label | Purpose |
 |---|---|---|---|
-| 1 | `{{table_name}}` | {{Singular Label}} | {{the FIRST SENTENCE of this entity's §3 Description, verbatim — a mechanical truncation, NOT an independently-worded summary}} |
-| 2 | … | … | … |
+| {{n}} | `{{table_name}}` | {{Singular Label}} | {{first sentence of this entity's §3 Description, verbatim}} |
 
 ### Entity-relationship diagram
 
-A Mermaid **flowchart** showing every entity in this model and every relationship declared in §3/§4. The diagram must be **complete** (every entity and every relationship appears) and **consistent** (cardinality and direction match §3/§4). The audit cycle verifies this.
-
-```mermaid
-flowchart LR
-    classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;
-    classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;
-    {{TABLE_A}} -->|{{verb}}| {{TABLE_B}}
-    {{TABLE_A}} ---|{{verb}}| {{TABLE_C}}
-    {{M:N_SOURCE}} -->|{{m:n verb}}| {{JUNCTION}}
-    {{M:N_TARGET}} --> {{JUNCTION}}
-    class {{TABLE_DEDUP_AGAINST_SEMANTIUS_BUILTIN}} builtin;
-    class {{TABLE_WITH_SHARED_MASTER_CLUSTER}} master;
-```
-
-**Shared / external entities are highlighted in green-family styling (analyst v3.1+ for `builtin`, v3.0+ for `master`).** Two classes capture entities that aren't solely owned by this module:
-
-- **`builtin`** (deeper green) tags entities that the deployer will dedup against a Semantius platform built-in at deploy time (`users`, `roles`, `permissions`, etc.). The deployer skips `create_entity` for these and reuses the built-in as the FK target. Add `class <table_name> builtin;` per such entity.
-- **`master`** (mint green) tags entities carrying a `**Shared master cluster:** <name>` annotation in §3 (vendors, currencies, cost_centers, departments, …). Created here by default; the deployer may offer to host them in a shared master module so other domain modules can FK to the same row. Add `class <table_name> master;` per such entity.
-
-Both classes are visual aids — they don't change deploy behavior; the deployer keys off the §3 annotations and the built-in catalog directly. Omit each `classDef` line (and its `class` tags) entirely when no entity in the model qualifies. Keep `classDef builtin` and `classDef master` exactly as written above so reviewers across model files see consistent shades.
-
-**Edge labels are managed metadata, not free guesses.** When an FK field carries a `relationship_label` (the verb describing the relationship, e.g. `"owns"`, `"employs"`), that string is the edge label and goes into the diagram verbatim. The downstream deployer reads it from §3 (annotated as `relationship_label: "<verb>"` on the FK row) and persists it on the field; the optimizer reads it back from live state when it regenerates the model. Do not invent a verb for the diagram that isn't also captured on the field.
-
-This applies to **junction legs too, and is how an M:N verb survives decomposition.** When a junction materializes an `A <verb> B` M:N edge, the source-side leg carries `relationship_label: "<verb>"` (see stage-4 "Preserve the M:N verb") — so it is captured on the field, and the diagram must render it: `A -->|<verb>| JUNCTION`. The non-source leg stays bare (no declared verb to draw). This is not a guess; dropping the verb here is the loss the diagram must avoid.
-
-**Mermaid flowchart cardinality conventions** (use these exactly):
-
-The convention: **arrows (`-->`) mean "many"**, **flat connectors (`---`) mean "one"**. The arrow/connector points *from the parent to the related side* and describes how many of the related side the parent has.
-
-| Cardinality | Syntax | Example (reads as…) |
-|---|---|---|
-| 1:N (one-to-many) | `A --> B` | `accounts --> contacts` — an account has **many** contacts |
-| 1:1 (one-to-one) | `A --- B` | `users --- user_profiles` — a user has **one** profile |
-| M:N (many-to-many) | two `-->` edges via a junction; the source-side leg carries the M:N verb | `contacts -->\|covers\| coverage_junction` **and** `campaigns --> coverage_junction` — both sides have many junction rows; the verb rides the source leg |
-| Labeled edge | `A -->|verb| B` / `A ---|verb| B` | `accounts -->|owns| opportunities` |
-
-Convention: always model junction tables explicitly in the diagram as their own node with two `-->` edges in from the parents, matching how §3 models them. Never draw a direct `-->` edge between two parents of an M:N relationship — route it through the junction. **Carry the M:N verb across the decomposition:** the leg from the M:N source parent is labeled with that relationship's verb (`asset_contracts -->|covers| asset_contract_saas_applications`); the other leg is bare. The verb must never be dropped just because the relationship became a junction.
+{{mermaid_block}}
 
 ## 3. Entities
-
-For each entity, repeat the following sub-structure.
 
 ### 3.{{N}} `{{table_name}}` - {{Singular Label}}
 
 **Plural label:** {{Plural Label}}
-**Label column:** `{{field_name_used_as_label}}`
-**Order column:** `{{field_name}}`  _(v5.4+; OPTIONAL — the field records default-sort by. Backticked as a `field_name` like **Label column:**. Emit ONLY when set; omit the line when empty/null. The deployer stamps it into `entities.order_column`.)_
-**Id column:** `{{field_name}}`  _(v5.4+; OPTIONAL — the field used as the record's public id. Backticked as a `field_name`. Emit ONLY when non-default; omit the line when the value is `id` (the platform default) or empty. The deployer stamps it into `entities.id_column`.)_
-**Audit log:** {{yes | no}}  _(optional; defaults to no. Set yes when INSERT/UPDATE/DELETE history matters — contracts, financial records, policy data, anything subject to compliance or dispute. Leave no for high-volume/ephemeral data where audit noise outweighs the value.)_
-**Edit permission:** {{manage | admin | <narrow_suffix>}}  _(v4.1+: **consumed verbatim from the blueprint's §3 `write tier` column**, not re-derived. Defaults to manage. Set `admin` for reference / config / master-data entities. Set a bare narrow-tier suffix (analyst v2.1+, e.g. `interview` resolving to `<system_slug>:interview`) when Stage 10 W4n classified this entity as written by external participants and a `narrow` tier row exists for the named code in §8.1. Omit the line entirely for operational entities — the default is manage. Drives the deployer's per-entity `edit_permission` assignment; `view_permission` is always `<system_slug>:read`. Drift between the spec's value and live `entities.edit_permission` is a Stage 3f.3 prompt; cross-tier flips are 🔴 blockers.)_
-**Edit mode:** {{edit_mode}}  _(v5.4+; OPTIONAL — bare enum value, no backticks. How the record edit surface renders. Emit ONLY when non-default; omit the line when the value is the platform default (`auto`). The deployer stamps it into `entities.edit_mode`.)_
-**Cube mode:** {{cube_mode}}  _(v5.4+; OPTIONAL — bare enum value, no backticks. How the entity is exposed to the cube semantic layer. Emit ONLY when non-default; omit the line when the value is the platform default. The deployer stamps it into `entities.cube_mode`.)_
-**Icon URL:** {{icon_url}}  _(v5.4+; OPTIONAL — plain URL value, NO backticks. The entity's icon image URL. Emit ONLY when set; omit the line when empty/null. The deployer stamps it into `entities.icon_url`.)_
-**Catalog entity code:** `{{catalog_code}}`  _(v5.1+; OWNED entities only — create-new / rename-incoming-from / promote-to-master. The catalog uber-model code from the blueprint's §3 `catalog code` column (equals `table_name` for agent-optimized naming). The deployer stamps it into `entities.catalog_entity_code` as write-once identity — the catalog code, not the deployed `table_name`. Omit for `reuse-from` / built-in entities — those are referenced, not provisioned, and already carry their own stamp.)_
-**Entity type:** {{operational_workflow | operational_record | catalog | junction | computed}}  _(v5.1+; OWNED entities only. The closed 6-way class from the blueprint's §3 `entity_type` column, carried verbatim. The deployer stamps it into `entities.entity_type`. Write `unclassified` only when the blueprint left it absent (pre-3.0 fallback) — the deployer treats that as derive-locally; never coin a value outside the closed set. Omit for `reuse-from` / built-in entities.)_
-**Label parent:** `{{fk_field_name}}`  _(v5.2+; OPTIONAL — omit the line when none. Names the one FK field on this entity that is its identity spine: the parent whose composed `_label` prefixes this record's `_label`. Derived by the analyst at Stage 4 via the label_parent decision rule: NONE for `junction` entities (legs auto-combine) and for self-identifying records (intrinsic name — name/title/code/email — in `label_column`); otherwise the FK to the principal subject (the lone `parent` FK by default, else the architect-informed identity spine). MUST name a real `reference`/`parent` FK declared on this entity and MUST NOT target a junction. The deployer stamps it into `entities.label_parent`; re-pointing it changes `_label` with no data migration. Omit for `junction` entities and `reuse-from` / built-in entities.)_
-**Reconciliation:** {{create-new | reuse-from <module>.<entity> | rename-incoming-from <module>.<entity> as <new> | promote-to-master <master>.<entity> | dropped (optional, user declined) | dropped (policy-excluded)}}  _(omit when create-new)_
-**Catalog alias:** {{alias_code: <incoming_catalog_code>, source_domain: <incoming_domain_code>, source_module: <incoming_system_slug>}}  _(v5.1+; OPTIONAL, repeatable. Emit ONLY on a reuse/merge where an incoming entity from another domain was renamed onto THIS host entity — record one line per absorbed identity. The deployer APPENDS each as an element of the host's `catalog_entity_aliases` JSON array (never rewriting or dropping prior elements). `alias_code` is the incoming entity's catalog code; `source_domain` is the incoming blueprint's `domain_code`; `source_module` its `system_slug`. Omit entirely when no cross-domain merge renamed an incoming entity onto this one.)_
-**Shared master cluster:** {{cluster_name}}  _(optional, analyst v3.0+. Emit for entities the analyst recognizes as classic master concepts (finance reference data, parties, organization data, products, employees). Common patterns: `finance` (currencies, cost_centers, budget_periods, ledger_accounts, fiscal_years, tax_rates, gl_accounts); `parties` (vendors, customers, partners, suppliers); `organization` (departments, business_units, locations, sites); `products` (products, product_categories, skus); `employees` (employees, job_titles). The hint is consulted by the deployer ONLY when this entity becomes a Branch B promotion candidate (cross-module collision in another domain module); it shapes the recommended host-master selection at the deploy-time prompt. Has no effect when the entity isn't promoted. The user can always override at the deploy prompt. Omit when the entity is not a classic master concept.)_
-**Description:** {{carried VERBATIM from the blueprint's §2 entity Description — do NOT re-author, paraphrase, expand, shorten, or "improve" it; this is the single authoritative text and it is what the modeler deploys to `entities.description`. Same carry-forward discipline as the §9.1 Processes catalog descriptions. The §2 Purpose above is this text's first sentence.}}
+**Label column:** `{{label_column?}}`
+**Order column:** `{{order_column?}}`
+**Id column:** `{{id_column?}}`
+**Audit log:** {{yes | no}}
+**Edit permission:** {{edit_permission?}}
+**Edit mode:** {{edit_mode?}}
+**Cube mode:** {{cube_mode?}}
+**Icon URL:** {{icon_url?}}
+**Catalog entity code:** `{{catalog_code?}}`
+**Entity type:** {{entity_type?}}
+**Catalog owner:** {{owner_module_slug?}}
+**Label parent:** `{{fk_field_name?}}`
+**Reconciliation:** {{reconciliation?}}
+**Catalog alias:** {{alias_code: <incoming_catalog_code>, source_domain: <incoming_domain_code>, source_module: <incoming_system_slug>?}}
+**Shared master cluster:** {{cluster_name?}}
+**Description:** {{description}}
 
 **Fields**
 
 | Field name | Format | Required | Label | Description | Reference / Notes |
 |---|---|---|---|---|---|
-| `{{field_name}}` | `{{format}}` | {{yes \| no}} | {{Human Label}} | {{one short sentence — leave blank when the title + format + enum/FK already says it; fill for units (e.g. "person-months"), ranges not in a validation rule, direction-mattering semantics, sign/polarity conventions, freeform-string shape hints, or overloaded terms; see SKILL.md "Fill the §3 Description column" for when to fill vs leave blank}} | {{structured annotations ONLY — no free prose: e.g., → `accounts` (N:1), `relationship_label: "owns"`, `default: "draft"`, `precision: 2`, `cube_type: dimension`, `parent label: "X" / "Ys"`, `width: m` (v5.4+; bare value `s` \| `m` \| `w`, like `precision:`; omit when the platform default `default`), `label_column`, `unique`, `searchable` (v5.4+; backticked bare marker like `unique`; emit ONLY when live `searchable` is true), and for enum fields write the annotation literally as `enum_values:` followed by each value in inline code, e.g. enum_values: `a`, `b`, `c`}} |
-| … | … | … | … | … |
-
-> For an entity with a lifecycle, its state field is named exactly `workflow_state` (format `enum`, required; `enum_values` = the lifecycle states in order, `default` = the initial state) — never `status` / `state` / `lifecycle_state`. The deployer rejects any other name.
-> **Notes-column formatting.** Marker and identifier annotations are written backticked as code in the output: the label-column marker is `` `label_column` `` (with backticks, not the bare word), likewise `unique`, `searchable`, and FK targets (`` → `accounts` (N:1) ``). Value annotations keep the value in **double quotes**, not backticks: `default: "draft"`, `relationship_label: "owns"`. **v5.4+:** `` `searchable` `` (backticked bare marker, like `` `unique` ``) is emitted ONLY when the field's live `searchable` is true; `width: <s|m|w>` is a bare-value marker (value NOT quoted, like `precision: 2`) emitted ONLY when non-default (omit when the platform default `default`). This is the exact form `semantius-optimizer` round-trips, so an authored spec and a reverse-engineered one stay byte-identical here.
+| `{{field_name}}` | `{{format}}` | {{yes | no}} | {{Human Label}} | {{one short sentence or blank}} | {{structured annotations}} |
 
 **Relationships**
 
-- {{Prose description of each relationship this entity participates in, with cardinality and ownership. Reference every entity and FK by its **unique name** (`table_name`, `field_name`), never a display label or a name-derived noun — the same uniqueness guarantee §1/§3 use for `table_name`, so `semantius-optimizer` round-trips this prose verbatim. Canonical forms (use the literal §4 delete-mode token `clear`/`restrict`/`cascade`): "A `{{this}}` record belongs to one `{{parent}}` via `{{fk_field}}` (N:1, required, restrict on delete)." (optional FK: "…may belong to one `{{parent}}` via `{{fk_field}}` (N:1, optional, clear on delete)."); "A `{{this}}` record may have many `{{child}}` (1:N, via `{{child}}.{{fk_field}}`)."; **the indefinite article agrees with the following `table_name`'s initial letter — write `An` before a vowel-initial identifier (`An `asset_contracts` record …`, `An `incident` …`) and `A` before a consonant-initial one (`A `saas_subscriptions` record …`). Match on the literal identifier that follows, not its display label.**; "`{{this}}` ↔ `{{other}}` is many-to-many through the `{{junction}}` junction table."; for a junction entity's own block: "Each `{{junction}}` links one `{{parent_a}}` to one `{{parent_b}}` (junction, both legs cascade on delete)."}}
+- {{relationship sentence}}
 
-**Computed fields** _(optional; omit the heading entirely when none)_
-
-A JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. Cross-entity primitives `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` (analyst v3.2+) let the body read columns of a parent / referenced record (inherited values, merged labels) — see the `use-semantius` skill's `references/jsonlogic.md` § "Cross-entity lookups inside JsonLogic".
+**Computed fields**
 
 ```json
-[
-  {
-    "name": "<existing-scalar-field>",
-    "description": "<one-line human note>",
-    "jsonlogic": { /* JsonLogic expression */ }
-  }
-]
+{{computed_fields_array?}}
 ```
 
-**Validation rules** _(optional; omit the heading entirely when none)_
-
-A JSON array of record-level invariants. Each rule must evaluate truthy for the write to succeed; failures are returned as `{ "errors": [{ "code", "message" }, ...] }`. Codes are snake_case and unique within the entity. The platform collects all failing rules without short-circuiting. Rules may use `{"set_record": ["<name>", "<entity>", <id>, <body>]}` (analyst v3.2+) to gate on the state of a parent / referenced record, and `{"throw_error": "<message>"}` inside an `if` to raise a SQL exception (SQLSTATE `23514`) whose text the caller sees verbatim — use it when prose names a specific, hand-tailored error message that should override the rule's static `message`.
+**Validation rules**
 
 ```json
-[
-  {
-    "code": "<snake_case_unique_within_entity>",
-    "message": "<default English message returned to the caller>",
-    "description": "<one-line human note explaining why this rule exists>",
-    "jsonlogic": { /* JsonLogic expression that must be truthy */ }
-  }
-]
+{{validation_rules_array?}}
 ```
 
-**Input type rules** _(optional; omit the heading entirely when none; analyst v2.2+)_
-
-A field-level UI override block. Lists every field on this entity whose displayed `input_type` should be derived from the current record's state instead of staying fixed. Each entry binds one field name to a single JsonLogic object that returns one of `"default"` / `"required"` / `"readonly"` / `"disabled"` / `"hidden"`. The platform evaluates the rule client-side at form-render time; the result replaces the field's static `input_type` for that record. A malformed result or empty rule falls back to the static `input_type`. Use this for conditional visibility (hide `approved_at` until the record is being approved), conditional lock (`readonly` after a terminal status), conditional require (an extra `comments` field becomes required when `workflow_state` is `disputed`). Anything that must be enforced server-side belongs in `validation_rules`, not here — `input_type_rule` is UI control only. Pair an "appears at the right moment" rule with a server-side `validation_rules` entry so the field is actually populated, not just rendered editable.
+**Input type rules**
 
 ```json
-[
-  {
-    "field": "<field_name>",
-    "description": "<one-line human note; optional>",
-    "jsonlogic": { /* JsonLogic expression returning one of "default"/"required"/"readonly"/"disabled"/"hidden" */ }
-  }
-]
+{{input_type_rules_array?}}
 ```
 
-(The block is emitted as a **JSON array** — same shape as `Computed fields` and `Validation rules` — so the deployer parses all four read- and write-side sub-blocks with one parser instead of two. Each entry's `field` value must match a real field declared in this entity's §3 field table. The deployer applies each entry by calling `update_field` on `<table_name>.<field>` with the entry's `jsonlogic` value as `data.input_type_rule`.)
-
-**Select rule** _(optional; omit the heading entirely when none; analyst v2.2+)_
-
-An entity-level row-visibility rule. A single JsonLogic *object* (not an array) that the platform compiles into a `FOR SELECT` row-level security policy: the rule must return truthy for a row to be visible to the caller. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. (`$old` is not meaningful in the select context). The rule is layered on top of `view_permission` — table-level access still gates first; this filters per-row for callers who have access. **The rule applies uniformly to every caller with `view_permission`** — there is no documented mechanism by which holding a specific permission causes the rule to be skipped. Use it for ownership-scoped visibility (a record's submitter / assignee / author sees it) and for confidential / restricted records (rule reads a column the row carries). For tiered visibility where some roles need broader access, the broadening lives **outside** the rule (an architectural decision resolved in §7.1: option B column-encoded, option C separate cube view / entity surface, option D Postgres `BYPASSRLS` role attribute). Never write a rule that promises a `<slug>:view_all_<plural>` permission bypass. Keep the expression simple: direct column comparisons and `$user_id` matches; avoid arithmetic and cross-row joins (the rule runs on every read of every row).
+**Select rule**
 
 ```json
-{ /* JsonLogic expression returning a boolean — truthy means row visible */ }
+{{select_rule_object?}}
 ```
 
 ---
 
-_(repeat section 3 per entity, numbered 3.1, 3.2, …)_
-
 ## 4. Relationship summary
-
-A single table showing every link between entities. An agent uses this to sanity-check that each reference field in §3 has a corresponding row here, and that the §2 diagram matches.
 
 | From | Field | To | Cardinality | Kind | fk_format | Delete behavior |
 |---|---|---|---|---|---|---|
-| `{{table_a}}` | `{{field}}` | `{{table_b}}` | {{N:1 \| 1:1 \| 1:N \| M:N}} | {{reference \| parent \| junction}} | {{reference \| parent}} | {{restrict \| clear \| cascade}} |
-| … | … | … | … | … | … | … |
-
-- **One row per OUTBOUND FK field, nothing else.** Emit exactly one row for each `reference`/`parent` field declared on the `From` entity in §3, in that entity's field order, entities in the canonical §3 order. **Never** emit a row for an *inbound* reference (a field another entity points here with) — that link already has its own row under the entity that owns the FK. Do not emit half-empty "via `<other_table>`" rows, `—`/blank `To`/`Cardinality`/`Kind` cells, or any row whose `To` is not a declared entity: each is an authoring bug (and the em-dash and reference-resolution gates reject it). `saas_applications` is referenced BY `saas_subscriptions.saas_application_id`, so that link appears **once**, on the `saas_subscriptions` row — not a second time as a phantom `saas_applications` row.
-- **`Kind` vs `fk_format` are two different columns — do not copy one into the other.** `fk_format` is the physical field format from §3 (`reference` or `parent`). `Kind` is the relationship class: it is `junction` for **every** FK leg of a `junction` entity (its `**Entity type:**` line is `junction`), and equals the `fk_format` value (`reference` or `parent`) for every other row. So a junction leg reads `Kind = junction`, `fk_format = parent` (they differ); an ordinary parent leg reads `Kind = parent`, `fk_format = parent`; a reference reads `Kind = reference`, `fk_format = reference`. Collapsing a junction leg's `Kind` to `parent` is the common mistake — the junction signal must survive here even though the checker derives §2 from `Cardinality`/`relationship_label` and not from `Kind`.
-
-_v4.1+: `fk_format` is consumed from the blueprint's §5.1 / §5.2 / §5.3a column verbatim; the analyst no longer re-derives. Drift between blueprint and live `fields.format` (cross-primitive flip: `parent ↔ reference`) is a 🔴 blocker._
+| `{{table_a}}` | `{{field}}` | `{{table_b}}` | {{N:1 | 1:1 | 1:N | M:N}} | {{reference | parent | junction}} | {{reference | parent}} | {{restrict | clear | cascade}} |
 
 ## 5. Enumerations
 
-Collect every `enum` field's allowed values here, one sub-section per enum, **sorted alphabetically by `table_name.field_name`**. If two fields share an enum, note it and list once. The sub-heading is **unnumbered** (just the backticked `table.field`, no `5.N`); the member values inside a block keep their defined lifecycle/semantic order (do NOT alphabetize the values).
-
 ### `{{table_name}}.{{field_name}}`
-- `{{value_1}}`
-- `{{value_2}}`
-- `{{value_3}}`
-
-If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" in the authoring guidance below.
+- `{{value}}`
 
 ## 6. Cross-model link suggestions
 
-Hints for the deployer about FKs that would add value when the named target entity exists in the catalog. The deployer resolves each `To` against the live catalog using its existing name-matching pass, proposes the FK as an additive `create_field` when a single match is found, and asks the user when several candidates plausibly fit (e.g. `vendors`, `suppliers`, `saas_vendors`). Entries whose target is not in the catalog are silently skipped, so erring toward inclusion is cheap.
+| From | To | Verb | Cardinality | Delete | Reconciliation |
+|---|---|---|---|---|---|
+| `{{source_table}}` | `{{target_concept}}` | {{verb in parent voice}} | {{N:1 | 1:1}} | {{clear | restrict}} | {{proposed | dormant | ambiguous-resolved | skipped}} |
 
-This section is a hint list, not a contract. It does **not** carry entity-overlap declarations (vendors-vs-suppliers, contracts-vs-saas_contracts). Those are name collisions and the deployer detects them by inspecting the live catalog at deploy time, so the analyst does not need to pre-declare them here.
+### Outbound handoffs
 
-If this model has no plausible cross-model links, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` under §6 (bare `_(none)_` allowed) — do not omit the section. The `related_domains` front-matter (described below) is a separate discovery tag and may still be populated even when §6 is empty.
+| source module | target domain | target module | trigger_event | transition | payload | integration | friction | description |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| {{SOURCE_MODULE_UPPER}} | {{TARGET_DOMAIN_CODE}} | {{TARGET_MODULE_UPPER}} | `{{event_name_snake_case}}` | `{{to_state}}` _({{event_category}})_ | `{{payload_entity}}` | {{event_stream | api_call | batch_sync | lifecycle_progression}} | {{low | medium | high}} | {{one-liner about what the receiver does with the event}} |
 
-| From | To | Verb | Cardinality | Delete |
-|---|---|---|---|---|
-| `{{source_table}}` | `{{target_concept}}` | {{verb in parent voice}} | {{N:1 \| 1:1}} | {{clear \| restrict}} |
-| ... | ... | ... | ... | ... |
+### Inbound handoffs
 
-- **From** is the table that hosts the FK column. For *outbound* rows it is a `table_name` declared in this model's §3; for *inbound* rows it is a sibling-owned `table_name` that does not yet exist in the catalog (the FK lands on the sibling's table at a later deploy). The same entity in this model can act as parent in some rows and child in others.
-- **To** is the FK target (the parent of the relationship). No module prefix; the deployer resolves against the global catalog. Use the most likely canonical plural snake_case form, the deployer handles fuzzy matches and ambiguity.
-- **Verb** follows the same parent-voice rule as `relationship_label` in §3: it fills "a `<To>` ___ many `<From>`". Both **active** parent voice ("owns", "tracks", "hosts", "manages") and **passive** parent voice ("is affected by", "is referenced by", "is the subject of") are valid; pick whichever reads naturally given which side is the natural actor. Avoid **child voice** ("an incident affects a hardware_asset"), which flips the breadcrumb. The deployer copies the verb onto the created FK as `relationship_label`.
-- **Cardinality** defaults to `N:1`; state `1:1` only when the FK should be unique. Cross-model `M:N` is out of scope for §6 (it requires a junction table that no model owns).
-- **Delete** defaults to `clear`. `restrict` is allowed when the link must block deletion of the target. `cascade` is never valid across modules (no module owns another).
-
-The deployer auto-generates the field name from the resolved target's singular form (e.g. `hardware_assets` becomes `hardware_asset_id`). When the source entity already has a field by that name, the deployer surfaces the collision and asks for an alternative.
+| target module | source domain | source module | trigger_event | transition | payload | integration | friction | description |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| {{THIS_MODULE_UPPER}} | {{SOURCE_DOMAIN_CODE}} | {{SOURCE_MODULE_UPPER}} | `{{event_name}}` | `{{to_state}}` _({{event_category}})_ | `{{payload_entity}}` | {{event_stream | api_call | batch_sync | lifecycle_progression}} | {{low | medium | high}} | {{description}} |
 
 ## 7. Open questions
 
-Questions the analyst flagged during the session. Every entry must be phrased as a **forward-looking question** that a reviewer can answer — not as a decision log or assumption narrative. Split into two severity buckets and keep both headings even when empty (write the canonical empty-section placeholder `_(none: <short reason>)_`, bare `_(none)_` allowed, under an empty bucket — see "Empty-section convention" below).
-
-**How to phrase entries.** Wrong: *"Contracts folded into subscriptions — if MSAs become needed, split them out."* (This is a decision log, not a question.) Right: *"Should contracts be separated from subscriptions to support master service agreements with multiple sub-products?"* Wrong: *"Actual invoiced spend is out of scope."* Right: *"Is tracking actual invoiced spend (paid vs. due, dispute handling) required, or is the expected-spend calculation from subscription terms sufficient?"*
-
 ### 7.1 🔴 Decisions needed (blockers)
 
-Questions where the model is **ambiguous or incomplete** without an answer. Leaving these open means the deployer has to guess at entity shape, cardinality, or required fields. The semantius-modeler skill refuses to proceed while any 🔴 question is unresolved.
-
-- {{Blocker question 1 — e.g. "Can a user hold multiple roles concurrently, or exactly one? This changes whether `user_roles` is a junction or a FK on `users`."}}
-- {{Blocker question 2}}
+- {{blocker question}}
 
 ### 7.2 🟡 Future considerations (deferred scope)
 
-Questions about extensibility or scope that are **fine to leave open**. These capture trade-offs the analyst deliberately deferred — the model works as-is, but a future business need would trigger a change. Safe to ignore at implementation time.
-
-- {{Deferred-scope question 1 — e.g. "Should the `category` enum on `subscriptions` and `budget_lines` be promoted to a lookup table if the category list starts evolving frequently?"}}
-- {{Deferred-scope question 2}}
+- {{deferred-scope question}}
 
 ## 8.1 Permissions catalog
 
-_The full permission catalog. Workflow gates and row-scope overrides on embedded_master entities whose catalog owner is absent carry a `**Reconciliation:** re-prefixed-from <catalog-module>.<verb>` annotation; the deployer's Stage 4n reads this annotation to identify reconciliation-eligible permissions when the catalog owner later installs._
-
 | permission | tier | description | included in `:admin`? | reconciliation |
 | --- | --- | --- | --- | --- |
-| `{{slug}}:read` | baseline-read | … | ✓ | — |
-| `{{slug}}:manage` | baseline-manage | … | ✓ | — |
-| `{{slug}}:admin` | baseline-admin | … | - | — |
-| `{{slug}}:{{verb}}` | workflow-gate (lifecycle) | … | ✓ | `re-prefixed-from {{catalog-module}}.{{verb}}` _(when applicable)_ |
-| `{{slug}}:view_all_{{plural}}` | override | … | ✓ | `re-prefixed-from {{catalog-module}}.view_all_{{plural}}` _(when applicable)_ |
-| `{{slug}}:manage_all_{{plural}}` | override | … | ✓ | `re-prefixed-from {{catalog-module}}.manage_all_{{plural}}` _(when applicable)_ |
-| `{{slug}}:bypass_submit_lock` | workflow-gate (rule) | … | ✓ | `re-prefixed-from {{catalog-module}}.bypass_submit_lock` _(when applicable)_ |
+| `{{slug}}:read` | baseline-read | {{description}} | ✓ | (none) |
+| `{{slug}}:manage` | baseline-manage | {{description}} | ✓ | (none) |
+| `{{slug}}:admin` | baseline-admin | {{description}} | - | (none) |
+| `{{slug}}:{{verb}}` | workflow-gate (lifecycle) | {{description}} | ✓ | {{re-prefixed-from <catalog-module>.<verb> | (none)}} |
+| `{{slug}}:view_all_{{plural}}` | override | {{description}} | ✓ | {{re-prefixed-from <catalog-module>.view_all_<plural> | (none)}} |
+| `{{slug}}:manage_all_{{plural}}` | override | {{description}} | ✓ | {{re-prefixed-from <catalog-module>.manage_all_<plural> | (none)}} |
+| `{{slug}}:bypass_submit_lock` | workflow-gate (rule) | {{description}} | ✓ | {{re-prefixed-from <catalog-module>.bypass_submit_lock | (none)}} |
+| `{{slug}}:{{narrow_suffix}}` | narrow | {{description}} | ✓ | (none) |
 
 ## 8.2 Business rules
 
-_Each rule carries its `source flag` (`lifecycle` / `owner_edit` / `narrow_write`) from the blueprint. The analyst converts the intent to JsonLogic at Stage 10. An approval is not a §8.2 rule — it is a §7 gated transition + its §8.1 `workflow-gate` permission + the §9 RACI Accountable actor._
-
 | rule_name | data_object | source flag | intent |
 | --- | --- | --- | --- |
-| `{{rule_name}}` | `{{table_name}}` | `{{source flag}}` | {{one-sentence intent — analyst converts to JsonLogic at Stage 10}} |
+| `{{rule_name}}` | `{{table_name}}` | `{{lifecycle | owner_edit | narrow_write}}` | {{one-sentence intent}} |
 
 ## 9. Governance
 
@@ -301,59 +200,51 @@ _Each rule carries its `source flag` (`lifecycle` / `owner_edit` / `narrow_write
 
 **Baseline roles:**
 
-_Role slugs use `{{role_slug_base}}` = `{{slug}}` with every `-` replaced by `_`, because `roles.slug` is constrained to `^[a-z0-9_]+$` and forbids the hyphens `module_slug` allows (e.g. `it-ops-starter` becomes `it_ops_starter_viewer`). Always emit this underscored form; never use the hyphenated `{{slug}}` for the role slug, even if an older blueprint's §9 carried it hyphenated. The `baseline grant` column keeps the hyphenated `{{slug}}` prefix, since `permissions.permission_name` allows hyphens._
-
-_The `origin` and `catalog role code` columns (v5.4+) are OPTIONAL, derived, and DISPLAY-ONLY: they carry live `roles.origin` / `roles.catalog_role_code`, which the deployer RE-DERIVES from the module type / slug, so a round-trip through them is a functional no-op. Present in reverse-engineered specs (`semantius-optimizer` emits them from live state); safe to leave BLANK or omit the two cells entirely in hand-authored specs. The modeler parses the table BY HEADER NAME and ignores these two columns as inputs. Older 5.3 specs carry the 3-column form (no `origin` / `catalog role code`) and still parse._
-
 | role | baseline grant | origin | catalog role code | reconciliation |
 | --- | --- | --- | --- | --- |
-| `{{role_slug_base}}_viewer` | `{{slug}}:read` | {{origin, derived — blank in hand-authored}} | {{catalog_role_code, derived — blank in hand-authored}} | _(✨ to create | ♻ exists | 🟡 drift on module_id)_ |
-| `{{role_slug_base}}_manager` | `{{slug}}:manage` | … | … | … |
-| `{{role_slug_base}}_admin` | `{{slug}}:admin` | … | … | _(omit when no `:admin` tier)_ |
+| `{{role_slug_base}}_viewer` | `{{slug}}:read` | {{origin?}} | {{catalog_role_code?}} | {{✨ to create | ♻ exists | 🟡 drift on module_id}} |
+| `{{role_slug_base}}_manager` | `{{slug}}:manage` | {{origin?}} | {{catalog_role_code?}} | {{✨ to create | ♻ exists | 🟡 drift on module_id}} |
+| `{{role_slug_base}}_admin` | `{{slug}}:admin` | {{origin?}} | {{catalog_role_code?}} | {{✨ to create | ♻ exists | 🟡 drift on module_id}} |
 
 **Permission hierarchy:**
 
 | permission | includes | reconciliation |
 | --- | --- | --- |
-| `{{slug}}:admin` | `{{slug}}:manage` | … |
-| `{{slug}}:manage` | `{{slug}}:read` | … |
-| `{{slug}}:admin` | `{{slug}}:{{gate_or_override}}` | _(one row per §8.1 gate / override)_ |
-| `{{slug}}:manage` | `{{slug}}:{{narrow}}` | _(one row per §8.1 `narrow` tier permission)_ |
+| `{{slug}}:admin` | `{{slug}}:manage` | {{✨ to create | ♻ exists}} |
+| `{{slug}}:manage` | `{{slug}}:read` | {{✨ to create | ♻ exists}} |
+| `{{slug}}:admin` | `{{slug}}:{{gate_or_override}}` | {{✨ to create | ♻ exists}} |
+| `{{slug}}:manage` | `{{slug}}:{{narrow_suffix}}` | {{✨ to create | ♻ exists}} |
 
-**Processes:** _(catalog — one row per process, referenced by `process_key`; carried from the blueprint's Processes wired table. PCF columns are blueprint provenance and are dropped here — `process_key` is the join-back key.)_
+**Processes:**
 
 | process_key | name | description | ordering |
 | --- | --- | --- | --- |
 | {{process_key}} | {{process display name}} | {{one-paragraph description}} | {{integer, from catalog order}} |
 
-**RACI mode:** `{{living | documentation}}` _(v4.2 — chosen at Stage 9.5 Step 0; the deployer honors this and does not re-prompt)._
+**RACI mode:** `{{living | documentation}}`
 
 **RACI realization:**
 
 | actor | kind | raci | process_key | consult_mode | realization | grant_module |
 | --- | --- | --- | --- | --- | --- | --- |
-| `{{ACTOR}}` | persona \| skill | responsible | {{process_key}} | — | grant gates [{{module:verb_1, module:verb_2}}] + the gated entities' write tier | _(the gate's owning entity's CURRENT module slug; may differ from installing unit when the entity already exists under another module)_ |
-| `{{ACTOR}}` | persona \| skill | accountable | {{process_key}} | — | approval gate | … |
-| `{{ACTOR}}` | persona \| skill | consulted | {{process_key}} | read \| notify \| block | advisory read grant | … |
-| `{{ACTOR}}` | persona \| skill | informed | {{process_key}} | — | notification side effect | _(handoff event_category + target module)_ |
-
-_The `process_key` references the **Processes** catalog above (display name + description live there, never on the RACI row). The `grant_module` column is the **entity-owning-module rule** at work: for each gate in the actor's grant list, look up the gate's owning entity's current owning module slug in the live catalog. The deployer's Stage 4k uses this column to resolve the canonical permission code; it does NOT assume the installing-unit prefix._
-
-**RACI plan (living mode only — v4.2).** When **RACI mode** is `living`, the analyst also emits the live-catalog plan the deployer materializes via `postgrestRequest`, **in addition to** the baseline tier grants above. The deployer creates one `processes` row per **Processes** catalog entry (with its `name`, `description`, `ordering`). Omit this entire block in `documentation` mode.
+| `{{ACTOR}}` | {{persona | skill}} | responsible | {{process_key}} | (none) | grant gates [{{module:verb_1, module:verb_2}}] + the gated entities' write tier | {{grant_module}} |
+| `{{ACTOR}}` | {{persona | skill}} | accountable | {{process_key}} | (none) | approval gate | {{grant_module}} |
+| `{{ACTOR}}` | {{persona | skill}} | consulted | {{process_key}} | {{read | notify | block}} | advisory read grant | {{grant_module}} |
+| `{{ACTOR}}` | {{persona | skill}} | informed | {{process_key}} | (none) | notification side effect | {{handoff event_category + target module}} |
 
 _raci_assignments_
 
 | process_key | role (slug) | raci | consult_mode |
 | --- | --- | --- | --- |
-| {{process_key}} | {{role_slug}} | responsible \| accountable \| consulted \| informed | read \| notify \| block \| — |
+| {{process_key}} | {{role_slug}} | {{responsible | accountable | consulted | informed}} | {{read | notify | block | (none)}} |
 
 _process_gates_
 
 | process_key | entity | gate_kind | to_state | state_column | emits_events |
 | --- | --- | --- | --- | --- | --- |
-| {{process_key}} | {{table_name}} | approval \| submit_lock \| ownership \| create \| transition | {{state}} | `workflow_state` | true \| false |
+| {{process_key}} | {{table_name}} | {{approval | submit_lock | ownership | create | transition}} | {{state}} | `workflow_state` | {{true | false}} |
 
-_enforcement rules_ — the `validation_rule` / `select_rule` the deployer authors (Stage 4e/4f mechanism):
+_enforcement rules_
 
 | entity | rule | jsonlogic |
 | --- | --- | --- |
@@ -370,37 +261,199 @@ _enforcement rules_ — the `validation_rule` / `select_rule` the deployer autho
 
 ```
 
-## Template ends above this line
+## Skeleton ends above this line
 
 ---
 
 ## Authoring guidance
 
-- Use the fenced `markdown` block so the model is self-contained when copied.
-- Table columns are fixed, don't rename or reorder them. Agents parse by header.
-- If a field is a reference, always put the arrow + target + cardinality in the "Reference / Notes" column, e.g. `→ accounts (N:1)`. If it's a parent (ownership), use `↳ accounts (N:1, cascade)` so the distinction is visible.
-- The §2 Mermaid diagram is **required**, it must list every entity in the summary table and every relationship in §4. Regenerate it whenever entities or relationships change.
-- Keep the "Open questions" section and both severity sub-sections (§7.1 Decisions needed, §7.2 Future considerations) even when empty, write the canonical placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) under an empty bucket. Every entry is a forward-looking question; decision-log prose ("X was folded into Y") does not belong here. The semantius-modeler skill uses §7.1 as a gate, any unresolved 🔴 item blocks deployment (the gate keys on unresolved 🔴 *items*, not on any literal placeholder string, so the `_(none: …)_` form is safe).
-- **Module identity comes from `system_slug`.** The frontmatter `system_slug` is the single source of truth for the module identifier. Do not introduce a second name like `{domain}_spend` or `{domain}_tracker` anywhere; if the frontmatter says `acme_crm`, the module is `acme_crm` and the permissions are `acme_crm:read` / `acme_crm:manage` / `acme_crm:admin` (in the three-permission default, or `acme_crm:read` / `acme_crm:manage` in the two-permission fallback). The §8.1 Permissions catalog and the deployed module record must agree with the frontmatter; a divergence is a blocker the deployer cannot resolve silently.
-- **The §8.1 Permissions catalog enumerates the permissions; the §9.1 hierarchy carries the rollup chain.** The default is three permissions (`<slug>:read`, `<slug>:manage`, `<slug>:admin`) with two hierarchy rows (`admin` includes `manage`; `manage` includes `read`). Drop to two permissions and one hierarchy row only when **all** entities classify operational AND the model declares no workflow permissions, or when every entity classifies admin (purely reference module). The admin-tier entity list (the §3 entities carrying `**Edit permission:** admin`) must match the entities assigned `<slug>:admin` as their `edit_permission`; drift between them is a blocker.
-- **The §8.1 Permissions catalog also lists workflow permissions** (analyst v1.11+) — the codes that family-12 and family-13 `validation_rules` invoke via `{"require_permission": "..."}`. Two or three permissions are the baseline; the analyst evaluates every model for additional gates that workflow / approval / record-ownership rules need (an offer's transition into `approved`, a contract's `signed` step, a personal note's owner-or-manager edit rule). The bar is: only add a workflow permission when the gated transition is genuinely policy-different from the rest of the entity's writes. Typical count per module is 0–4; ten is a smell. Every workflow permission listed in §8.1 must appear as the argument to a `require_permission` call in some entity, and vice versa: every `require_permission` argument must be declared in §8.1. Workflow permissions roll up under `<slug>:admin` (the rollup default) or stand alone (granted directly); **never** roll up under `<slug>:manage` (it defeats the conditional gate). A model with workflow permissions but no admin-tier entities should still declare `<slug>:admin` as the rollup target.
-- **`**Edit permission:** manage | admin`** on the §3 entity sub-section drives the deployer's per-entity `edit_permission` assignment. Default is `manage` (omit the line). Annotate `admin` for entities classified as reference/config in Stage 9 (small, slowly-changing, referenced by operational entities as a lookup/category/stage/type/source, ships seeded values). The line lives next to `**Audit log:**` so the analyst sees both decisions in the same place. The platform-built-in `users` entity, when declared in §3 for self-containment, does not need the line — the deployer dedups against the built-in and the annotation has no effect.
-- **Keep field-level titles off `singular_label`.** After `create_entity`, the platform derives the label-column field's `title`; the deployer validates it and corrects only the outliers via `update_field` (the analyst does not spell out that procedure). The analyst's job is to put the intended title in the §3 field table's Label column for the label_column row (e.g. `"Vendor Name"`) while keeping `singular_label` a bare singular for plural/singular symmetry (`"Vendor"`, never `"Vendor Name"`). Field-level titles live on the field, not on the entity label.
-- **`version`** is the analyst skill's `CURRENT_VERSION` at the time the file was last written, as a quoted string `"MAJOR.MINOR"`. The analyst stamps this on every save (Mode A Stage 11, Mode B fix-up writes, Mode C extend writes); it is never authored by hand. Major changes only on breaking schema/structure shifts (frontmatter keys removed, sections renumbered, table column shapes changed); minor changes on any non-breaking analyst-skill update (new audit checks, clarified rules, additional optional fields). The deployer rejects models whose major differs from its expected major; the analyst treats older-major files as archived knowledge rather than literal models. Files with no `version` key (legacy, pre-versioning) require an explicit review-and-migrate pass before any audit/extend or deploy.
-- **`tagline`** is **required**: a compact ≤40-character (2-5 word) string shown in the UI module-selector chip and on the module landing page beside `system_name` — it populates `modules.description`. Its job is to disambiguate similar-looking names at a glance (ITSM vs ITAM, CRM vs CDP). For acronym `system_name`s use the plain English expansion (`CRM` → `Customer Relationship Management`, `ITSM` → `IT Service Management`, `CMDB` → `Configuration Management Database`, `HRIS` → `Human Resources Information System`, `SAM` → `Software Asset Management`, `ATS` → `Applicant Tracking System`, `CDP` → `Customer Data Platform`). For non-acronym names use a 2-4 word disambiguating noun phrase (`Helpdesk` → `IT Support & Ticketing`, `Workforce Planning` → `Headcount & Org Design`). Full-sentence descriptions belong in §1 Overview, not here.
+### Frontmatter keys
+
+- **`artifact`** is always `semantic-spec`.
+- **`version`** is the analyst skill's `CURRENT_VERSION` at the time the file was last written (currently `"5.5"`), as a quoted string `"MAJOR.MINOR"`. The analyst stamps this on every save (Mode A Stage 11, Mode B fix-up writes, Mode C extend writes); it is never authored by hand. Major changes only on breaking schema/structure shifts (frontmatter keys removed, sections renumbered, table column shapes changed); minor changes on any non-breaking analyst-skill update (new audit checks, clarified rules, additional optional fields). The deployer rejects models whose major differs from its expected major; the analyst treats older-major files as archived knowledge rather than literal models. Files with no `version` key require an explicit review-and-migrate pass before any audit/extend or deploy.
+- **`blueprint_version`** is carried through from the blueprint (currently `"3.0"`).
+- **`license`** is carried from the blueprint (e.g. `MIT`). OPTIONAL: present when the blueprint carries it; absence is not a finding.
+- **`system_name`** is the system display name. Keep acronyms as acronyms (CRM, ITSM, CMDB).
+- **`tagline`** is **required**: a compact ≤40-character (2-5 word) string shown in the UI module-selector chip and on the module landing page beside `system_name`, carried from the blueprint; it populates `modules.description`. Its job is to disambiguate similar-looking names at a glance (ITSM vs ITAM, CRM vs CDP). For acronym `system_name`s use the plain English expansion (`CRM` → `Customer Relationship Management`, `ITSM` → `IT Service Management`, `CMDB` → `Configuration Management Database`, `HRIS` → `Human Resources Information System`, `SAM` → `Software Asset Management`, `ATS` → `Applicant Tracking System`, `CDP` → `Customer Data Platform`). For non-acronym names use a 2-4 word disambiguating noun phrase (`Helpdesk` → `IT Support & Ticketing`, `Workforce Planning` → `Headcount & Org Design`). Full-sentence descriptions belong in §1 Overview, not here.
 - **`icon_name`** is the module's UI icon as an icon-set handle (not a URL), e.g. `briefcase`, `users`, `ticket`. Carried from the blueprint; the deployer stamps it into `modules.icon_name`.
-- The front-matter is YAML, every value must be quoted if it contains a colon.
+- **`description`** is the longer marketing-voice prose for the catalog page, carried from the blueprint as a multi-line YAML literal block (`|`). OPTIONAL: present when the blueprint carries it (publish-only; absence is not a finding).
+- **`system_slug`** is the module identifier. **Module identity comes from `system_slug`.** The frontmatter `system_slug` is the single source of truth for the module identifier. Do not introduce a second name like `{domain}_spend` or `{domain}_tracker` anywhere; if the frontmatter says `acme_crm`, the module is `acme_crm` and the permissions are `acme_crm:read` / `acme_crm:manage` / `acme_crm:admin` (in the three-permission default, or `acme_crm:read` / `acme_crm:manage` in the two-permission fallback). The §8.1 Permissions catalog and the deployed module record must agree with the frontmatter; a divergence is a blocker the deployer cannot resolve silently.
+- **`module_type`** is `domain` or `master`. OPTIONAL; omit for the default `domain`. Set to `master` when authoring a master model.
+- **`module_kind`** is an informational label (`domain` / `master` / `starter` / …), NOT a behavior switch. OPTIONAL: carry it verbatim when the blueprint carries it; **omit the key entirely** when the blueprint does not. Never emit `null`. The modeler writes `modules.settings.module_kind` only when the key is present with a non-empty value and compares it at verify time only then.
+- **`access_scope`** is the access-control scope the analyst resolved after Stage 2: `basic` = two-permission fallback (read + edit, no admin tier / gates / lifecycle gating / personas / RACI); `full` = complete governance. OMIT only on a non-interactive run that couldn't resolve it (the modeler's Stage 2.5 backstop then resolves it at deploy time). The modeler honors a present value without re-asking.
+- **`raci_mode`** (`living` | `documentation`) is REQUIRED when §9 carries a RACI matrix. Auto-derived at analyst Stage 9.5 Step 0 from instance state (living iff another module already uses RACI), not a user prompt; must match the §9 `**RACI mode:**` line. OMIT under `access_scope: basic`.
+- **`raci_mode_source`** (`computed-default` | `non-interactive`) is REQUIRED alongside `raci_mode`. How the mode was derived: `computed-default` for the value auto-derived from instance state on an interactive run; `non-interactive` for headless runs. Allowed values are `computed-default` and `non-interactive`. `consistency-check.ts` rejects a RACI spec missing either key.
+- **`domain_code`** is carried from the blueprint: an uppercase TLA / short code, e.g. ATS, HCM, ITSM, CRM.
+- **`naming_mode`** is `template:<vendor>` or `agent-optimized`.
+- **`logo_color`** is a hex color (e.g. `#2563eb`) → `modules.logo_color`. OPTIONAL: emit ONLY when set (non-empty). The modeler honors a provided value and random-fills only when this key is ABSENT. Omit the key entirely when unset.
+- **`home_page`** is a path (e.g. `/dashboard`) → `modules.home_page`, the module's default landing path. OPTIONAL: emit ONLY when set (non-empty/non-null); omit the key entirely otherwise.
+- **`created_at`** (`YYYY-MM-DD`) is the blueprint's creation date. **`reconciled_at`** (`YYYY-MM-DD`) is when the analyst ran. **`reconciled_against_catalog_snapshot`** is the ISO 8601 timestamp of the catalog read in Stage 2. **`source_blueprint`** is the relative path to the blueprint `.md`.
+- **Deploy provenance (`deployed_version`, `deployed_version_date`, `deployed_related_versions`)** is MODELER-written at the end of a clean deploy (Stage 5b), NOT authored by the analyst. All three keys are absent until the spec has been deployed once. On a later analyst write they are carried forward verbatim (the analyst never computes them). They describe the LAST deploy; the analyst's 2a.1 gate compares live `modules.version` against `deployed_version` to detect prod drift. `deployed_version` is `modules.version` after the last clean deploy (integer); `deployed_version_date` is `modules.version_date` (ISO 8601); `deployed_related_versions` maps each module this spec reuses/promotes an entity from to its live `modules.version` (omit the key when none). Omit all three until first deploy.
+- **`entities`** is **required** and must be the complete list of `table_name` values from §2 (in §2 order, lowercase snake_case). `entities` is **lowercase snake_case** (matches Semantius `table_name` form so it works as an exact-match table tag). Regenerate it whenever entities are added, removed, or renamed, a stale list defeats discovery.
+- **`persona`** is a flat list of actor codes (`PERSONA-1, PERSONA-2, ...`) carried forward from the blueprint. Emit it **only** under `access_scope: full` when §9 carries a RACI matrix; under `access_scope: basic` (and on any spec with no RACI realization) the key MUST BE ABSENT. Every name in the list must appear in a §9.1 RACI `actor` cell; the modeler enforces this and uses the list as the Stage 4k provisioning list.
+- **`related_modules`** is ADVISORY ONLY, never a deployment prerequisite: a list of module slugs. Omit the key when empty.
+- **`related_domains`** is a discovery tag for humans browsing the model catalog: the names of business domains/system categories this model sits next to in the enterprise neighborhood. Each entry is **Title-case / acronym form**, the same vocabulary as the `domain` field itself (`ITAM`, `CMDB`, `Change Management`, `Workforce Planning`, `Vendor Management`, `Identity & Access`). It is **not** a list of slugs of other model files, it is descriptive analyst knowledge about which neighborhoods this system touches, drawn from general business-architecture knowledge rather than what other model files happen to exist. No skill consumes `related_domains` for logic; it exists purely to help a human scanning a directory of `*-semantic-blueprint.md` files see how a model fits into the broader catalog. Omit the key entirely when the system genuinely has no adjacent domains (rare); do not write an empty list.
 - **`domain`**, the system category in **Title-case / acronym form**. Common values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. These are seed examples, not a closed set, prefer one when it genuinely fits (keeps the vocabulary tight for discovery), but coin a new Title-case / acronym value when nothing fits (`Talent Acquisition`, `EHR`, `Compliance`, `MES`). **Omit the key entirely** only when you can't categorize the system at all. **Never write `custom`**, it adds no information; absence already means "uncategorized".
-- **Discovery tags**, `entities` is **lowercase snake_case** (matches Semantius `table_name` form so it works as an exact-match table tag). `departments` and `industries` use **Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) so acronyms read correctly and humans can scan them, snake_case mangles initialisms (`it`, `hr`, `saas`).
-  - `entities` is **required** and must be the complete list of `table_name` values from §2 (in §2 order, lowercase snake_case). Regenerate it whenever entities are added, removed, or renamed, a stale list defeats discovery.
+- **Discovery tags**: `departments` and `industries` use **Title-case / acronym form** (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`) so acronyms read correctly and humans can scan them, snake_case mangles initialisms (`it`, `hr`, `saas`).
   - `departments` is **optional**: list the department(s) where the system will mostly be used (e.g. `Sales`, `Finance`, `IT`, `HR`, `Operations`, `Marketing`, `Engineering`, `Legal`). Most models have 0–1 departments, for cross-departmental models list every relevant one. **Omit the key entirely** when no department is dominant; do not write an empty list.
   - `industries` is **optional**: list the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when the model is industry-agnostic; do not write an empty list.
-- `initial_request` is **immutable**. It captures the user's verbatim opening ask from the Create session. Audit and Extend modes must preserve it exactly, never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
-- **Empty-section convention (the single rule).** Every canonical top-level / numbered section is **always present**; never omit one. When a section (or §7 severity bucket) is intentionally empty, keep its heading and write the canonical placeholder **`_(none: <short reason>)_`** (lowercase `none`, a **colon** not an em-dash; bare `_(none)_` allowed when a reason adds nothing) in place of its table or list. Keeping every canonical section present keeps section numbers stable, which helps humans navigate multiple models and keeps parse-by-number consumers safe. This replaces the older per-section placeholder strings (`"None."`, `"No enumerations defined."`, `"No cross-model link suggestions."`) — normalize any of those to `_(none: …)_`. The **only** omit-when-empty exception is the §3 per-entity sub-blocks (Computed fields / Validation rules / Input type rules / Select rule), which stay omit-when-empty as noted in their own headings.
-- **§6 Cross-model link suggestions is a hint table.** The semantic model is atomic by design (it covers one bounded domain), but Semantius is a unified catalog where many such models coexist. §6 lists potential FKs from this model's entities to entities that may be owned by another domain (e.g. `incidents → hardware_assets`, `incidents → configuration_items`). The deployer resolves each `To` against the live catalog at deploy time, proposes an additive FK when the target exists, asks when multiple candidates fit, and silently skips when the target is not deployed. Five columns per row: `From`, `To`, `Verb`, `Cardinality` (default `N:1`), `Delete` (default `clear`).
-- **§6 does not carry entity-overlap declarations.** Vendors-vs-suppliers, contracts-vs-saas_contracts, and similar shared-master-data overlaps are name collisions, and the deployer detects them by inspecting the live catalog at deploy time (entity-name match and similarity heuristic, with a user decision on merge / rename incoming / rename existing). The analyst does not need to pre-declare them in §6.
-- **`related_domains` front-matter** is a discovery tag for humans browsing the model catalog: the names of business domains/system categories this model sits next to in the enterprise neighborhood. Each entry is **Title-case / acronym form**, the same vocabulary as the `domain` field itself (`ITAM`, `CMDB`, `Change Management`, `Workforce Planning`, `Vendor Management`, `Identity & Access`). It is **not** a list of slugs of other model files, it is descriptive analyst knowledge about which neighborhoods this system touches, drawn from general business-architecture knowledge rather than what other model files happen to exist. No skill consumes `related_domains` for logic; it exists purely to help a human scanning a directory of `*-semantic-blueprint.md` files see how a model fits into the broader catalog. Omit the key entirely when the system genuinely has no adjacent domains (rare); do not write an empty list.
-- **When drafting §6 rows,** look at: (a) anything you deferred to "another module" in Stage 3 or 4 that takes the form of a cross-domain link (the §7.2 future considerations are the natural seed list); (b) entities in this model whose lifecycle is closely tied to a concept in a different domain (an incident's affected device, a job opening's planned position, a software install's host CI). Vendors / users / cost-centers / departments and other shared-master-data tables do **not** belong in §6, the deployer's name-collision flow handles them.
-- **`Computed fields` and `Validation rules` are optional §3 sub-blocks** that capture entity-level JsonLogic the platform evaluates on every write. Use them when a derived value is documented elsewhere as a computed quantity (RICE score, line subtotal, days-open) or when an invariant is documented as a record-level rule ("only set X once Y reaches state Z"). Omit the heading entirely when an entity needs neither — these are not required scaffolding. The blocks are emitted as fenced ```` ```json ```` arrays so the deployer can pass them byte-for-byte to `create_entity` / `update_entity` and the optimizer can round-trip them out of live state. Keep the JSON valid (real arrays of real objects, no comments), every `computed_fields[].name` resolves to an existing scalar field on the same entity, every `validation_rules[].code` is snake_case and unique within the entity, and reserved variables (`$today`, `$now`, `$user_id`, `$old`) are referenced as `{"var": "$today"}` etc. Cross-row lookups, aggregates, and FK traversal are out of scope for these blocks (that work belongs in cube/views). Two platform-extension operators are available inside `validation_rules` JsonLogic (analyst v1.11+): `{"value_changed": "<field>"}` (true when the field's value differs from `$old`, true on INSERT) and `{"require_permission": "<permission_code>"}` (true when the caller holds the permission, throws otherwise). They compose into conditional-permission rules — Stage 8 families 12 and 13. Every `require_permission` argument must reference a permission declared in §8.1 Permissions catalog; the deployer rejects models that violate this.
+- **`initial_request`** is **immutable**. It captures the user's verbatim opening ask from the Create session (e.g. "I need a basic lead tracker"). Audit and Extend modes must preserve it exactly, never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
+- **`promotion_decisions`** is a list of objects, one per promoted entity: `{entity: <table_name>, host_module: <master_slug>, manage_option: 1 | 2 | 3 | 4}`. Omit the key when no entity is promoted.
+- The front-matter is YAML, every value must be quoted if it contains a colon.
 
-- **`Input type rules` and `Select rule` are optional §3 sub-blocks (analyst v2.2+)** that capture *read-side* JsonLogic the platform evaluates at form-render or row-read time. They are independent of `computed_fields` / `validation_rules` (which fire on writes); the same entity may legitimately carry all four sub-blocks. Each `Input type rules` entry binds a single field to a JsonLogic expression returning one of the `input_type` enum values; the deployer applies them with `update_field` and the platform overrides the static `input_type` per-record at form render. The `Select rule` sub-block carries a single JsonLogic *object* that the platform compiles into a `FOR SELECT` row-level security policy; non-empty means "filter rows where the rule returns truthy", empty (or absent heading) means no per-row filter. Stage 11 is the mandatory mechanical scan that produces the `Input type rules` block; Stage 12 is the mandatory mechanical scan that produces the `Select rule` block. Each sub-block's heading is omitted entirely when no fields / no entity rule fired — like `Computed fields` / `Validation rules`, these are not required scaffolding. Cross-row lookups and FK traversals are out of scope for both; they belong in cube/views.
+### H1 and §1 Overview
+
+- The H1 is `# <system_name>: Semantic Model` (a colon separator; the modeler reads the human-readable system name from it and also accepts the pre-5.5 em-dash form on older files).
+- §1 is two or three sentences describing the system, its users, and the problem it solves. Written for a human reviewer; keep it concrete and avoid marketing tone. §1 is the catalog-readable system narrative — downstream skills (notably semantius-skill-maker) copy it verbatim into their human-facing README. Hard bans: no §-number cross-references (no "see §6", "via §6 hint rows"); no snake_case identifiers or column-shaped tokens (no `cost_center_id`, no `features.cost_center_id`); no platform plumbing words ("Semantius", "deployer", "deploy time", "self-contained"); no scope-deferral or authoring-decision narration ("deliberately out of scope", "moved to a sibling domain", "fully declared even though..."). Deferrals live in `related_domains` plus §6, never in §1 prose. Authoring decisions about platform built-ins are the deployer's concern at deploy time, not §1's. If you find yourself wanting to add a third paragraph that explains a *modeling choice*, delete it: §1 describes the system, not the model file.
+
+### §2 Entity summary and diagram
+
+- **Entity order (canonical).** Sequence entities by `entity_type` tier, then alphabetically by `table_name` within each tier: (1) `catalog` masters/lookups, (2) `operational_record` / `operational_workflow` / `computed` / `unclassified`, (3) `junction`, then (4) reuse-from platform built-ins (`users`, `departments`, …). Use this exact order everywhere entities are sequenced (the `entities:` frontmatter list, this §2 table, §3, §4, §5). It is deterministic from `entity_type` + `table_name` alone, so the reverse pass (`semantius-optimizer`) reproduces it identically; never order by discovery or authoring convenience.
+- The `Purpose` cell is the FIRST SENTENCE of this entity's §3 Description, verbatim — a mechanical truncation, NOT an independently-worded summary.
+- The §2 Mermaid diagram is **required**, it must list every entity in the summary table and every relationship in §4: a Mermaid **flowchart** showing every entity in this model and every relationship declared in §3/§4. The diagram must be **complete** (every entity and every relationship appears) and **consistent** (cardinality and direction match §3/§4). The audit cycle verifies this. It is generated from §3/§4 by `consistency-check.ts --emit-mermaid` (Stage 11 "Generate §2, never hand-author it") and pasted in as `{{mermaid_block}}`. Regenerate it whenever entities or relationships change. Its shape:
+
+  ```mermaid
+  flowchart LR
+      classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;
+      classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;
+      {{TABLE_A}} -->|{{verb}}| {{TABLE_B}}
+      {{TABLE_A}} ---|{{verb}}| {{TABLE_C}}
+      {{M:N_SOURCE}} -->|{{m:n verb}}| {{JUNCTION}}
+      {{M:N_TARGET}} --> {{JUNCTION}}
+      class {{TABLE_DEDUP_AGAINST_SEMANTIUS_BUILTIN}} builtin;
+      class {{TABLE_WITH_SHARED_MASTER_CLUSTER}} master;
+  ```
+
+- **Shared / external entities are highlighted in green-family styling.** Two classes capture entities that aren't solely owned by this module:
+  - **`builtin`** (deeper green) tags entities that the deployer will dedup against a Semantius platform built-in at deploy time (`users`, `roles`, `permissions`, etc.). The deployer skips `create_entity` for these and reuses the built-in as the FK target. Add `class <table_name> builtin;` per such entity.
+  - **`master`** (mint green) tags entities carrying a `**Shared master cluster:** <name>` annotation in §3 (vendors, currencies, cost_centers, departments, …). Created here by default; the deployer may offer to host them in a shared master module so other domain modules can FK to the same row. Add `class <table_name> master;` per such entity.
+
+  Both classes are visual aids — they don't change deploy behavior; the deployer keys off the §3 annotations and the built-in catalog directly. Omit each `classDef` line (and its `class` tags) entirely when no entity in the model qualifies. Keep `classDef builtin` and `classDef master` exactly as written above so reviewers across model files see consistent shades.
+- **Edge labels are managed metadata, not free guesses.** When an FK field carries a `relationship_label` (the verb describing the relationship, e.g. `"owns"`, `"employs"`), that string is the edge label and goes into the diagram verbatim. The downstream deployer reads it from §3 (annotated as `relationship_label: "<verb>"` on the FK row) and persists it on the field; the optimizer reads it back from live state when it regenerates the model. Do not invent a verb for the diagram that isn't also captured on the field.
+- This applies to **junction legs too, and is how an M:N verb survives decomposition.** When a junction materializes an `A <verb> B` M:N edge, the source-side leg carries `relationship_label: "<verb>"` (see stage-4 "Preserve the M:N verb") — so it is captured on the field, and the diagram must render it: `A -->|<verb>| JUNCTION`. The non-source leg stays bare (no declared verb to draw). This is not a guess; dropping the verb here is the loss the diagram must avoid.
+- **Mermaid flowchart cardinality conventions** (use these exactly). The convention: **arrows (`-->`) mean "many"**, **flat connectors (`---`) mean "one"**. The arrow/connector points *from the parent to the related side* and describes how many of the related side the parent has.
+
+  | Cardinality | Syntax | Example (reads as…) |
+  |---|---|---|
+  | 1:N (one-to-many) | `A --> B` | `accounts --> contacts` — an account has **many** contacts |
+  | 1:1 (one-to-one) | `A --- B` | `users --- user_profiles` — a user has **one** profile |
+  | M:N (many-to-many) | two `-->` edges via a junction; the source-side leg carries the M:N verb | `contacts -->\|covers\| coverage_junction` **and** `campaigns --> coverage_junction` — both sides have many junction rows; the verb rides the source leg |
+  | Labeled edge | `A -->|verb| B` / `A ---|verb| B` | `accounts -->|owns| opportunities` |
+
+- Convention: always model junction tables explicitly in the diagram as their own node with two `-->` edges in from the parents, matching how §3 models them. Never draw a direct `-->` edge between two parents of an M:N relationship — route it through the junction. **Carry the M:N verb across the decomposition:** the leg from the M:N source parent is labeled with that relationship's verb (`asset_contracts -->|covers| asset_contract_saas_applications`); the other leg is bare. The verb must never be dropped just because the relationship became a junction.
+
+### §3 Entities
+
+For each entity, repeat the §3 sub-structure, numbered 3.1, 3.2, … in the canonical entity order. The heading separator is a plain hyphen: `` ### 3.N `table_name` - Singular Label ``. A single `---` rule follows the LAST entity block, before §4 (one rule for the whole section, not one per entity). The `**Key:**` lines, in skeleton order:
+
+- **`**Plural label:**`** — always present.
+- **`**Label column:**`** — the backticked `field_name` used as the record's label. REQUIRED for every non-junction entity. For `entity_type: junction` it is OPTIONAL: omit the line entirely when the junction has no distinct local label (the platform composes the junction's `_label` from its parent legs, e.g. `Alice Chen › Admin`); never invent a synthetic label field just to fill the line. When present, the modeler passes it to `create_entity`; when absent on a junction, the modeler omits `label_column`, skips the title-correction and uniqueness passes, and Stage 5 skips the `label_column is set` check for that entity. The optimizer omits the line when the live value is null/empty.
+- **`**Order column:**`** — OPTIONAL: the field records default-sort by. Backticked as a `field_name` like **Label column:**. Emit ONLY when set; omit the line when empty/null. The deployer stamps it into `entities.order_column`.
+- **`**Id column:**`** — OPTIONAL: the field used as the record's public id. Backticked as a `field_name`. Emit ONLY when non-default; omit the line when the value is `id` (the platform default) or empty. The deployer stamps it into `entities.id_column`.
+- **`**Audit log:**`** `yes | no` — always present; defaults to `no`. Set `yes` when INSERT/UPDATE/DELETE history matters — contracts, financial records, policy data, anything subject to compliance or dispute. Leave `no` for high-volume/ephemeral data where audit noise outweighs the value.
+- **`**Edit permission:**`** `manage | admin | <narrow_suffix>` — **consumed verbatim from the blueprint's §3 `write tier` column**, not re-derived. Defaults to `manage`. Set `admin` for reference / config / master-data entities. Set a bare narrow-tier suffix (e.g. `interview` resolving to `<system_slug>:interview`) when Stage 10 W4n classified this entity as written by external participants and a `narrow` tier row exists for the named code in §8.1. Omit the line entirely for operational entities — the default is manage. Drives the deployer's per-entity `edit_permission` assignment; `view_permission` is always `<system_slug>:read`. Drift between the spec's value and live `entities.edit_permission` is a Stage 3f.3 prompt; cross-tier flips are 🔴 blockers. Annotate `admin` for entities classified as reference/config in Stage 9 (small, slowly-changing, referenced by operational entities as a lookup/category/stage/type/source, ships seeded values). The line lives next to `**Audit log:**` so the analyst sees both decisions in the same place. The platform-built-in `users` entity, when declared in §3 for self-containment, does not need the line — the deployer dedups against the built-in and the annotation has no effect.
+- **`**Edit mode:**`** — OPTIONAL: bare enum value, no backticks. How the record edit surface renders. Emit ONLY when non-default; omit the line when the value is the platform default (`auto`). The deployer stamps it into `entities.edit_mode`.
+- **`**Cube mode:**`** — OPTIONAL: bare enum value, no backticks. How the entity is exposed to the cube semantic layer. Emit ONLY when non-default; omit the line when the value is the platform default. The deployer stamps it into `entities.cube_mode`.
+- **`**Icon URL:**`** — OPTIONAL: plain URL value, NO backticks. The entity's icon image URL. Emit ONLY when set; omit the line when empty/null. The deployer stamps it into `entities.icon_url`.
+- **`**Catalog entity code:**`** — OWNED entities only (create-new / rename-incoming-from / promote-to-master). The catalog uber-model code from the blueprint's §3 `catalog code` column (equals `table_name` for agent-optimized naming). The deployer stamps it into `entities.catalog_entity_code` as write-once identity — the catalog code, not the deployed `table_name`. Omit for `reuse-from` / built-in entities — those are referenced, not provisioned, and already carry their own stamp.
+- **`**Entity type:**`** `operational_workflow | operational_record | catalog | junction | computed` — OWNED entities only. The closed 6-way class from the blueprint's §3 `entity_type` column, carried verbatim. The deployer stamps it into `entities.entity_type`. Write `unclassified` only when the blueprint left it absent (pre-3.0 fallback) — the deployer treats that as derive-locally; never coin a value outside the closed set. Omit for `reuse-from` / built-in entities.
+- **`**Catalog owner:**`** — OPTIONAL, placeholder masters only: the owner-module slug for an `embedded_master` entity provisioned locally as a placeholder while its catalog owner module is absent (a first-mover `create-new`, or a silo `rename-incoming-from`), from the blueprint's `mastered_in`. The deployer stamps it into `entities.catalog_owner_module`. Omit the line when this module owns the entity, when the entity is local/custom, and on `reuse-from` / `promote-to-master`.
+- **`**Label parent:**`** — OPTIONAL: omit the line when none. Names the one FK field on this entity that is its identity spine: the parent whose composed `_label` prefixes this record's `_label`. Derived by the analyst at Stage 4 via the label_parent decision rule: NONE for `junction` entities (legs auto-combine) and for self-identifying records (intrinsic name — name/title/code/email — in `label_column`); otherwise the FK to the principal subject (the lone `parent` FK by default, else the architect-informed identity spine). MUST name a real `reference`/`parent` FK declared on this entity and MUST NOT target a junction. The deployer stamps it into `entities.label_parent`; re-pointing it changes `_label` with no data migration. Omit for `junction` entities and `reuse-from` / built-in entities.
+- **`**Reconciliation:**`** `create-new | reuse-from <module>.<entity> | rename-incoming-from <module>.<entity> as <new> | promote-to-master <master>.<entity> | dropped (optional, user declined) | dropped (policy-excluded)` — omit the line when `create-new`.
+- **`**Catalog alias:**`** — OPTIONAL, repeatable. Emit ONLY on a reuse/merge where an incoming entity from another domain was renamed onto THIS host entity — record one line per absorbed identity. The deployer APPENDS each as an element of the host's `catalog_entity_aliases` JSON array (never rewriting or dropping prior elements). `alias_code` is the incoming entity's catalog code; `source_domain` is the incoming blueprint's `domain_code`; `source_module` its `system_slug`. Omit entirely when no cross-domain merge renamed an incoming entity onto this one.
+- **`**Shared master cluster:**`** — OPTIONAL. Emit for entities the analyst recognizes as classic master concepts (finance reference data, parties, organization data, products, employees). Common patterns: `finance` (currencies, cost_centers, budget_periods, ledger_accounts, fiscal_years, tax_rates, gl_accounts); `parties` (vendors, customers, partners, suppliers); `organization` (departments, business_units, locations, sites); `products` (products, product_categories, skus); `employees` (employees, job_titles). The hint is consulted by the deployer ONLY when this entity becomes a Branch B promotion candidate (cross-module collision in another domain module); it shapes the recommended host-master selection at the deploy-time prompt. Has no effect when the entity isn't promoted. The user can always override at the deploy prompt. Omit when the entity is not a classic master concept.
+- **`**Description:**`** — carried VERBATIM from the blueprint's §2 entity Description — do NOT re-author, paraphrase, expand, shorten, or "improve" it; this is the single authoritative text and it is what the modeler deploys to `entities.description`. Same carry-forward discipline as the §9.1 Processes catalog descriptions. The §2 Purpose above is this text's first sentence.
+- **Keep field-level titles off `singular_label`.** After `create_entity`, the platform derives the label-column field's `title`; the deployer validates it and corrects only the outliers via `update_field` (the analyst does not spell out that procedure). The analyst's job is to put the intended title in the §3 field table's Label column for the label_column row (e.g. `"Vendor Name"`) while keeping `singular_label` a bare singular for plural/singular symmetry (`"Vendor"`, never `"Vendor Name"`). Field-level titles live on the field, not on the entity label.
+
+**Fields table.** Columns are fixed (`Field name | Format | Required | Label | Description | Reference / Notes`).
+
+- `Description` is one short sentence — leave blank when the title + format + enum/FK already says it; fill for units (e.g. "person-months"), ranges not in a validation rule, direction-mattering semantics, sign/polarity conventions, freeform-string shape hints, or overloaded terms; see SKILL.md "Fill the §3 Description column" for when to fill vs leave blank.
+- `Reference / Notes` carries structured annotations ONLY — no free prose: e.g., → `accounts` (N:1), `relationship_label: "owns"`, `default: "draft"`, `precision: 2`, `cube_type: dimension`, `parent label: "X" / "Ys"`, `width: m` (bare value `s` \| `m` \| `w`, like `precision:`; omit when the platform default `default`), `label_column`, `unique`, `searchable` (backticked bare marker like `unique`; emit ONLY when live `searchable` is true), and for enum fields write the annotation literally as `enum_values:` followed by each value in inline code, e.g. enum_values: `a`, `b`, `c`. If a field is a reference, always put the arrow + target + cardinality in the "Reference / Notes" column, e.g. `→ accounts (N:1)`. If it's a parent (ownership), use `↳ accounts (N:1, cascade)` so the distinction is visible.
+- For an entity with a lifecycle, its state field is named exactly `workflow_state` (format `enum`, required; `enum_values` = the lifecycle states in order, `default` = the initial state) — never `status` / `state` / `lifecycle_state`. The deployer rejects any other name.
+- **Notes-column formatting.** Marker and identifier annotations are written backticked as code in the output: the label-column marker is `` `label_column` `` (with backticks, not the bare word), likewise `unique`, `searchable`, and FK targets (`` → `accounts` (N:1) ``). Value annotations keep the value in **double quotes**, not backticks: `default: "draft"`, `relationship_label: "owns"`. `` `searchable` `` (backticked bare marker, like `` `unique` ``) is emitted ONLY when the field's live `searchable` is true; `width: <s|m|w>` is a bare-value marker (value NOT quoted, like `precision: 2`) emitted ONLY when non-default (omit when the platform default `default`). This is the exact form `semantius-optimizer` round-trips, so an authored spec and a reverse-engineered one stay byte-identical here.
+
+**Relationships.** Prose description of each relationship this entity participates in, with cardinality and ownership. Reference every entity and FK by its **unique name** (`table_name`, `field_name`), never a display label or a name-derived noun — the same uniqueness guarantee §1/§3 use for `table_name`, so `semantius-optimizer` round-trips this prose verbatim. Canonical forms (use the literal §4 delete-mode token `clear`/`restrict`/`cascade`): "A `{{this}}` record belongs to one `{{parent}}` via `{{fk_field}}` (N:1, required, restrict on delete)." (optional FK: "…may belong to one `{{parent}}` via `{{fk_field}}` (N:1, optional, clear on delete)."); "A `{{this}}` record may have many `{{child}}` (1:N, via `{{child}}.{{fk_field}}`)."; **the indefinite article agrees with the following `table_name`'s initial letter — write `An` before a vowel-initial identifier (`An `asset_contracts` record …`, `An `incident` …`) and `A` before a consonant-initial one (`A `saas_subscriptions` record …`). Match on the literal identifier that follows, not its display label.**; "`{{this}}` ↔ `{{other}}` is many-to-many through the `{{junction}}` junction table."; for a junction entity's own block: "Each `{{junction}}` links one `{{parent_a}}` to one `{{parent_b}}` (junction, both legs cascade on delete)."
+
+**§3 sub-blocks (all four omit-when-empty: emit the `**Heading**` and its fenced `json` block only when the value is non-empty).**
+
+- **`Computed fields`** — a JSON array, byte-stable for round-trip through the deployer/optimizer. Each entry derives a value into an existing scalar field on this entity via JsonLogic, evaluated against the merged record on every write. The platform overwrites any caller-supplied value for a `computed_fields[].name`. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. Cross-entity primitives `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}` and `{"let": ["<name>", <value>, <body>]}` let the body read columns of a parent / referenced record (inherited values, merged labels) — see the `use-semantius` skill's `references/jsonlogic.md` § "Cross-entity lookups inside JsonLogic". Entry shape: `{ "name": "<existing-scalar-field>", "description": "<one-line human note>", "jsonlogic": { … } }`.
+- **`Validation rules`** — a JSON array of record-level invariants. Each rule must evaluate truthy for the write to succeed; failures are returned as `{ "errors": [{ "code", "message" }, ...] }`. Codes are snake_case and unique within the entity. The platform collects all failing rules without short-circuiting. Rules may use `{"set_record": ["<name>", "<entity>", <id>, <body>]}` to gate on the state of a parent / referenced record, and `{"throw_error": "<message>"}` inside an `if` to raise a SQL exception (SQLSTATE `23514`) whose text the caller sees verbatim — use it when prose names a specific, hand-tailored error message that should override the rule's static `message`. Entry shape: `{ "code": "<snake_case_unique_within_entity>", "message": "<default English message returned to the caller>", "description": "<one-line human note explaining why this rule exists>", "jsonlogic": { … } }`.
+- **`Input type rules`** — a field-level UI override block. Lists every field on this entity whose displayed `input_type` should be derived from the current record's state instead of staying fixed. Each entry binds one field name to a single JsonLogic object that returns one of `"default"` / `"required"` / `"readonly"` / `"disabled"` / `"hidden"`. The platform evaluates the rule client-side at form-render time; the result replaces the field's static `input_type` for that record. A malformed result or empty rule falls back to the static `input_type`. Use this for conditional visibility (hide `approved_at` until the record is being approved), conditional lock (`readonly` after a terminal status), conditional require (an extra `comments` field becomes required when `workflow_state` is `disputed`). Anything that must be enforced server-side belongs in `validation_rules`, not here — `input_type_rule` is UI control only. Pair an "appears at the right moment" rule with a server-side `validation_rules` entry so the field is actually populated, not just rendered editable. Entry shape: `{ "field": "<field_name>", "description": "<one-line human note; optional>", "jsonlogic": { … } }`. The block is emitted as a **JSON array** — same shape as `Computed fields` and `Validation rules` — so the deployer parses all four read- and write-side sub-blocks with one parser instead of two. Each entry's `field` value must match a real field declared in this entity's §3 field table. The deployer applies each entry by calling `update_field` on `<table_name>.<field>` with the entry's `jsonlogic` value as `data.input_type_rule`.
+- **`Select rule`** — an entity-level row-visibility rule. A single JsonLogic *object* (not an array) that the platform compiles into a `FOR SELECT` row-level security policy: the rule must return truthy for a row to be visible to the caller. Reserved variables `$today`, `$now`, `$user_id` are available via `{"var": "$today"}` etc. (`$old` is not meaningful in the select context). The rule is layered on top of `view_permission` — table-level access still gates first; this filters per-row for callers who have access. **The rule applies uniformly to every caller with `view_permission`** — there is no documented mechanism by which holding a specific permission causes the rule to be skipped. Use it for ownership-scoped visibility (a record's submitter / assignee / author sees it) and for confidential / restricted records (rule reads a column the row carries). For tiered visibility where some roles need broader access, the broadening lives **outside** the rule (an architectural decision resolved in §7.1: option B column-encoded, option C separate cube view / entity surface, option D Postgres `BYPASSRLS` role attribute). Never write a rule that promises a `<slug>:view_all_<plural>` permission bypass. Keep the expression simple: direct column comparisons and `$user_id` matches; avoid arithmetic and cross-row joins (the rule runs on every read of every row). The fenced block carries the JsonLogic object itself (a boolean expression; truthy means row visible).
+- **`Computed fields` and `Validation rules` are optional §3 sub-blocks** that capture entity-level JsonLogic the platform evaluates on every write. Use them when a derived value is documented elsewhere as a computed quantity (RICE score, line subtotal, days-open) or when an invariant is documented as a record-level rule ("only set X once Y reaches state Z"). Omit the heading entirely when an entity needs neither — these are not required scaffolding. The blocks are emitted as fenced ```` ```json ```` arrays so the deployer can pass them byte-for-byte to `create_entity` / `update_entity` and the optimizer can round-trip them out of live state. Keep the JSON valid (real arrays of real objects, no comments), every `computed_fields[].name` resolves to an existing scalar field on the same entity, every `validation_rules[].code` is snake_case and unique within the entity, and reserved variables (`$today`, `$now`, `$user_id`, `$old`) are referenced as `{"var": "$today"}` etc. Cross-row lookups, aggregates, and FK traversal are out of scope for these blocks (that work belongs in cube/views). Two platform-extension operators are available inside `validation_rules` JsonLogic: `{"value_changed": "<field>"}` (true when the field's value differs from `$old`, true on INSERT) and `{"require_permission": "<permission_code>"}` (true when the caller holds the permission, throws otherwise). They compose into conditional-permission rules — Stage 8 families 12 and 13. Every `require_permission` argument must reference a permission declared in §8.1 Permissions catalog; the deployer rejects models that violate this.
+- **`Input type rules` and `Select rule` are optional §3 sub-blocks** that capture *read-side* JsonLogic the platform evaluates at form-render or row-read time. They are independent of `computed_fields` / `validation_rules` (which fire on writes); the same entity may legitimately carry all four sub-blocks. Each `Input type rules` entry binds a single field to a JsonLogic expression returning one of the `input_type` enum values; the deployer applies them with `update_field` and the platform overrides the static `input_type` per-record at form render. The `Select rule` sub-block carries a single JsonLogic *object* that the platform compiles into a `FOR SELECT` row-level security policy; non-empty means "filter rows where the rule returns truthy", empty (or absent heading) means no per-row filter. Stage 11 is the mandatory mechanical scan that produces the `Input type rules` block; Stage 12 is the mandatory mechanical scan that produces the `Select rule` block. Each sub-block's heading is omitted entirely when no fields / no entity rule fired — like `Computed fields` / `Validation rules`, these are not required scaffolding. Cross-row lookups and FK traversals are out of scope for both; they belong in cube/views.
+
+### §4 Relationship summary
+
+A single table showing every link between entities. An agent uses this to sanity-check that each reference field in §3 has a corresponding row here, and that the §2 diagram matches.
+
+- **One row per OUTBOUND FK field, nothing else.** Emit exactly one row for each `reference`/`parent` field declared on the `From` entity in §3, in that entity's field order, entities in the canonical §3 order. **Never** emit a row for an *inbound* reference (a field another entity points here with) — that link already has its own row under the entity that owns the FK. Do not emit half-empty "via `<other_table>`" rows, `—`/blank `To`/`Cardinality`/`Kind` cells, or any row whose `To` is not a declared entity: each is an authoring bug. The §4 reference-resolution gate rejects a row whose `To` is not a declared entity and the em-dash scan rejects a `—` cell; a blank `To` cell is caught by neither, so never author one. `saas_applications` is referenced BY `saas_subscriptions.saas_application_id`, so that link appears **once**, on the `saas_subscriptions` row — not a second time as a phantom `saas_applications` row.
+- **`Kind` vs `fk_format` are two different columns — do not copy one into the other.** `fk_format` is the physical field format from §3 (`reference` or `parent`). `Kind` is the relationship class: it is `junction` for **every** FK leg of a `junction` entity (its `**Entity type:**` line is `junction`), and equals the `fk_format` value (`reference` or `parent`) for every other row. So a junction leg reads `Kind = junction`, `fk_format = parent` (they differ); an ordinary parent leg reads `Kind = parent`, `fk_format = parent`; a reference reads `Kind = reference`, `fk_format = reference`. Collapsing a junction leg's `Kind` to `parent` is the common mistake — the junction signal must survive here even though the checker derives §2 from `Cardinality`/`relationship_label` and not from `Kind`.
+- `fk_format` is consumed from the blueprint's §5.1 / §5.2 / §5.3a column verbatim, never re-derived. Drift between blueprint and live `fields.format` (cross-primitive flip: `parent ↔ reference`) is a 🔴 blocker.
+
+### §5 Enumerations
+
+Collect every `enum` field's allowed values here, one sub-section per enum, **sorted alphabetically by `table_name.field_name`**. If two fields share an enum, note it and list once. The sub-heading is **unnumbered** (just the backticked `table.field`, no `5.N`); the member values inside a block keep their defined lifecycle/semantic order (do NOT alphabetize the values). If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
+
+### §6 Cross-model link suggestions and handoffs
+
+§6 carries three tables in this order: the **link table** (directly under `## 6.`), then the two unnumbered handoff sub-sections `### Outbound handoffs` and `### Inbound handoffs`. Each of the three is always present; when one has no rows, keep its heading (the `## 6.` heading for the link table) and write the canonical placeholder `_(none: <short reason>)_` in place of that table.
+
+**Link table (§6 Cross-model link suggestions is a hint table).** The semantic model is atomic by design (it covers one bounded domain), but Semantius is a unified catalog where many such models coexist. §6 lists potential FKs from this model's entities to entities that may be owned by another domain (e.g. `incidents → hardware_assets`, `incidents → configuration_items`): hints for the deployer about FKs that would add value when the named target entity exists in the catalog. The deployer resolves each `To` against the live catalog at deploy time using its existing name-matching pass, proposes the FK as an additive `create_field` when a single match is found, asks the user when several candidates plausibly fit (e.g. `vendors`, `suppliers`, `saas_vendors`), and silently skips when the target is not deployed. Entries whose target is not in the catalog are silently skipped, so erring toward inclusion is cheap. This section is a hint list, not a contract. It does **not** carry entity-overlap declarations (vendors-vs-suppliers, contracts-vs-saas_contracts). Those are name collisions and the deployer detects them by inspecting the live catalog at deploy time, so the analyst does not need to pre-declare them here. If this model has no plausible cross-model links, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` under §6 (bare `_(none)_` allowed) — do not omit the section. The `related_domains` front-matter (described above) is a separate discovery tag and may still be populated even when the link table is empty. Six columns per row: `From`, `To`, `Verb`, `Cardinality` (default `N:1`), `Delete` (default `clear`), `Reconciliation`.
+
+- **From** is the table that hosts the FK column. For *outbound* rows it is a `table_name` declared in this model's §3; for *inbound* rows it is a sibling-owned `table_name` that does not yet exist in the catalog (the FK lands on the sibling's table at a later deploy). The same entity in this model can act as parent in some rows and child in others.
+- **To** is the FK target (the parent of the relationship). No module prefix; the deployer resolves against the global catalog. Use the most likely canonical plural snake_case form, the deployer handles fuzzy matches and ambiguity.
+- **Verb** follows the same parent-voice rule as `relationship_label` in §3: it fills "a `<To>` ___ many `<From>`". Both **active** parent voice ("owns", "tracks", "hosts", "manages") and **passive** parent voice ("is affected by", "is referenced by", "is the subject of") are valid; pick whichever reads naturally given which side is the natural actor. Avoid **child voice** ("an incident affects a hardware_asset"), which flips the breadcrumb. The deployer copies the verb onto the created FK as `relationship_label`.
+- **Cardinality** defaults to `N:1`; state `1:1` only when the FK should be unique. Cross-model `M:N` is out of scope for §6 (it requires a junction table that no model owns).
+- **Delete** defaults to `clear`. `restrict` is allowed when the link must block deletion of the target. `cascade` is never valid across modules (no module owns another).
+- **Reconciliation** is the analyst's Stage 2g resolution of the row against the live catalog: `proposed` / `dormant` / `ambiguous-resolved` / `skipped`. Resolved rows carry the FK column name and the resolved target.
+- The deployer auto-generates the field name from the resolved target's singular form (e.g. `hardware_assets` becomes `hardware_asset_id`). When the source entity already has a field by that name, the deployer surfaces the collision and asks for an alternative.
+- **§6 does not carry entity-overlap declarations.** Vendors-vs-suppliers, contracts-vs-saas_contracts, and similar shared-master-data overlaps are name collisions, and the deployer detects them by inspecting the live catalog at deploy time (entity-name match and similarity heuristic, with a user decision on merge / rename incoming / rename existing). The analyst does not need to pre-declare them in §6.
+- **When drafting link rows,** look at: (a) anything you deferred to "another module" in Stage 3 or 4 that takes the form of a cross-domain link (the §7.2 future considerations are the natural seed list); (b) entities in this model whose lifecycle is closely tied to a concept in a different domain (an incident's affected device, a job opening's planned position, a software install's host CI); (c) the implied FKs of the blueprint's §6.2 / §6.3 handoff rows (analyst Stage 2g). Vendors / users / cost-centers / departments and other shared-master-data tables do **not** belong in §6, the deployer's name-collision flow handles them.
+
+**Outbound / Inbound handoffs.** The blueprint's §6.2 (outbound) and §6.3 (inbound) event-handoff rows, carried into the spec **verbatim** in the blueprint's nine-column shape, under both access scopes (the modeler's Stage 4m skips wiring under `basic`; the rows still document the intent). Rules:
+
+- Column vocabulary is the blueprint's: `transition` carries `<to_state> _(<event_category>)_` with `event_category` ∈ {`lifecycle`, `state_change`, `entity_event`} (for an `entity_event` the cell is `_(entity_event)_` alone); `integration` ∈ {`event_stream`, `api_call`, `batch_sync`, `lifecycle_progression`}; `friction` ∈ {`low`, `medium`, `high`}; `payload` is the backticked `table_name` of the entity whose change the event carries.
+- The `source module` column (outbound) follows the entity-owning-module rule: when the source entity is an `embedded_master` whose catalog owner is absent, the source module is the installing unit; otherwise it is the catalog owner. On master-install the deployer's Stage 4n re-attributes the handoff to the new catalog owner module.
+- `to_state` validation applies to **Outbound** `lifecycle` rows (and to an Inbound row only when its `payload` names an entity declared in this spec's §3): the `to_state` must be one of that entity's `workflow_state` enum values. Inbound payloads normally belong to the source module and are not checked. `consistency-check.ts` additionally requires every Outbound `payload` to be a declared entity.
+- The modeler parses both sub-sections **when present** (specs written before 5.5 carry none) and feeds Stage 4m; the optimizer cannot read handoffs back from live state and emits the placeholders.
+
+### §7 Open questions
+
+Questions the analyst flagged during the session. Every entry must be phrased as a **forward-looking question** that a reviewer can answer — not as a decision log or assumption narrative. Split into two severity buckets and keep both headings even when empty (write the canonical empty-section placeholder `_(none: <short reason>)_`, bare `_(none)_` allowed, under an empty bucket — see "Empty-section convention" below).
+
+- **How to phrase entries.** Wrong: *"Contracts folded into subscriptions — if MSAs become needed, split them out."* (This is a decision log, not a question.) Right: *"Should contracts be separated from subscriptions to support master service agreements with multiple sub-products?"* Wrong: *"Actual invoiced spend is out of scope."* Right: *"Is tracking actual invoiced spend (paid vs. due, dispute handling) required, or is the expected-spend calculation from subscription terms sufficient?"*
+- **§7.1 🔴 Decisions needed (blockers)** — questions where the model is **ambiguous or incomplete** without an answer. Leaving these open means the deployer has to guess at entity shape, cardinality, or required fields. The semantius-modeler skill refuses to proceed while any 🔴 question is unresolved. Example: "Can a user hold multiple roles concurrently, or exactly one? This changes whether `user_roles` is a junction or a FK on `users`."
+- **§7.2 🟡 Future considerations (deferred scope)** — questions about extensibility or scope that are **fine to leave open**. These capture trade-offs the analyst deliberately deferred — the model works as-is, but a future business need would trigger a change. Safe to ignore at implementation time. Example: "Should the `category` enum on `subscriptions` and `budget_lines` be promoted to a lookup table if the category list starts evolving frequently?"
+- Keep the "Open questions" section and both severity sub-sections (§7.1 Decisions needed, §7.2 Future considerations) even when empty, write the canonical placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) under an empty bucket. Every entry is a forward-looking question; decision-log prose ("X was folded into Y") does not belong here. The semantius-modeler skill uses §7.1 as a gate, any unresolved 🔴 item blocks deployment (the gate keys on unresolved 🔴 *items*, not on any literal placeholder string, so the `_(none: …)_` form is safe).
+
+### §8.1 Permissions catalog
+
+The full permission catalog. Workflow gates and row-scope overrides on embedded_master entities whose catalog owner is absent carry a `**Reconciliation:** re-prefixed-from <catalog-module>.<verb>` annotation (the row's `reconciliation` cell reads `re-prefixed-from <catalog-module>.<verb>`); the deployer's Stage 4n reads this annotation to identify reconciliation-eligible permissions when the catalog owner later installs. Every other `reconciliation` cell is the literal `(none)`. `tier` is one of `baseline-read`, `baseline-manage`, `baseline-admin`, `workflow-gate (lifecycle)`, `workflow-gate (rule)`, `override`, `narrow` (the modeler's accepted set; a bare `workflow-gate` is rejected). `included in :admin?` is `✓` for every row the `<slug>:admin` hierarchy transitively includes and `-` otherwise (the `baseline-admin` row itself is always `-`).
+
+- **The §8.1 Permissions catalog enumerates the permissions; the §9.1 hierarchy carries the rollup chain.** The default is three permissions (`<slug>:read`, `<slug>:manage`, `<slug>:admin`) with two hierarchy rows (`admin` includes `manage`; `manage` includes `read`). Drop to two permissions and one hierarchy row only when **all** entities classify operational AND the model declares no workflow permissions, or when every entity classifies admin (purely reference module). The admin-tier entity list (the §3 entities carrying `**Edit permission:** admin`) must match the entities assigned `<slug>:admin` as their `edit_permission`; drift between them is a blocker.
+- **The §8.1 Permissions catalog also lists workflow permissions** — the codes that family-12 and family-13 `validation_rules` invoke via `{"require_permission": "..."}`. Two or three permissions are the baseline; the analyst evaluates every model for additional gates that workflow / approval / record-ownership rules need (an offer's transition into `approved`, a contract's `signed` step, a personal note's owner-or-manager edit rule). The bar is: only add a workflow permission when the gated transition is genuinely policy-different from the rest of the entity's writes. Typical count per module is 0–4; ten is a smell. Every workflow permission listed in §8.1 must appear as the argument to a `require_permission` call in some entity, and vice versa: every `require_permission` argument must be declared in §8.1. Workflow permissions roll up under `<slug>:admin` (the rollup default) or stand alone (granted directly); **never** roll up under `<slug>:manage` (it defeats the conditional gate). A model with workflow permissions but no admin-tier entities should still declare `<slug>:admin` as the rollup target.
+- A `narrow` row exists for every bare suffix named by a §3 `**Edit permission:**` line, and is included by `<slug>:manage` (or higher) in the §9.1 hierarchy.
+
+### §8.2 Business rules
+
+Each rule carries its `source flag` (`lifecycle` / `owner_edit` / `narrow_write`) from the blueprint. The analyst converts the intent to JsonLogic at Stage 10. An approval is not a §8.2 rule — it is a gated transition + its §8.1 `workflow-gate` permission + the §9 RACI Accountable actor. `data_object` is a backticked declared `table_name` (`consistency-check.ts` verifies it).
+
+### §9 Governance
+
+- The §9.1 heading key is the `system_slug` uppercased (hyphens kept), e.g. `### 9.1 \`HIRING-STARTER\``.
+- **Baseline roles.** Role slugs use `<role_slug_base>` = `<slug>` with every `-` replaced by `_`, because `roles.slug` is constrained to `^[a-z0-9_]+$` and forbids the hyphens `module_slug` allows (e.g. `it-ops-starter` becomes `it_ops_starter_viewer`). Always emit this underscored form; never use the hyphenated `<slug>` for the role slug, even if an older blueprint's §9 carried it hyphenated. The `baseline grant` column keeps the hyphenated `<slug>` prefix, since `permissions.permission_name` allows hyphens. The `_admin` row is present only when §8.1 carries a `baseline-admin` row. The `origin` and `catalog role code` columns are OPTIONAL, derived, and DISPLAY-ONLY: they carry live `roles.origin` / `roles.catalog_role_code`, which the deployer RE-DERIVES from the module type / slug, so a round-trip through them is a functional no-op. Present in reverse-engineered specs (`semantius-optimizer` emits them from live state); safe to leave BLANK or omit the two cells entirely in hand-authored specs. The modeler parses the table BY HEADER NAME and ignores these two columns as inputs. A 3-column form (no `origin` / `catalog role code`) also parses.
+- **Reconciliation cell vocabulary (both §9.1 tables).** Exactly one of `✨ to create` / `♻ exists` / `🟡 drift on module_id` (bare text, no italics; `♻` is U+267B with no variation selector). `✨ to create` = not in the live catalog at reconcile time; `♻ exists` = already present (the optimizer, which reads live state, always writes this); `🟡 drift on module_id` = present but attached to a different module. The descriptive marks in the stage references (`✨ persona role to be created`, `✨ hierarchy edge to be added`, …) are plan narration, not cell values. The hierarchy table uses `✨ to create` / `♻ exists` only.
+- **Permission hierarchy.** One `admin` → `manage` row and one `manage` → `read` row (the `admin` row only when `<slug>:admin` exists), one `admin` → gate/override row per §8.1 gate / override, and one `manage` → narrow row per §8.1 `narrow` tier permission.
+- **Processes** is a catalog — one row per process, referenced by `process_key`; carried from the blueprint's Processes wired table. PCF columns are blueprint provenance and are dropped here — `process_key` is the join-back key. `name` and `description` are carried VERBATIM. When there is no catalog the whole line is the inline form `**Processes:** _(none: <short reason>)_` (caption and placeholder on one line, no table).
+- **RACI mode** is chosen at Stage 9.5 Step 0; the deployer honors this and does not re-prompt. The line must match the frontmatter `raci_mode`.
+- **RACI realization.** The `process_key` references the **Processes** catalog (display name + description live there, never on the RACI row). `consult_mode` is `read | notify | block` for a `consulted` actor and `(none)` otherwise. The `grant_module` column is the **entity-owning-module rule** at work: for each gate in the actor's grant list, look up the gate's owning entity's current owning module slug in the live catalog (it may differ from the installing unit when the entity already exists under another module). The deployer's Stage 4k uses this column to resolve the canonical permission code; it does NOT assume the installing-unit prefix. For an `informed` actor the cell carries the handoff `event_category` + target module.
+- **RACI plan (living mode only).** When **RACI mode** is `living`, the analyst also emits the live-catalog plan the deployer materializes via `postgrestRequest`, **in addition to** the baseline tier grants above: the `_raci_assignments_`, `_process_gates_`, and `_enforcement rules_` tables (the enforcement rules are the `validation_rule` / `select_rule` the deployer authors, Stage 4e/4f mechanism). The deployer creates one `processes` row per **Processes** catalog entry (with its `name`, `description`, `ordering`). `consult_mode` in `_raci_assignments_` is `read | notify | block | (none)`; the modeler sends `null` for `(none)` (and for the legacy `—` / blank) on the living-mode POST. Omit this entire block (the three italic labels and their tables) in `documentation` mode.
+- Under `access_scope: basic` the whole RACI surface (RACI mode, RACI realization, RACI plan) and the `persona` frontmatter key are absent; **Processes** and §9.2 carry `_(none: …)_` placeholders; §9.1 has only the viewer + manager roles and the single `manage → read` hierarchy row.
+
+### General authoring rules
+
+- Use the fenced `markdown` block so the model is self-contained when copied.
+- Table columns are fixed, don't rename or reorder them. Agents parse by header.
+- **Empty-section convention (the single rule).** Every canonical top-level / numbered section is **always present**; never omit one. When a section (or §7 severity bucket, or a §6 table) is intentionally empty, keep its heading and write the canonical placeholder **`_(none: <short reason>)_`** (lowercase `none`, a **colon** not an em-dash; bare `_(none)_` allowed when a reason adds nothing) in place of its table or list. Keeping every canonical section present keeps section numbers stable, which helps humans navigate multiple models and keeps parse-by-number consumers safe. This replaces the older per-section placeholder strings (`"None."`, `"No enumerations defined."`, `"No cross-model link suggestions."`) — normalize any of those to `_(none: …)_`. The **only** omit-when-empty exception is the §3 per-entity sub-blocks (Computed fields / Validation rules / Input type rules / Select rule), which stay omit-when-empty as noted above.
+- Zero em-dashes in the emitted file (Writing Convention 2): the skeleton carries none, and an authored cell or sentence must not introduce one; use `(none)` for an empty or not-applicable cell, and `(…)`, commas, or sentence splits in prose.

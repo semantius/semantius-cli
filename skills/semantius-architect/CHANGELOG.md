@@ -8,6 +8,35 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: `consistency-check.ts` spec checks revived (§5, §8.2), §6 handoff check added, NUL bytes removed; audit-checklist `persona` conditional
+
+Checker and audit-guidance change only, no blueprint contract change, `CURRENT_VERSION` unchanged (2026-08-19). Paired with the analyst 5.5 / optimizer 5.5 bumps.
+
+1. **`consistency-check.ts` was invisible to ripgrep.** Three raw NUL bytes (a comment at `:446`, two template-literal map-key separators at `:464` / `:540`) made ripgrep — and therefore the Grep tool — classify the file as binary and skip it, so agents searching for the checker's rules never found them. Replaced with the six-character `\u0000` escape: pure-ASCII source, identical runtime key.
+2. **The spec `§5 ⟺ entities` check was dead code.** Its regex required `### 5.N \`table.field\``, but the analyst template has emitted unnumbered `### \`table.field\`` since the v5.4 alphabetical-§5 convention, so it never matched. It now accepts both forms and is scoped to `topSection(lines, 5)` (it previously scanned every line).
+3. **The spec `§8.2 ⟺ entities` check was dead code.** It went through `topSection(lines, 8)`, whose slice ends at the next `## ` line — `## 8.2 Business rules`, a sibling H2 — so the §8.2 table was never in the slice. It now addresses `## 8.2` directly via `subSection(lines, /^##\s+8\.2\b/)`.
+4. **New spec check `§6 handoffs ⟺ entities`:** every row under `### Outbound handoffs` whose `payload` cell is a backticked identifier must be a declared entity (Inbound payloads belong to the source module and are not checked). Mirrors the blueprint `§6.4 ⟺ §3` check.
+5. **§3 heading regex** keeps tolerating `—` / `–` / `-` (pre-5.4 files); the comment now states the canonical separator is the hyphen.
+6. **`references/audit-checklist.md`:** `persona` moved out of "Required keys present" into a conditional (present iff §9.1 carries a RACI realization), matching SKILL.md:340 and `stage-11-governance.md` Step 7. **`references/modes-audit-extend-rebuild.md`:** the 🟡 example "missing label_column" replaced (blueprints carry no field-level content).
+
+Both revived checks can newly fail a malformed existing spec (a §5 heading or §8.2 `data_object` naming an undeclared entity) — intended, same posture as the earlier checker tightenings. Verified against `semantius/specs/it-ops-starter-semantic-spec.md` (exit 0) and scratch negatives for §5 / §8.2 / Outbound payload (each fails), a legacy numbered §5 heading and a foreign Inbound payload (each passes).
+
+## Unreleased: task-tool call economy
+
+Guidance only, no contract change, `CURRENT_VERSION` unchanged (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (resident "Task tracking" section, stage tasks and the Stage 2 gate). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
+
+## Unreleased: task tracking and the question ledger
+
+Guidance only, no contract change, `CURRENT_VERSION` unchanged (2026-08-18). The architect now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): a resident "Task tracking" paragraph in SKILL.md with a per-mode table of `Design ›` stage tasks (four for Create-Greenfield, two for Catalog-Clone, one for Audit / Extend / Customize / Rebuild); the Mode A stage table gains a Task subject column; the Customize task stays `in_progress` for the whole C2 → C5 loop and is completed only when the user answers the C5 question with "done", which is the status the admin now reads at its customize gate (`modes-audit-extend-rebuild.md` C1 and C5). Stage 2's naming-style question is the one ledger question (`stage-2-naming.md`); every other architect question stays a standalone prose or widget question. Files: SKILL.md, `stage-2-naming.md`, `modes-audit-extend-rebuild.md`.
+
+## Unreleased: `AskUserQuestion` call mechanics
+
+Guidance only, no contract change, `CURRENT_VERSION` unchanged. The resident writing conventions in SKILL.md (mirroring `semantius-admin/references/writing-conventions.md`) gain an unnumbered "AskUserQuestion mechanics" paragraph (Conventions 1-10 stay as numbered): call the widget alone in its own response after edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. `stage-2-naming.md` corrected: the answer arrives as a `<user_answers>` block mapping each question text to the chosen label, not as an answer ordinal like "A: 2". Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
+
+## Unreleased: historical / version-stamp narration removed from runtime files
+
+No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history on the `blueprint_version` bullet, "no longer …" phrasings, and the "legacy slug" parenthetical in `stage-2-naming.md` from the references; the rules those lines carried are stated present-tense. History lives here and in git only.
+
 ## Unreleased: catalog-surface elicitation moved to Stage 13; `description` / `license` become publish-only
 
 2026-07-23. Stage 1 asked the user for buyer-facing marketing copy (`tagline`, `description`), a `license`, and a `module_kind` before a single entity existed — yet the `hiring-starter` reference description literally enumerates the entity list ("postings, candidates, applications, interviews, and offers"), which cannot be written well before Stage 3, and `module_kind`'s defaults are defined by §3 role composition, which doesn't exist yet either. Separately, `description` and `license` are catalog-publication metadata that internal-only blueprints never need.

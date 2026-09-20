@@ -11,7 +11,10 @@
  * instead of restating numbers in prose, so the rendered table, the plan,
  * and what actually executes can never disagree.
  *
- * Run (inside the run folder): bun run render-plan.ts
+ * Run from the session cwd by path (offline, no CLI calls — but the same
+ * invocation shape as its siblings, which do spawn `semantius`; preflight
+ * check 1 says never `cd` into the run folder):
+ *   bun run .tmp_import/run-<ts>/render-plan.ts
  */
 import { readFileSync } from "node:fs";
 
@@ -39,7 +42,7 @@ type Mapping = {
   table: string;
   id_column?: string;
   natural_key?: string | null;
-  on_exists?: "insert" | "update";
+  on_exists?: string; // legacy (postponed update mode); warned on below
   expected_records?: number | null;
   batch_size?: number;
   columns: ColumnSpec[];
@@ -92,13 +95,22 @@ console.log(`- columns in file: ${total} = ${imported} imported + ${skipped.leng
 console.log(`- fields to create: ${creates.length}${creates.length ? ` (${creates.map((c) => c.field_name).join(", ")})` : ""}`);
 console.log(`- existing live fields targeted: ${exists.length}`);
 console.log(`- label column: ${label.length ? `\`${label[0]!.field_name}\` (auto-created by the platform, imported, never create_field)` : "none declared"}`);
-console.log(`- natural key: ${M.natural_key ? `\`${M.natural_key}\` (on_exists: ${M.on_exists ?? "insert"})` : "none (plain insert; re-running duplicates rows)"}`);
+console.log(`- unique key: ${M.natural_key ? `\`${M.natural_key}\` (marked unique; re-runs skip rows whose value already exists, existing rows are never modified)` : "none (plain insert; re-running duplicates rows)"}`);
 console.log(`- expected records: ${expected ?? "unknown (capped scan)"}${expected ? `, up to ${Math.ceil(expected / batchSize)} batch(es) of ${batchSize}` : ""}`);
 
 // Sanity warnings - never fatal, always visible.
 const nonSkipNames = M.columns.filter((c) => c.disposition !== "skip").map((c) => c.field_name);
 if (M.natural_key && !nonSkipNames.includes(M.natural_key)) {
   console.log(`\n⚠ natural_key "${M.natural_key}" is not among the imported field names`);
+}
+if (M.natural_key) {
+  const keyCol = M.columns.find((c) => c.field_name === M.natural_key && c.disposition !== "skip");
+  if (keyCol && keyCol.disposition === "create" && !keyCol.unique_value) {
+    console.log(`\n⚠ natural_key "${M.natural_key}" is a new field but does not carry unique_value: true - the "mark unique" answer was not recorded on the column`);
+  }
+}
+if (M.on_exists !== undefined && M.on_exists !== "insert") {
+  console.log(`\n⚠ on_exists "${M.on_exists}" is not supported: the import is insert-only (updating existing records is postponed); import.ts will refuse to run - remove the key`);
 }
 const dupes = nonSkipNames.filter((n, i) => n && nonSkipNames.indexOf(n) !== i);
 if (dupes.length) console.log(`\n⚠ duplicate field names in mapping: ${[...new Set(dupes)].join(", ")}`);

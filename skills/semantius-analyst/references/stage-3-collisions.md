@@ -2,26 +2,49 @@
 
 *Reference for `semantius-analyst`. Each widget's "Policy path:" line depends on the protocol in [`customizations-consultation.md`](customizations-consultation.md); read it alongside.*
 
+> **Ledger stage.** Every widget in 3a-3e is a `Q:` task (SKILL.md → Task tracking; sequence in `../../semantius-admin/references/task-tracking.md`): after the policy consultation, enumerate every widget that must fire into `Q:` tasks (subject = `Q: ` + the widget's exact question text; description carries the widget's Policy path as `Recorded in:`), ask them in batches of up to four question objects per `AskUserQuestion` call, write each answer to `customizations.yaml` first, then complete its task. 3b.0 adoption widgets and any widget whose text says "fire a single AskUserQuestion" are still one question object each; they may share a call. The stage is complete only when `TaskList` shows no `Q:` task pending or in progress; that check is what makes the MUST-FIRE rule verifiable.
+
 ### 3a. Optional concepts
 
 **Policy path:** `.optionals_decided.<slug>` (per-slug verdict, `included` or `excluded`). Both directions are recorded; 2c.5 has already filtered the entity list to un-decided slugs only. This widget fires only when at least one un-decided optional remains.
 
-Blueprint §3 entries with `necessity = optional` are offered to the user as multiSelect `AskUserQuestion` choices, **one option per optional entity**:
+Blueprint §3 entries with `necessity = optional` are offered to the user as multiSelect `AskUserQuestion` choices, **one option per optional entity** (the single exception is K = 1 in the table below, which adds a `"None, skip it"` option):
 
-- **question**: `"Some parts of this module are optional. Which do you want to set up?"`
+- **question**: `"Which optional parts do you want to set up?"` (when the optionals are split across several questions, append ` (<i> of <N>)`, e.g. `"Which optional parts do you want to set up? (1 of 2)"`, so the question text is byte-identical to its `Q:` ledger subject)
 - **header**: `"Optional parts"`
-- **multiSelect**: `true`
-- **options**: one per optional entity:
+- **multiSelect**: `true` (K = 1: `false`, see the table below)
+- **options**: one per optional entity (K = 1 adds the `"None, skip it"` option from the table):
   - label: the entity's **Plural Label** (e.g. `"Career Aspirations"`)
   - description: blueprint §2 description, followed by `" Skip if you don't track this."`
 
-**The 4-option cap (mandatory).** `AskUserQuestion` allows at most **4 options per question**. Most modules have ≤4 optionals and fit one multiSelect question. When **more than 4** optional entities remain un-decided:
+**The 2-to-4-option rule (mandatory).** `AskUserQuestion` accepts **2 to 4 options per question**, never 1 and never 5. A 1-option question is rejected exactly like a 5-option one, and the rejection throws out the whole call, including every other question batched beside it. So count the un-decided optionals (call the count K) and shape the questions from this table before creating the `Q:` tasks:
 
+| K (un-decided optionals) | Questions to create | Options per question |
+|---|---|---|
+| 1 | 1 question, `multiSelect: false` | 2: the entity, then `"None, skip it"` (description: `"Don't set up <Plural Label> now. You can add this later."`) |
+| 2, 3, or 4 | 1 question | K (one per entity) |
+| 5 | 2 questions | 3 + 2 |
+| 6 | 2 questions | 4 + 2 |
+| 7 | 2 questions | 4 + 3 |
+| 8 | 2 questions | 4 + 4 |
+| 9 | 3 questions | 4 + 3 + 2 |
+| 10 | 3 questions | 4 + 4 + 2 |
+| 11 | 3 questions | 4 + 4 + 3 |
+| 12 | 3 questions | 4 + 4 + 4 |
+| more than 12 | fill chunks of 4 in blueprint §3 order; if the last chunk would hold 1 option, move the **last** option of the previous chunk into the last chunk (so the last two chunks become 3 + 2 instead of 4 + 1) | every chunk 2 to 4 |
+
+Every row except K = 1 is `multiSelect: true`. Example, K = 5 (Hardware Assets, Incidents, SaaS Applications, Service Requests, Software Licenses, in blueprint §3 order): `(1 of 2)` = Hardware Assets, Incidents, SaaS Applications; `(2 of 2)` = Service Requests, Software Licenses.
+
+Rules that go with the table:
+
+- **Fill in blueprint §3 order:** the first question takes the first entities, the next question the next ones, and so on. The order is deterministic so the `Q:` subjects and `.optionals_decided` records line up across runs.
 - **Never merge two entities into one combined option** to fit the cap. The user must be able to include one without the other; a `"Issues + Service Requests"` mega-option silently forces an all-or-nothing choice and corrupts the per-slug `.optionals_decided` record.
-- **Split** the optionals across several multiSelect questions of ≤4 options each, **all carrying the same `"Optional parts"` header**, and send them together in **one** `AskUserQuestion` call (a single call holds up to 4 questions → up to 16 optionals). With more than 16 un-decided optionals, fire successive `AskUserQuestion` calls until all are covered.
-- **Keep this in its own `AskUserQuestion` call.** Do not fold the optional-parts question(s) into the access-control question (Stage 2c) or any other decision. Batching unrelated questions makes every chip inherit the first question's header (the access-control question's `"Access control"` chip would then mislabel the optional-parts question).
+- **Never pad with a filler option** (no `"Other"`, no `"All of the above"`) to reach 2; the only sanctioned second option is the K = 1 `"None, skip it"` row above. Re-balance the chunks instead.
+- **Every question carries the same `"Optional parts"` header** and is its own `Q:` ledger task with subject `Q: Which optional parts do you want to set up? (<i> of <N>)` (N = number of questions from the table; the ` (1 of 1)` suffix is omitted when the table yields one question) (SKILL.md → Task tracking). The ledger batches up to four question objects per `AskUserQuestion` call and keeps asking until `TaskList` shows none pending; no optional is left un-asked because each chunk is a task that must reach `completed`.
+- **Self-check before firing:** every optional-parts question has between 2 and 4 options. If one has 1, or 5 or more, you skipped the table; re-chunk.
+- Optional-parts questions may share a call with other Stage 3 `Q:` tasks (each question carries its own header chip); the ledger's id order decides the batch.
 
-Entities the user does NOT select get the internal annotation `dropped (optional, user declined)` on the spec entry and are skipped from all later stages. Selected entities proceed to bucket classification.
+Entities the user does NOT select get the internal annotation `dropped (optional, user declined)` on the spec entry and are skipped from all later stages; at record time (R) write one `.optionals_decided.<slug>` entry per option in the question, `included` or `excluded`, before completing the task. For the K = 1 single-select shape, choosing `"None, skip it"` records the entity as `excluded`; `"None, skip it"` is not a slug and gets no entry. Selected entities proceed to bucket classification.
 
 Example option (for Career Aspirations):
 - Label: `"Career Aspirations"`
@@ -31,7 +54,7 @@ Example option (for Career Aspirations):
 
 For every 🛑 cross-module exact-name collision, the widget shape depends on the incoming blueprint's declared `role` for the entity. Three sub-cases, ordered by precedence:
 
-#### 3b.0 Catalog-owner adoption (1-option confirmation widget)
+#### 3b.0 Catalog-owner adoption (2-option Yes / Cancel confirmation widget)
 
 **Fires when:** incoming blueprint's `role` is `master`, an entity with the same slug exists in some module X (X ≠ incoming module), AND the Stage 2 workspace scan found that **X's blueprint (or spec, if blueprint is missing) carries an `embedded_master` row pointing this entity at the incoming blueprint's `system_slug`**. In other words: an earlier blueprint declared this entity as a placeholder "for whenever the catalog owner shows up." This blueprint IS that catalog owner. The adoption is the contract being honored.
 
@@ -110,11 +133,12 @@ No host-module or manager-scope follow-up — the host is determined by B's blue
 - **question**: `"Where should the shared <Plural Label> live?"`
 - **header**: `"Where to host"`
 - **multiSelect**: `false`
-- **options** depend on existing master modules:
-  - *Case A* (no shared modules exist, no cluster hint): single option `"New shared module called <plural_label_snake_case>"` — confirm or override.
-  - *Case B* (no shared modules, cluster hint `<cluster>`): default option `"New shared module called <cluster> (Recommended)"`.
-  - *Case C* (shared modules exist, cluster hint matches one): default option `"Existing <Master Display Name> module (Recommended)"`.
-  - *Case D* (shared modules exist, no match): one option per existing shared module by display name, plus `"Create a new shared module called <name>"`.
+- **options** depend on existing master modules. Every case yields 2 to 4 options (a 1-option question is rejected by the tool); the user can always type another name into the tool's free-text slot, so no `"Other"` option is listed:
+  - *Case A* (no shared modules exist, no cluster hint): 2 options: `"New shared module called <plural_label_snake_case> (Recommended)"`, then `"Stop, I want to think about it"` (halts the run, no changes).
+  - *Case B* (no shared modules, cluster hint `<cluster>`): 3 options: `"New shared module called <cluster> (Recommended)"`, `"New shared module called <plural_label_snake_case>"`, then `"Stop, I want to think about it"`.
+  - *Case C* (shared modules exist, cluster hint matches one): 3 options: `"Existing <Master Display Name> module (Recommended)"`, `"New shared module called <cluster>"`, then `"Stop, I want to think about it"`.
+  - *Case D* (shared modules exist, no match): the existing shared modules by display name, **at most 3** (when more exist, list the 3 whose names are closest to the cluster hint or the entity, and end the question text with `" More shared modules exist; type the name of another if you want it."`), then `"Create a new shared module called <name>"`. That is 2 to 4 options.
+  - **On `"Stop, I want to think about it"`** (Cases A to C): halt the run with no spec written, and do not leave a half-written policy: the `.collisions.<entity>` entry with `outcome: share` that 3b.2 option 1 would write at record time is written only together with its `host_module`, so a Stop here writes nothing for this entity and the next run asks again (the cancel rule in admin `references/customizations-protocol.md`, 7.6).
 
 Then a follow-up on who manages records:
 
@@ -141,7 +165,7 @@ Stage 2 has already applied the role-driven placement table (top of Stage 3) usi
 
 | Incoming `role` | Existing entity location | Workspace spec evidence | Sub-case |
 |---|---|---|---|
-| `master` | Some module X (X ≠ incoming) | X's spec carries `embedded_master mastered_in: <incoming.system_slug>` for this entity | **3b.0** (1-option take-ownership confirmation, batched if multiple entities adopt at once) |
+| `master` | Some module X (X ≠ incoming) | X's spec carries `embedded_master mastered_in: <incoming.system_slug>` for this entity | **3b.0** (2-option Yes / Cancel take-ownership confirmation, batched if multiple entities adopt at once) |
 | `master` | Some module X (X ≠ incoming) | No matching spec evidence, OR X's spec claims `master`/`create-new` ownership | **3b.2** (master-vs-master, 4-option) |
 | `embedded_master` | `<mastered_in>` module exists, entity exists there | n/a | (no prompt — `reuse-from <mastered_in>.<entity>` per placement table) |
 | `embedded_master` | Some module X (`<mastered_in>` doesn't exist yet) | (any — placement is the same regardless of A's prior intent) | **3b.1** (2-option second-mover widget — share via new shell, or silo via rename) |
@@ -175,7 +199,7 @@ For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`:
 > **Entity-owning-module rule.** Workflow gates and row-scope overrides for entity E are prefixed by E's CURRENT owning module slug, not by the installing unit. The Stage 3d / 3b.0 / 3b.1 logic below routes the decision; the actual emission rules are:
 >
 > - **Case 1: catalog owner module installed** → consume via the catalog owner (`reuse-from <catalog-module>.<entity>`). Personas grant on catalog-prefixed codes.
-> - **Case 2: catalog owner absent AND entity does NOT exist anywhere in the live catalog** → installing unit becomes the entity's owning module. Emit the entity's full derived governance (workflow gates + row-scope overrides + matching §8.2 rules + boundary-crossing handoffs in §6.2 / §6.3) prefixed by the installing-unit slug. **Annotate each re-prefixed gate / override with `**Reconciliation:** re-prefixed-from <catalog-module>.<verb>`** so the deployer's Stage 4n knows to reconcile when the catalog owner later installs.
+> - **Case 2: catalog owner absent AND entity does NOT exist anywhere in the live catalog** → installing unit becomes the entity's owning module. Emit the entity's full derived governance (workflow gates + row-scope overrides + matching §8.2 rules + boundary-crossing handoffs in the spec's §6 `### Outbound handoffs` / `### Inbound handoffs` sub-sections) prefixed by the installing-unit slug. **Annotate each re-prefixed gate / override with `**Reconciliation:** re-prefixed-from <catalog-module>.<verb>`** so the deployer's Stage 4n knows to reconcile when the catalog owner later installs.
 > - **Case 3: catalog owner absent BUT entity already exists under a non-catalog owner module** → emit `reuse-from <non-catalog-module>.<entity>`. Personas grant on existing non-catalog-prefixed codes. DO NOT mint duplicate gates / overrides; DO NOT emit re-prefixed governance — it's already minted under another unit. This is the second-installer case (3b.1).
 >
 > A module that embeds an entity whose catalog owner is absent ALWAYS deploys (Case 2 or Case 3); there is no "install the master first" prompt. The widget below applies only to `contributor` / `consumer` rows that legitimately can't materialize without the owner; `embedded_master` rows route through 3b.0 / 3b.1 / Case 2 instead.
@@ -214,7 +238,8 @@ When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) poin
   1. label: `"<expected_context>_<target> (Recommended)"` — e.g. `workforce_employees`, `finance_currencies`. Reads naturally and says what the table is for.
   2. label: `"<this_module_short>_<target>"` — e.g. `atscrm_employees`. Module-prefixed; fine when no clean context word fits.
   3. label: `"Use the existing <Owner Module Display Name> <Target Plural Label> after all"` — fall back to option 2 of Stage 3d, treat the existing entity as the link target.
-  4. label: `"Other"` — runtime auto-adds; user types a free-text name. Analyst checks it doesn't collide before accepting.
+
+  Exactly these 3 options; do not add an `"Other"` option (the tool adds its own free-text slot). When the user types a name into that slot, the analyst checks it doesn't collide before accepting.
 
 Record the picked name on the new §3 entity in the spec and stamp `**Reconciliation:** create-new`. The §7.2 note from option 1 above gets the picked name substituted in (*"<Picked Plural Label> currently lives in this module..."*).
 
@@ -233,11 +258,11 @@ For every blueprint §5.3 / §6 row, the analyst resolves the target against the
 
 **Multi-candidate widget** (≥2 candidates fit):
 
-- **question**: `"<This Singular Label> should link to a record in another module. Several candidates fit — which one?"`
+- **question**: `"<This Singular Label> should link to a record in another module. Several candidates fit, which one?"` (when more than 2 candidates exist, append `" The 2 closest are listed; type the name of another if it isn't here."`)
 - **header**: `"Multiple matches"`
 - **multiSelect**: `false`
-- **options**:
-  - one per candidate, label = `"<Plural Label> in <Module Display Name>"`, description = `"<one-line description from the existing entity>"`
+- **options** (always 4 or fewer; the tool rejects a 5-option question):
+  - one per candidate, **at most 2** (when more than 2 fit, list 2, in this priority: the module named by the blueprint's `mastered_in`, then master modules, then modules whose slug shares a word with the expected context, then alphabetical; the user types any other candidate's name into the tool's free-text slot), label = `"<Plural Label> in <Module Display Name>"`, description = `"<one-line description from the existing entity>"`
   - then: `"Create our own here under a different name"`, description = `"Set up <suggested_local_name> as a new table in this module so we don't have to pick from the candidates above. The other tables stay where they are. When a catalog <Expected Context> module arrives later, you can merge."`
   - then: `"Skip this link for now"`, description = `"Don't connect anything. You can add the link later, when the right module is in place."`
 

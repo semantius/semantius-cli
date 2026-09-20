@@ -57,6 +57,7 @@ Then render a plan summary as **markdown prose** (NOT inside a triple-backtick c
 7. **Render as prose**, not as a code-fenced block.
 8. **Echo applied Additional Requirements.** When the blueprint carried an `## Additional Requirements Specification` section, add one line to the plan summary, in plain English (Convention 8 applies, this is user-facing chat, so no backticks, use Labels): summarize each requirement and name where it landed (a field you added, an open question you recorded). Example: *"📐 Extra requirements applied: added an annual cost figure and a currency code to Asset Contracts and SaaS Subscriptions; recorded the standalone-vs-full-module dedup rule as an open question."* Omit the line entirely when the blueprint had no such section.
 9. **Keep the Fields block compact.** One line per owned entity: its Plural Label, a field count, then field Labels with their format (and FK target as a Plural Label) only. Never paste full field tables, descriptions, validation rules, or full enum value lists into the summary, those live in the file and in the per-entity Adjust view. Reused, built-in, and skipped entities get no field line.
+10. **Name every blocker.** When drift resolution (3f) produced any blocker the deployer cannot clear on its own (a cross-primitive format change, a field-name or enum-value migration the user chose to keep, a destructive precision or uniqueness change), add one line after the Fields block: *"🔴 Needs a manual step before deploy: <one plain-English clause per blocker, naming the entity and field by Label>"*. Omit the line entirely when there is no blocker. This is the only place such a blocker reaches the user before the file is written, so never skip it.
 
 **Outcome-column translation:**
 
@@ -83,7 +84,7 @@ Then render a plan summary as **markdown prose** (NOT inside a triple-backtick c
 
 Combine multiple behaviors with a comma: `Per-user records, Locks once submitted`.
 
-**Closing confirmation.** After the plan summary, call `AskUserQuestion`:
+**Closing confirmation.** Precondition: `TaskList` shows no `Q:` task pending or in progress (every 3a-3f decision recorded); an open one means back to the ledger, not to this widget. This confirmation and its follow-ups are standalone questions, not ledger tasks. After the plan summary, call `AskUserQuestion`:
 
 - **question**: `"Does this plan look right?"`
 - **header**: `"Confirm plan"`
@@ -94,6 +95,17 @@ Combine multiple behaviors with a comma: `Per-user records, Locks once submitted
   3. label `"Revise the plan"`, description `"Change which entities are included, reused, renamed, or linked. The plan re-renders after the change."`
   4. label `"Cancel"`, description `"Stop without writing the file."`
 
-On option 2 (adjust the fields), fire one follow-up `AskUserQuestion` listing the owned entities as a multiSelect; for each entity the user picks, show its full field table (the Stage 4 columns) and let them change field names, formats, required flags, labels, and enum values. Apply the edits, then re-render the plan summary and fire this confirmation widget again. On option 3 (revise the plan), drop into one follow-up `AskUserQuestion` listing the entities and links from the plan as a multiSelect; the user picks one or more, and the analyst re-prompts the relevant Stage 3a/3b/3c/3d/3e decision for each, then re-runs drift resolution and field drafting for any affected entity. After all revisions, re-render the plan summary and fire the confirmation widget again. On option 4 (cancel), narrate one line ("Cancelled. Nothing was written.") and stop.
+On option 2 (adjust the fields), fire a follow-up `AskUserQuestion` picker over the owned entities: question `"Which entities do you want to adjust the fields for?"`, header `"Which entity"`, `multiSelect: true`, one option per owned entity (label = Plural Label, description = one line on what it holds). For each entity the user picks, show its full field table (the Stage 4 columns) and let them change field names, formats, required flags, labels, and enum values. Apply the edits, then re-render the plan summary, and only then fire this confirmation widget again, alone in its own response (never in the same response as the edit or re-render tool calls). On option 3 (revise the plan), fire a follow-up `AskUserQuestion` picker over the entities and links from the plan: question `"Which parts of the plan do you want to revise?"`, header `"Which parts"`, `multiSelect: true`, one option per entity or link (label = Plural Label, or `"<Plural Label> to <Plural Label> link"`; description = the plan's current decision for it in one line); the user picks one or more, and the analyst sets the corresponding completed `Q:` tasks back to `pending` (`TaskList`, then `TaskUpdate`; the tasks already carry the question text and policy path, so nothing is re-derived), re-enters the ledger loop for them, then re-runs drift resolution and field drafting for any affected entity. After all revisions, re-render the plan summary and fire the confirmation widget again. On option 4 (cancel), narrate one line ("Cancelled. Nothing was written.") and stop.
+
+**Shaping both pickers** (SKILL.md → AskUserQuestion mechanics: 2 to 4 options per question object, never 1, never 5). Count the items (K):
+
+| K | Shape |
+|---|---|
+| 1 | Skip the picker: the one item counts as chosen. Go straight to its field table (option 2) or set its `Q:` tasks back to `pending` (option 3). |
+| 2, 3, or 4 | 1 question, K options |
+| 5 to 16 | Several questions in the same call, same header, question text suffixed ` (<i> of <N>)`, filled in plan order in chunks of 4, the last item of the previous chunk moved into the last chunk when it would otherwise hold 1 (5 → 3 + 2, 6 → 4 + 2, 9 → 4 + 3 + 2, 13 → 4 + 4 + 3 + 2) |
+| more than 16 | Same chunks, at most four question objects per call; fire the next call with the remaining chunks after the first answers arrive, then act on the union of all picks |
+
+Never merge two items into one option, never pad with a filler option.
 
 **Closing narration after the confirmation step** (only when the user said "Yes, looks good"): one short sentence stating the next action, in plain English. Example: *"Writing the file with the entities and fields as confirmed."* No "round-trip", no "single-pass", no internal flow vocabulary. After this, the remaining stages (governance authoring, the mechanical scans) run without further prompts: there is no downstream access-control widget, because the basic-vs-advanced decision was already made and the documentation-vs-living split is auto-derived (Stage 9.5 Step 0).

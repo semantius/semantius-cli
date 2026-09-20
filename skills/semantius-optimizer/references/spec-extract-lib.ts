@@ -1,12 +1,18 @@
 /**
  * spec-extract-lib.ts — deterministic reverse-engineer of a live Semantius module
- * into a `*-semantic-spec.md` (analyst artifact, version "5.4").
+ * into a `*-semantic-spec.md` (analyst artifact, version "5.5").
  *
  * READ-ONLY against Semantius. Every read shells out via `Bun.spawn` with an
  * ARG ARRAY (bypasses the shell — inline JSON is safe on Windows and POSIX),
  * the same proven pattern as semantius-modeler/references/deploy-lib.ts.
  *
- * Usage:  bun run spec-extract-lib.ts <module_slug> [outfile]
+ * Usage:  bun run spec-extract-lib.ts <module_slug> [outfile] [--force]
+ *         bun run spec-extract-lib.ts --from-fixture <fixture.json> [outfile] [--force]
+ *
+ * `--from-fixture` renders the same markdown from a JSON snapshot of the live
+ * reads (shape documented at `loadLive()` / the round-trip eval under
+ * `../evals/round-trip/`) without touching Semantius; it exists so the emitted
+ * markdown can be diffed against the analyst template byte-for-byte in CI.
  *
  * The mapping rules (and the Category-A / Category-B divergence taxonomy the
  * companion compare loop keys on) are documented in SKILL.md. This file is the
@@ -14,7 +20,7 @@
  * attributable.
  */
 
-const SPEC_VERSION = "5.4";
+const SPEC_VERSION = "5.5";
 
 /** Semantius platform built-ins — reused by the deployer, not owned by any module. */
 const BUILTINS = new Set([
@@ -249,11 +255,9 @@ function entitySummary(entities: any[], fieldsByTable: Record<string, any[]>): s
 }
 
 function mermaid(entities: any[], fieldsByTable: Record<string, any[]>): string {
-  const lines: string[] = ["```mermaid", "flowchart LR"];
-  lines.push(
-    "    classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;",
-  );
+  const edgeLines: string[] = [];
   const builtinTargets = new Set<string>();
+  const referenced = new Set<string>();
   // Deterministic emission order: child entities in canonical order (entity_type
   // tier, then table_name A->Z), then their reference fields in field_order. The
   // same entity order the analyst emits.
@@ -262,11 +266,31 @@ function mermaid(entities: any[], fieldsByTable: Record<string, any[]>): string 
     for (const f of fields) {
       if (!isRef(f)) continue;
       const verb = f.relationship_label ? `|${f.relationship_label}|` : "";
-      lines.push(`    ${f.reference_table} -->${verb} ${e.table_name}`);
+      edgeLines.push(`    ${f.reference_table} -->${verb} ${e.table_name}`);
+      referenced.add(f.reference_table);
+      referenced.add(e.table_name);
       if (BUILTINS.has(f.reference_table)) builtinTargets.add(f.reference_table);
     }
   }
+  // `master` tags non-builtin entities whose reconciliation is `reuse-from` /
+  // `promote-to-master` and that take part in an edge — the same criterion the
+  // architect's consistency-check.ts `emitSpecMermaid` uses, so the checker's
+  // derived diagram and this one agree. Both classDef lines are emitted ONLY when
+  // at least one entity qualifies (template §2 omit-rule).
+  const masterIds = entities
+    .filter((e) => !BUILTINS.has(e.table_name) && referenced.has(e.table_name))
+    .filter((e) => /^(reuse-from|promote-to-master)\b/.test(reconciliation(e)))
+    .map((e) => e.table_name);
+  const lines: string[] = ["```mermaid", "flowchart LR"];
+  if (builtinTargets.size) {
+    lines.push("    classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;");
+  }
+  if (masterIds.length) {
+    lines.push("    classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;");
+  }
+  lines.push(...edgeLines);
   for (const t of builtinTargets) lines.push(`    class ${t} builtin;`);
+  for (const t of masterIds) lines.push(`    class ${t} master;`);
   lines.push("```");
   return lines.join("\n");
 }
@@ -286,7 +310,7 @@ function entityDetail(e: any, fields: any[]): string {
     // emitted (the extractor does not read built-in columns), matching the analyst,
     // which emits that table ONLY when the blueprint adds fields to the built-in.
     out.push(`**Plural label:** ${e.plural_label}`);
-    out.push(`**Label column:** \`${e.label_column}\``);
+    if (e.label_column) out.push(`**Label column:** \`${e.label_column}\``);
     out.push(`**Reconciliation:** ${reconciliation(e)}`);
     out.push(`**Description:** ${e.description}`); // Category B (live built-in description)
     const rel = relationshipsProse(e, fields, e._allEntities, e._fieldsByTable);
@@ -309,7 +333,10 @@ function entityDetail(e: any, fields: any[]): string {
   const editSuffix = String(e.edit_permission || "").split(":").pop() || "manage";
   const recon = reconciliation(e);
   out.push(`**Plural label:** ${e.plural_label}`);
-  out.push(`**Label column:** \`${e.label_column}\``);
+  // Label column: required on every non-junction entity; OPTIONAL on a junction (the
+  // platform composes `_label` from the parent legs). Omit the line when live
+  // `label_column` is null/empty instead of emitting `` `null` `` (template §3 rule).
+  if (e.label_column) out.push(`**Label column:** \`${e.label_column}\``);
   // v5.4 identity-spine lines (canonical spec §1), pinned right after **Label column:**.
   // Both backticked as a `field_name` like **Label column:**. Order column: omit when
   // empty/null. Id column: omit when the platform default `id` (or empty) — every live
@@ -355,7 +382,7 @@ function entityDetail(e: any, fields: any[]): string {
   // §3 behavior blocks (data-integrity / RLS / dynamic-UI logic). Emitted after the
   // Fields table and Relationships prose, ONLY for non-builtin entities (the BUILTINS
   // branch returned early above). Each block is emitted WHEN its live value is non-empty,
-  // in the analyst template's order (semantic-spec-template.md:141-192): Computed fields,
+  // in the analyst template's order (semantic-spec-template.md, §3 sub-blocks): Computed fields,
   // Validation rules, Input type rules, Select rule. All four use the same fence style:
   // `**Heading**`, blank line, ```json, JSON.stringify(v, null, 2), ```, blank line.
   emitJsonBlock(out, "Computed fields", e.computed_fields);
@@ -367,7 +394,7 @@ function entityDetail(e: any, fields: any[]): string {
 }
 
 /** Assemble the §3 "Input type rules" array from per-field `input_type_rule` objects
- *  (analyst template array shape, semantic-spec-template.md:170-184): one entry
+ *  (analyst template array shape, semantic-spec-template.md §3 "Input type rules"): one entry
  *  `{ field, jsonlogic }` per field carrying a non-empty rule, in field order. Returns
  *  `[]` when no field carries a rule (so `emitJsonBlock` omits the whole block). */
 function inputTypeRules(fields: any[]): Array<{ field: string; jsonlogic: any }> {
@@ -518,25 +545,84 @@ function enumerations(entities: any[], fieldsByTable: Record<string, any[]>): st
   return out.join("\n").trimEnd();
 }
 
-function permissionsCatalog(perms: any[]): string {
+/** Permission suffix relative to this module's slug prefix (`<slug>:<suffix>`). Falls
+ *  back to the text after the last colon for a permission minted under another prefix. */
+function permSuffix(name: string, slug: string): string {
+  return name.startsWith(`${slug}:`) ? name.slice(slug.length + 1) : (name.split(":").pop() || name);
+}
+
+/** Set of permission ids transitively included by `rootId` via the hierarchy edges. */
+function includedClosure(rootId: number, hierarchy: any[]): Set<number> {
+  const adj: Record<number, number[]> = {};
+  for (const h of hierarchy) (adj[h.including_permission_id] ||= []).push(h.included_permission_id);
+  const seen = new Set<number>();
+  const stack = [rootId];
+  while (stack.length) {
+    const id = stack.pop()!;
+    for (const next of adj[id] || []) if (!seen.has(next)) { seen.add(next); stack.push(next); }
+  }
+  return seen;
+}
+
+/**
+ * §8.1 Permissions catalog. The `tier` vocabulary MUST be one the modeler accepts
+ * (stage-1-parse: baseline-read | baseline-manage | baseline-admin |
+ * workflow-gate (lifecycle) | workflow-gate (rule) | override | narrow) — a bare
+ * `workflow-gate` is a deploy-time 🛑. Live state carries no tier column, so the
+ * non-baseline tiers are a HEURISTIC over what the spec itself can prove:
+ *   narrow                   the suffix is an owned entity's `edit_permission` suffix
+ *   override                 `view_all_*` / `manage_all_*` row-scope codes (tested before
+ *                            the rule test: they are wired into select_rule via has_permission)
+ *   workflow-gate (rule)     the code occurs in an owned entity's validation_rules /
+ *                            select_rule JSON (a `require_permission` / `has_permission`)
+ *   workflow-gate (lifecycle) everything else (a gated transition)
+ * `included in :admin?` is derived from the live hierarchy: ✓ iff `<slug>:admin`
+ * transitively includes the permission. With no admin permission (two-permission
+ * fallback) every row is ✓ except a `baseline-admin` row, which is always `-`.
+ * `reconciliation` is `(none)`: live state cannot recover a `re-prefixed-from` origin.
+ */
+function permissionsCatalog(mod: any, perms: any[], hierarchy: any[], owned: any[]): string {
   const out: string[] = [
     "## 8.1 Permissions catalog",
     "",
     "| permission | tier | description | included in `:admin`? | reconciliation |",
     "| --- | --- | --- | --- | --- |",
   ];
-  // Deterministic order: read, manage, admin, then others.
-  const rank = (p: string) =>
-    p.endsWith(":read") ? 0 : p.endsWith(":manage") ? 1 : p.endsWith(":admin") ? 2 : 3;
-  const sorted = [...perms].sort((a, b) => rank(a.permission_name) - rank(b.permission_name));
+  const slug: string = mod.module_slug;
+  const editSuffixes = new Set<string>(
+    owned.map((e) => permSuffix(String(e.edit_permission || ""), slug)).filter((s) => s && s !== "manage" && s !== "admin"),
+  );
+  const ruleText = owned
+    .map((e) => JSON.stringify([e.validation_rules || [], e.select_rule || {}]))
+    .join("\n");
+  const adminPerm = perms.find((p) => permSuffix(p.permission_name, slug) === "admin");
+  const adminClosure = adminPerm ? includedClosure(adminPerm.id, hierarchy) : null;
+
+  // Deterministic order: read, manage, admin, then the rest by name.
+  const rank = (p: any) => {
+    const s = permSuffix(p.permission_name, slug);
+    return s === "read" ? 0 : s === "manage" ? 1 : s === "admin" ? 2 : 3;
+  };
+  const sorted = [...perms].sort(
+    (a, b) => rank(a) - rank(b) || String(a.permission_name).localeCompare(String(b.permission_name)),
+  );
   for (const p of sorted) {
-    const name = p.permission_name;
-    let tier = "workflow-gate";
-    if (name.endsWith(":read")) tier = "baseline-read";
-    else if (name.endsWith(":manage")) tier = "baseline-manage";
-    else if (name.endsWith(":admin")) tier = "baseline-admin";
-    // Fixed convention: baseline read/manage always ✓ (roll up under admin when it exists).
-    const inAdmin = tier === "baseline-read" || tier === "baseline-manage" || tier === "workflow-gate" ? "✓" : "-";
+    const name: string = p.permission_name;
+    const suffix = permSuffix(name, slug);
+    let tier: string;
+    if (suffix === "read") tier = "baseline-read";
+    else if (suffix === "manage") tier = "baseline-manage";
+    else if (suffix === "admin") tier = "baseline-admin";
+    else if (editSuffixes.has(suffix)) tier = "narrow";
+    // `override` before the rule test: a row-scope override is wired INTO the entity's
+    // select_rule via `has_permission`, so it would otherwise read as a rule gate.
+    else if (/^(view_all_|manage_all_)/.test(suffix)) tier = "override";
+    else if (ruleText.includes(`"${name}"`)) tier = "workflow-gate (rule)";
+    else tier = "workflow-gate (lifecycle)";
+    let inAdmin: string;
+    if (tier === "baseline-admin") inAdmin = "-";
+    else if (adminClosure) inAdmin = adminClosure.has(p.id) ? "✓" : "-";
+    else inAdmin = "✓";
     out.push(`| \`${name}\` | ${tier} | ${p.description} | ${inAdmin} | (none) |`);
   }
   return out.join("\n");
@@ -546,11 +632,23 @@ function governance(
   mod: any, perms: any[], hierarchy: any[], permById: Record<number, any>, roles: any[],
   processes: any[],
 ): string {
-  const upper = mod.domain_code;
+  // §9.1 heading key is the system_slug uppercased (template `{{SYSTEM_SLUG_UPPER}}`),
+  // NOT domain_code — the two coincide only when domain_code == upper(slug).
+  const upper = String(mod.module_slug).toUpperCase();
+  // §8.2 / §9.2 / the RACI surfaces are Category B: live state does not carry them in
+  // a recoverable shape. Under `basic` the placeholder reason is definitional; under
+  // `full` it is honest about the extractor's limit. The RACI realization / RACI mode /
+  // RACI plan lines are NEVER emitted (not even as placeholders): consistency-check.ts
+  // keys its raci_mode provenance gate on the literal `**RACI realization:**`.
+  const basic = mod.access_scope === "basic";
   const out: string[] = [];
   out.push("## 8.2 Business rules");
   out.push("");
-  out.push("_(none: access_scope is basic, so no permission-gated business rules are authored)_");
+  out.push(
+    basic
+      ? "_(none: access_scope is basic, so no permission-gated business rules are authored)_"
+      : "_(none: not extracted from live state by semantius-optimizer; author by hand)_",
+  );
   out.push("");
   out.push("## 9. Governance");
   out.push("");
@@ -582,7 +680,10 @@ function governance(
     const r = roleById[roleId];
     // Built via tableRow so the (commonly empty) catalog-role-code cell renders as a
     // single space, not `|  |` — same empty-cell rule as the §3 field tables.
-    out.push(tableRow([`\`${r.slug}\``, `\`${grant}\``, r.origin || "", r.catalog_role_code || "", "✨ to create"]));
+    // Reconciliation cell: this pass reads LIVE state, so every role it lists exists
+    // by construction -> `♻ exists` (template vocabulary: ✨ to create | ♻ exists |
+    // 🟡 drift on module_id; the marker is U+267B without a variation selector).
+    out.push(tableRow([`\`${r.slug}\``, `\`${grant}\``, r.origin || "", r.catalog_role_code || "", "♻ exists"]));
   }
   out.push("");
   out.push("**Permission hierarchy:**");
@@ -592,35 +693,43 @@ function governance(
   for (const h of hierarchy) {
     const inc = permById[h.including_permission_id]?.permission_name;
     const included = permById[h.included_permission_id]?.permission_name;
-    if (inc && included) out.push(`| \`${inc}\` | \`${included}\` | ✨ to create |`);
+    if (inc && included) out.push(`| \`${inc}\` | \`${included}\` | ♻ exists |`);
   }
   out.push("");
   // v5.4: read the module's Processes catalog (no typed `read_process` CRUD tool exists —
   // read via `postgrestRequest` GET `/processes?module_id=eq.<id>`, the same table the
   // modeler writes in living-RACI mode). Emit the §9 catalog in the analyst template's
-  // exact format (semantic-spec-template.md:311-315) when rows exist; keep the
+  // exact format (semantic-spec-template.md §9.1 Processes) when rows exist; keep the
   // `_(none: ...)_` placeholder when there are none.
-  emitProcesses(out, processes);
+  emitProcesses(out, processes, basic);
   out.push("");
   out.push("### 9.2 Functional ownership and default grants");
   out.push("");
-  out.push("_(none: access_scope is basic, no functional-ownership rows are authored)_");
+  out.push(
+    basic
+      ? "_(none: access_scope is basic, no functional-ownership rows are authored)_"
+      : "_(none: not extracted from live state by semantius-optimizer; author by hand)_",
+  );
   return out.join("\n");
 }
 
 /** §9 Processes catalog. Emits the analyst template's exact shape
- *  (semantic-spec-template.md:311-315): the `**Processes:**` caption line, a blank line,
- *  then a `| process_key | name | description | ordering |` table — one row per live
- *  process, sorted by `ordering` (then `process_key`) for deterministic output. When there
- *  are no processes, keeps the `_(none: ...)_` placeholder (single line, no table). */
-function emitProcesses(out: string[], processes: any[]): void {
+ *  (semantic-spec-template.md §9.1 Processes): the bare `**Processes:**` caption line, a
+ *  blank line, then a `| process_key | name | description | ordering |` table — one row
+ *  per live process, sorted by `ordering` (then `process_key`) for deterministic output.
+ *  When there are no processes, the inline `**Processes:** _(none: ...)_` form (single
+ *  line, no table). The template's caption parenthetical is authoring commentary and is
+ *  never emitted. */
+function emitProcesses(out: string[], processes: any[], basic: boolean): void {
   if (!processes.length) {
-    out.push("**Processes:** _(none: access_scope is basic, no Processes catalog is authored)_");
+    out.push(
+      basic
+        ? "**Processes:** _(none: access_scope is basic, no Processes catalog is authored)_"
+        : "**Processes:** _(none: not extracted from live state by semantius-optimizer; author by hand)_",
+    );
     return;
   }
-  out.push(
-    "**Processes:** _(catalog — one row per process, referenced by `process_key`; carried from the blueprint's Processes wired table. PCF columns are blueprint provenance and are dropped here — `process_key` is the join-back key.)_",
-  );
+  out.push("**Processes:**");
   out.push("");
   out.push("| process_key | name | description | ordering |");
   out.push("| --- | --- | --- | --- |");
@@ -636,38 +745,34 @@ function emitProcesses(out: string[], processes: any[]): void {
 // Main
 // ---------------------------------------------------------------------------
 
-async function main() {
-  // Arg parse: positional <module_slug> [outfile], plus an optional order-independent
-  // --force flag. --force is the ONLY way to overwrite an existing outfile.
-  const rawArgs = Bun.argv.slice(2);
-  const force = rawArgs.includes("--force");
-  const positional = rawArgs.filter((a) => a !== "--force");
-  const slug = positional[0];
-  if (!slug) throw new Error("usage: bun run spec-extract-lib.ts <module_slug> [outfile] [--force]");
-  const outfile = positional[1] || `${slug}-semantic-spec.md`;
+/**
+ * Everything the renderer needs, as read from Semantius (raw rows, pre-sort). This is
+ * also the JSON shape a `--from-fixture` file carries, so the round-trip eval can feed
+ * the renderer without a live instance. `relatedModules` are the `modules` rows of the
+ * OTHER modules that own a related (reuse-from) entity.
+ */
+type LiveData = {
+  mod: any;
+  ownedRaw: any[];
+  fieldsByTable: Record<string, any[]>;
+  related: any[];
+  perms: any[];
+  allHierarchy: any[];
+  roles: any[];
+  processes: any[];
+  relatedModules: any[];
+};
 
-  // Fail-fast overwrite guard: check the output path BEFORE any live read, so the
-  // script never spends a run's worth of network work and then clobbers a file.
-  // Refuse unless --force; the skill's Stage 2a asks the user first and passes --force
-  // only on an explicit "replace" (or passes a different, non-colliding outfile).
-  if (!force && (await Bun.file(outfile).exists())) {
-    console.error(
-      `refusing to overwrite existing file: ${outfile}\n` +
-        `Choose a different output path, or pass --force to replace it.`,
-    );
-    process.exit(1);
-  }
-
+/** All live reads, in the original order, nothing else. */
+async function loadLive(slug: string): Promise<LiveData> {
   const mod = (await read("read_module", { filters: `module_slug=eq.${slug}` }))[0];
   if (!mod) throw new Error(`module not found: ${slug}`);
 
-  // Read all owned entities, then impose the canonical modeling order
-  // (entity_type tier, then table_name A->Z). The `created_at.asc` read only
-  // makes the input deterministic; the EMITTED order is the modeling order,
-  // never creation order.
+  // Read all owned entities; the canonical modeling order (entity_type tier, then
+  // table_name A->Z) is imposed in `prepare()`. The `created_at.asc` read only makes
+  // the input deterministic; the EMITTED order is the modeling order, never creation order.
   const ownedRaw = await read("read_entity", { filters: `module_id=eq.${mod.id}`, order: "created_at.asc" });
-  const owned = sortEntities(ownedRaw);
-  const ownedTables = owned.map((e) => e.table_name);
+  const ownedTables = sortEntities(ownedRaw).map((e) => e.table_name);
 
   const fieldsByTable: Record<string, any[]> = {};
   const loadFields = async (table: string) => {
@@ -690,22 +795,9 @@ async function main() {
     }
   }
 
-  const allEntities = [...owned, ...sortEntities(related)];
-  allEntities.forEach((e, i) => {
-    e._num = i + 1;
-    e._allEntities = allEntities;
-    e._fieldsByTable = fieldsByTable;
-  });
-
   // §8/§9 sources.
   const perms = await read("read_permission", { filters: `module_id=eq.${mod.id}` });
-  const permIds = perms.map((p) => p.id);
-  const permById: Record<number, any> = {};
-  for (const p of perms) permById[p.id] = p;
   const allHierarchy = await read("read_permission_hierarchy", {});
-  const hierarchy = allHierarchy.filter(
-    (h) => permIds.includes(h.including_permission_id) && permIds.includes(h.included_permission_id),
-  );
   const roles = await read("read_role", { filters: `module_id=eq.${mod.id}` });
 
   // §9 Processes catalog. No typed `read_process` CRUD tool exists, so read the
@@ -727,14 +819,45 @@ async function main() {
     processes = [];
   }
 
-  // Deploy-provenance: live version of each OTHER module this spec reuses an entity
-  // from (the reference targets pulled in above). Lets the analyst's 2a.1 gate detect
-  // drift in a reused entity, not just this module's own. Best-effort: skip a module
-  // whose row lacks a version (older platform) or can't be read.
-  const relatedVersions: Record<string, number> = {};
+  // Deploy-provenance: live `modules` row of each OTHER module this spec reuses an
+  // entity from (the reference targets pulled in above). Lets the analyst's 2a.1 gate
+  // detect drift in a reused entity, not just this module's own. Best-effort: skip a
+  // module that can't be read.
+  const relatedModules: any[] = [];
   const relModuleIds = [...new Set(related.map((e) => e.module_id).filter((id) => id && id !== mod.id))];
   for (const mid of relModuleIds) {
     const rm = (await read("read_module", { filters: `id=eq.${mid}` }))[0];
+    if (rm) relatedModules.push(rm);
+  }
+
+  return { mod, ownedRaw, fieldsByTable, related, perms, allHierarchy, roles, processes, relatedModules };
+}
+
+/** Pure: derive the markdown from a LiveData snapshot. Shared by the live path and
+ *  `--from-fixture`, so both produce byte-identical output for identical input. */
+function render(data: LiveData): string {
+  const { mod, fieldsByTable, perms, roles, processes } = data;
+
+  // Canonical modeling order (entity_type tier, then table_name A->Z); reuse-from /
+  // built-in entities appended last, sorted the same way.
+  const owned = sortEntities(data.ownedRaw);
+  const related = data.related;
+  const allEntities = [...owned, ...sortEntities(related)];
+  allEntities.forEach((e, i) => {
+    e._num = i + 1;
+    e._allEntities = allEntities;
+    e._fieldsByTable = fieldsByTable;
+  });
+
+  const permIds = perms.map((p) => p.id);
+  const permById: Record<number, any> = {};
+  for (const p of perms) permById[p.id] = p;
+  const hierarchy = data.allHierarchy.filter(
+    (h) => permIds.includes(h.including_permission_id) && permIds.includes(h.included_permission_id),
+  );
+
+  const relatedVersions: Record<string, number> = {};
+  for (const rm of data.relatedModules) {
     if (rm && rm.version !== undefined && rm.version !== null) relatedVersions[rm.module_slug] = rm.version;
   }
 
@@ -763,9 +886,21 @@ async function main() {
   parts.push("");
   parts.push(enumerations(owned, fieldsByTable));
   parts.push("");
+  // §6: the link table (first table directly under `## 6.`), then the two handoff
+  // sub-sections (template v5.5+). Live state carries neither in a recoverable shape:
+  // every cross-module FK already exists as a §3 reference, and the platform exposes
+  // no handoff / trigger registry to read back — so all three are placeholders.
   parts.push("## 6. Cross-model link suggestions");
   parts.push("");
   parts.push("_(none: live extraction is reverse-engineering; every cross-module FK already exists as a §3 reference)_");
+  parts.push("");
+  parts.push("### Outbound handoffs");
+  parts.push("");
+  parts.push("_(none: not extracted from live state by semantius-optimizer; carried from the blueprint when one exists)_");
+  parts.push("");
+  parts.push("### Inbound handoffs");
+  parts.push("");
+  parts.push("_(none: not extracted from live state by semantius-optimizer; carried from the blueprint when one exists)_");
   parts.push("");
   parts.push("## 7. Open questions");
   parts.push("");
@@ -777,14 +912,62 @@ async function main() {
   parts.push("");
   parts.push("_(none: reverse-engineered from a live module)_");
   parts.push("");
-  parts.push(permissionsCatalog(perms));
+  parts.push(permissionsCatalog(mod, perms, hierarchy, owned));
   parts.push("");
   parts.push(governance(mod, perms, hierarchy, permById, roles, processes));
   parts.push("");
 
-  const md = parts.join("\n");
+  return parts.join("\n");
+}
+
+async function main() {
+  // Arg parse: positional <module_slug> [outfile] (or --from-fixture <json> [outfile]),
+  // plus an optional order-independent --force flag. --force is the ONLY way to
+  // overwrite an existing outfile.
+  const rawArgs = Bun.argv.slice(2);
+  const force = rawArgs.includes("--force");
+  const fixtureIdx = rawArgs.indexOf("--from-fixture");
+  const fixturePath = fixtureIdx >= 0 ? rawArgs[fixtureIdx + 1] : null;
+  const positional = rawArgs.filter((a, i) => a !== "--force" && a !== "--from-fixture" && i !== fixtureIdx + 1);
+  const usage =
+    "usage: bun run spec-extract-lib.ts <module_slug> [outfile] [--force]\n" +
+    "       bun run spec-extract-lib.ts --from-fixture <fixture.json> [outfile] [--force]";
+  if (fixtureIdx >= 0 && !fixturePath) throw new Error(usage);
+  const slug = fixturePath ? null : positional[0];
+  if (!fixturePath && !slug) throw new Error(usage);
+  const outfile = (fixturePath ? positional[0] : positional[1]) || `${slug ?? "fixture"}-semantic-spec.md`;
+
+  // Fail-fast overwrite guard: check the output path BEFORE any live read, so the
+  // script never spends a run's worth of network work and then clobbers a file.
+  // Refuse unless --force; the skill's Stage 2a asks the user first and passes --force
+  // only on an explicit "replace" (or passes a different, non-colliding outfile).
+  if (!force && (await Bun.file(outfile).exists())) {
+    console.error(
+      `refusing to overwrite existing file: ${outfile}\n` +
+        `Choose a different output path, or pass --force to replace it.`,
+    );
+    process.exit(1);
+  }
+
+  const data: LiveData = fixturePath
+    ? (JSON.parse(await Bun.file(fixturePath).text()) as LiveData)
+    : await loadLive(slug!);
+  if (fixturePath) {
+    // Defensive defaults so a hand-written fixture may omit the rarely-used arrays.
+    data.related ||= [];
+    data.perms ||= [];
+    data.allHierarchy ||= [];
+    data.roles ||= [];
+    data.processes ||= [];
+    data.relatedModules ||= [];
+    data.fieldsByTable ||= {};
+  }
+
+  const md = render(data);
   await Bun.write(outfile, md);
-  console.log(`Wrote ${outfile}: ${owned.length} owned entities, ${related.length} related, ${perms.length} permissions.`);
+  console.log(
+    `Wrote ${outfile}: ${data.ownedRaw.length} owned entities, ${data.related.length} related, ${data.perms.length} permissions.`,
+  );
 }
 
 main().catch((e) => {

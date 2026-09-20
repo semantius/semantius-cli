@@ -6,7 +6,7 @@ Read: `../../use-semantius/references/jsonlogic.md` — the `computed_fields` / 
 
 ## Stage 10: Computed fields and validation rules
 
-> **`access_scope = basic` note.** Emit computed fields and validation rules as usual **except** any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission`): under `basic` the gating permission no longer exists, so drop that rule. Pure data-integrity rules (date ordering, required-when, range checks — no permission reference) are kept; they are not access control. (See the "What basic authors" access-control contract in SKILL.md.)
+> **`access_scope = basic` note.** Emit computed fields and validation rules as usual **except** any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission`): under `basic` the gating permission does not exist, so drop that rule. Pure data-integrity rules (date ordering, required-when, range checks — no permission reference) are kept; they are not access control. (See the "What basic authors" access-control contract in SKILL.md.)
 
 Convert blueprint §8.2 business rules to JsonLogic, plus add field-level computed fields and validation rules discovered during Stage 4.
 

@@ -46,7 +46,24 @@ After presenting the core entity list, identify 3-6 *commonly-related but not al
 - Verdict `excluded` → silently drop the concept. Do not include it in the multiSelect.
 - No entry → the concept appears in the multiSelect as today.
 
-Only fire the multiSelect if at least one concept remains un-decided. On answer, write each verdict back per concept (per the "Optional entity verdict" row in `../../semantius-admin/references/customizations-protocol.md`):
+Only fire the multiSelect if at least one concept remains un-decided. **Widget shape** (a standalone question, not a ledger task):
+
+- **question**: domain-phrased, e.g. `"Roadmap tools commonly also track these. Want any of them in your module?"`
+- **header**: `"Also track"`
+- **multiSelect**: `true`
+- **options**: one per un-decided concept, label = the concept's Plural Label, description = a one-line gloss of what it holds, followed by `" Skip if you don't track this."`
+
+**Count the un-decided concepts (K) and shape the widget so every question object holds 2 to 4 options** (SKILL.md → AskUserQuestion mechanics; the tool rejects a 1-option or 5-option question and voids the whole call):
+
+| K | Shape |
+|---|---|
+| 1 | 1 question, `multiSelect: false`, 2 options: the concept, then `"None, skip it"` (description: `"Don't add <Plural Label> now. You can add this later."`) |
+| 2, 3, or 4 | 1 question, `multiSelect: true`, K options |
+| 5 | 2 questions in the same call, same header, question text suffixed ` (1 of 2)` / ` (2 of 2)`, options 3 + 2, in the order you listed the candidates |
+| 6 | 2 questions, same as above, options 4 + 2 |
+| 7 or more | chunks of 4 per SKILL.md → AskUserQuestion mechanics (7 → 4 + 3, 8 → 4 + 4, 9 → 4 + 3 + 2), same header, question text suffixed ` (<i> of <N>)`, all in the same call |
+
+Never merge two concepts into one option, never pad with a filler option. On answer, write each verdict back per concept (`"None, skip it"` is not a concept and gets no entry; it records the one concept as `excluded`) (per the "Optional entity verdict" row in `../../semantius-admin/references/customizations-protocol.md`):
 
 ```bash
 DATE=$(date +%Y-%m-%d)

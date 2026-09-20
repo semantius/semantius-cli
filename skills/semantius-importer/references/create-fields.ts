@@ -33,11 +33,18 @@
  *   (ok / failed / skipped-exists / not-run), exit code, first stderr line.
  *   No error is ever swallowed.
  *
- * Run (inside the run folder):
- *   bun run create-fields.ts            # create the fields
- *   bun run create-fields.ts --dry-run  # print the exact bulk payload(s), no writes
+ * Run FROM THE SESSION CWD (repo root), by path — never `cd` into the run folder:
+ *   bun run .tmp_import/run-<ts>/create-fields.ts            # create the fields
+ *   bun run .tmp_import/run-<ts>/create-fields.ts --dry-run  # print the exact bulk payload(s), no writes
+ * Every call spawns `semantius call`, and the CLI reads its `.env` from the
+ * spawning shell's cwd (preflight check 1). mapping.json resolves via
+ * import.meta.url, so this file never needs the run folder as cwd.
  */
 import { readFileSync } from "node:fs";
+
+// The child inherits process.cwd(); the CLI reads `.env` from there. Printed on
+// exit 5 so a run started from inside the run folder names its likely cause.
+const AUTH_HINT = `hint: semantius reads .env from the current working directory (${process.cwd()}); run this script from the session cwd by path (bun run .tmp_import/run-<ts>/create-fields.ts), never from inside the run folder.`;
 
 type ColumnSpec = {
   header: string;
@@ -136,6 +143,7 @@ async function liveFieldNames(): Promise<Set<string>> {
   const live = await call("read_field", { filters: `table_name=eq.${M.table}` });
   if (live.code !== 0) {
     console.error(`read_field failed (exit ${live.code}) - refusing to create blind:\n${live.stderr || live.stdout}`);
+    if (live.code === 5) console.error(AUTH_HINT);
     process.exit(live.code === 5 ? 5 : 1);
   }
   return new Set((JSON.parse(live.stdout) as { field_name: string }[]).map((f) => f.field_name));
@@ -218,5 +226,5 @@ const counts = { ok: 0, "failed": 0, "skipped-exists": 0, "not-run": 0 } as Reco
 for (const r of results.values()) counts[r.status] += 1;
 console.log(`\n${counts.ok} created, ${counts["skipped-exists"]} already existed, ${counts.failed} failed, ${counts["not-run"]} not run (${batches.length} create_field call(s))`);
 
-if (authFailure) process.exit(5);
+if (authFailure) { console.error(AUTH_HINT); process.exit(5); }
 if (counts.failed > 0 || counts["not-run"] > 0) process.exit(1);

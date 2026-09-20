@@ -92,6 +92,8 @@ Source of truth for this contract: `semantius-cli/src/local-tools/csv-schema.d.t
 
 ## 2. Format mapping
 
+> **Ledger note (sections 2-7).** Every user question these sections describe (a format override, an ambiguous enum, the unique-key question, the reserved-column collisions, an FK candidate, the label column, a zero-for-empty or enum-empty rule) is a `Q:` ledger task in the Stage 2 review loop: enumerated all at once, asked in batches of up to four, and completed only after the answer is in `mapping.json`. Templates and sequence: SKILL.md writing convention 7 and `../../semantius-admin/references/task-tracking.md`. Nothing here is asked outside that loop.
+
 The vocabulary is aligned, so most formats pass straight into `create_field`:
 
 | csvschema `format` | Semantius `format` | Extras on `create_field` | Script coercion (section 7 for empties) |
@@ -151,8 +153,10 @@ The util's `field_name` suggestions are mechanically valid. The skill still veri
 
 | Column | Default resolution | Alternatives (one question for all collisions) |
 |---|---|---|
-| a CSV column whose field name equals the target's primary key column (`id` on a new entity, the live `id_column` on an existing one) | rename to `external_id`, offer it as the **unique natural key** (`unique_value: true`) for idempotent, updatable re-imports | skip the column |
-| `id_move_column` (new entity, `id_mode: "move"`) | keep as its own `integer` field, offer as unique natural key | skip |
+| a CSV column whose field name equals the target's primary key column (`id` on a new entity, the live `id_column` on an existing one) | rename to `external_id`, offer to **mark it unique** (`unique_value: true`; becomes the `natural_key` the import dedupes on, so re-runs skip rows already present) | skip the column |
+| `id_move_column` (new entity, `id_mode: "move"`) | keep as its own `integer` field, offer to mark it unique (same as above) | skip |
+
+**The unique-key question (user-facing wording).** Any column that identifies a row in the source (an id, a code, a reference number) is a candidate. Ask once, in plain words: *"`<Header>` looks like a unique id from the source. Mark `<field>` as unique so re-running this import skips rows that are already there?"* Options: **Unique** (Recommended) — `unique_value: true` goes on the field, `natural_key` in `mapping.json` names it, the import skips rows whose value already exists; **Not unique** — plain insert, re-running the file inserts every row again. The phrase "natural key" is internal (`mapping.json`) and never appears in a question or a plan; the user decides about **uniqueness**. There is no "update existing rows" option: **updating existing records is postponed** (README → Postponed), the import is insert-only.
 
 **Why deferred:** explicit-id imports leave the platform id sequence behind and the first platform-side insert collides (verified live). The full preservation design, the sequence rule, and the repairing RPC's SQL live in the README under "Deferred design"; it returns once the `fix_id_sequence` RPC is installed.
 
@@ -179,7 +183,7 @@ Offer `format: "reference"` + `reference_table` (with `reference_delete_mode: "r
 1. The target entity exists in the live catalog.
 2. The user confirms the CSV values are that table's actual `id` values.
 
-Otherwise keep the column scalar (`integer` or `string` as introspected) and note in the mapping that it can be converted to a reference later. Looking up target ids from natural keys (e.g. the CSV holds category *names*, not ids) is out of scope for this skill's import script; flag it and keep the column scalar, or let the user pre-process the CSV.
+Otherwise keep the column scalar (`integer` or `string` as introspected) and note in the mapping that it can be converted to a reference later. Looking up target ids from display values (e.g. the CSV holds category *names*, not ids) is out of scope for this skill's import script; flag it and keep the column scalar, or let the user pre-process the CSV.
 
 `format: "parent"` (composition, cascade delete) is almost never right for an imported flat file; suggest it only when the user describes the relationship as ownership.
 
@@ -191,7 +195,7 @@ Otherwise keep the column scalar (`integer` or `string` as introspected) and not
 
 1. A column named `name`, `title`, or `*_name` / `*_title`.
 2. Otherwise the required `string` column with the highest uniqueness in `sample_values`.
-3. Otherwise ask; any human-identifying string column works.
+3. Otherwise ask (`Q: Which column should name each row?`, `multiSelect: false`): any human-identifying string column works, so the options are the string columns ranked by uniqueness, **2 to 4 of them** (the tool rejects a 1-option or 5-option question). Exactly 1 string column: no question, it is the label column. No string column at all: no question; propose the most unique column of any format and flag it in the mapping review. More than 4: list the 4 best and end the question text with ` The 4 best candidates are listed; type another header if you prefer.` (the tool adds its own free-text slot; never list an "Other" option).
 
 The user confirms (or picks another column) in the mapping review. Mechanics for a new entity:
 
@@ -228,7 +232,6 @@ The review loop's output and the **single runtime input** for every script in th
   "table": "products",
   "id_column": "id",
   "natural_key": "external_id",
-  "on_exists": "update",
   "expected_records": 110,
   "batch_size": 250,
   "columns": [
@@ -277,8 +280,8 @@ Top-level keys:
 |---|---|
 | `table` | Target `table_name`. |
 | `id_column` | Copied from the target entity's live `id_column` property (`read_entity`; `id` for entities this skill just created). The import script's payload guard keys on it. |
-| `natural_key` | Optional. Names the **field** (not header) that identifies a row across re-imports. |
-| `on_exists` | Meaningful only with a natural key: `"insert"` skips rows whose key already exists; `"update"` synchronizes them — unchanged rows untouched, changed rows updated, new rows inserted. Update mode requires the key field to be unique (`unique_value: true`); with a non-unique key only `"insert"` is available and the skill says so. |
+| `natural_key` | Optional. Names the **field** (not header) the user chose to mark unique (`unique_value: true` on that column). The import skips rows whose value already exists in the table; existing rows are never modified (updating existing records is postponed, README → Postponed). Absent/null: plain insert, re-running duplicates rows. Internal name only — user-facing wording is "unique key" / "marked unique". |
+| `on_exists` | **Removed** (postponed). The scripts reject a mapping that still carries `"on_exists": "update"`; do not write the key. |
 | `expected_records` | The introspection wrapper's `record_count` on a full scan; `null` when the scan was capped. The import verifies `parsed` against it (section 9). |
 | `batch_size` | Optional insert batch size (default 250, sane range 200–500). |
 
@@ -328,7 +331,7 @@ Four diff buckets:
 
 | Change | Why | Alternatives |
 |---|---|---|
-| Format change across Postgres primitives (`string` → `date`, `integer` → `string`, `number` → `boolean`, ...) | The platform rejects it; existing data cannot be retyped in place | coerce in the import script into the **live** format when lossless (e.g. CSV `integer` into live `string`); drop the column; or abort and let the user remodel |
+| Format change across Postgres primitives (`string` → `date`, `integer` → `string`, `number` → `boolean`, ...) | The platform rejects it; existing data cannot be retyped in place | coerce in the import script into the **live** format when lossless (e.g. CSV `integer` into live `string`); drop the column; report only; or abort and let the user remodel (abort is never a listed option on the mismatch question: the user types "stop" into its free-text slot) |
 | Removing `enum_values` in use | Would orphan existing rows | leave the value; treat the CSV's smaller set as a subset |
 | Touching auto-generated fields (`id`, `label`, `<label_column>` structure, `created_at`, `updated_at`) | Platform-owned | section 4 renames on the CSV side instead |
 
@@ -336,6 +339,6 @@ Coercion direction matters: a CSV `integer` column imports losslessly into a liv
 
 In compare-only mode this classified report is the deliverable: render it and stop, zero writes.
 
-When a natural key and `on_exists: "update"` are in play, the report also states how existing rows will be treated: matched-and-identical rows are left untouched, matched-but-differing rows are updated with the CSV's values, and rows only in the CSV are inserted.
+When a unique key is set, the report also states how existing rows will be treated: rows whose key value already exists are skipped (never modified), rows only in the CSV are inserted. Without a unique key it says plainly that every row will be inserted, existing or not.
 
 **Row-count expectation.** On a full scan, the wrapper's `record_count` is the number of data records the import should parse; the verification stage checks `parsed === record_count` and treats a mismatch as a parsing defect to surface (delimiter trouble, embedded newlines), not as noise.

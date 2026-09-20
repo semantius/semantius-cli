@@ -8,12 +8,12 @@ The goal is to give the user a clear, actionable quality report — not just a l
 
 ### How to run the audit
 
-**Before checking anything else, read `../../use-semantius/references/data-modeling.md`**. This file is the authoritative source of Semantius platform constraints — entity naming rules, built-in tables, field format rules, relationship rules. It is updated independently of this skill. Any rule there about naming, formats, or relationships overrides or extends the audit checklist. **Note:** this skill no longer treats Semantius built-ins (`users`, `roles`, etc.) as forbidden in the model — the model is self-contained and the semantius-modeler skill deduplicates at deploy-time. The `data-modeling.md` reference is still the source of truth for other platform rules. Rule-level constraints (JsonLogic `computed_fields` / `validation_rules`, `select_rule`) live in the sibling references `../../use-semantius/references/jsonlogic.md` and `../../use-semantius/references/select-rule.md`; read those too during an audit.
+**Before checking anything else, read `../../use-semantius/references/data-modeling.md`**. This file is the authoritative source of Semantius platform constraints — entity naming rules, built-in tables, field format rules, relationship rules. It is updated independently of this skill. Any rule there about naming, formats, or relationships overrides or extends the audit checklist. **Note:** Semantius built-ins (`users`, `roles`, etc.) are NOT forbidden in the model — the model is self-contained and the semantius-modeler skill deduplicates at deploy-time. The `data-modeling.md` reference is still the source of truth for other platform rules. Rule-level constraints (JsonLogic `computed_fields` / `validation_rules`, `select_rule`) live in the sibling references `../../use-semantius/references/jsonlogic.md` and `../../use-semantius/references/select-rule.md`; read those too during an audit.
 
 Read the file in full, then work through each check in the audit checklist (`audit-checklist.md`). Group your findings into three severity levels:
 
 - **🔴 Blocker** — the downstream agent will fail or produce incorrect results (e.g., missing required front-matter, `id` field manually declared, `reference` field missing target table, enum field with no values)
-- **🟡 Warning** — the model will work but is fragile or misleading (e.g., ambiguous field names, missing label_column, relationship in §3 but not in §4)
+- **🟡 Warning** — the model will work but is fragile or misleading (e.g., ambiguous data_object names, a §3 entity with no role, a relationship drawn in the §2 diagram but missing from §5)
 - **🟢 Suggestion** — improvements to clarity or long-term maintainability (e.g., a field that could be more descriptive, an open question that should be closed)
 
 After listing findings, give an overall summary: how many issues of each severity, and a one-line verdict ("Ready to implement", "Needs minor fixes before implementation", "Significant rework needed").
@@ -51,7 +51,7 @@ The goal is to evolve the model without breaking what's already there. Existing 
 
 ### Step C1: Read and summarize the current model
 
-Read the file. Present a compact summary to orient the user:
+The mode's stage task already exists from Step 0 (`Design › Extend the design`, or `Design › Edit the design with you` when the mode is Customize; SKILL.md → Task tracking) and is `in_progress`; it stays so through the whole loop. Read the file. Present a compact summary to orient the user:
 
 > **Current model: `{system_name}`** (`{naming_mode}`, {N} entities)
 >
@@ -110,7 +110,7 @@ Update the file in place:
 > **🛑 MUST-FIRE gate — the customize pass is a loop and only the user ends it.** After the file is written and the one-line change summary is announced, the customize pass is **NOT over**. Immediately return to the user and ask, in plain language, whether they want another change or are done — e.g. *"Done, <change> is in. Anything else to adjust, or are you ready to move on?"*
 
 - If the user names another change → go back to **Step C2** and repeat the full C2 → C3 (confirm) → C4 (write) → C5 (ask) loop for it. There is no limit on the number of passes.
-- If the user explicitly signals completion ("done", "deploy", "that's all", "proceed", "nothing else") → only THEN return control to the caller.
+- If the user explicitly signals completion ("done", "deploy", "that's all", "proceed", "nothing else") → only THEN `TaskList`, set the `Design › Edit the design with you` task `completed`, and return control to the caller. That status is the signal the admin reads before it advances (its 6.7 customize gate); while the task is `in_progress` the pass is open. Never complete it earlier.
 
 **Never** treat the first change as the end of the customize pass, and **never** let the deploy pipeline (matching / deploy) advance while the user might still have changes. **When this skill is run by the admin orchestrator, the admin advances to the next pipeline step the instant this skill returns** — so returning early after a single edit is exactly what silently launches matching and deployment behind the user's back. Hold control here until the user's explicit "I'm done". This gate exists because that silent auto-advance is a real failure this loop is designed to prevent.
 

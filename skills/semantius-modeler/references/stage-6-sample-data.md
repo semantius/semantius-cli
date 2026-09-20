@@ -16,6 +16,8 @@ _Read this when the workflow reaches Stage 6. The stage map is in SKILL.md._
 > 3. **Default is NO.** On no answer, an ambiguous answer, a topic change, a request to do something else, a non-interactive run, or session close, **do not seed.** When in any doubt, re-ask the single question (*"Confirm: create 10 sample records in each new entity? (yes / no)"*) and wait. Treating ambiguous input as consent is the exact failure this gate exists to prevent: one wrong inference writes dozens of rows into a live model, and that is never acceptable.
 >
 > This gate governs every path into the seed script below. Wherever this section later says the user's "yes" authorizes the run, it means *this* yes and nothing weaker.
+>
+> **Task tracking.** The question itself is a standalone question, not a ledger task. No `Apply › Add sample data` task exists until the user says yes; on yes, the next response's first call is `TaskCreate` for it (`in_progress`), and it goes `completed` when the seed report is printed; on no or on a decline, nothing is created and no task changes. The `Apply › Verify what is live` task was already completed before the closing block was emitted (SKILL.md → Closing Contract → Task sequencing).
 
 After verification, ask the sample-data question on its own (this is a gate, not a footer; see the consent gate above):
 
@@ -130,7 +132,8 @@ Seed scripts reuse the committed [`deploy-lib.ts`](./deploy-lib.ts) for the loud
 
 ```bash
 mkdir -p .tmp_deploy
-cp "${CLAUDE_PLUGIN_ROOT:-.claude/skills/semantius-modeler}/references/deploy-lib.ts" .tmp_deploy/deploy-lib.ts
+# <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
+cp "<skill-folder>/references/deploy-lib.ts" .tmp_deploy/deploy-lib.ts
 ```
 
 ```typescript

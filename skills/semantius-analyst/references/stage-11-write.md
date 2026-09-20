@@ -15,40 +15,14 @@ Do **not** write the spec at the workspace root. The committed-artifact conventi
 
 ### Frontmatter
 
-```yaml
----
-artifact: semantic-spec
-version: "5.4"
-blueprint_version: "3.0"
-system_name: <from blueprint>
-system_slug: <from blueprint>
-domain_modules:
-  - <system_slug>
-domain_code: <from blueprint>
-related_modules: [<from blueprint>]  # advisory only
-persona: [<from blueprint>]  # carry forward (OMIT under access_scope: basic)
-license: <from blueprint>  # carry forward
-module_kind: <from blueprint>  # informational
-access_scope: <resolved by the analyst after Stage 2>  # basic | full — OMIT only on a non-interactive run that couldn't resolve it
-tagline: <from blueprint>  # ≤40-char selector chip → modules.description
-icon_name: <from blueprint>  # → modules.icon_name
-description: <from blueprint>  # carry forward (YAML literal block)
-logo_color: <hex>  # v5.4+; OPTIONAL → modules.logo_color. Placed after naming_mode: in the template. Emit only when set; omit the key entirely when unset (the modeler random-fills only when ABSENT).
-home_page: <path>  # v5.4+; OPTIONAL → modules.home_page. Emit only when set (non-empty/non-null); omit the key entirely otherwise.
-created_at: <blueprint's created_at>
-reconciled_at: <YYYY-MM-DD today>
-reconciled_against_catalog_snapshot: <ISO 8601 timestamp of the catalog read in Stage 2>
-source_blueprint: <relative path to blueprint .md>
-# deploy provenance (v5.4+) — MODELER-owned (Stage 5b); analyst carries forward VERBATIM, never computes; all omitted until first deploy
-deployed_version: <carried forward from the spec being edited, else omit>
-deployed_version_date: <carried forward, else omit>
-deployed_related_versions: <carried forward, else omit>
-promotion_decisions:
-  - entity: <table_name>
-    host_module: <master_slug>
-    manage_option: 1 | 2 | 3 | 4
----
-```
+The frontmatter key set, order, and per-key rules are **canonical in `./semantic-spec-template.md`** (the skeleton's frontmatter block plus the "Frontmatter keys" guidance); do not maintain a second copy here. Stage 11 specifics on top of that:
+
+- `version: "5.5"` (this skill's `CURRENT_VERSION`), `blueprint_version` carried from the blueprint.
+- `access_scope` is the value the analyst resolved after Stage 2 (`basic` | `full`); OMIT only on a non-interactive run that couldn't resolve it.
+- `persona` is emitted ONLY under `access_scope: full` when §9 carries a RACI matrix; it is ABSENT under `basic`.
+- `module_kind` is carried verbatim when the blueprint has it; otherwise the key is omitted (never `null`).
+- `reconciled_at` is today; `reconciled_against_catalog_snapshot` is the ISO 8601 timestamp of the catalog read in Stage 2; `source_blueprint` is the relative path to the blueprint `.md`.
+- Deploy-provenance keys (`deployed_version`, `deployed_version_date`, `deployed_related_versions`) are MODELER-owned (Stage 5b): carry them forward VERBATIM from the spec being edited, never compute them; omit all three on a fresh reconcile (delta 11 below).
 
 ### Spec sections (mirroring `./semantic-spec-template.md`)
 
@@ -63,17 +37,17 @@ Use the existing spec template at `./semantic-spec-template.md` for the section 
 
 2. **Every §3 entity flagged `reuse-from` with additive fields** carries an `**Additive fields**` table (same columns as the regular Fields table). The deployer adds these fields to the existing entity without touching existing fields.
 
-3. **§6 Cross-model link suggestions table** has an extra column `Reconciliation` with values `proposed` / `dormant` / `ambiguous-resolved` / `skipped`. Resolved rows carry the FK column name and the resolved target.
+3. **§6 Cross-model link suggestions table** carries the `Reconciliation` column (now part of the template's six-column link table) with values `proposed` / `dormant` / `ambiguous-resolved` / `skipped` from Stage 2g. Resolved rows carry the FK column name and the resolved target. §6 also carries the two handoff sub-sections (delta 6).
 
 4. **§8.1 workflow gates / row-scope overrides for `embedded_master` entities whose catalog owner is absent** carry a `**Reconciliation:** re-prefixed-from <catalog-module>.<verb>` annotation. The deployer's Stage 4n reads this annotation to identify reconciliation-eligible permissions when the catalog owner later installs.
 
-5. **§9 governance is carry-forward.** The blueprint's §9.1 (baseline roles + permission hierarchy + RACI realization) and §9.2 (functional ownership) appear verbatim in the spec, with one transform: role slugs are normalized `-`→`_` per Stage 9.5 Step 1 (since `roles.slug` forbids the hyphens `module_slug` allows). Stage 9.5 reconciles each row against the live catalog and emits drift annotations (`✨ persona role to be created`, `✨ persona grant to be added`, `🟡 role drift on module_id`, etc.) per row.
+5. **§9 governance is carry-forward.** The blueprint's §9.1 (baseline roles + permission hierarchy + RACI realization) and §9.2 (functional ownership) appear verbatim in the spec, with one transform: role slugs are normalized `-`→`_` per Stage 9.5 Step 1 (since `roles.slug` forbids the hyphens `module_slug` allows). Stage 9.5 reconciles each row against the live catalog; the per-row `reconciliation` cells carry exactly the template vocabulary `✨ to create` / `♻ exists` / `🟡 drift on module_id` (bare text, no italics). The descriptive marks the stage references use in narration (`✨ persona role to be created`, `✨ persona grant to be added`, `✨ hierarchy edge to be added`, …) are plan narration, not cell values.
 
    **Entity descriptions are carry-forward, not re-authored.** Copy each entity's blueprint §2 `Description` **verbatim** into that entity's §3 `**Description:**` line — byte-for-byte, the same discipline as §9 governance and the §9.1 Processes catalog descriptions. Do NOT paraphrase, expand, shorten, singularize, or add a "when created" clause the blueprint lacks: the blueprint's `Description` is the single authoritative text and the modeler deploys it to `entities.description`. Then set the §2 `Purpose` cell to the **first sentence** of that §3 Description (a mechanical truncation). This keeps one wording end-to-end (blueprint → §3 → `entities.description`, with §2 a truncation) instead of three drifting variants. If a blueprint `Description` is a bare field-list rather than a product-facing sentence, that is an architect-side gap — flag it as a §7.2 note, do not silently rewrite it here.
 
-6. **§6.2 / §6.3 handoff tables carry the `transition` column** with `<to_state> _(<event_category>)_`. The source_module column follows the entity-owning-module rule: when the source entity is an `embedded_master` whose catalog owner is absent, the source_module is the installing unit; otherwise it's the catalog owner.
+6. **§6 `### Outbound handoffs` / `### Inbound handoffs` sub-sections** carry the **blueprint's** §6.2 / §6.3 event-handoff rows verbatim, in the blueprint's nine-column shape (incl. the `transition` column `<to_state> _(<event_category>)_`), under both access scopes. The source module column follows the entity-owning-module rule: when the source entity is an `embedded_master` whose catalog owner is absent, the source module is the installing unit; otherwise it's the catalog owner. An empty sub-section keeps its heading with the `_(none: …)_` placeholder. Validation (Outbound `lifecycle` rows: `to_state` ∈ the `payload` entity's `workflow_state` enum values) ran at Stage 2g.
 
-7. **Empty canonical sections carry the canonical placeholder, never an omitted heading or a bare string.** Every canonical top-level / numbered spec section is **always present**. When §4 Relationship summary, §5 Enumerations, §6 Cross-model link suggestions, §7.1 🔴 Decisions needed, or §7.2 🟡 Future considerations has no rows, **keep the heading and write the canonical empty-section placeholder `_(none: <short reason>)_`** (lowercase `none`, colon not em-dash; bare `_(none)_` allowed) — matching `./semantic-spec-template.md`. Do **not** emit the bare strings `None.` / `No enumerations defined.` / `No cross-model link suggestions.`, do not omit the section, and do not leave a bare empty heading. The §7.1 deploy gate keys on unresolved 🔴 *items*, not on any literal placeholder string, so the `_(none: …)_` form is safe. **Sole exception:** the §3 per-entity sub-blocks (Computed fields / Validation rules / Input type rules / Select rule) **stay omit-when-empty** — they carry no placeholder.
+7. **Empty canonical sections carry the canonical placeholder, never an omitted heading or a bare string.** Every canonical top-level / numbered spec section is **always present**. When §4 Relationship summary, §5 Enumerations, §6 Cross-model link suggestions (the link table, `### Outbound handoffs`, or `### Inbound handoffs`), §7.1 🔴 Decisions needed, or §7.2 🟡 Future considerations has no rows, **keep the heading and write the canonical empty-section placeholder `_(none: <short reason>)_`** (lowercase `none`, colon not em-dash; bare `_(none)_` allowed) — matching `./semantic-spec-template.md`. Do **not** emit the bare strings `None.` / `No enumerations defined.` / `No cross-model link suggestions.`, do not omit the section, and do not leave a bare empty heading. The §7.1 deploy gate keys on unresolved 🔴 *items*, not on any literal placeholder string, so the `_(none: …)_` form is safe. **Sole exception:** the §3 per-entity sub-blocks (Computed fields / Validation rules / Input type rules / Select rule) **stay omit-when-empty** — they carry no placeholder.
 
 8. **Every §3 entity sub-section carries the provenance carriers the modeler stamps.** Two lines per OWNED entity (every `create-new`, `rename-incoming-from`, `promote-to-master` — i.e. every entity the deployer provisions), plus a `**Catalog owner:**` line for placeholder masters, carried through from the blueprint §3:
    - **`**Catalog entity code:** `<catalog_code>``** — the catalog uber-model code from the blueprint's §3 `catalog code` column (defaults to the entity's `table_name` for agent-optimized naming). The deployer stamps it into `entities.catalog_entity_code` (the **catalog** code, NOT the deployed `table_name`), write-once.
@@ -87,16 +61,18 @@ Use the existing spec template at `./semantic-spec-template.md` for the section 
 
 9. **Every §3 owned entity that has an identity spine carries a `**Label parent:**` line.** Names the one FK that is the entity's identity spine (derived in Stage 4 via the label_parent decision rule). The deployer stamps it into `entities.label_parent`; re-pointing it changes the composed `_label` with no data migration. **Omit the line** for `junction` entities (the platform auto-combines their parent legs), self-identifying entities (intrinsic `label_column`), and `reuse-from` / built-in entities (referenced, not provisioned). The modeler parses and stamps it.
 
-10. **Optional v5.4 entity property lines (round-trip carriers; the analyst rarely authors them, `semantius-optimizer` emits them from live state).** Five new OPTIONAL `**Xxx:**` lines may appear in an entity block, each with an omit-when-default rule — so a hand-authored spec normally omits all five and lets the platform defaults stand. Positions and rules match `./semantic-spec-template.md` exactly:
+10. **Optional entity property lines (round-trip carriers; the analyst rarely authors them, `semantius-optimizer` emits them from live state).** Five new OPTIONAL `**Xxx:**` lines may appear in an entity block, each with an omit-when-default rule — so a hand-authored spec normally omits all five and lets the platform defaults stand. Positions and rules match `./semantic-spec-template.md` exactly:
    - **`**Order column:** `<field_name>``** — after `**Label column:**`. Backticked `field_name`. Omit when empty/null. → `entities.order_column`.
    - **`**Id column:** `<field_name>``** — after `**Order column:**`. Backticked `field_name`. Omit when `id` (the platform default) or empty. → `entities.id_column`.
    - **`**Edit mode:** <edit_mode>`** — after `**Edit permission:**`. Bare enum value, NO backticks. Omit when the platform default (`auto`). → `entities.edit_mode`.
    - **`**Cube mode:** <cube_mode>`** — after `**Edit mode:**`. Bare enum value, NO backticks. Omit when the platform default. → `entities.cube_mode`.
    - **`**Icon URL:** <icon_url>`** — after `**Cube mode:**`, before `**Catalog entity code:**`. Plain URL value, NO backticks. Omit when empty/null. → `entities.icon_url`.
 
-   A `reuse-from` / built-in entity carries none of these (referenced, not provisioned). The modeler parses and stamps each when present, and does not fail when they are absent (older 5.3 specs omit them all).
+   A `reuse-from` / built-in entity carries none of these (referenced, not provisioned). The modeler parses and stamps each when present, and does not fail when they are absent.
 
-11. **Deploy-provenance keys are carried forward, never computed (v5.4+).** `deployed_version`, `deployed_version_date`, and `deployed_related_versions` are written **only by the modeler** at the end of a clean deploy (Stage 5b), recording the live `modules.version` the deploy produced. The analyst NEVER computes or refreshes them — it copies them verbatim from the spec it read and re-emits them unchanged. A fresh Reconcile from a blueprint has none (nothing deployed yet), so omit all three. An Extend / Rebuild / re-Reconcile of a spec that was previously deployed carries them through as-is. They intentionally describe the **last deploy**, so they stay stable across analyst edits and are refreshed only when the modeler next deploys — that stability is what lets the 2a.1 gate compare live `modules.version` against `deployed_version` to detect prod drift. Omit any key the source spec did not carry.
+   **`**Label column:**`** is REQUIRED on every non-junction entity and OPTIONAL on an `entity_type: junction`: omit the line when the junction has no distinct local label (the platform composes its `_label` from the parent legs) and never invent a synthetic label field to fill it. When the line is absent on a junction, the modeler omits `label_column` from `create_entity` and skips the title-correction / uniqueness passes for that entity.
+
+11. **Deploy-provenance keys are carried forward, never computed.** `deployed_version`, `deployed_version_date`, and `deployed_related_versions` are written **only by the modeler** at the end of a clean deploy (Stage 5b), recording the live `modules.version` the deploy produced. The analyst NEVER computes or refreshes them — it copies them verbatim from the spec it read and re-emits them unchanged. A fresh Reconcile from a blueprint has none (nothing deployed yet), so omit all three. An Extend / Rebuild / re-Reconcile of a spec that was previously deployed carries them through as-is. They intentionally describe the **last deploy**, so they stay stable across analyst edits and are refreshed only when the modeler next deploys — that stability is what lets the 2a.1 gate compare live `modules.version` against `deployed_version` to detect prod drift. Omit any key the source spec did not carry.
 
 ### Order §3 entities canonically (§2 inherits it)
 
@@ -118,7 +94,8 @@ If you find yourself about to type `-->` or `|verb|` directly into a `Write` or 
 Once §3 and §4 are written, generate the block and paste its output as §2 verbatim:
 
 ```bash
-bun ".claude/skills/semantius-architect/references/consistency-check.ts" --emit-mermaid "semantius/specs/<slug>-semantic-spec.md"
+# <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
+bun "<skill-folder>/../semantius-architect/references/consistency-check.ts" --emit-mermaid "semantius/specs/<slug>-semantic-spec.md"
 ```
 
 This reads the file's own §3/§4 and prints a ready-to-paste ` ```mermaid ` block: arrow direction from `Cardinality` (`N:1` → the `To` side is the parent, arrow runs `To --> From`; `1:N` → arrow runs `From --> To`; `1:1` → flat `---`), verb from §3's `relationship_label` for that field (a `parent`-kind row — a junction FK — is always a bare arrow with no verb, per the junction convention, even though §3 may declare a `relationship_label` for that field), `builtin`/`master` classDef lines from entity role, and a bare node line for any entity with no edges. Re-run it whenever §3 or §4 changes after the fact (an added field, a renamed verb, a cardinality fix) — never hand-patch §2 to keep it in sync.

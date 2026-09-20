@@ -34,6 +34,8 @@ The modeler never consults the customizations file (specs already carry every de
 
 Never `cd`. The `semantius` CLI reads `.env` from the current working directory, so changing into a sibling project loads a different `.env` with different credentials pointing at a different instance, and every subsequent call lands on the wrong tenant. Run every `semantius` command from the session's repo root, full stop. If verifying something requires a different directory's config, ask the user to run it and paste the output.
 
+This covers scripts as much as bare commands. The Bun helpers these skills stage under `.tmp_deploy/`, `.tmp_import/`, and `.tmp_admin/` spawn `semantius call …` as child processes, and a child inherits the shell's cwd — so a script run from inside its scratch folder makes the CLI look for `.env` there, where none exists, and every call fails with an auth error that reads like a CLI bug (an install authenticated by a JWT or by injected environment variables hides the mistake; an API-key install does not). Run every such script **from the repo root by path** (`bun run .tmp_import/run-<ts>/import.ts …`, `bun run .tmp_deploy/deploy_<slug>.ts`); the scripts resolve their inputs and outputs relative to their own file, so the working directory never needs to change. When a scratch folder needs a dependency install, use `bun add --cwd <folder> <pkg>` instead of `cd`. Never copy or symlink `.env` into a scratch folder to make a `cd` "work": those folders are gitignored scratch and must not carry credentials.
+
 ---
 
 ## Check 2: Install the supporting toolchain (Bun, jq, yq)

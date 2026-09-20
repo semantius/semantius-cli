@@ -22,7 +22,7 @@ After all creates are done, emit a **structured verification report** with expli
      - `module.catalog_module_code` is **non-empty** and equals the spec source (the catalog blueprint code, else `system_slug`).
      - `module.domain_code` == front-matter `domain_code` (top-level column).
      - `module.icon_name` == front-matter `icon_name` (top-level column).
-     - `module.settings.module_kind` == front-matter `module_kind`.
+     - `module.settings.module_kind` == front-matter `module_kind` **when** the front-matter carried a non-empty, non-null value (not required otherwise — the key is optional and informational; a spec without it must not produce a `settings.module_kind` stamp, and its absence live is not a finding).
      - `module.settings.naming_mode` == front-matter `naming_mode`.
      - `module.settings.catalog_snapshot` == front-matter `reconciled_against_catalog_snapshot` (note the key rename: front-matter `reconciled_against_catalog_snapshot` lands in `settings.catalog_snapshot`).
      - `module.access_scope` == the Stage 2.5 resolved scope (top-level column).
@@ -42,13 +42,13 @@ After all creates are done, emit a **structured verification report** with expli
    - No rows were created with `origin = "user"` overwriting prior admin intent (paranoia check; should be impossible per Stage 4i idempotency).
 
 4. **Merged JSON arrays (master entities only).**
-   - Every entry has a non-null `source_module` (legacy entries treated as `"user"`).
+   - Every entry has a non-null `source_module` (entries without it are treated as `"user"`).
    - **No `code` duplicates** within `validation_rules` on an entity, regardless of `source_module`. The natural key is `code` alone; `source_module` is reconciliation metadata, not part of the uniqueness key.
    - **No `name` duplicates** within `computed_fields` on an entity, same rule.
    - Pre-merge entries from non-current sources are still present (preserved across re-runs per 4e-merge rule 4).
 
 5. **Per-entity field counts and labels:**
-   - `read_entity` on each custom entity, confirm `label_column` is set.
+   - `read_entity` on each custom entity, confirm `label_column` is set — **except** an `entity_type: junction` entity whose spec omitted the `**Label column:**` line (valid: the platform composes its `_label` from the parent legs; a null live `label_column` there is expected, not a finding).
    - **Owning `module_id`.** For every entity this deploy owns (`create-new` / `rename-incoming-from` → this module; `promote-to-master` → the master module), assert live `entities.module_id` equals the expected module id. A NULL or mismatched value is a 🛑 — the platform is documented to reject a null `module_id` on create, so a live NULL means the create either omitted it or it was nulled later; the entity then belongs to no module and is invisible to module-scoped queries. Stage 4c sets this on create and converges it on the same-module path, so a Stage 5 hit means that did not land — re-issue the `update_entity` and halt if it still will not take. (Reused/built-in entities are out of scope: they keep their source module's id.)
    - `read_field` per entity, confirm field count matches the model (minus auto-generated).
    - Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`).

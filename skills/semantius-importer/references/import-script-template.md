@@ -5,6 +5,7 @@ The import script is a Bun (TypeScript) one-shot that streams the CSV with `csv-
 **The script ships as a real file: [`import.template.ts`](import.template.ts), next to this document.** It carries no generation-time placeholders — all run configuration comes from `./mapping.json` (schema-mapping.md section 8), which it reads at startup. "Generating" the script means copying the file byte-for-byte **as `import.ts`** — done once, in the Stage 2 setup block below, never deferred to Stage 5:
 
 ```bash
+# <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
 cp <skill-folder>/references/import.template.ts <run-folder>/import.ts
 ```
 
@@ -16,7 +17,7 @@ Every import run gets its own scratch folder under the **current working directo
 
 ```
 <cwd>/.tmp_import/run-<yyyymmdd-hhmmss>/
-├── package.json          # {"dependencies": {"csv-parse": "^6"}} — created by `bun add csv-parse`
+├── package.json          # {"dependencies": {"csv-parse": "^6"}} — created by `bun add --cwd <run-folder> csv-parse`
 ├── mapping.json          # the approved mapping (schema-mapping.md section 8) — the single runtime input
 ├── <file>.csvschema.json # copied introspection output
 ├── render-plan.ts        # copied helper: renders the mapping table + plan facts (Stage 2/4)
@@ -26,7 +27,7 @@ Every import run gets its own scratch folder under the **current working directo
 └── import-summary.json   # written at the end of every run
 ```
 
-The workspace is created at the start of Stage 2 (the helpers need `mapping.json` beside them from the first review round). **One canonical setup block, run in full at Stage 2** — every copy lands under its **final name**, so no later stage renames anything. In particular `import.template.ts` becomes `import.ts` here; defer that rename to Stage 5 and `bun run import.ts` dies with "Module not found":
+The workspace is created at the start of Stage 2 (the helpers need `mapping.json` beside them from the first review round). **One canonical setup block, run in full at Stage 2** — every copy lands under its **final name**, so no later stage renames anything. In particular `import.template.ts` becomes `import.ts` here; defer that rename to Stage 5 and `bun run …/import.ts` dies with "Module not found":
 
 ```bash
 mkdir -p .tmp_import/run-<ts>                                          # from <cwd>
@@ -34,16 +35,18 @@ cp <csv-folder>/<file>.csvschema.json     .tmp_import/run-<ts>/
 cp <skill-folder>/references/render-plan.ts    .tmp_import/run-<ts>/render-plan.ts
 cp <skill-folder>/references/create-fields.ts  .tmp_import/run-<ts>/create-fields.ts
 cp <skill-folder>/references/import.template.ts .tmp_import/run-<ts>/import.ts   # note the final name
-cd "<cwd>/.tmp_import/run-<ts>" && bun add csv-parse
+bun add --cwd .tmp_import/run-<ts> csv-parse                           # still from <cwd>: --cwd targets the run folder, no `cd`
 ```
 
-Run commands (inside the run folder, as each stage arrives):
+**Never `cd` into the run folder.** Preflight check 1 (`../semantius-admin/references/preflight.md`) applies to this skill's scripts exactly as it does to a bare `semantius call`: `create-fields.ts` and `import.ts` spawn `semantius call crud …` as child processes, and a child inherits the shell's current working directory, from which the CLI reads its `.env`. Run from inside `.tmp_import/run-<ts>/` there is no `.env` there, so on an API-key install every `create_field` call and every batch insert fails with an auth error (exit 5) that looks like a CLI bug; an install authenticated by a JWT or by environment variables the harness injected merely hides the mistake. Nothing in the scripts needs the run folder as cwd: `mapping.json`, `node_modules/csv-parse`, `import-summary.json`, and `failed-batches.json` all resolve relative to the script file's own location (`import.meta.url` / Bun's upward module lookup), so they run identically from `<cwd>` by path — the same shape as the modeler's `bun run .tmp_deploy/deploy_<slug>.ts`. `bun add --cwd` covers the one step that does need the run folder as its working directory. Do not "solve" this by copying or symlinking `.env` into the run folder either: the run folder is gitignored scratch and must never carry credentials.
+
+Run commands (from `<cwd>`, by path, as each stage arrives; `<run-folder>` = `.tmp_import/run-<ts>`):
 
 ```bash
-bun run render-plan.ts                       # Stage 2: mapping table + facts
-bun run create-fields.ts --dry-run           # Stage 4: exact create_field payloads
-bun run create-fields.ts                     # Stage 4: create the fields (one bulk create_field call)
-bun run import.ts <absolute-path-to>/<file>.csv   # Stage 5
+bun run <run-folder>/render-plan.ts                       # Stage 2: mapping table + facts (offline)
+bun run <run-folder>/create-fields.ts --dry-run           # Stage 4: exact create_field payloads (offline)
+bun run <run-folder>/create-fields.ts                     # Stage 4: create the fields (one bulk create_field call)
+bun run <run-folder>/import.ts <absolute-path-to>/<file>.csv   # Stage 5
 ```
 
 The workspace lives under the project's working directory but stays out of `git status` via the `.tmp_import/` gitignore entry; it never goes into the CSV's folder or the skill folder. Always report the run folder's **absolute path** in the final summary so the user can open `failed-batches.json` and `import-summary.json` directly. Re-running an import for the same table: prefer updating `mapping.json` in the existing run folder over generating a fresh one, so `failed-batches.json` history stays in one place.
@@ -53,15 +56,15 @@ The workspace lives under the project's working directory but stays out of `git 
 These are the contract `import.template.ts` fulfills — read them to understand the run's behavior, not to re-derive the code.
 
 1. **Stream, never slurp.** `csv-parse`'s async iterator with `{columns: true, bom: true, skip_empty_lines: true}`. `columns: true` keys each row by raw header, matching `mapping.json`'s `header` keys. Works on multi-GB files.
-2. **The primary key never travels (hard guard).** While id preservation is deferred (design in the README), the script strips the entity's primary key column from **every** outgoing payload — insert batches and PATCH bodies alike — silently and unconditionally, after coercion. The mapping's `id_column` is **not** assumed to be `id`: it is copied from the target entity's `id_column` property (`read_entity`). This is a runtime safety net, not a mapping convention: even a mapping that wrongly targets the primary key cannot reintroduce explicit-id inserts and the sequence desync they cause.
-3. **Write modes.** With `natural_key` set, `on_exists` decides what happens to rows whose key already exists: `"insert"` skips them (counted `skipped`); `"update"` synchronizes them — the preload fetches the mapped fields too, rows whose coerced CSV values equal the live values are untouched (counted `unchanged`), differing rows are updated with a per-row `PATCH` (counted `updated`). Update mode requires the key field to be unique. A key seen twice in the same file sends the second row to the failed capture (`duplicate key in file`) — deterministic, never last-wins.
+2. **The primary key never travels (hard guard).** While id preservation is deferred (design in the README), the script strips the entity's primary key column from **every** outgoing payload silently and unconditionally, after coercion. The mapping's `id_column` is **not** assumed to be `id`: it is copied from the target entity's `id_column` property (`read_entity`). This is a runtime safety net, not a mapping convention: even a mapping that wrongly targets the primary key cannot reintroduce explicit-id inserts and the sequence desync they cause.
+3. **Insert-only; unique-key dedupe.** With `natural_key` set (the field the user chose to mark unique, `unique_value: true`), rows whose key value already exists in the table are skipped (counted `skipped`); existing rows are **never modified** — updating existing records from a re-import is postponed (README → Postponed), and the script exits with a clear error if `mapping.json` still carries `"on_exists": "update"`. A key seen twice in the same file sends the second row to the failed capture (`duplicate key in file`) — deterministic, never last-wins.
 4. **Uniform keys.** Every record object carries every non-skipped mapped field, empties filled from `empty_value`. `postgrestRequest` is the raw PostgREST path: it rejects heterogeneous arrays with `PGRST102` and has no `missing=default` (the tool exposes no `prefer` input). Only the typed catalog tools (`create_field` etc.) accept mixed-key arrays — that is why the field runner can, and the row loader cannot, send ragged items.
 5. **Stdin transport.** The batch payload is piped to the CLI via stdin (`Bun.spawn` with `stdin: "pipe"`); no inline JSON argument, so Windows argument-length limits and shell quoting never apply. The interactive "always pass inline JSON" gotcha is about a human shell with an empty stdin; a script that pipes and closes stdin is the documented preferred form.
-6. **Batches of 250 by default** (`batch_size` in mapping.json, sane range 200 to 500) for inserts. No `prefer` key is sent: the current server strips it and always uses `Prefer: return=representation` (the tool returns a `{request, response}` envelope; the script ignores it on success). Batched upsert (`resolution=merge-duplicates`) becomes possible once the MCP passes `prefer` through — see the README roadmap; until then updates go per-row via `PATCH`.
+6. **Batches of 250 by default** (`batch_size` in mapping.json, sane range 200 to 500) for inserts. No `prefer` key is sent: the current server strips it and always uses `Prefer: return=representation` (the tool returns a `{request, response}` envelope; the script ignores it on success). Batched upsert (`resolution=merge-duplicates`) becomes possible once the MCP passes `prefer` through — see the README roadmap; it is what the postponed update mode will build on.
 7. **Exit-code-aware error handling.** Exit 3 (transient, CLI retries already exhausted) retries the batch up to 3 times with 1s/3s/9s backoff. Exit 5 (auth) aborts immediately. Exit 4 or anything else captures the batch (index, row range, stderr, rows) into `failed-batches.json` and continues; the run ends with exit 1 if anything failed.
 8. **Row-level validation before batching, coercion by exception.** The coercion switch handles only the families that genuinely need it (`integer`/`number` parse, `boolean` via `bool_pair`, `date`/`date-time` validation); its `default` branch passes every other format through verbatim, so `email`, `url`, and any future format flow untouched (server-side validation failures land in the batch-level capture). A cell that cannot coerce (unparseable number, unknown bool token, invalid date) sends the whole row to the failed capture with a reason instead of poisoning its batch. `ColumnSpec.format` is a plain `string` — known values are a comment, never a closed union the script enforces.
-9. **Preload doubles as the diff source.** With `natural_key` set, page `GET /<table>?select=<key>,<mapped fields>&order=<key>&limit=1000&offset=N` until a short page, building a map of key → live values. Insert mode uses only the key set; update mode compares coerced CSV values field-by-field against the live values (strict equality after coercion, so `"1"` vs `1` is not a change) to decide untouched vs `PATCH`. Without a natural key the script is a plain insert; re-running it duplicates rows and the script says so in its banner.
-10. **Progress on stderr, summary on stdout.** One line per batch (`batch 12/40 ok - 3000/9873 rows`) and a periodic update-progress line in update mode; the final line of stdout is the JSON summary (`parsed / inserted / updated / unchanged / skipped / failed / ...`), also written to `import-summary.json`, so the calling skill parses one object.
+9. **Preload of existing keys.** With `natural_key` set, page `GET /<table>?select=<key>&order=<key>&limit=1000&offset=N` until a short page, building the set of key values already in the table; rows whose key is in the set are skipped. Without a unique key the script is a plain insert; re-running it duplicates rows and the script says so in its banner.
+10. **Progress on stderr, summary on stdout.** One line per batch (`batch 12/40 ok - 3000/9873 rows`); the final line of stdout is the JSON summary (`parsed / inserted / skipped / failed / ...`), also written to `import-summary.json`, so the calling skill parses one object.
 11. **Built-in count verify.** After the last batch the script compares the server row count (`GET /<table>?select=count`, reading `[{"count": N}]`) against `preexisting + inserted` and exits non-zero on mismatch. Skipped and failed rows are excluded from the expectation. It also checks `parsed` against `expected_records` (the introspection's `record_count` on full scans) and flags a mismatch as a parsing defect.
 
 ## The field-creation runner (`create-fields.ts`)
@@ -80,11 +83,11 @@ The old generation-time checklist is now a checklist on the artifact, verified o
 
 - [ ] Every column has a `disposition`: `create` / `exists` / `label` / `skip` — and skipped columns carry a `reason`.
 - [ ] Exactly one column has `disposition: "label"` for a new entity (the auto-created label column: imported, never `create_field`), and no `field_name` targets an auto-generated column (`created_at`, `updated_at`, `label`) or the entity's primary key.
-- [ ] Every `create` column carries `title`, `format`, and `field_order` in increments of 10 starting at 30 (10 and 20 belong to the auto-created fields); `precision` on `number` columns; `enum_values` on confirmed enums; `input_type` per the review; `unique_value: true` on the natural key when update mode is planned.
+- [ ] Every `create` column carries `title`, `format`, and `field_order` in increments of 10 starting at 30 (10 and 20 belong to the auto-created fields); `precision` on `number` columns; `enum_values` on confirmed enums; `input_type` per the review; `unique_value: true` on the column named by `natural_key` (the user's "mark unique" answer).
 - [ ] Every `boolean` column carries its `bool_pair` from the introspection.
 - [ ] Digit-leading field names were renamed during the review.
-- [ ] `natural_key` is a **field name** present among the non-skipped columns, or absent/null.
-- [ ] `on_exists` matches the review decision; `"update"` only when the key field is unique (`unique_value: true`).
+- [ ] `natural_key` is a **field name** present among the non-skipped columns and that column carries `unique_value: true` (on an existing entity: the live field is unique), or `natural_key` is absent/null.
+- [ ] No `on_exists` key (update mode is postponed; the scripts reject `"update"`).
 - [ ] `id_column` equals the target entity's live `id_column` (from `read_entity`; `id` only for entities this skill just created).
 - [ ] `expected_records` carries the introspection's `record_count` on full scans, `null` when the scan was capped.
 - [ ] When the diff chose coerce-into-live for a mismatched column, that column's `format` is the **live** field's format, so validation routes incompatible rows to the failed capture.

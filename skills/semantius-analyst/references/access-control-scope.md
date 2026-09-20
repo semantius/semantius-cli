@@ -12,7 +12,7 @@ Any row → **default Full** (stay consistent with the modules already using ful
 
 This reads the choice each prior deploy recorded on its own module record (the top-level `modules.access_scope` column), the authoritative per-module signal. Do NOT sniff whether permissions or roles merely exist: a basic-access module also creates `<slug>:read` / `<slug>:manage` permissions and viewer / manager roles, so permission presence cannot tell basic from full and would wrongly default Full on an instance whose other modules are all basic. The modeler persists `access_scope` on every deploy path, so this signal is populated for every module the pipeline has touched.
 
-**The question** (`AskUserQuestion`, header `Access control`, the Recommended option leading per detection; plain language, US spelling, no em-dashes):
+**The question** (a `Q:` ledger task per SKILL.md → Task tracking, subject = `Q: ` + the exact question text below, `Recorded in: .access_scopes.<system_slug>`; asked per the ledger sequence, and it may share a call with the Stage 3 `Q:` tasks once those are enumerated. `AskUserQuestion` header `Access control`, the Recommended option leading per detection; plain language, US spelling, no em-dashes):
 
 - **When the instance already uses access control:**
   - question: *"Your other modules use role-based access control. Set `<system_name>` up the same way, or keep it to basic access (read and edit only)?"*

@@ -18,26 +18,6 @@ The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semanti
 
 ## Credentials Setup
 
-The CLI needs a **host** and a **credential**:
-
-- Host, first match wins: `--host <hostname>` → `SEMANTIUS_HOST` → `SEMANTIUS_ORG` (the managed-cloud
-  host `<org>.semantius.cloud`). A host under `.semantius.cloud` is the managed cloud; any other
-  `hostname[:port]` is a self-hosted instance. `<org>.semantius.app` (the web app) is mapped to
-  `<org>.semantius.cloud`.
-- Credential, first match wins: `SEMANTIUS_JWT` (a token sent as-is) → `SEMANTIUS_API_KEY`
-  (exchanged for a short-lived token, cached) → the session stored by `semantius login` for this
-  host. Without one, commands that talk to the platform exit `5` with "Authentication required".
-  `--auth jwt|apikey|oauth` picks one source explicitly.
-- With `--host`, only credentials stored for that host are used (one set per host); the API key,
-  JWT and org from the environment are ignored. Pair a host with an API key via `SEMANTIUS_HOST`.
-- `semantius login` opens a browser (PKCE) and stores the session in the OS keyring under the host's
-  name; `semantius logout` revokes and deletes it. Agents should not run `login` themselves: it needs
-  a human at an interactive terminal. Self-hosted instances can use it too: they configure it by
-  serving `/.well-known/semantius.json` (which names their OAuth client id — not necessarily
-  `semantius-cli` — their identity provider and their API audience), or, on an instance that serves
-  no such document, through the older `/.well-known/oauth-protected-resource` chain with the
-  `semantius-cli` client registered.
-
 ```bash
 # Option 1: Export in shell
 export SEMANTIUS_API_KEY=your-api-key
@@ -76,13 +56,6 @@ Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably.
 | `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
 | `--single` | (`call` only) Expect exactly one row: bare object on stdout, exit 1 on 0 rows, exit 2 on 2+ rows. **Rejected (exit 1, `SINGLE_ARRAY_INPUT`) for bulk calls** — an array in `data` / `body` / `id` / `table_name` always answers with an array of records. |
 | `--diag` | (`call`) Print the full `{request, response}` envelope instead of just `response.data` |
-| `--stream` | (`call crud postgrestRequest` only) Print PostgREST's response body unchanged — compact JSON, or CSV with `"accept":"text/csv"`; fastest for large reads. Errors: `Error: (<code>) <message>`, exit 5 for 401/403, 3 for 5xx/network, 4 otherwise. Not with `--single`, `--diag`, `--crud-mcp` (exit 1) |
-| `--host <host>` | Semantius host (see Credentials Setup) |
-| `--auth <source>` | Force one credential source: `jwt`, `apikey` or `oauth`. Not with `--host` for `jwt`/`apikey` (exit 1) |
-| `--login` | Sign in with the browser first, then run the command with that session (interactive terminal only) |
-| `--env <prefix>` | Read `<PREFIX>_API_KEY`, `<PREFIX>_ORG`, … instead of `SEMANTIUS_*` |
-| `--crud-mcp` | Run the `crud` tools on the Semantius cloud MCP server instead of inside the CLI (cloud only). Needed for `sqlToRest` |
-| `--reset-cache` | Drop the cached token and host lookup before running |
 
 ---
 
@@ -341,63 +314,32 @@ fi
 
 ---
 
-## Moving Entities and Modules Between Hosts
-
-The built-in `utils` server exports entities, or a whole module, from one host into a JSON file, and imports that file into another host as an upsert (stage → prod, prod → test). `--host` picks the host each side runs against.
-
-```bash
-semantius --host stage.example.com call utils/export_module '{"name":"CRM","path":"crm.json"}'
-semantius --host prod.example.com  call utils/import_module '{"path":"crm.json"}'
-
-# Single tables: schema and records, or either alone
-semantius call utils/export_entities '{"names":"accounts,contacts","path":"accounts.json"}'
-semantius call utils/export_entities '{"names":"accounts","exclude_schema":true,"path":"data.json"}'
-semantius call utils/import_entities '{"path":"accounts.json"}'
-```
-
-- **What travels.** `export_module` writes the module, its permissions, permission hierarchy, roles and grants, then its entities with their fields and records. `export_entities` writes entities, fields and records. Metadata is keyed by name (`module_name`, role `slug`, `permission_name`), never by a host's ids. Metadata and system tables (`users`, `roles`, `entities`, …) cannot be exported.
-- **Records keep their ids.** The import upserts by the entity's id column, so it overwrites any target row with the same id. References between exported tables keep their values; references to other tables keep their ids too, so their target rows must exist. References to `users` travel as `{"external_id": …}`: a user's numeric id differs between hosts, `external_id` does not. An unknown `external_id` is an error.
-- **Re-runs are cheap.** Every step reads the target first and writes only what differs, so re-running a failed import resumes it, and re-importing unchanged data writes nothing. Nothing is ever deleted, and there is no transaction across requests.
-- **`import_entities` also takes a module file**, importing only its entities (their module must exist on the target). `import_module` needs a module file.
-- **The target needs the `fix_id_sequence` RPC**, which moves each table's id sequence past the imported ids. A target on 0.5.0-beta1 lacks it until it is rebuilt; the import then stops before writing any record.
-- **Validation rules and `select_rule`** are written after the records, so older rows are not rejected by today's rules and no row is hidden from the import. An entity that already exists on the target keeps its current rules while its records are written.
-- **The file** is valid JSON with metadata pretty-printed and one record per line, so a committed file diffs record by record. A re-export of unchanged data is byte-identical.
-- An export contains only the rows this user can see, and is not a snapshot of a source that is written to meanwhile. The tools always talk to the host's PostgREST directly: `--crud-mcp` and a `crud.postgrest` URL in the config file do not apply, and an authentication failure exits 4, not 5. A static `SEMANTIUS_JWT` is not refreshed, so it can expire during a long run.
-- Records are compared as PostgREST prints them, so between hosts whose databases use different time zones every timestamp differs and every row is rewritten. A table with several hundred columns can exceed a proxy's URL limit (nginx: 8 KB), since reads and writes list every column.
-
----
-
 ## Connection Pooling (Daemon)
 
-The `crud` tools run inside the CLI and call PostgREST directly, so there is no connection to keep open for them. For the other servers (`cube`, and `crud` under `--crud-mcp`), the CLI on Linux and macOS keeps each server's MCP connection open in a lazily spawned background daemon, so repeated calls skip the connect handshake. On Windows there is no daemon; every call opens a fresh connection.
+By default the CLI uses a lazy-spawn background daemon to avoid MCP server startup latency on every call.
 
-- Each MCP server gets its own daemon process (a second instance of the `semantius` binary)
-- 300-second idle timeout, auto-terminates when idle
+- Each MCP server gets its own daemon process
+- 60-second idle timeout, auto-terminates when idle
 - Stale-detection: config changes trigger re-spawn
 
 **Control via environment:**
 ```bash
-SEMANTIUS_NO_DAEMON=1 semantius info        # Force a fresh connection every time (Linux/macOS)
-SEMANTIUS_DAEMON_TIMEOUT=120 semantius      # 2-minute idle timeout
-SEMANTIUS_DEBUG=1 semantius info            # Show daemon spawn/reuse decisions on stderr
+MCP_NO_DAEMON=1 semantius info      # Force fresh connection every time
+MCP_DAEMON_TIMEOUT=120 semantius    # 2-minute idle timeout
+MCP_DEBUG=1 semantius info          # Show daemon debug output
 ```
 
 ### Other Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SEMANTIUS_API_KEY` | (required unless `SEMANTIUS_JWT`) | API key |
-| `SEMANTIUS_ORG` | (required unless `SEMANTIUS_HOST` / `--host`) | Organization name |
-| `SEMANTIUS_HOST` | `https://<org>.semantius.cloud` | Host URL or hostname, same as `--host` |
-| `SEMANTIUS_JWT` | (none) | Static token, used instead of the API key |
-| (browser session) | (none) | Stored by `semantius login`, per host, in the OS keyring |
-| `SEMANTIUS_CRUD_MCP` | `false` | `1` = same as `--crud-mcp` |
-| `SEMANTIUS_STREAM` | `false` | `1` = `--stream` wherever it is valid |
-| `SEMANTIUS_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
-| `SEMANTIUS_CONCURRENCY` | `5` | Servers processed in parallel |
-| `SEMANTIUS_MAX_RETRIES` | `3` | Retry attempts for transient errors |
-| `SEMANTIUS_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
-| `SEMANTIUS_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
+| `SEMANTIUS_API_KEY` | (required) | API key |
+| `SEMANTIUS_ORG` | (required) | Organization name |
+| `MCP_TIMEOUT` | `1800` (30 min) | Request timeout in seconds |
+| `MCP_CONCURRENCY` | `5` | Servers processed in parallel |
+| `MCP_MAX_RETRIES` | `3` | Retry attempts for transient errors |
+| `MCP_RETRY_DELAY` | `1000` | Base retry delay in milliseconds |
+| `MCP_STRICT_ENV` | `true` | Error on missing `${VAR}` in config |
 
 ---
 
@@ -443,7 +385,7 @@ The CLI automatically retries transient failures with exponential backoff.
 | `2` | `--single` returned two or more rows (also what an `in.(...)` filter that matches several rows produces under `--single` — use an array read for multi-key sweeps) |
 | `3` | Network / transport failure (transient, retryable: `ECONNREFUSED`, `ETIMEDOUT`, `5xx`, `429` after retry exhaustion) |
 | `4` | Tool execution failed (RLS denial, duplicate key, schema violation, validation rule) |
-| `5` | Auth failure (no credentials, invalid `SEMANTIUS_API_KEY`, `401`, `403`) |
+| `5` | Auth failure (missing/invalid `SEMANTIUS_API_KEY`, `401`, `403`) |
 
 Notes:
 - Exit `1` carries two meanings, but they cannot co-occur: a malformed

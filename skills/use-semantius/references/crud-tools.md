@@ -17,7 +17,7 @@ Use this when: inserting, reading, updating, or deleting actual business data re
 ```
 Layer 1 typed tools  →  managing the schema itself
 postgrestRequest     →  reading and writing business records in any table
-sqlToRest            →  translating a SQL query into PostgREST path syntax (with --crud-mcp only)
+sqlToRest            →  translating a SQL query into PostgREST path syntax
 ```
 
 ---
@@ -125,22 +125,20 @@ If you find yourself building the body in many short steps, chunk into separate 
 ### `sqlToRest`
 Translates a SQL query into a PostgREST path. Useful when you think in SQL and need the equivalent PostgREST syntax.
 
-**Cloud only, and only with `--crud-mcp`:** the CLI's built-in `crud` tools do not include `sqlToRest` (a plain `semantius call crud sqlToRest …` fails with `TOOL_NOT_FOUND`); `--crud-mcp` runs it on the Semantius cloud MCP server.
-
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sql` | string | yes | SQL query to convert, e.g. `SELECT * FROM products WHERE status = 'active' ORDER BY name` |
 
 ```bash
-semantius --crud-mcp call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
+semantius call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
 ```
 
-### `refresh_schema_cache`
-Forces PostgREST to reload its schema cache. Takes no parameters.
+### `refresh_schema_cache` *(deno server only)*
+Forces PostgREST to reload its schema cache after structural changes.
 ```bash
-semantius call crud refresh_schema_cache '{}'
+semantius call deno refresh_schema_cache '{}'
 ```
-> The cache refreshes automatically after structural changes, so do **not** call this routinely after every `create_entity` / `create_field`. Reach for it only when the cache is visibly stale — a just-created entity or field is missing from `postgrestRequest` responses, or PostgREST reports an unknown table/column that you know exists.
+> Call this if PostgREST returns errors about unknown columns or tables after you've just added/modified fields.
 
 ### `sendEmail`
 
@@ -256,7 +254,7 @@ semantius call crud read_field '{"filters": "table_name=eq.services&field_name=i
 ### `create_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | Entity fields — one object, or a **non-empty array** to create several entities in one request (all entities of a model go in one call, before any of their fields; items may have different keys). See data-modeling.md for required fields and auto-generated fields. `module_id` is **required** and must be a valid integer module id (`null` is rejected — it is no longer nullable). `singular` is now **optional**. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in jsonlogic.md. Also accepts the optional `label_parent` (the FK field name that is this entity's identity spine; must name a `reference`/`parent` FK, must not be set on a junction or target one). |
+| `data` | object \| object[] | yes | Entity fields — one object, or a **non-empty array** to create several entities in one request (all entities of a model go in one call, before any of their fields; items may have different keys). See data-modeling.md for required fields and auto-generated fields. `module_id` is **required** and must be a valid integer module id (`null` is rejected). `singular` is **optional**. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in jsonlogic.md. Also accepts the optional `label_parent` (the FK field name that is this entity's identity spine; must name a `reference`/`parent` FK, must not be set on a junction or target one). |
 
 ### `read_entity`
 Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties, plus `label_parent` (the identity-spine FK field name, or null).
@@ -334,8 +332,6 @@ Every entity exposes a read-only **`_label`** — its composed, human-readable l
 | `settings` | JSON | Module-specific configuration blob. Optional. |
 | `dashboard_config` | JSON | Module landing-page dashboard layout. Optional. |
 
-> ⚠️ **`alias` is removed.** Earlier versions of the schema carried an `alias` field; it is gone. Use `module_name` for the unique display name and `module_slug` for the URL/permission handle. Code or scripts that read or write `alias` will fail.
-
 ### `read_module`
 Accepts common read parameters.
 
@@ -343,7 +339,7 @@ Accepts common read parameters.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | integer \| integer[] | yes | Module ID, or an array of ids to apply the same `data` to several modules |
-| `data` | object | yes | Fields to update (partial — omit a field to leave it unchanged). `module_slug` stays optional here, but **when provided** it must be non-empty and match `^[a-z0-9_-]+$` (hyphen now allowed); same error as `create_module` on violation. |
+| `data` | object | yes | Fields to update (partial — omit a field to leave it unchanged). `module_slug` stays optional here, but **when provided** it must be non-empty and match `^[a-z0-9_-]+$`; same error as `create_module` on violation. |
 
 ### `delete_module`
 | Parameter | Type | Required | Description |

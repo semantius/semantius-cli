@@ -10,7 +10,7 @@ Read: `../../use-semantius/references/select-rule.md` — the `select_rule` cont
 
 For each entity, scan for row-visibility patterns:
 
-- **S1 — Ownership scope (row-scope playbook).** Entity has an owner FK to `users` (`created_by` / `owner_id` / `submitter_id` / `assignee_id` / `author_id`). Decide between two shapes per entity, guided by the §1 / §3 prose and any `## Additional Requirements Specification` directive — **this decision is the analyst's; the blueprint no longer carries a flag for it:**
+- **S1 — Ownership scope (row-scope playbook).** Entity has an owner FK to `users` (`created_by` / `owner_id` / `submitter_id` / `assignee_id` / `author_id`). Decide between two shapes per entity, guided by the §1 / §3 prose and any `## Additional Requirements Specification` directive — **this decision is the analyst's; the blueprint carries no flag for it:**
   - **(a) Private** — the row belongs to its owner alone, with no oversight (bookmarks, saved searches, personal drafts / notes). Emit a `select_rule` scoping to the owner column with **no `has_permission` disjunct** and **no override permissions**. The owner is the only one who ever sees the row.
   - **(b) Owner + oversight** — the owner sees their own rows by default, but a manager / admin must be able to see all (tickets, applications, interview scorecards, offers). Emit a `select_rule` with an `or($user_id == owner, has_permission(<slug>:view_all_<plural>))` disjunct **and** emit the `<slug>:view_all_<plural>` (read) + `<slug>:manage_all_<plural>` (write) override permissions in §8.1 as `override`-tier rows, rolled up under `<slug>:admin` in the §9.1 permission hierarchy.
 

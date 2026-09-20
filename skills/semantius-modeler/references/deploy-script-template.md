@@ -15,8 +15,9 @@ There are **two committed resources** — copy both into the scratch dir and imp
 
 ```bash
 mkdir -p .tmp_deploy
-cp "${CLAUDE_PLUGIN_ROOT:-.claude/skills/semantius-modeler}/references/deploy-lib.ts"   .tmp_deploy/deploy-lib.ts
-cp "${CLAUDE_PLUGIN_ROOT:-.claude/skills/semantius-modeler}/references/scaffold-lib.ts" .tmp_deploy/scaffold-lib.ts
+# <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
+cp "<skill-folder>/references/deploy-lib.ts"   .tmp_deploy/deploy-lib.ts
+cp "<skill-folder>/references/scaffold-lib.ts" .tmp_deploy/scaffold-lib.ts
 # author .tmp_deploy/deploy_<slug>.ts (below), then:
 bun run .tmp_deploy/deploy_<slug>.ts
 ```

@@ -19,6 +19,8 @@ if [ -f "$CUSTOMIZATIONS_FILE" ]; then
 fi
 ```
 
+With the question ledger (SKILL.md → Task tracking), this lookup runs twice: when the stage's widgets are enumerated (a hit means no `Q:` task is created) and again for each still-pending `Q:` task right before it is batched (a hit completes the task with `Answer: policy` and the one-line narration below). The write-back below happens after the answer arrives and before the task is completed.
+
 On cache miss (or when the user picks an explicit cancel option), fire the widget. **If the user picked an answer (not cancel), write atomically back to the file BEFORE proceeding with the spec change.** Use the write form matching the row in `../../semantius-admin/references/customizations-protocol.md` 7.4 (scalar via `lineComment`, list via `[-1] lineComment`, nested object via `headComment`):
 
 ```bash

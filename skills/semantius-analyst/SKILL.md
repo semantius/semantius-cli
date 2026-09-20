@@ -49,6 +49,24 @@ The two always-on rules that govern every chat message are kept here verbatim (f
 
 **Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending.
 
+**AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
+
+**Option count is 2 to 4 per question object, never 1 and never 5.** The tool rejects the whole call otherwise, every other question in it included. When the options come from data (one per entity, field, property, concept, file, column), count the items (K) and shape the list before firing:
+
+- **K = 2 to 4:** one question object, K options.
+- **K = 5 or more (multiSelect):** several question objects, same header, question text suffixed ` (<i> of <N>)`, filled in source order in chunks of 4; when the last chunk would hold 1, move the last item of the previous chunk into it (5 → 3 + 2, 6 → 4 + 2, 9 → 4 + 3 + 2). At most four question objects per call; the rest go in the next call, after the answers arrive.
+- **K = 1:** a 2-option single-select (the item, plus the "None" / "Skip" option the stage text names), or no widget where the stage text says the one item counts as chosen.
+- **Single-select pick list (the user chooses one candidate):** never split across questions. List at most the 3 best candidates (2 when two fixed options such as "Create new" and "Skip" must stay), keep the stage's fixed alternative so the count never drops to 1, and say in the question text that another can be typed in. With 0 candidates the widget does not fire (the stage text says what happens instead). The tool always adds its own free-text slot: never list an "Other" option.
+- Never pad with a filler option, never merge two items into one option.
+- The tool has no pre-checked or default-selected option; "(Recommended)" on one label is the only default marker, so word a multiSelect so that selecting nothing is the safe outcome.
+
+**Task tracking** (resident summary; the rules are the canonical text in [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md)). The analyst uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`); the task list is rendered UI, not chat, so it does not count against narration restraint.
+
+- **Stage tasks.** At Step 0 (after the run context is read, standalone or under the admin), once the mode is known: `TaskList`, then `TaskCreate` the `Match ›` tasks from the Stage pipeline index below (subjects verbatim, `activeForm` = subject, all `pending`; reconcile mode creates three, the other modes one); in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's procedure ran; a halt (version rejection, drift refusal, user cancel) leaves the task `in_progress` with `halted: <verbatim message>`. Never a task for preflight, the use-semantius reads, or the pre-save checks: reading the design (Stage 1) and the live catalog (Stage 2) is preparation that runs under the first task while it is `in_progress`, not a task of its own (nothing the user can see comes out of it; its one question, the access-control choice, is a `Q:` task that gates that first task).
+- **Ledger stages: access scope, 3a-3e, 3f, and Extend mode's re-run of the Stage 2/3 widgets for new entities.** Every widget in those stages is a `Q:` task (subject = `Q: ` + the exact question text; one task per question object; a multiSelect with more than four choices is several tasks "(1 of N)" with the same header, every one holding 2 to 4 options, never 1 (the chunk table in stage-3-collisions.md 3a decides the sizes; 5 optionals split 3 + 2, not 4 + 1); description = header, options, `Decides: <slugs>`, `Recorded in: <the yq path(s) from customizations-protocol.md 7.4>`). Sequence: enumerate every open widget of the stage first (E, after the policy consultation; a policy hit creates no task; one `TaskUpdate` per stage task with `addBlockedBy: [<its Q: task ids>]` so the stage shows as blocked while questions are open), batches of up to four question objects per `AskUserQuestion` call (B, re-consulting policy per pending task; A), then record every answer in `customizations.yaml` first and complete the task (R). `TaskList` clean of open `Q:` tasks is the precondition for the 3g plan render. **A MUST-FIRE widget is a `Q:` task that must reach `completed`; a widget that never became a task was silently skipped, which is the bug the MUST-FIRE rule forbids.**
+- **`Q:` templates** (fill placeholders, never reword): `Q: Which optional parts do you want to set up? (<i> of <N>)` (`(1 of 1)` omitted when one question suffices); `Q: Basic or advanced access control?`; `Q: <Plural Label> exists already as part of <Module Display Name>. Adopt it now?`; `Q: <Plural Label> also exists in <Module Display Name>. Use theirs, keep our own, or share one copy?`; `Q: <Plural Label> looks like <Other Plural Label> in <Module Display Name>. Same thing?`; `Q: <Module Display Name> is not set up yet. Wait for it, create the records here, or skip?`; `Q: <Plural Label>: keep the live <property>, or apply the design's?`; `Q: <Plural Label>: keep the design's value for which of these? Anything you leave unselected takes the live value. (<i> of <N>)` (the 3f.6 cosmetic batch; `(1 of 1)` omitted when one question suffices). Where a stage file specifies a different question wording, that wording wins and becomes the subject; the point is that subject and question text are identical.
+- **Standalone (no ledger task, unchanged):** the 3g closing confirmation and its "Adjust the fields" / "Revise the plan" follow-ups (a "revise" sets the affected `Q:` tasks back to `pending` and re-enters the ledger instead of re-deriving), and every prose question in the Audit / Rebuild modes.
+
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a reconciled spec. Hard rules:
 
 - **Do not announce what you're about to do** before doing it. No *"Let me load the use-semantius reference..."*, no *"Let me classify each entity..."*, no *"Let me check this against the live catalog..."*. Just do the work; the tool-call lines in the transcript are enough.
@@ -61,9 +79,9 @@ A useful test: *"if I deleted this chat message before sending, would the user n
 
 ---
 
-## Skill version: `CURRENT_VERSION = "5.4"` and `EXPECTED_BLUEPRINT_VERSION = "3.0"`
+## Skill version: `CURRENT_VERSION = "5.5"` and `EXPECTED_BLUEPRINT_VERSION = "3.0"`
 
-This skill stamps every spec file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"5.4"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
+This skill stamps every spec file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"5.5"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
 
 The analyst reads `blueprint_version` from the blueprint's front-matter. **Major** must equal `EXPECTED_BLUEPRINT_VERSION`'s major (currently `"3.0"`, i.e. major `3` — minor is informational and not compared). Major older → ask the user to regenerate the blueprint via `semantius-architect` Mode D Rebuild. Major newer → ask the user to update this analyst skill.
 
@@ -209,7 +227,7 @@ The lifecycle state machine still exists in a `basic` spec (every lifecycle enti
    - **Stage 5 (W3/W4/W4n/W5 workflow-permission scan)** emits nothing — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`.
    - **Stage 7 (`select_rule`)** emits nothing — no per-row read scoping (every entity falls back to table-level `view_permission`).
    - **Stage 9.5** forces `documentation` mode (Stage 9.5 Step 0 auto-derives the mode; `living` is never selected under `basic`), emits only the viewer + manager baseline roles (role slugs normalized `-`→`_`, e.g. `it_ops_starter_viewer`) and the single `manage → read` edge, and skips RACI realization, the Processes catalog, and §9.2 functional ownership. No `persona` frontmatter is emitted.
-   - **Stage 10** keeps only permission-free computed fields / validation rules (pure data-integrity logic); it drops any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission` on a code that no longer exists), since the gating permission is gone.
+   - **Stage 10** keeps only permission-free computed fields / validation rules (pure data-integrity logic); it drops any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission` on a code that does not exist), since the gating permission does not exist under `basic`.
 
 The result satisfies the analyst's own §8.1/§9.1 invariants by construction (exactly one baseline-read + one baseline-manage, no gate rolled under `manage`, no orphan `narrow`) and the modeler's parse-time validation. The Stage 11 pre-save verifier additionally checks `access_scope: basic` coherence (no admin/gate/override/narrow rows, no personas, no RACI realization).
 
@@ -225,30 +243,32 @@ The reconcile flow runs Stage 1 through Stage 11. Each stage's detail is in a `r
 2. **Stages 5, 7, 9.5, 10 are no-ops under `access_scope: basic`** (see the resident "What basic authors" contract above).
 3. **Stage 8 + the Stage 11 pre-save gates are the join point**: they validate the output of Stages 5/6/7/9/10 and run before every write. They are **resident** (see "Verification gates" below), not in a reference.
 
-| Stage | Purpose | When it runs | `basic` short-circuit | Read first |
-|---|---|---|---|---|
-| 1. Parse | Parse the blueprint sections into an internal model | Start of every reconcile run | n/a | `references/stage-1-parse.md` |
-| Access scope | Resolve `basic` vs `full` (resolution order is resident above) | Right after Stage 2 | this decides it | `references/access-control-scope.md` |
-| 2. Inspect | Read the live catalog; classify every blueprint entity | After parse | n/a | `references/stage-2-inspect.md` |
-| 3 placement | Role-driven deterministic placement of every entity | After inspect | n/a | `references/stage-3-placement.md` |
-| 3a-3e collisions | Optional / collision / cross-link widgets (with the consultation protocol) | When a 🛑 or 🟡 fires | n/a | `references/stage-3-collisions.md` + `references/customizations-consultation.md` |
-| 3g confirm | Render the plan, confirm; orchestrates 3f then Stage 4 | After placement / collisions | n/a | `references/stage-3-confirm.md` |
-| 3f drift | Resolve adopted-entity drift | From 3g, when Stage 2h found drift | n/a | `references/stage-3f-drift.md` |
-| 4. Fields | Draft fields for owned entities | From 3g, before the render | n/a | `references/stage-4-fields.md` |
-| 5. Workflow perms | W3 / W4 / W4n / W5 workflow-permission scan | After fields | **emits nothing** | `references/stage-5-workflow-perms.md` |
-| 6. Input-type | Conditional input-type scan | After Stage 5 | n/a | `references/stage-6-input-type.md` |
-| 7. Select rule | Row-level read-access scan | After Stage 6 | **no select_rule** | `references/stage-7-select-rule.md` |
-| 8. Consistency gate | Holistic view / edit-rules cross-check | After 5/6/7/9/10 | n/a | **resident** (Verification gates) |
-| 9 + 9.5 Governance | Cross-tier FK validation + RACI / persona reconciliation | After Stage 8 inputs | **documentation-only, viewer + manager** | `references/stage-9-governance.md` |
-| 10. Rules | Computed fields + validation rules (families F1-F15) | After governance | **drop permission-gated rules** | `references/stage-10-rules.md` |
-| 11. Write | Frontmatter, section deltas, write the spec, close-out | After all stages pass | n/a | `references/stage-11-write.md` (pre-save gates resident) |
-| Modes B/C/D | Audit / Extend / Rebuild | Non-reconcile invocations | n/a | `references/modes-audit-extend-rebuild.md` |
+The Task column is the exact subject of the stage task (Task tracking, above); stages sharing a subject are one task, and the ledger stages are marked.
+
+| Stage | Purpose | When it runs | `basic` short-circuit | Task subject | Read first |
+|---|---|---|---|---|---|
+| 1. Parse | Parse the blueprint sections into an internal model | Start of every reconcile run | n/a | `Match › Settle reuse, naming, and optional parts` (Stages 1 and 2 are preparation under this task, not a task of their own) | `references/stage-1-parse.md` |
+| Access scope | Resolve `basic` vs `full` (resolution order is resident above); **ledger** | Right after Stage 2 | this decides it | (same task) | `references/access-control-scope.md` |
+| 2. Inspect | Read the live catalog; classify every blueprint entity | After parse | n/a | (same task) | `references/stage-2-inspect.md` |
+| 3 placement | Role-driven deterministic placement of every entity | After inspect | n/a | (same task) | `references/stage-3-placement.md` |
+| 3a-3e collisions | Optional / collision / cross-link widgets (with the consultation protocol); **ledger** | When a 🛑 or 🟡 fires | n/a | (same task) | `references/stage-3-collisions.md` + `references/customizations-consultation.md` |
+| 3f drift | Resolve adopted-entity drift; **ledger** | From 3g, when Stage 2h found drift | n/a | (same task) | `references/stage-3f-drift.md` |
+| 3g confirm | Render the plan, confirm; orchestrates 3f then Stage 4 | After placement / collisions | n/a | `Match › Draft the fields and confirm the plan` | `references/stage-3-confirm.md` |
+| 4. Fields | Draft fields for owned entities | From 3g, before the render | n/a | (same task) | `references/stage-4-fields.md` |
+| 5. Workflow perms | W3 / W4 / W4n / W5 workflow-permission scan | After fields | **emits nothing** | (same task) | `references/stage-5-workflow-perms.md` |
+| 6. Input-type | Conditional input-type scan | After Stage 5 | n/a | (same task) | `references/stage-6-input-type.md` |
+| 7. Select rule | Row-level read-access scan | After Stage 6 | **no select_rule** | (same task) | `references/stage-7-select-rule.md` |
+| 8. Consistency gate | Holistic view / edit-rules cross-check | After 5/6/7/9/10 | n/a | (same task) | **resident** (Verification gates) |
+| 9 + 9.5 Governance | Cross-tier FK validation + RACI / persona reconciliation | After Stage 8 inputs | **documentation-only, viewer + manager** | (same task) | `references/stage-9-governance.md` |
+| 10. Rules | Computed fields + validation rules (families F1-F15) | After governance | **drop permission-gated rules** | (same task) | `references/stage-10-rules.md` |
+| 11. Write | Frontmatter, section deltas, write the spec, close-out | After all stages pass | n/a | `Match › Write the file and double-check it` | `references/stage-11-write.md` (pre-save gates resident) |
+| Modes B/C/D | Audit / Extend / Rebuild | Non-reconcile invocations | n/a | `Match › Review the file` / `Match › Extend the design` (its Stage 2/3 re-run is a **ledger** stage) / `Match › Rebuild the file` | `references/modes-audit-extend-rebuild.md` |
 
 ---
 
 ## Stage 3: Drive reconciliation decisions
 
-Before any field elicitation, surface every 🛑 ambiguity and every 🟡 optional to the user via `AskUserQuestion`. No field work happens until every decision is recorded.
+Before any field elicitation, surface every 🛑 ambiguity and every 🟡 optional to the user via `AskUserQuestion`, through the question ledger (Task tracking, above): every widget is enumerated as a `Q:` task first, asked in batches of up to four per call, and completed only after its answer is written to `customizations.yaml`. No field work happens until every decision is recorded, which is checkable: `TaskList` shows no `Q:` task pending or in progress.
 
 > **Reminder:** every `AskUserQuestion` in this stage must follow Writing Convention 8 (plain language). Use Singular/Plural Labels, never raw `table_name`. Use module display names when known, never internal annotation values. Map the user's choice to an internal annotation *after* they pick.
 
@@ -259,10 +279,10 @@ The widgets in 3a, 3b.0, 3b.1, 3b.2, 3c, 3d, 3e, and 3f are **mandatory user gat
 In particular:
 
 - **3b.0 (catalog-owner adoption)**: even though option 1 is the only sensible outcome, the widget MUST fire so the user explicitly consents to the ownership transfer. Adoption changes the catalog state in a way the user should knowingly approve.
-- **3f.1 / 3f.2 / 3f.3 / 3f.4 (drift widgets)**: even when option 1 ("keep live state, align spec to it") is the safe and obvious default, the widget MUST fire so the user knows drift was detected. Silently rewriting the spec to align to live state is a Convention 8 *violation* — the spec is the user's design, and changing field names / enum values / permission tiers behind their back is exactly the kind of "silent self-correction" Convention 8 forbids in its Narration restraint section ("Do not narrate self-corrections mid-flight; fix them silently" applies to *implementation* corrections, not *spec content* corrections).
-- **Pre-fill the recommended option, then fire the widget** — that's the correct pattern. The user clicks "Yes" once per widget; they did not lose conversation context; they have explicit awareness of every adjustment to their design.
+- **3f.1 / 3f.2 / 3f.3 / 3f.4 (drift widgets)**: even when option 1 ("keep live state, align spec to it") is the safe and obvious default, the widget MUST fire so the user knows drift was detected. (The one drift case with no widget is 3f.4's cross-primitive format change: nothing can be chosen there, so it becomes a blocker in the file and a line in the plan summary instead; the user still sees it.) Silently rewriting the spec to align to live state is a Convention 8 *violation* — the spec is the user's design, and changing field names / enum values / permission tiers behind their back is exactly the kind of "silent self-correction" Convention 8 forbids in its Narration restraint section ("Do not narrate self-corrections mid-flight; fix them silently" applies to *implementation* corrections, not *spec content* corrections).
+- **Put the recommended option first, mark its label "(Recommended)", then fire the widget** — that's the correct pattern. (The tool has no pre-selected or pre-checked option; the label marker is the only way to point at the default.) The user picks it with one click per widget; they did not lose conversation context; they have explicit awareness of every adjustment to their design.
 
-If you find yourself reasoning *"the user is going to pick option 1, so I'll just do it and move on,"* that's the bug. Fire the widget anyway.
+If you find yourself reasoning *"the user is going to pick option 1, so I'll just do it and move on,"* that's the bug. Fire the widget anyway. The mechanical form of this rule: every MUST-FIRE widget is a `Q:` task, and the stage does not end while any `Q:` task is pending or in progress; a decision that never became a task was skipped.
 
 ---
 
@@ -305,18 +325,18 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 
 | Check | Failure surfaces as |
 |---|---|
-| `version` is `"5.4"` | front-matter has wrong major |
+| `version` is `"5.5"` | front-matter has wrong major |
 | Every blueprint §3 entity has a Reconciliation decision | missing decisions list |
 | No `reuse-from` entity carries a Fields block | over-spec list |
 | No `create-new` / `rename-incoming-from` / `promote-to-master` entity is missing a Fields block | under-spec list |
 | Every `require_permission` argument is in §8.1 Permissions catalog | unbound permissions list |
-| Frontmatter carries `tagline`, `icon_name`, `description`, `persona`, `license`, `module_kind` (each either carried verbatim from blueprint or null when blueprint omitted) | missing frontmatter keys |
+| Frontmatter carries `tagline` and `icon_name` (required, carried verbatim from the blueprint); `module_kind` carried verbatim when the blueprint has it, otherwise the key is **omitted** (never `null`); `description` / `license` carried when the blueprint has them (absence is not a finding); `persona` is REQUIRED under `access_scope: full` when §9 carries a RACI matrix and MUST BE ABSENT under `access_scope: basic` (see the basic-coherence row below) | missing / forbidden frontmatter keys |
 | §9 governance section is present and populated (§9.1 + §9.2) | missing or empty §9 |
-| When frontmatter `access_scope: basic`: §8.1 carries exactly `<slug>:read` + `<slug>:manage` (no `baseline-admin` / `workflow-gate` / `override` / `narrow`); no §3 entity has `**Edit permission:** admin` or a narrow tier; no §7 lifecycle state is gated; §9.1 carries only viewer + manager + the single `manage → read` row; no RACI realization / Processes / §9.2 ownership rows; no `persona` frontmatter. (Absent or `full` → no extra check.) | access_scope incoherence list |
-| **RACI provenance — mechanically enforced by `consistency-check.ts`.** When the spec carries a RACI matrix, frontmatter MUST carry `raci_mode` (`living`/`documentation`) AND `raci_mode_source` (`computed-default`/`non-interactive`; `raci_mode` is auto-derived from instance state, so this gate no longer produces `user-answer`), and the §9 `**RACI mode:**` line must match `raci_mode`. The checker fails the save on any missing / invalid / mismatched value. | RACI provenance missing / inconsistent |
+| When frontmatter `access_scope: basic`: §8.1 carries exactly `<slug>:read` + `<slug>:manage` (no `baseline-admin` / `workflow-gate` / `override` / `narrow`); no §3 entity has `**Edit permission:** admin` or a narrow tier; no `workflow-gate` row in §8.1 (no gated lifecycle transition); §9.1 carries only viewer + manager + the single `manage → read` row; no RACI realization / Processes / §9.2 ownership rows; no `persona` frontmatter. (Absent or `full` → no extra check.) | access_scope incoherence list |
+| **RACI provenance — mechanically enforced by `consistency-check.ts`.** When the spec carries a RACI matrix, frontmatter MUST carry `raci_mode` (`living`/`documentation`) AND `raci_mode_source` (`computed-default`/`non-interactive`; `raci_mode` is auto-derived from instance state, so this gate never produces `user-answer`), and the §9 `**RACI mode:**` line must match `raci_mode`. The checker fails the save on any missing / invalid / mismatched value. | RACI provenance missing / inconsistent |
 | Every `re-prefixed-from` annotation in §8.1 names a catalog module and a verb; the verb appears on the relevant entity in §3 | malformed re-prefix list |
-| §5 rows carry `delete_mode` and `fk_format` consumed from the blueprint, not re-derived | column-missing list |
-| §6.2 / §6.3 handoff rows carry the `transition` column; for `lifecycle` event_category, `to_state` exists on source entity's §7 | mismatched-state list |
+| §4 rows carry `fk_format` and the delete behavior consumed verbatim from the **blueprint's** §5.1 / §5.2 / §5.3a, not re-derived | column-missing list |
+| §6 `Outbound handoffs` / `Inbound handoffs` rows carry the `transition` column; for an Outbound `lifecycle` row (or an Inbound row whose `payload` is a declared §3 entity), `to_state` is one of that entity's `workflow_state` enum values | mismatched-state list |
 | Every `select_rule` column references a real field on the entity | dangling columns list |
 | No throwing operator inside any `select_rule` (`require_permission` / `throw_error` abort the per-row read; permission checks must use the non-throwing `has_permission`) | throwing-select_rule list |
 | DDL token scan (`CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE`, `DROP`, `REFERENCES`, `ON DELETE CASCADE` as SQL clause) | DDL tokens found list |
@@ -327,7 +347,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | §7.1 🔴 blockers count | block count; halt save if > 0 |
 | **Adopted-entity drift resolution complete** — every drift surfaced by Stage 2h has either a Stage 3f decision applied OR a §7.1 🔴 blocker documenting why it's deferred | unresolved drift list (entity, drift kind, expected resolution) |
 | **JsonLogic field references resolve** — every `{"var": "<token>"}` in every `computed_fields`, `validation_rules`, `input_type_rules`, and `select_rule` references a field that exists on the relevant entity (either declared in the spec's Fields block, or carried from live state via Stage 2h for adopted/reused entities, or known to be a Semantius built-in column like `id`, `created_at`) | dangling JsonLogic var list (entity, rule code/name, unresolved token) |
-| **JsonLogic permission references resolve** — every `require_permission(<code>)` and every `has_permission(<code>)` argument in JsonLogic resolves to a permission row in §2 OR a known platform-level permission | unbound permission code list |
+| **JsonLogic permission references resolve** — every `require_permission(<code>)` and every `has_permission(<code>)` argument in JsonLogic resolves to a permission row in §8.1 OR a known platform-level permission | unbound permission code list |
 | **JsonLogic enum-value references resolve** — every literal value compared against an enum-typed field in JsonLogic exists in that field's `enum_values` (after any Stage 3f.2 merge) | unknown enum literals list |
 | **JsonLogic rename cascade complete** — for every rename recorded in Stage 3f.1 / 3f.3, grep the assembled spec text for the old token; the count must be zero | partial rename list (token, line numbers where stale references remain) |
 | **No enum value would orphan live records** — for every adopted entity, no value in `live_distinct_enum_values_in_use` is missing from the spec's final `enum_values` for that field UNLESS a §7.1 🔴 blocker documents the required pre-deploy data migration | enum drop list (entity, field, dropped value, live record count) |
@@ -337,7 +357,8 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 **Mechanical consistency gate (mandatory — run it, do not eyeball it).** The §2 Mermaid-completeness row above and the entity-set / label / reference reconciliation are enforced by the same deterministic checker the architect ships (it handles both blueprints and specs). After writing the candidate spec, run it and require a clean exit:
 
 ```bash
-bun ".claude/skills/semantius-architect/references/consistency-check.ts" "semantius/specs/<slug>-semantic-spec.md"
+# <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
+bun "<skill-folder>/../semantius-architect/references/consistency-check.ts" "semantius/specs/<slug>-semantic-spec.md"
 ```
 
 For a spec it byte-compares: the frontmatter `entities:` list ⟺ §2 `Table name` ⟺ §3 sub-section headings (the entity set, strict 1:1); §2 `Singular label` ⟺ the §3 heading singular label (per entity); that every §4 / §5 / §8.2 / mermaid reference resolves to a declared entity; and that every §2 mermaid edge's direction + verb agrees with what §3 `relationship_label` + §4 `Cardinality`/`Kind` derive (a `parent`-kind row is always drawn as a bare arrow with no verb, per the junction convention; every other row's verb comes from §3, never invented at diagram time). It is **content-agnostic** on prose — it never judges language or casing, only that every occurrence of a name (and now every diagram edge) agrees with its source. A non-zero exit prints the exact entity and the disagreeing locations; fix every reported line and re-run until exit 0 before narrating the close-out. Do not substitute reading for running it.
