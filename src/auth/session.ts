@@ -43,12 +43,15 @@ interface Callback {
 
 /**
  * The loopback callbacks a host that publishes none is assumed to have
- * registered — the ports every instance registered before the platform
- * document existed, in order.
+ * registered, in order. 53682-53684 are what every instance registered before
+ * the platform document existed; they sit in the Windows/macOS dynamic range,
+ * where WinNAT/Hyper-V can reserve them all at once. 18682 and 28682 are below
+ * every OS's ephemeral range. They come last, so an instance that registered
+ * only the first three still gets one of those whenever one is free.
  */
-const DEFAULT_CALLBACKS: ReadonlyArray<Callback> = [53682, 53683, 53684].map(
-  (port) => ({ port, path: '/callback' }),
-);
+const DEFAULT_CALLBACKS: ReadonlyArray<Callback> = [
+  53682, 53683, 53684, 18682, 28682,
+].map((port) => ({ port, path: '/callback' }));
 
 /** How long the browser flow may take before the CLI gives up. */
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;

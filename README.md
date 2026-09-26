@@ -564,7 +564,10 @@ any other address. (Microsoft Entra's portal offers `localhost` on its
 desktop-platform form; `127.0.0.1` reply URLs are added by editing the app
 manifest.) A document listing only `localhost` fails the login with that
 explanation rather than an opaque error from the provider. Listing no redirect
-URIs at all means the CLI uses `http://127.0.0.1:{53682,53683,53684}/callback`.
+URIs at all means the CLI uses
+`http://127.0.0.1:{53682,53683,53684,18682,28682}/callback`, the first free one
+in that order. Register all five: on Windows, WinNAT/Hyper-V can reserve the
+whole 5368x block, and then only 18682 or 28682 is left.
 
 An instance that serves no such document — it answers 404, or its web app
 catches the path — falls back to the legacy chain:

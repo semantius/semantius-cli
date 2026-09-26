@@ -949,6 +949,8 @@ describe('oauth login', () => {
         'http://127.0.0.1:53682/callback',
         'http://127.0.0.1:53683/callback',
         'http://127.0.0.1:53684/callback',
+        'http://127.0.0.1:18682/callback',
+        'http://127.0.0.1:28682/callback',
       ],
       scope: '',
       audience: 'semantius://api',
@@ -965,7 +967,13 @@ describe('oauth login', () => {
       idp_type: 'entra',
       idp_well_known: `${provider.origin}/entra/tid/v2.0/.well-known/openid-configuration`,
       client_id_cli: GUID,
-      redirect_uris: ['http://127.0.0.1:53682/callback'],
+      redirect_uris: [
+        'http://127.0.0.1:53682/callback',
+        'http://127.0.0.1:53683/callback',
+        'http://127.0.0.1:53684/callback',
+        'http://127.0.0.1:18682/callback',
+        'http://127.0.0.1:28682/callback',
+      ],
       scope: 'openid profile email offline_access api://app-id/access_as_user',
       audience: 'api://app-id',
       ...over,
@@ -1208,7 +1216,7 @@ describe('oauth login', () => {
       await login(target, { openUrl });
 
       expect(provider.redirectUris[0]).toMatch(
-        /^http:\/\/127\.0\.0\.1:5368[234]\/callback$/,
+        /^http:\/\/127\.0\.0\.1:(5368[234]|18682|28682)\/callback$/,
       );
     });
 
