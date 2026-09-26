@@ -17,8 +17,9 @@ import { resolveHost } from '../src/host';
 import { setHostsIndexDirForTests } from '../src/hosts-index';
 import { createBuiltinConnection } from '../src/local-tools/connection';
 import { exportEntities } from '../src/local-tools/transfer/export';
-import { PostgrestClient } from '../src/local-tools/transfer/postgrest';
+import { ENTITY_CREATE_ONLY } from '../src/local-tools/transfer/format';
 import { SelfReferences, planWrites } from '../src/local-tools/transfer/graph';
+import { PostgrestClient } from '../src/local-tools/transfer/postgrest';
 import {
   FakePostgrest,
   type Row,
@@ -1589,6 +1590,48 @@ describe('import: files and schema', () => {
       table_name: 'contacts',
       entity: 'updated',
     });
+  });
+
+  test('id_type is sent on create and left out of the update: patching it is refused with 90233', async () => {
+    const source = fake('source.example.test');
+    seedCrm(source);
+    source.update('entities', 'accounts', {
+      id_type: 'typeid',
+      id_prefix: 'acct',
+    });
+    const target = emptyTarget();
+    const path = join(dir, 'crm.json');
+    await call(source, 'export_module', { name: 'CRM', path });
+
+    await call(target, 'import_module', { path });
+    expect(target.row('entities', 'accounts')?.id_type).toBe('typeid');
+    const created = target.requests.find(
+      (r) => r.method === 'POST' && r.target === 'entities',
+    );
+    const createdRows = [created?.body].flat() as Row[];
+    expect(
+      createdRows.some((r) => r?.table_name === 'accounts' && r.id_type),
+    ).toBe(true);
+
+    // A re-import updates the entity that now exists. id_type is locked once
+    // the table is created, so it must not appear in the PATCH.
+    source.update('entities', 'accounts', { singular_label: 'Account!' });
+    await call(source, 'export_module', { name: 'CRM', path });
+    const from = target.requests.length;
+    const again = await call(target, 'import_module', { path });
+    expect(again.entities).toContainEqual(
+      expect.objectContaining({ table_name: 'accounts', entity: 'updated' }),
+    );
+    const patches = target.requests
+      .slice(from)
+      .filter((r) => r.method === 'PATCH' && r.target === 'entities');
+    expect(patches.length).toBeGreaterThan(0);
+    for (const p of patches) {
+      expect(p.body as Row).not.toHaveProperty('id_type');
+    }
+    // id_prefix stays updatable: a TypeID prefix may be changed later.
+    expect(ENTITY_CREATE_ONLY).toContain('id_type');
+    expect(ENTITY_CREATE_ONLY).not.toContain('id_prefix');
   });
 
   test('select_rule is written before the records, with the validation rules', async () => {

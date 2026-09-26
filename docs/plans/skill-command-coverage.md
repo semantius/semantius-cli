@@ -181,23 +181,72 @@ current mark, `--json` for scripts.
 > read values you then act on"*. Documenting `whoami` without that line would manufacture the
 > exact confusion modeler spends a paragraph on.
 
-**Never run unattended** — `login`, `logout`, `use`. Documented as prohibitions, with the
-reasons:
+**How a person connects — `use` is the answer, and the skill must say so.**
 
-- `login` — opens a browser and waits up to 5 min for a loopback callback. The subcommand has
-  **no TTY guard** (`src/index.ts:1333` → `src/commands/auth.ts:18`); only the `--login` flag
-  checks `process.stdin.isTTY` (`src/index.ts:1270`). Headless it prints the URL and stalls —
-  see "Out of scope". Never run it; tell the human which host needs a session.
-- `use <host>` — sets the machine-global **current host**, which outranks `SEMANTIUS_HOST` /
-  `SEMANTIUS_ORG` and every project `.env` for every later invocation in every directory, and
-  **runs the browser login first when no session is stored** (`src/commands/hosts.ts:222`) —
-  the same headless stall as `login`, on top of the global mutation. With a current host set,
-  an API key or JWT in the environment is ignored for it. An agent wanting a different host for
-  one call uses `--host` (stored session only) or `--token` / `--token-file`.
+`semantius use <host>` is the normal way to point this machine at a host, and the skill should
+recommend it rather than treat it as a hazard. One command covers the common case (one user,
+one host): it signs in if there is no session yet, then pins the host for every later
+invocation in every directory. The current host outranks `SEMANTIUS_HOST` / `SEMANTIUS_ORG`
+and every `.env` — only `--host` and `--token` beat it — so it is also the most *deterministic*
+option, which is the point.
+
+Prefer it over an API key by default. A key has to be provisioned on the platform and then
+persists a long-lived bearer secret on disk, where a session is OAuth, refreshes itself, is
+sealed per host and is revocable with `logout`. **And the trap the skill must state: with a
+current host set (or `--host`), an API key or JWT in the environment is ignored — silently.**
+Someone who runs `use` and then sets `SEMANTIUS_API_KEY` gets no error and no effect. Keys
+belong in the automation/CI path, which is exactly where no interactive login can complete.
+
+Order the credentials section accordingly: `use` first, `--host` / `--token` for one-off
+cross-host work, API keys last as the advanced path.
+
+**The agent's own rule stays narrow**: do not run `use` *unprompted*, because it changes
+machine-global state the user did not ask to change and that outlives the task. Running it
+after the user names a host is doing what they asked, not overreach.
+
+**Preflight — `whoami` first, and read `host_source`, not just the exit code.** `whoami`
+succeeding does not mean the user is set up: run inside a repo with a project `.env` it happily
+reports that `.env`'s host. The signal is the `host_source` row (`flag | token | current | env
+| dotenv:<path> | org`):
+
+| `host_source` | Meaning | What the agent does |
+|---|---|---|
+| `current` | pinned with `use` | proceed |
+| `env` / `dotenv:…` / `org` | configured but not pinned — could be a project default | proceed, but name the host and where it came from |
+| exits 1, `MISSING_ENV_VAR` | nothing configured | ask which host, then `semantius use <host>` |
+
+**Never run unattended** — `login`, `logout`. Documented as prohibitions, with the reasons:
+
+- `login` — signs in interactively. The subcommand has **no TTY guard**
+  (`src/index.ts:1333` → `src/commands/auth.ts:18`); only the `--login` flag checks
+  `process.stdin.isTTY`. It no longer stalls headlessly (see `--login-flow` below), but it
+  still needs a human: don't run it, tell the human which host needs a session.
 - `logout` — revokes the session where the provider publishes a revocation endpoint, deletes
   it, **clears the current host if it was this one, and stops every daemon**
   (`src/commands/auth.ts:34-51`). Every later invocation in every directory loses its host.
   Only a human at a browser can restore it.
+
+**`--login-flow auto|browser|device` — new, and the skill has to carry it.**
+Implemented 2026-09-26 (`headless-login-device-code.md`). It changes what the tiers above say
+about headless behaviour, so it is not optional detail:
+
+- `login` and `use` **no longer stall for 5 minutes** without a browser. `auto` uses the
+  browser when the machine has one, the **device code grant** (RFC 8628 — a code the user
+  enters on another device) when it does not and the host advertises it, and otherwise fails
+  in about a second with exit 5 and advice. In CI it refuses outright.
+- **On Windows and macOS `auto` cannot detect headless** — there is no `DISPLAY` to consult, so
+  the predicate always answers "browser". `--login-flow device` is therefore the *only* way to
+  reach the device grant on those platforms, including over SSH and on Server Core. An agent
+  that doesn't know the flag exists cannot help a user stuck there.
+- The managed cloud already advertises the endpoint (verified on two tenants:
+  `device_authorization_endpoint: https://<org>.semantius.cloud/device_authorization`), so
+  `semantius login --host <org>.semantius.app --login-flow device` works today.
+- Also settable as `<PREFIX>_LOGIN_FLOW`, so it honours `--env`.
+- When the device grant runs, the CLI prints a user code and a verification URL and then waits.
+  **An agent must relay those to the human, not treat the wait as a hang.**
+
+Lands in the options table (Step 1's restored rows, now 14) and in the `use` / `login` guidance
+above.
 
 **The always-loaded setup rule is wrong and changes with this step.**
 `skills/use-semantius/SKILL.md:119-129` tells the agent to STOP unless `SEMANTIUS_API_KEY` and
@@ -240,7 +289,7 @@ actually reads. The `MCP_*` bug survived because nobody checked the names agains
 
 Check **both directions**: everything documented maps to `src/`, and everything in `src/` is
 documented or on the allowlist below. A one-way check passes with the restored 13 rows while
-`parseArgs` has 20. Counts on `762c21b`:
+`parseArgs` has 20 — **21 since `--login-flow` landed** (below). Counts on `762c21b`:
 
 | Surface | `src/` | `README.md` | `cli-usage.md` now | `762c21b^` copy |
 |---|---|---|---|---|
@@ -369,6 +418,86 @@ description alone (trigger evals in the transfer, importer and admin skills pass
 pointer only; `admin-operations.md` 5.2 is a pointer; a dry walkthrough of a module transfer
 between two hosts of a test org completes with a converged second import.
 
+### Step 6 — two behaviour changes landed after this plan was written
+
+Both are post-`8a37ec5`, both change what an agent must tell a user, and neither is documented
+in any skill.
+
+#### 6a. `id_type` / `id_prefix` on `create_entity` (`ea06898`)
+
+New optional entity-schema columns (`src/vendor/postgrest-mcp/src/tools/schemas/entitySchema.ts:33-36`),
+vendored — so change them upstream in `postgrest-mcp` and re-sync, never here:
+
+- `id_type`: `auto_increment` (default) | `bigint` | `text` | `uuid` | `typeid` | `computed`.
+  **Set on create and locked afterwards** — changing it is refused with `90233`; omit on update.
+- `id_prefix`: required when `id_type` is `typeid`, empty otherwise. Up to 63 lowercase letters
+  and underscores, starting and ending with a letter (e.g. `acct`), **unique among entities**.
+  Unlike `id_type` it *may* be changed later: new ids take the new prefix, existing ids keep
+  theirs, and an id with a former prefix can no longer be inserted.
+
+`grep -rln "id_type\|id_prefix\|typeid" skills/` is **empty** — zero coverage across all
+skills. Targets:
+
+- `use-semantius/references/data-modeling.md` — the `entities` schema table: both columns, the
+  locked-on-create rule, and `90233`. Also state that the `id` field is created automatically
+  and must **never** be created with `create_field`, which the description says and no skill does.
+- `semantius-analyst` / `semantius-architect` — choosing a key type is a modelling decision
+  (`typeid` for externally visible ids, `auto_increment` for internal tables), so the spec and
+  blueprint templates need a slot for it. Today a spec cannot express it, so the modeler cannot
+  deploy it.
+- `semantius-modeler` — it is create-only, so a key type missed at create costs a rebuild of
+  the entity. That belongs in the stage-3 plan and the stage-2 reconcile drift rules.
+
+**Done when:** the two columns are in the `entities` table doc with the lock and `90233`, a spec
+can express a key type, and the modeler treats it as create-only.
+
+#### 6b. Validation rules now run *before* records on import (`64bd779`)
+
+`validation_rules` and `select_rule` moved out of `ENTITY_AFTER_DATA` into `ENTITY_DEFERRED`
+(`src/local-tools/transfer/format.ts:119-129`), so they are written once the fields exist and
+**before any record**, where they used to be written last. The old comment said why they were
+last — *"older rows can fail today's validation rules, and a select_rule would hide rows from
+the import's own reads"*; the new one says why they are not — *"a first import and a re-import
+meet the same rules."*
+
+The user-visible consequence, which Step 5's skill must state: **records that violate the
+exported validation rules now fail the import instead of being written.** A file exported from a
+host whose rules were added after its data will no longer import cleanly, and that is the
+intended behaviour, not a regression. The fix is to correct the data or the rule, not to retry.
+An agent that hits it must not present it as a transient failure.
+
+This lands in Step 5's new `semantius-transfer` skill (its failure-modes section) and in the
+mechanics paragraph Step 1 restores to `cli-usage.md`.
+
+**Done when:** the transfer skill names this failure and says the retry is not the fix.
+
+#### 6c. **Code bug found while checking 6a** — not a documentation item
+
+`ea06898` added `id_type` to the entity schema but did not add it to `ENTITY_CREATE_ONLY`
+(`src/local-tools/transfer/format.ts:114-118`, which lists only `id_column`,
+`catalog_entity_code`, `catalog_entity_aliases`). The import builds its update column list as
+`writable.filter((c) => c !== 'table_name' && !ENTITY_CREATE_ONLY.includes(c))`
+(`src/local-tools/transfer/import.ts:527-529`), so **a re-import onto a host where the entity
+already exists will PATCH `id_type` and be refused with `90233`** — exactly what the schema's
+own comment warns about (*"a default would send `id_type` with every update, which the database
+refuses"*, `entitySchema.ts:31`).
+
+Since `ENTITY_COLUMNS` derives from `keysOf(entitySchema)`
+(`format.ts:109-113`), the column rides into every export file automatically; nothing had to be
+added for it to appear, and nothing stopped it being sent on update.
+
+`id_prefix` is **not** affected — its own description says it may be changed later, so it is
+legitimately updatable.
+
+Fix `ENTITY_CREATE_ONLY` before documenting re-import as working; upsert onto an existing
+entity is the transfer's core case, so this is not an edge. Add a transfer test that re-imports
+a file whose entity carries a non-default `id_type`.
+
+**Done when:** `id_type` is in `ENTITY_CREATE_ONLY`, a re-import of an entity with a non-default
+key type succeeds, and a test covers it.
+
+---
+
 ### Commit plan
 
 1. **"skills: revert the collateral of 762c21b"** — Step 0's modeler edit and changelog entry,
@@ -376,6 +505,13 @@ between two hosts of a test org completes with a converged second import.
 2. Step 2 — the tiers in `cli-usage.md` and the `SKILL.md` setup rewrite.
 3. Step 4 — the bidirectional pass, and the guard check if added.
 4. Step 5 — the transfer skill and its four companion edits, one commit.
+5. **Step 6c first, on its own** — it is a code fix, not docs, and Step 5's skill documents
+   behaviour that 6c has to make true. Then Step 6a and 6b with the docs they belong to.
+
+Note Step 2 now carries `--login-flow` and the device grant, which shipped after this plan was
+written. Those passages describe **current** behaviour, not planned behaviour — the CLI change
+is already done (uncommitted at the time of writing) and needs no work here beyond documenting
+it.
 
 ---
 
@@ -390,19 +526,12 @@ between two hosts of a test org completes with a converged second import.
   (`src/index.ts:140-156`) catches `list`, `ls`, `run`, `get`, `show` … but not `help`,
   `version`, `status` or `test`, so near-misses get the wrong error. CLI change, not a skill
   change.
-- **Headless login stalls for 5 minutes.** `openBrowser` (`src/auth/session.ts:799-811`)
-  spawns `xdg-open` with `stdout`/`stderr` ignored, no exit-code check, and a missing binary
-  caught into `debug()`. The CLI claims "Opening the browser to sign in", waits on a loopback
-  callback (`127.0.0.1`, ports 53682/53683/53684, `src/auth/session.ts:49-51`) for
-  `LOGIN_TIMEOUT_MS` = 5 min (`src/auth/session.ts:54`), then blames the browser. Pasting the
-  printed URL only completes the flow when the browser shares localhost with the CLI (same
-  machine, WSL, or `ssh -L`). The real fix is RFC 8628 device code — **`cli-auth` already
-  implements it** (`strategy: "device-code"`); the call site pins
-  `createCliAuth<'authorization-code'>` (`src/auth/session.ts:65`), and
-  `src/auth/provider.ts:129-143` does not capture `device_authorization_endpoint`. Select on
-  that advertised capability, never on `idp_type` (`CLAUDE.md`). **Planned in
-  `headless-login-device-code.md`** (2026-09-20), which also records that Entra and Google both
-  advertise the endpoint and that `semantius-idp` already ships the Better Auth code to do so.
+- **Headless login — FIXED, no longer out of scope.** Implemented 2026-09-26 and verified on
+  real headless Linux: `login` / `use` now pick the device code grant when the host advertises
+  it, and otherwise fail in ~1 s with exit 5 instead of stalling 5 minutes. `--login-flow
+  auto|browser|device` selects explicitly and is required on Windows/macOS, where headless
+  cannot be detected. See `headless-login-device-code.md` §8 for the departures and the
+  remaining limitation. **The skill work this creates is in Step 2 above, not here.**
 - **`-md` dumps the README's Development section** (`README.md:695-768`: `bun run dev whoami`,
   `bun run dev call crud …`) verbatim to agents — the only place an agent ever sees the CLI
   invoked as anything but `semantius`. Either the dump skips that section or the README moves

@@ -27,6 +27,8 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_SECONDS,
+  type LoginFlow,
+  getLoginFlow,
   getMissingRequiredEnvVars,
   getUserConfigDir,
   ignoreEnvCredentials,
@@ -39,6 +41,7 @@ import {
   setCrudMcpFlag,
   setEnvPrefix,
   setHostFlag,
+  setLoginFlow,
   setTokenArg,
   splitOrgPrefix,
 } from './config.js';
@@ -108,6 +111,7 @@ interface ParsedArgs {
   disableJwtCache: boolean;
   resetCache: boolean;
   auth?: AuthFlag;
+  loginFlow?: LoginFlow;
   login: boolean;
 }
 
@@ -342,6 +346,32 @@ function parseArgs(args: string[]): ParsedArgs {
           process.exit(ErrorCode.CLIENT_ERROR);
         }
         result.auth = source;
+        break;
+      }
+
+      case '--login-flow': {
+        const value = args[++i];
+        if (!value) {
+          console.error(
+            formatCliError(
+              missingArgumentError('--login-flow', 'auto|browser|device'),
+            ),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        if (value !== 'auto' && value !== 'browser' && value !== 'device') {
+          console.error(
+            formatCliError({
+              code: ErrorCode.CLIENT_ERROR,
+              type: 'INVALID_OPTION',
+              message: `Invalid --login-flow value "${value}"`,
+              suggestion:
+                'Use --login-flow auto, --login-flow browser or --login-flow device',
+            }),
+          );
+          process.exit(ErrorCode.CLIENT_ERROR);
+        }
+        result.loginFlow = value;
         break;
       }
 
@@ -791,6 +821,12 @@ Options:
   --token-file <path>      Same as --token, read from a file (org:jwt, trimmed)
   --login                  Sign in with the browser first, then run the command with that session
                            (needs an interactive terminal)
+  --login-flow <mode>      Which grant an interactive login uses: auto (default), browser or
+                           device. auto picks the browser when this machine has one, and the
+                           device code grant (RFC 8628 — a code you enter on another device) when
+                           it does not and the host offers it; it refuses in CI, where nobody can
+                           complete a sign-in. browser and device force one and both bypass that
+                           CI check. Also: ${prefixedEnvName('LOGIN_FLOW')}
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
                            local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
@@ -1154,6 +1190,7 @@ async function main(): Promise<void> {
   }
 
   setAuthFlag(args.login ? 'oauth' : args.auth);
+  setLoginFlow(args.loginFlow);
 
   if (args.disableJwtCache) {
     setJwtCacheDisabled(true);
@@ -1267,9 +1304,15 @@ async function main(): Promise<void> {
   // A browser login before the actual command: never implicit, always an
   // interactive terminal (there is nobody to complete the flow otherwise).
   if (args.login && args.command !== 'login') {
-    if (!process.stdin.isTTY) {
+    // stdin is a rough proxy for "a human is here", kept because the browser
+    // flow has no better one. An explicit --login-flow overrides it: the
+    // device grant needs no stdin at all (the code is typed into a browser on
+    // another device), so this check would otherwise refuse the one path that
+    // works on a headless box. Bare `semantius login` is not gated here at
+    // all — login() itself chooses the grant, once discovery has answered.
+    if (!process.stdin.isTTY && !getLoginFlow()) {
       console.error(
-        'Error [LOGIN_FAILED]: --login needs an interactive terminal',
+        'Error [LOGIN_FAILED]: --login needs an interactive terminal (or an explicit --login-flow)',
       );
       process.exit(ErrorCode.CLIENT_ERROR);
     }
@@ -1363,6 +1406,12 @@ if (!runDaemonFromArgv(process.argv.slice(2))) {
       // Error message already formatted by command handlers
       console.error(error.message);
       recordError(error.message);
-      setImmediate(() => process.exit(ErrorCode.CLIENT_ERROR));
+      // An error may name its own exit code, the same `exitCode` convention
+      // the identity commands already use locally — an auth failure has to
+      // reach the shell as 5, not as the generic client error.
+      const code = (error as { exitCode?: number })?.exitCode;
+      setImmediate(() =>
+        process.exit(typeof code === 'number' ? code : ErrorCode.CLIENT_ERROR),
+      );
     });
 }

@@ -258,6 +258,32 @@ export function getAuthFlag(): AuthFlag | undefined {
 }
 
 /**
+ * Which grant an interactive login uses. `auto` detects (see auth/environment
+ * .ts); `browser` and `device` force one, and both bypass the CI guard — tests
+ * and CI jobs that drive a login need `browser` on a runner where CI is set.
+ */
+export type LoginFlow = 'auto' | 'browser' | 'device';
+
+let _loginFlow: LoginFlow | undefined;
+
+export function setLoginFlow(value: LoginFlow | undefined): void {
+  _loginFlow = value;
+}
+
+/**
+ * The flag if given, else `<PREFIX>_LOGIN_FLOW`, else undefined (= auto). The
+ * env var is prefixed like every other one so `--env PROD` keeps working, and
+ * so a spawned test can set it without a flag.
+ */
+export function getLoginFlow(): LoginFlow | undefined {
+  if (_loginFlow) return _loginFlow;
+  const value = getPrefixedEnv('LOGIN_FLOW')?.toLowerCase();
+  return value === 'auto' || value === 'browser' || value === 'device'
+    ? value
+    : undefined;
+}
+
+/**
  * --token / --token-file: an org:jwt argument, resolved in index.ts right
  * after parseArgs (before loadDotEnv). Kept as state rather than written
  * into process.env so that ignoreEnvCredentials() cannot blank it and

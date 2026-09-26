@@ -102,6 +102,14 @@ export interface OAuthMetadata {
   authorizationEndpoint: string;
   tokenEndpoint: string;
   revocationEndpoint?: string;
+  /**
+   * RFC 8628. Present only when the authorization server advertises it, which
+   * is what decides whether a headless login can use the device code grant —
+   * the capability, never `idp_type`. Bound to the issuer's origin at
+   * discovery: a device flow has no loopback callback, so the RFC 9207 check
+   * in session.ts cannot cover this leg.
+   */
+  deviceAuthorizationEndpoint?: string;
   /** Scopes the protected resource declares, e.g. tenant:<tenant id>:user. */
   resourceScopes: string[];
   /**

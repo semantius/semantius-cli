@@ -160,6 +160,11 @@ async function discoverFromPlatform(
     authorizationEndpoint,
     tokenEndpoint,
     revocationEndpoint: asString(server.revocation_endpoint),
+    deviceAuthorizationEndpoint: deviceEndpoint(
+      server.device_authorization_endpoint,
+      issuer,
+      url,
+    ),
     // The platform chain never fetches an RFC 9728 document, so there are no
     // resource scopes to add. The document's own `scope` covers that.
     resourceScopes: [],
@@ -211,6 +216,11 @@ async function discoverLegacy(host: HostFacts): Promise<OAuthMetadata> {
     authorizationEndpoint,
     tokenEndpoint,
     revocationEndpoint: asString(server.revocation_endpoint),
+    deviceAuthorizationEndpoint: deviceEndpoint(
+      server.device_authorization_endpoint,
+      issuer,
+      metadataUrl,
+    ),
     resourceScopes: asStringArray(resource.scopes_supported),
     issParameterSupported:
       server.authorization_response_iss_parameter_supported === true,
@@ -230,6 +240,33 @@ function record(host: HostFacts, metadata: OAuthMetadata): OAuthMetadata {
  * address in local development. Applies to both chains — the legacy one took
  * its issuer from authorization_servers[0] with no scheme check at all.
  */
+/**
+ * The device authorization endpoint (RFC 8628), if advertised, checked harder
+ * than the other endpoints: a device flow has no loopback callback, so
+ * issuerMismatch() — the CLI's defence against a metadata mix-up where the
+ * browser leg and the token leg go to different servers — never runs on it.
+ * Binding it to the issuer's origin is the compensating control, and mirrors
+ * what the platform chain already requires of authorization_endpoint.
+ *
+ * Absent is normal and means "this server cannot do device code": a headless
+ * login then reports that rather than guessing an endpoint.
+ */
+function deviceEndpoint(
+  value: unknown,
+  issuer: string,
+  docUrl: string,
+): string | undefined {
+  const raw = asString(value);
+  if (!raw) return undefined;
+  const url = requireSecure(raw, 'device_authorization_endpoint', docUrl);
+  if (url.origin !== new URL(issuer).origin) {
+    throw new HostResolutionError(
+      `${docUrl} declares issuer "${issuer}" but a device_authorization_endpoint on a different origin: "${raw}"`,
+    );
+  }
+  return raw;
+}
+
 function requireSecure(value: string, field: string, docUrl: string): URL {
   let url: URL;
   try {

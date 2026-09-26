@@ -111,8 +111,16 @@ export const ENTITY_COLUMNS = without(
   'searchable',
   'is_child',
 ).map((c) => (c === 'module_id' ? 'module_name' : c));
+/**
+ * Sent on create, never on update. `id_type` is locked once the table exists:
+ * patching it is refused with 90233, so a re-import of an entity that already
+ * exists on the target must leave it out. `id_prefix` is deliberately absent —
+ * a TypeID prefix may be changed later (new ids take it, existing ids keep
+ * theirs), so it stays updatable.
+ */
 export const ENTITY_CREATE_ONLY = [
   'id_column',
+  'id_type',
   'catalog_entity_code',
   'catalog_entity_aliases',
 ];

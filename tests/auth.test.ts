@@ -9,17 +9,20 @@
  * (never Bun.secrets), and the user config dir is redirected to a temp dir.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import type { TokenSet } from 'cli-auth';
 import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import type { TokenSet } from 'cli-auth';
 import {
   clearPlatformMemoForTests,
   getPlatformConfig,
@@ -46,6 +49,7 @@ import {
   getUsedCredentialSource,
 } from '../src/auth/token';
 import { transformConfigWithJwt } from '../src/client';
+import { loginCommand, logoutCommand } from '../src/commands/auth';
 import {
   getUserConfigDir,
   getUserSecretsDir,
@@ -53,7 +57,6 @@ import {
   setEnvPrefix,
   setHostFlag,
 } from '../src/config';
-import { loginCommand, logoutCommand } from '../src/commands/auth';
 import {
   type HostFacts,
   SELF_HOSTED_CLIENT_ID,
@@ -80,6 +83,8 @@ interface ProviderState {
   origin: string;
   paths: string[];
   tokenGrants: string[];
+  /** What each /device/code request carried. */
+  deviceRequests: { clientId: string; resource: string; scope: string }[];
   /** The `resource` seen on each authorize / token request ('' when absent). */
   resources: string[];
   /** The `redirect_uri`, `client_id` and `scope` of each authorize request. */
@@ -108,6 +113,13 @@ interface ProviderConfig {
   platformDoc: 'html' | 'broken' | Record<string, unknown> | null;
   /** Serve the Entra-shaped metadata with an authorize endpoint elsewhere. */
   entraCrossOrigin: boolean;
+  /**
+   * Advertise device_authorization_endpoint (RFC 8628). Off by default: a
+   * server that does not offer the grant is the normal case, and the CLI must
+   * refuse a headless login rather than invent an endpoint.
+   * 'cross-origin' advertises one on another origin, which discovery refuses.
+   */
+  deviceGrant: boolean | 'cross-origin';
 }
 
 /** A tenant-shaped OAuth provider: discovery, authorize, token, revoke. */
@@ -118,9 +130,15 @@ function startProvider(): ProviderState {
     advertiseIss: true,
     platformDoc: null,
     entraCrossOrigin: false,
+    deviceGrant: false,
   };
   const paths: string[] = [];
   const tokenGrants: string[] = [];
+  const deviceRequests: {
+    clientId: string;
+    resource: string;
+    scope: string;
+  }[] = [];
   const resources: string[] = [];
   const redirectUris: string[] = [];
   const clientIds: string[] = [];
@@ -160,6 +178,14 @@ function startProvider(): ProviderState {
           revocation_endpoint: `${origin}/api/auth/oauth2/revoke`,
           scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
           authorization_response_iss_parameter_supported: cfg.advertiseIss,
+          ...(cfg.deviceGrant
+            ? {
+                device_authorization_endpoint:
+                  cfg.deviceGrant === 'cross-origin'
+                    ? 'https://elsewhere.example/device/code'
+                    : `${origin}/api/auth/device/code`,
+              }
+            : {}),
         });
       }
 
@@ -192,6 +218,36 @@ function startProvider(): ProviderState {
           revocation_endpoint: `${origin}/api/auth/oauth2/revoke`,
           code_challenge_methods_supported: ['S256'],
           authorization_response_iss_parameter_supported: cfg.advertiseIss,
+          ...(cfg.deviceGrant
+            ? {
+                device_authorization_endpoint:
+                  cfg.deviceGrant === 'cross-origin'
+                    ? 'https://elsewhere.example/device/code'
+                    : `${origin}/api/auth/device/code`,
+                grant_types_supported: [
+                  'authorization_code',
+                  'refresh_token',
+                  'urn:ietf:params:oauth:grant-type:device_code',
+                ],
+              }
+            : {}),
+        });
+      }
+
+      if (url.pathname === '/api/auth/device/code') {
+        const form = new URLSearchParams(await req.text());
+        deviceRequests.push({
+          clientId: form.get('client_id') ?? '',
+          resource: form.get('resource') ?? '',
+          scope: form.get('scope') ?? '',
+        });
+        return Response.json({
+          device_code: 'device-code-1',
+          user_code: 'WDJB-MJHT',
+          verification_uri: `${origin}/device`,
+          verification_uri_complete: `${origin}/device?user_code=WDJB-MJHT`,
+          expires_in: 1800,
+          interval: 1,
         });
       }
 
@@ -204,7 +260,10 @@ function startProvider(): ProviderState {
         const back = new URL(redirectUri);
         back.searchParams.set('code', 'auth-code-1');
         back.searchParams.set('state', url.searchParams.get('state') as string);
-        const iss = cfg.callbackIss === undefined ? `${origin}/api/auth` : cfg.callbackIss;
+        const iss =
+          cfg.callbackIss === undefined
+            ? `${origin}/api/auth`
+            : cfg.callbackIss;
         if (iss !== null) back.searchParams.set('iss', iss);
         return Response.redirect(back.toString(), 302);
       }
@@ -236,6 +295,7 @@ function startProvider(): ProviderState {
     origin: `http://127.0.0.1:${server.port}`,
     paths,
     tokenGrants,
+    deviceRequests,
     resources,
     redirectUris,
     clientIds,
@@ -249,6 +309,8 @@ function startProvider(): ProviderState {
       cfg.advertiseIss = true;
       cfg.platformDoc = null;
       cfg.entraCrossOrigin = false;
+      cfg.deviceGrant = false;
+      deviceRequests.length = 0;
       issued = 0;
       paths.length = 0;
       tokenGrants.length = 0;
@@ -310,6 +372,7 @@ const VARS = [
   'SEMANTIUS_ORG',
   'SEMANTIUS_API_KEY',
   'SEMANTIUS_JWT',
+  'SEMANTIUS_LOGIN_FLOW',
   'APPDATA',
   'LOCALAPPDATA',
   'HOME',
@@ -342,6 +405,11 @@ describe('oauth login', () => {
       saved[v] = process.env[v];
       delete process.env[v];
     }
+    // Force the loopback grant. Every login below drives the mock provider
+    // through a stubbed opener, so the browser flow is what is under test —
+    // but CI is set on a runner, where the grant chooser refuses an
+    // interactive login outright (nobody is there to complete one).
+    process.env.SEMANTIUS_LOGIN_FLOW = 'browser';
     configDir = await mkdtemp(join(tmpdir(), 'semantius-auth-cfg-'));
     secretsDir = await mkdtemp(join(tmpdir(), 'semantius-auth-sec-'));
     cacheDir = await mkdtemp(join(tmpdir(), 'semantius-auth-cache-'));
@@ -483,7 +551,10 @@ describe('oauth login', () => {
 
       await storage.save(big);
 
-      const onDisk = readFileSync(credentialsPath('SEMANTIUS:big.test'), 'utf8');
+      const onDisk = readFileSync(
+        credentialsPath('SEMANTIUS:big.test'),
+        'utf8',
+      );
       expect(onDisk.length).toBeGreaterThan(2560);
       expect(onDisk).not.toContain('refresh-secret');
       expect(await storage.load()).toEqual(big);
@@ -509,9 +580,9 @@ describe('oauth login', () => {
       const entry = secrets.store.get('semantius:SEMANTIUS:example.test') ?? '';
       expect(entry).not.toContain('old');
       expect(entry).not.toContain('new');
-      expect(await createSecretStorage('SEMANTIUS:example.test').load()).toEqual(
-        { refresh_token: 'new', tokens: {} },
-      );
+      expect(
+        await createSecretStorage('SEMANTIUS:example.test').load(),
+      ).toEqual({ refresh_token: 'new', tokens: {} });
     });
 
     test('a sealed session whose key is gone reads as no session', async () => {
@@ -644,6 +715,57 @@ describe('oauth login', () => {
   });
 
   // --------------------------------------------------------------------
+  describe('discovery: the device authorization endpoint', () => {
+    // Discovery is memoized per host name, so each case needs its own.
+    const named = (name: string): HostFacts => ({ ...host, host: name });
+
+    test('absent unless advertised, on both chains', async () => {
+      // Absence is the normal case and must not be guessed at: it is what
+      // tells a headless login to report that the grant is unavailable.
+      expect(
+        (await getOAuthMetadata(named('no-device.example')))
+          .deviceAuthorizationEndpoint,
+      ).toBeUndefined();
+    });
+
+    test('read from the RFC 8414 document (the legacy chain)', async () => {
+      provider.cfg.deviceGrant = true;
+      const metadata = await getOAuthMetadata(named('legacy-device.example'));
+      expect(metadata.deviceAuthorizationEndpoint).toBe(
+        `${provider.origin}/api/auth/device/code`,
+      );
+    });
+
+    test('read from the OIDC document the platform chain names', async () => {
+      // An Entra-backed deployment reaches it this way: the platform document
+      // names an OIDC discovery URL that is read verbatim.
+      provider.cfg.deviceGrant = true;
+      provider.cfg.platformDoc = {
+        version: 2,
+        host_type: 'selfhost',
+        idp_type: 'entra',
+        idp_well_known: `${provider.origin}/.well-known/openid-configuration`,
+        client_id_cli: 'cli-client-id',
+        scope: 'openid profile email offline_access',
+        audience: '',
+      };
+      const metadata = await getOAuthMetadata(named('platform-device.example'));
+      expect(metadata.deviceAuthorizationEndpoint).toBe(
+        `${provider.origin}/api/auth/device/code`,
+      );
+    });
+
+    test('refused when it is on another origin than the issuer', async () => {
+      // The device leg has no callback, so issuerMismatch() never sees it.
+      // This origin check is the only thing in its place.
+      provider.cfg.deviceGrant = 'cross-origin';
+      expect(getOAuthMetadata(named('cross-device.example'))).rejects.toThrow(
+        /device_authorization_endpoint on a different origin/,
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------
   describe('discovery', () => {
     test('resource metadata names the issuer, RFC 8414 the endpoints', async () => {
       const metadata = await getOAuthMetadata(host);
@@ -687,6 +809,96 @@ describe('oauth login', () => {
         discoveryUrl: `${provider.origin}/nope`,
       };
       expect(getOAuthMetadata(broken)).rejects.toThrow(/\/nope returned 404/);
+    });
+  });
+
+  // --------------------------------------------------------------------
+  describe('headless login: the device code grant', () => {
+    // Every test here forces the grant rather than simulating a machine with
+    // no browser: hasLocalBrowser() is unconditionally true on Windows and
+    // macOS, so DISPLAY cannot express "headless" on two of the three
+    // platforms this ships to. The chooser's own wiring is unit-tested in
+    // environment.test.ts; what needs a provider is the flow itself.
+    const device = () => {
+      process.env.SEMANTIUS_LOGIN_FLOW = 'device';
+    };
+
+    test('stores a session without opening anything', async () => {
+      provider.cfg.deviceGrant = true;
+      device();
+
+      // No openUrl stub, deliberately: the device flow must never reach a
+      // browser. On a headless runner the real opener would hang to the
+      // timeout, which is the bug this grant exists to remove.
+      await login(host);
+
+      expect(await hasStoredSession(host)).toBe(true);
+      expect(provider.tokenGrants).toContain(
+        'urn:ietf:params:oauth:grant-type:device_code',
+      );
+      expect(provider.tokenGrants).not.toContain('authorization_code');
+      expect(await getSessionToken(host)).toBe('access-1');
+      // Nothing was bound: no authorize request, so no loopback server.
+      expect(provider.redirectUris).toEqual([]);
+    });
+
+    test('the code request carries the client id and the tenant audience', async () => {
+      provider.cfg.deviceGrant = true;
+      device();
+
+      await login(loginHost);
+
+      expect(provider.deviceRequests).toHaveLength(1);
+      expect(provider.deviceRequests[0]).toMatchObject({
+        clientId: 'cli-client-id',
+        resource: 'tenant://t-1',
+        scope: 'openid profile email offline_access tenant:t-1:user',
+      });
+      // One host, one audience: the poll must ask for the same one.
+      expect(provider.resources).toContain('tenant://t-1');
+    });
+
+    test('the session it stores refreshes like any other', async () => {
+      provider.cfg.deviceGrant = true;
+      device();
+      await login(host);
+      const before = provider.tokenGrants.length;
+
+      const token = await getSessionToken(host, { forceRefresh: true });
+
+      expect(provider.tokenGrants.slice(before)).toEqual(['refresh_token']);
+      expect(token).toBe('access-2');
+    });
+
+    test('refused when the server advertises no device endpoint', async () => {
+      provider.cfg.deviceGrant = false;
+      device();
+
+      expect(login(host)).rejects.toThrow(/Authentication required/);
+      expect(await hasStoredSession(host)).toBe(false);
+    });
+
+    test('discovery refuses a device endpoint on another origin', async () => {
+      // A device flow has no callback, so issuerMismatch() never runs on this
+      // leg — the origin check at discovery is the only thing standing between
+      // a tampered document and a code sent to an attacker.
+      provider.cfg.deviceGrant = 'cross-origin';
+      device();
+
+      expect(login(host)).rejects.toThrow(/different origin/);
+    });
+
+    test('auto refuses in CI even when the grant is on offer', async () => {
+      provider.cfg.deviceGrant = true;
+      process.env.SEMANTIUS_LOGIN_FLOW = 'auto';
+      const savedCi = process.env.CI;
+      process.env.CI = 'true';
+      try {
+        expect(login(host)).rejects.toThrow(/CI environment/);
+      } finally {
+        if (savedCi === undefined) delete process.env.CI;
+        else process.env.CI = savedCi;
+      }
     });
   });
 
@@ -1442,26 +1654,47 @@ describe('oauth login', () => {
 
   // --------------------------------------------------------------------
   describe('--login', () => {
-    test('needs an interactive terminal', async () => {
+    const spawnLogin = (env: Record<string, string>) => {
       const cliPath = join(import.meta.dir, '..', 'src', 'index.ts');
-      const proc = Bun.spawn(['bun', 'run', cliPath, '--login', 'whoami'], {
+      return Bun.spawn(['bun', 'run', cliPath, '--login', 'whoami'], {
         env: {
           ...process.env,
           SEMANTIUS_HOST: host.host,
           SEMANTIUS_API_KEY: '',
           SEMANTIUS_JWT: '',
           SEMANTIUS_NO_DAEMON: '1',
+          // The suite sets this for the in-process logins; these two cases are
+          // about the guard that runs before any of that, so each states it.
+          SEMANTIUS_LOGIN_FLOW: '',
+          ...env,
         },
         stdin: null,
         stdout: 'pipe',
         stderr: 'pipe',
       });
+    };
+
+    test('needs an interactive terminal', async () => {
+      const proc = spawnLogin({});
       const stderr = await new Response(proc.stderr).text();
 
       expect(await proc.exited).toBe(1);
       expect(stderr).toContain(
         'Error [LOGIN_FAILED]: --login needs an interactive terminal',
       );
+    });
+
+    test('an explicit --login-flow gets past it: the device grant needs no stdin', async () => {
+      // Without this the stdin proxy would refuse the one grant that works on
+      // a headless box, where stdin is routinely not a TTY.
+      const proc = spawnLogin({ SEMANTIUS_LOGIN_FLOW: 'device' });
+      const stderr = await new Response(proc.stderr).text();
+
+      expect(stderr).not.toContain('needs an interactive terminal');
+      // It gets as far as the grant chooser, which refuses for its own reason:
+      // this provider advertises no device endpoint.
+      expect(stderr).toContain('does not offer the device code grant');
+      expect(await proc.exited).toBe(5);
     });
   });
 
@@ -1617,9 +1850,7 @@ describe('oauth login', () => {
 
       expect(hasHost(host.host)).toBe(false);
       expect(getCurrentHost()).toBeNull();
-      expect(lines.some((l) => l.includes('was the current host'))).toBe(
-        true,
-      );
+      expect(lines.some((l) => l.includes('was the current host'))).toBe(true);
     });
 
     test('removes the entry with no hint when it was not the current host', async () => {

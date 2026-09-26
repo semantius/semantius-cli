@@ -8,7 +8,12 @@
  */
 
 import { type TokenSet, createCliAuth } from 'cli-auth';
-import { debug, prefixedEnvName } from '../config.js';
+import {
+  debug,
+  getLoginFlow,
+  isSessionOnlyHost,
+  prefixedEnvName,
+} from '../config.js';
 import { ErrorCode, formatCliError } from '../errors.js';
 import {
   type CachedPlatform,
@@ -16,12 +21,19 @@ import {
   HostResolutionError,
   type OAuthMetadata,
   deleteHostCache,
+  getHostSource,
   readCachedOAuthMetadata,
   readCachedPlatformConfig,
   resolveHost,
 } from '../host.js';
 import { hasHost, recordHost } from '../hosts-index.js';
 import { logTokenEvent } from '../logger.js';
+import {
+  canShowUser,
+  hasLocalBrowser,
+  isCi,
+  promptStream,
+} from './environment.js';
 import {
   type PlatformConfig,
   configOrNull,
@@ -57,6 +69,14 @@ const DEFAULT_CALLBACKS: ReadonlyArray<Callback> = [
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
+ * The same ceiling for the device flow, but longer: the user has to reach
+ * another device, open a URL and type a code. Still finite — the server's own
+ * expiry is typically 30 minutes and cli-auth polls to it without an abort, so
+ * without this a forced device login in CI would hang for half an hour.
+ */
+const DEVICE_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
  * Seconds of remaining lifetime below which a cached access token counts as
  * expired. This is cli-auth's own default, named here because two code paths
  * must agree on it: the cache-only read in getSessionToken and the full Auth
@@ -66,6 +86,14 @@ const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 const TOKEN_REFRESH_THRESHOLD_S = 300;
 
 type Auth = ReturnType<typeof createCliAuth<'authorization-code'>>;
+/**
+ * The device-code strategy. A separate alias rather than a union with Auth:
+ * the two agree on getToken / logout / status, so the token, refresh and
+ * revoke paths keep the narrow type, and only `login` differs — device-code's
+ * onAuthorization takes a user code and a verification URI where the loopback
+ * flow takes a URL.
+ */
+type DeviceAuth = ReturnType<typeof createCliAuth<'device-code'>>;
 
 /**
  * A login is not possible for this host at all (no CLI client registered for
@@ -353,8 +381,50 @@ function cacheKey(resource: string | undefined): string {
 // ============================================================================
 
 /**
- * Run the browser login for this host and store the resulting session.
- * `openUrl` exists so tests can drive the flow without a real browser.
+ * Which grant to run, decided once discovery has answered. Ordered cascade,
+ * first match wins:
+ *
+ *   1. --login-flow browser   loopback, unconditionally (the override/test path)
+ *   2. --login-flow device    device code; refused if the server advertises none
+ *   3. isCi()                 nothing interactive completes in a pipeline
+ *   4. hasLocalBrowser()      loopback. Does NOT consult canShowUser(): the
+ *                             browser drives the user, so `login 2>log` on a
+ *                             desktop must still work
+ *   5. device + canShowUser() device code. Both conjuncts: an advertised
+ *                             endpoint is necessary, not sufficient — somebody
+ *                             has to read the code before it expires
+ *   6. otherwise              refuse, naming which of the three reasons applies
+ *
+ * Selection is on the advertised endpoint, never on idp_type, which CLAUDE.md
+ * defines as advisory.
+ */
+type GrantChoice =
+  | { grant: 'browser' }
+  | { grant: 'device' }
+  | { grant: 'refuse'; because: 'ci' | 'no-endpoint' | 'cannot-show' };
+
+function chooseGrant(metadata: OAuthMetadata): GrantChoice {
+  const advertised = Boolean(metadata.deviceAuthorizationEndpoint);
+  const forced = getLoginFlow();
+  if (forced === 'browser') return { grant: 'browser' };
+  if (forced === 'device') {
+    return advertised
+      ? { grant: 'device' }
+      : { grant: 'refuse', because: 'no-endpoint' };
+  }
+  if (isCi()) return { grant: 'refuse', because: 'ci' };
+  if (hasLocalBrowser()) return { grant: 'browser' };
+  if (advertised && canShowUser()) return { grant: 'device' };
+  return {
+    grant: 'refuse',
+    because: advertised ? 'cannot-show' : 'no-endpoint',
+  };
+}
+
+/**
+ * Run an interactive login for this host and store the resulting session.
+ * `openUrl` exists so tests can drive the browser flow without a real browser;
+ * the device flow needs no such stub, since it opens nothing.
  */
 export async function login(
   host: HostFacts,
@@ -371,6 +441,30 @@ export async function login(
     rediscover: true,
     platform,
   });
+
+  // The grant is chosen here, after discovery, and not at the three entry
+  // points (login / use / --login): only here is fresh metadata already in
+  // hand. Deciding earlier would mean either a second discovery round trip or
+  // reading the 24 h cache, where an entry written by an older CLI has no
+  // deviceAuthorizationEndpoint and would silently demote a capable host.
+  const choice = chooseGrant(metadata);
+  if (choice.grant === 'refuse') {
+    throw noInteractiveLogin(facts.host, choice.because);
+  }
+  if (choice.grant === 'device') {
+    return loginWithDeviceCode(facts, storage, { metadata, platform });
+  }
+  return loginWithBrowser(facts, storage, { metadata, platform }, opts);
+}
+
+/** The loopback browser flow (authorization code + PKCE). */
+async function loginWithBrowser(
+  facts: HostFacts,
+  storage: ReturnType<typeof storageFor>,
+  resolved: { metadata: OAuthMetadata; platform: PlatformConfig | null },
+  opts: { openUrl?: (url: string) => void },
+): Promise<void> {
+  const { metadata, platform } = resolved;
   const open = opts.openUrl ?? openBrowser;
 
   // The callback is checked as it arrives (so the browser sees the outcome),
@@ -396,10 +490,25 @@ export async function login(
     },
   );
 
+  // The URL is printed before the attempt and the outcome after it, so the CLI
+  // never claims to have opened a browser it did not open. The URL is useful
+  // either way: on this machine it is what the user can paste.
+  let opened: BrowserLaunch = 'unknown';
   const flow = auth.login({
     onAuthorization: (url) => {
-      console.error(`Opening the browser to sign in:\n${url}`);
-      open(url);
+      console.error(`Sign in to ${facts.host} in your browser:\n${url}`);
+      if (open === openBrowser) {
+        opened = openBrowser(url);
+      } else {
+        // A stubbed opener (tests) is assumed to have done its job.
+        open(url);
+        opened = 'ok';
+      }
+      if (opened === 'failed') {
+        console.error(
+          `Could not launch a browser. Open the URL above yourself, or see "semantius login --help" for the headless options.`,
+        );
+      }
     },
   });
 
@@ -430,6 +539,117 @@ export async function login(
   }
 
   await labelStoredTokens(storage, resourceIndicator(facts, platform));
+}
+
+/**
+ * The device code grant: print a short code and a URL, poll while the user
+ * approves on whatever device they like. Nothing is opened and no port is
+ * bound, which is the whole point on a host with no browser.
+ */
+async function loginWithDeviceCode(
+  facts: HostFacts,
+  storage: ReturnType<typeof storageFor>,
+  resolved: { metadata: OAuthMetadata; platform: PlatformConfig | null },
+): Promise<void> {
+  const { metadata, platform } = resolved;
+  const auth = createDeviceAuth(facts, storage, resolved);
+  const write = (text: string) => {
+    if (promptStream() === 'stdout') console.log(text);
+    else console.error(text);
+  };
+
+  const flow = auth.login({
+    onAuthorization: ({
+      userCode,
+      verificationUri,
+      verificationUriComplete,
+    }) => {
+      write(
+        `\nTo sign in to ${facts.host}, open this URL on any device:\n\n` +
+          `  ${verificationUri}\n\n` +
+          `and enter the code:  ${userCode}\n`,
+      );
+      if (verificationUriComplete) {
+        write(
+          `Or open this, which carries the code:\n  ${verificationUriComplete}\n`,
+        );
+      }
+      write('Waiting for approval...');
+    },
+  });
+
+  // The server sets its own expiry (typically 30 minutes) and cli-auth polls
+  // until then with no abort signal, so a ceiling here is what stops a wedged
+  // run — notably one forced with --login-flow device in CI, where nobody will
+  // ever approve. Generous enough for a walk to another device, still finite.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new LoginFailedError(
+            `the code was not approved within ${DEVICE_LOGIN_TIMEOUT_MS / 60_000} minutes`,
+          ),
+        ),
+      DEVICE_LOGIN_TIMEOUT_MS,
+    );
+  });
+
+  try {
+    await Promise.race([flow, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  await labelStoredTokens(storage, resourceIndicator(facts, platform));
+}
+
+/**
+ * No interactive login can complete here. Says which of the three reasons
+ * applies, and — the part that is easy to get wrong — advice that actually
+ * works on *this* host: with --host or a current host, an API key in the
+ * environment is ignored outright (isSessionOnlyHost / ignoreEnvCredentials),
+ * so "set <PREFIX>_API_KEY" alone would send the user in a circle. The host
+ * has to stop being session-only first.
+ *
+ * "Authentication required" is load-bearing: isAuthErrorMessage() maps it to
+ * exit 5.
+ */
+function noInteractiveLogin(
+  host: string,
+  because: 'ci' | 'no-endpoint' | 'cannot-show',
+): Error {
+  // The no-endpoint case is reached two ways — auto, having already found no
+  // browser, and --login-flow device, where a browser may well exist. Only the
+  // first may say anything about the browser.
+  const forcedDevice = getLoginFlow() === 'device';
+  const reason =
+    because === 'ci'
+      ? 'this looks like a CI environment, where nobody can complete a sign-in'
+      : because === 'cannot-show'
+        ? 'there is no terminal to display a device code on'
+        : forcedDevice
+          ? `${host} does not offer the device code grant`
+          : `no browser is available and ${host} does not offer the device code grant`;
+
+  const key = prefixedEnvName('API_KEY');
+  const hostVar = prefixedEnvName('HOST');
+  const fix =
+    getHostSource() === 'current'
+      ? `Run "semantius use --clear", then set ${hostVar}=${host} and ${key}.`
+      : isSessionOnlyHost()
+        ? `Drop --host and set ${hostVar}=${host} with ${key} instead.`
+        : `Set ${key} (or ${prefixedEnvName('JWT')}).`;
+
+  const error = new Error(
+    `Authentication required: cannot sign in to ${host} interactively — ${reason}.\n` +
+      `  ${fix}\n` +
+      `  A browser on this machine can still be used with "--login-flow browser" if one is reachable at ${DEFAULT_CALLBACKS.map((c) => c.port).join(' / ')} (e.g. over "ssh -L <port>:localhost:<port>").`,
+  );
+  // Reaches the shell as 5 (AUTH_ERROR) rather than the generic client error:
+  // this is a missing credential, not a malformed command line.
+  (error as Error & { exitCode?: number }).exitCode = ErrorCode.AUTH_ERROR;
+  return error;
 }
 
 /**
@@ -631,11 +851,42 @@ function createAuth(
         }
       : {}),
     strategy: 'authorization-code',
+    ...sharedAuthConfig(host, storage, resolved, resource),
+  });
+}
+
+/**
+ * The parts of the cli-auth config that do not depend on the grant. Kept in
+ * one place because the device-code path must agree with the loopback path on
+ * every one of them — client id, scope, storage and resource especially: a
+ * session stored by one grant is read back by the other (getSessionToken and
+ * revoke both build an authorization-code Auth), and "one host, one audience"
+ * only holds if `resource` is identical.
+ *
+ * `deviceAuthorizationEndpoint` is included for both. cli-auth ignores it
+ * under authorization-code and *requires* it under device-code, and building
+ * the metadata in one place is what stops the device grant from being wired up
+ * correctly everywhere except here — this object is rebuilt field by field, so
+ * anything not named is silently dropped.
+ */
+function sharedAuthConfig(
+  host: HostFacts,
+  storage: ReturnType<typeof storageFor>,
+  resolved: ResolvedHost,
+  resource: string | undefined,
+) {
+  const { metadata, platform } = resolved;
+  return {
     provider: {
       metadata: {
         authorizationEndpoint: metadata.authorizationEndpoint,
         tokenEndpoint: metadata.tokenEndpoint,
         revocationEndpoint: metadata.revocationEndpoint,
+        ...(metadata.deviceAuthorizationEndpoint
+          ? {
+              deviceAuthorizationEndpoint: metadata.deviceAuthorizationEndpoint,
+            }
+          : {}),
       },
     },
     clientId: effectiveClientId(host, platform),
@@ -644,6 +895,25 @@ function createAuth(
     tokenRefreshThreshold: TOKEN_REFRESH_THRESHOLD_S,
     fetch: tokenLoggingFetch(metadata.tokenEndpoint),
     ...(resource ? { resource } : {}),
+  };
+}
+
+/**
+ * The device code grant (RFC 8628), for a host with no usable browser. No
+ * loopback server and no callback, so none of the flow/callback options apply
+ * — and neither does the RFC 9207 issuer check that rides on the callback,
+ * which is why provider.ts binds the device endpoint to the issuer's origin
+ * during discovery instead.
+ */
+function createDeviceAuth(
+  host: HostFacts,
+  storage: ReturnType<typeof storageFor>,
+  resolved: ResolvedHost,
+): DeviceAuth {
+  const resource = resourceIndicator(host, resolved.platform);
+  return createCliAuth({
+    strategy: 'device-code',
+    ...sharedAuthConfig(host, storage, resolved, resource),
   });
 }
 
@@ -799,7 +1069,16 @@ function pickCallback(candidates: ReadonlyArray<Callback>): Callback {
  * line at the unquoted "&" of the query string, so `start` would open the
  * authorize URL truncated after the first parameter.
  */
-function openBrowser(url: string): void {
+/**
+ * 'failed' only when the launcher itself could not be started. A zero exit is
+ * not proof a browser appeared — rundll32 exits 0 with nothing registered, and
+ * macOS `open` returns 0 for a session nobody can see — so the child is never
+ * awaited: under some Linux handlers xdg-open stays alive for the browser's
+ * lifetime, and waiting on it would trade a 5-minute stall for a longer one.
+ */
+type BrowserLaunch = 'ok' | 'failed' | 'unknown';
+
+function openBrowser(url: string): BrowserLaunch {
   const cmd =
     process.platform === 'win32'
       ? ['rundll32', 'url.dll,FileProtocolHandler', url]
@@ -807,8 +1086,19 @@ function openBrowser(url: string): void {
         ? ['open', url]
         : ['xdg-open', url];
   try {
-    Bun.spawn(cmd, { stdout: 'ignore', stderr: 'ignore', stdin: 'ignore' });
+    const child = Bun.spawn(cmd, {
+      stdout: 'ignore',
+      stderr: 'ignore',
+      stdin: 'ignore',
+    });
+    // A launcher that is missing or immediately rejects the URL is the case
+    // worth reporting; anything still running is treated as success.
+    child.exited.then((code) => {
+      if (code !== 0) debug(`${cmd[0]} exited ${code}`);
+    });
+    return 'unknown';
   } catch (error) {
     debug(`Could not open a browser: ${(error as Error).message}`);
+    return 'failed';
   }
 }

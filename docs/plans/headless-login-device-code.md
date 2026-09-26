@@ -1,8 +1,18 @@
 # Plan: headless login — detect, use device code, or say so
 
-Status: open. Raised 2026-09-20 from the `use-semantius` command audit
-(`skill-command-coverage.md` §4). Revised twice after adversarial review; findings from the
-second round are marked **[r2]**.
+Status: **implemented 2026-09-26**, uncommitted. Raised 2026-09-20 from the `use-semantius`
+command audit (`skill-command-coverage.md` §4). Revised twice after adversarial review;
+findings from the second round are marked **[r2]**. §8 records where the implementation
+departed from this plan.
+
+Verified on real headless Linux (`oven/bun` in Docker, no `DISPLAY`, no `xdg-open`):
+
+| Case | Before | After |
+|---|---|---|
+| headless + tty, host offers device code | "Opening the browser", 5-min stall | device code, login succeeds |
+| headless + tty, host offers none | same 5-min stall | exit 5 in **1 second**, with advice |
+| headless, no tty (cron, pipe) | same 5-min stall | exit 5, "no terminal to display a code on" |
+| CI | same 5-min stall | exit 5, "nobody can complete a sign-in" |
 
 Scope: **`semantius-cli` only**. Server-side work is not scoped here — §6 names what each IdP
 needs; the repo plans are `device-code-semantius-cloud.md` and `device-code-semantius-idp.md`.
@@ -313,3 +323,44 @@ Steps 4 and 5 are each worth landing alone.
 (`skill-command-coverage.md` Step 2). When this lands, that needs revisiting: the command stops
 being a trap and becomes merely interactive. The prohibition for **agents** stands either way —
 a device code still needs a human to read it and approve.
+
+---
+
+## 8. How the implementation departed from this plan
+
+Four places, all found while building it.
+
+1. **Step 1 was wrong that no test asserts the `--login` stdin guard.** `tests/auth.test.ts`
+   has one (`--login` → exit 1, "needs an interactive terminal"). The guard was therefore
+   **kept**, not removed: it is pre-existing behaviour with its own test, and on Windows
+   `hasLocalBrowser()` is unconditionally true, so removing it would have sent that test down
+   the browser path and hung it. It now yields to an explicit `--login-flow`, which is what
+   unblocks the device grant for `--login` on a headless box. Unifying it with the cascade is
+   follow-up work.
+
+2. **A separate `DeviceAuth` alias rather than widening `Auth`.** Both strategies expose
+   `getToken` / `logout` / `status` and differ only in `login`, so the token, refresh and
+   revoke paths keep the narrow type and only the login path constructs the device variant.
+   The shared config moved into `sharedAuthConfig()` so the two cannot drift on client id,
+   scope, storage or `resource` — the last matters because "one host, one audience" only holds
+   if both grants request the same one.
+
+3. **Exit 5 needed a change in `main()`.** The plan said to classify the error; in fact
+   `main().catch()` discarded any `exitCode` and always exited 1. It now honours
+   `error.exitCode`, which is the convention the identity commands already used locally. The
+   refusal sets `ErrorCode.AUTH_ERROR`.
+
+4. **Step 5 landed smaller than written.** `openBrowser` now returns a launch result and the
+   CLI prints the URL *before* attempting it, so it never claims to have opened a browser it
+   did not. It does **not** fall back to device code from there: `onAuthorization` is
+   synchronous and the flow is already in flight with a bound loopback server, so a fallback
+   would mean abandoning it and leaking the listener. The child is deliberately not awaited —
+   under some Linux handlers `xdg-open` lives as long as the browser.
+
+### Known limitation
+
+`hasLocalBrowser()` returns true unconditionally on Windows and macOS, so macOS-over-SSH,
+Windows-over-SSH and Server Core still take the browser path and still stall. The fix for
+those is the spawn result, and the spawn result is not trustworthy there either (`rundll32`
+exits 0 with nothing registered). Linux — where the CI matrix runs and where the bug was
+reported — is fully covered.
