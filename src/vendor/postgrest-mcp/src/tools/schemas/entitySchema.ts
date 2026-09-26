@@ -27,6 +27,13 @@ export const entitySchema = z.looseObject({
       'Permission required to INSERT/UPDATE/DELETE from this table, by name. Same foreign key as view_permission: the permission must already exist. A permission an entity names cannot be deleted while the entity stands.'
     ),
   id_column: z.string().optional().describe('Name of the primary key column, created automatically'),
+  // Optional rather than .default(): this schema also serves update_entity, and
+  // a default would send id_type with every update, which the database refuses
+  // for any entity whose key type is not the default.
+  id_type: z.enum(['auto_increment', 'bigint', 'text', 'uuid', 'typeid', 'computed']).optional()
+    .describe('Key type of the table, set on create and locked afterwards (changing it is refused with 90233); omit it on update. auto_increment (the default when omitted): a 64-bit number the database assigns. bigint: a 64-bit number the caller supplies on every insert. text: a text key the caller supplies. uuid: a time-ordered UUIDv7 the database assigns. typeid: a prefixed, sortable TypeID such as acct_01h455vb4pex5vsknk084sn02q, assigned by the database; requires id_prefix. computed: system tables only, refused for a new entity (90234). The id field itself is created automatically; never create it with create_field.'),
+  id_prefix: z.string().optional()
+    .describe('TypeID prefix, required when id_type is typeid and empty otherwise: up to 63 lowercase letters and underscores, starting and ending with a letter (e.g. acct). Unique among entities. May be changed later: new ids take the new prefix, existing ids keep theirs, and an id with a former prefix can no longer be inserted.'),
   label_column: z.string().optional().describe('Name of the label/display column, created automatically'),
   label_parent: z.string().optional()
     .describe('Reference or parent field of this entity whose record label the composed _label is built from (the identity spine). Empty = self-identifying: the composed label is the local label. Not allowed on a junction entity, and the spine must stay acyclic.'),

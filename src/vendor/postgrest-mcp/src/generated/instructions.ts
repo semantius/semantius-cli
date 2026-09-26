@@ -152,9 +152,16 @@ export const instructions = `   ---
       - \`audit_log\`: Optional boolean, default \`false\`. When \`true\`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value.
       - Optional: \`managed\` — When \`false\`, automatic DDL execution is disabled for this entity. Leave unset (defaults to \`true\`) for normal entities where Semantius manages the database schema. Set to \`false\` only for external or legacy tables where DDL is managed outside the platform.
       - Optional: \`order_column\` — Enable fixed, user-defined row ordering (e.g. drag-and-drop) by naming the snake_case field that stores the sort position. The platform provisions that INTEGER column and auto-assigns increasing values on insert. Leave unset (default \`''\`) unless the user wants records to keep a manual order rather than a natural/sorted one.
+      - Optional: \`id_type\` — the key type of the table. **Chosen once on create and locked afterwards** (an update that changes it fails with \`90233\`), so decide before creating:
+        - \`auto_increment\` (default, leave it unset): a 64-bit number the database assigns. Right for almost every entity.
+        - \`uuid\`: a time-ordered UUIDv7 the database assigns. Use when ids must be unguessable or created by several systems without coordination.
+        - \`typeid\`: a prefixed, sortable id such as \`acct_01h455vb4pex5vsknk084sn02q\`, assigned by the database. Use when ids appear in URLs, logs or support tickets and should say what they are. **Requires \`id_prefix\`.**
+        - \`bigint\` / \`text\`: the caller supplies the key on every insert (e.g. an external system's numeric id, or a natural code like an ISO country code). Only when the user has such a key.
+        - \`computed\` is for system tables only; never use it.
+      - \`id_prefix\` — only with \`id_type: "typeid"\`, and then required: a short lowercase name for the records (e.g. \`acct\`, \`inv\`, \`cust\`), up to 63 lowercase letters and underscores, starting and ending with a letter, unique among entities. It can be changed later, but ids already issued keep the old prefix, and records exported before the change can no longer be re-imported with their ids.
 
       **The system automatically creates these fields — do NOT create them manually:**
-      - \`id\` — primary key field (\`ctype: "id"\`, \`is_pk: true\`)
+      - \`id\` — primary key field (\`ctype: "id"\`, \`is_pk: true\`), typed from \`id_type\`: format \`int64\` for \`auto_increment\` and \`bigint\`, \`text\`, \`uuid\`, or \`string\` for \`typeid\`
       - \`label\` — display field (\`ctype: "label"\`) that reads from \`label_column\`
       - The field named in \`label_column\` (e.g., \`service_name\`) with title from \`singular_label\`
       - \`created_at\` and \`updated_at\` timestamp fields
@@ -516,7 +523,7 @@ export const instructions = `   ---
    - Renaming \`table_name\` or \`field_name\` (breaks all references)
    - Deleting entities or fields (permanent data loss)
    - Removing permissions still in use by roles
-   - Changing primary key fields
+   - Changing primary key fields (\`id_type\` cannot change at all; a record's key value cannot change either, the update fails with \`90236\`)
    - **Always check dependencies before deletion**
 
    ---
@@ -573,14 +580,14 @@ export const instructions = `   ---
    |-----------|-----------------|--------------|-----------|
    | \`string\`, \`text\`, \`multiline\`, \`html\`, \`code\`, \`email\`, \`url\`, \`uri\`, \`uuid\`, \`password\` | TEXT | \`''\` | NOT NULL |
    | \`enum\` | TEXT | \`''\` unless \`input_type: "required"\`, then first entry of \`enum_values\` | NOT NULL |
-   | \`integer\`, \`int32\`, \`int64\` | INTEGER / BIGINT | \`0\` | NOT NULL |
+   | \`integer\`, \`int32\` / \`int64\` | INTEGER / BIGINT | \`0\` | NOT NULL |
    | \`number\`, \`float\`, \`double\` | NUMERIC / REAL | \`0.0\` | NOT NULL |
    | \`boolean\` | BOOLEAN | \`FALSE\` | NOT NULL |
    | \`json\`, \`jsonlogic\`, \`object\`, \`array\` | JSONB | \`'{}'\` | NOT NULL |
    | \`date-time\` | TIMESTAMPTZ | \`CURRENT_TIMESTAMP\` | NULL allowed |
    | \`date\` | DATE | \`CURRENT_DATE\` | NULL allowed |
-   | \`reference\` | FK, type of the referenced entity's key (INTEGER) | none | NULL allowed |
-   | \`parent\` | FK, type of the referenced entity's key (INTEGER) | none | NOT NULL |
+   | \`reference\` | FK, type of the referenced entity's key (BIGINT for \`auto_increment\`/\`bigint\`, TEXT, UUID, or the TypeID domain) | none | NULL allowed |
+   | \`parent\` | FK, type of the referenced entity's key (as for \`reference\`) | none | NOT NULL |
 
    ---
 
@@ -773,6 +780,8 @@ Compare file headers to entity field names/titles:
 - **Ambiguous or no match**: ask the user before generating code
 
 Never map file columns to fields with \`input_type: "readonly"\` — these are system-controlled and cannot be imported.
+
+If the entity's \`id_type\` is \`bigint\` or \`text\`, the caller supplies the key: map a file column to \`id\` (every row needs one). For the other key types (\`auto_increment\`, \`uuid\`, \`typeid\`) \`id\` is generated by the database and must not be mapped.
 
 ### Step 5 — Generate the Python Import Script
 
