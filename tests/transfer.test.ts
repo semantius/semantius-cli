@@ -919,7 +919,7 @@ describe('import', () => {
     expect(target.writesSince(mark)).toEqual([]);
   });
 
-  test('validation rules are written after the records they would reject', async () => {
+  test('validation rules are written before the records, and a record they reject stops every run', async () => {
     const source = fake('source.example.test');
     seedCrm(source);
     source.update('accounts', 5, { industry: 'Legacy' });
@@ -930,9 +930,11 @@ describe('import', () => {
     };
     source.update('entities', 'accounts', { validation_rules: [rule] });
     const target = emptyTarget();
+    const path = await exportCrm(source);
 
-    await call(target, 'import_module', { path: await exportCrm(source) });
-    expect(target.row('accounts', 5)?.industry).toBe('Legacy');
+    expect(await callError(target, 'import_module', { path })).toContain(
+      'legacy accounts are closed',
+    );
     expect(target.row('entities', 'accounts')?.validation_rules).toEqual([
       rule,
     ]);
@@ -942,11 +944,15 @@ describe('import', () => {
         r.target === 'entities' &&
         'validation_rules' in (r.body as Row),
     );
-    expect(rules).toBeGreaterThan(lastRequest(target, 'POST', 'accounts'));
-    // The rule is live on the target now.
-    expect(() =>
-      target.insert('accounts', [{ account_name: 'New', industry: 'Legacy' }]),
-    ).toThrow('legacy accounts are closed');
+    expect(rules).toBeGreaterThanOrEqual(0);
+    expect(rules).toBeLessThan(firstRequest(target, 'POST', 'accounts'));
+    expect(target.row('accounts', 5)).toBeUndefined();
+
+    // A re-run, the entity now on the target, fails the same way.
+    expect(await callError(target, 'import_module', { path })).toContain(
+      'legacy accounts are closed',
+    );
+    expect(target.row('accounts', 5)).toBeUndefined();
   });
 
   test('computed columns are not written; a field disabled by hand is', async () => {
@@ -1585,7 +1591,7 @@ describe('import: files and schema', () => {
     });
   });
 
-  test('select_rule is written after the records, with the validation rules', async () => {
+  test('select_rule is written before the records, with the validation rules', async () => {
     const source = fake('source.example.test');
     seedCrm(source);
     const selectRule = { '!=': [{ var: 'industry' }, 'Hidden'] };
@@ -1602,7 +1608,8 @@ describe('import: files and schema', () => {
         r.target === 'entities' &&
         'select_rule' in (r.body as Row),
     );
-    expect(patch).toBeGreaterThan(lastRequest(target, 'POST', 'accounts'));
+    expect(patch).toBeGreaterThanOrEqual(0);
+    expect(patch).toBeLessThan(firstRequest(target, 'POST', 'accounts'));
   });
 });
 

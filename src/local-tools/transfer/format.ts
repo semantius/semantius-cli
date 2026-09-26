@@ -116,13 +116,16 @@ export const ENTITY_CREATE_ONLY = [
   'catalog_entity_code',
   'catalog_entity_aliases',
 ];
-/** Written once the fields exist: they name fields. */
-export const ENTITY_DEFERRED = ['label_parent', 'computed_fields'];
 /**
- * Written after the records: older rows can fail today's validation rules,
- * and a select_rule would hide rows from the import's own reads.
+ * Written once the fields exist, since they name fields, and before any
+ * record: a first import and a re-import meet the same rules.
  */
-export const ENTITY_AFTER_DATA = ['validation_rules', 'select_rule'];
+export const ENTITY_DEFERRED = [
+  'label_parent',
+  'computed_fields',
+  'validation_rules',
+  'select_rule',
+];
 
 /** Field columns in file order: id and table_name are implied. */
 export const FIELD_COLUMNS = without(keysOf(fieldSchema), 'id', 'table_name');

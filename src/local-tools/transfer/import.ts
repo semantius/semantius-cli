@@ -7,11 +7,12 @@
  * re-import of unchanged data sends no write at all.
  *
  *   1. module, permissions, hierarchy, roles, grants (import_module only);
- *   2. schema: entities, fields, then the entity columns that name fields;
+ *   2. schema: entities, fields, then the entity columns that name fields
+ *      (validation rules and select_rule among them, so every record is
+ *      written under the rules, on a first import as on a re-import);
  *   3. the schema cache, when the schema changed on a cloud host;
  *   4. records, table by table in foreign-key order, keyed on the id column;
- *      fix_id_sequence after each table;
- *   5. validation rules, last: older rows can fail today's rules.
+ *      fix_id_sequence after each table.
  *
  * Metadata is matched by name, never by host id, and never written with
  * ON CONFLICT: an upsert would put create-only columns (origin, slug,
@@ -24,7 +25,6 @@ import { resetSchemaCache } from '../../vendor/postgrest-mcp/src/utils/resetSche
 import { buildToolContext, setCurrentContext } from '../crud/context.js';
 import {
   CORE_FIELD_FIXED,
-  ENTITY_AFTER_DATA,
   ENTITY_COLUMNS,
   ENTITY_CREATE_ONLY,
   ENTITY_DEFERRED,
@@ -123,7 +123,6 @@ export async function importTransfer(
   ctx.pg.onSchemaMiss = cache.refreshOnce;
 
   await importRecords(ctx, file, outcomes);
-  await importValidationRules(ctx, doc, outcomes);
   return result;
 }
 
@@ -523,10 +522,7 @@ async function importSchema(
 
   // 1. Entities.
   const writable = ENTITY_COLUMNS.filter(
-    (c) =>
-      c !== 'module_name' &&
-      !ENTITY_DEFERRED.includes(c) &&
-      !ENTITY_AFTER_DATA.includes(c),
+    (c) => c !== 'module_name' && !ENTITY_DEFERRED.includes(c),
   );
   const updatable = writable.filter(
     (c) => c !== 'table_name' && !ENTITY_CREATE_ONLY.includes(c),
@@ -666,35 +662,6 @@ function schemaCacheRefresher(ctx: TransferContext) {
       return again;
     },
   };
-}
-
-async function importValidationRules(
-  ctx: TransferContext,
-  doc: TransferDoc,
-  outcomes: Map<string, EntityResult>,
-): Promise<void> {
-  const entities = schemaEntries(doc).filter((e) =>
-    ENTITY_AFTER_DATA.some((c) => e[c] !== undefined),
-  );
-  if (!entities.length) return;
-  const current = indexBy(
-    await ctx.pg.readIn(
-      'entities',
-      'table_name',
-      entities.map((e) => e.table_name),
-      { key: 'table_name' },
-    ),
-    'table_name',
-  );
-  for (const e of entities) {
-    const target = current.get(e.table_name);
-    const change = target && changes(e, target, ENTITY_AFTER_DATA);
-    if (!change) continue;
-    await withContext(`updating the validation rules of ${e.table_name}`, () =>
-      patch(ctx.pg, 'entities', [eq('table_name', e.table_name)], change),
-    );
-    markUpdated(outcomes.get(e.table_name));
-  }
 }
 
 // ----------------------------------------------------------------- records
