@@ -215,6 +215,32 @@ reports that `.env`'s host. The signal is the `host_source` row (`flag | token |
 | `env` / `dotenv:…` / `org` | configured but not pinned — could be a project default | proceed, but name the host and where it came from |
 | exits 1, `MISSING_ENV_VAR` | nothing configured | ask which host, then `semantius use <host>` |
 
+**Read `auth_method` too, because the trap runs both ways.** The credential order is
+`<PREFIX>_JWT` → `<PREFIX>_API_KEY` → stored session, first match wins — **an API key outranks
+a browser session**, which surprises people who have just logged in:
+
+- **Host pinned** (`current`, or `--host`) → session-only: an API key or JWT in the environment
+  is ignored, silently. Someone who runs `use` and *then* sets a key gets no error and no
+  effect.
+- **Host not pinned** (`org`, `env`, `dotenv:…`) → the environment's key wins, silently. A user
+  who has just completed an interactive login — device code included — still sees
+  `auth_method: apikey`, and their new session is never reached.
+
+Observed on a real machine: `whoami` → `host_source org`, `auth_method apikey`; the same
+`whoami --host <same host>` → `host_source flag`, `auth_method oauth`. Same host, same machine,
+different credential, no warning either way.
+
+So an agent reporting "connected" must say **which credential** is in use, not just which host.
+Where a user expects their session and sees `apikey`, the fix is to pin the host
+(`semantius use <host>`) or force it (`--auth oauth`) — not to log in again, which will appear
+to work and change nothing.
+
+> Worth raising with the owner separately: whether a stored session *should* outrank an API
+> key. A session is per host, refreshed and revocable; a key is a long-lived secret that is
+> often a leftover in a `.env`. The present order silently discards the credential the user
+> most recently and most deliberately established. Changing it is a behavioural break, so it is
+> a decision, not a cleanup — but the skill should not paper over it.
+
 **Never run unattended** — `login`, `logout`. Documented as prohibitions, with the reasons:
 
 - `login` — signs in interactively. The subcommand has **no TTY guard**
