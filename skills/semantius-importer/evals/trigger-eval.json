@@ -16,5 +16,8 @@
   {"query": "add a status field to the products entity", "should_trigger": false},
   {"query": "export the orders table to CSV", "should_trigger": true},
   {"query": "merge these two CSV files and sort by date", "should_trigger": false},
-  {"query": "insert a new category record and link 2 products to it", "should_trigger": false}
+  {"query": "insert a new category record and link 2 products to it", "should_trigger": false},
+  {"query": "export the crm module from staging and import it into prod", "should_trigger": false},
+  {"query": "restore crm.json into the test host", "should_trigger": false},
+  {"query": "export the orders table to another host", "should_trigger": false}
 ]

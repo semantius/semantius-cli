@@ -71,7 +71,7 @@ Per field:
 | `precision` | Max decimal places seen; `0` for every non-numeric base format. |
 | `required` | `true` = no empty cell was seen in any inspected row; `false` = at least one exists. A statement about the CSV with **no `create_field` counterpart** — never send it. |
 | `input_type` | `"required"`, present **only** when `required` is `true`. The derived property that IS sendable to `create_field`; treated as a proposal the user can downgrade (section 6). |
-| `enum_values` | Present only for `format: "enum"`: the distinct values, **always strings**. |
+| `enum_values` | Present only for `format: "enum"`: the distinct values, **always strings** in the introspection output. (A live field's `enum_values` may also hold `{"value", "label"}` pairs; see section 3.) |
 | `sample_values` | Present for every non-enum format: the distinct values seen, capped at 11. JSON numbers for numeric formats, verbatim strings otherwise (so `007` keeps its leading zeros). These are unique values, not the first N rows. |
 
 ### Detection quirks you cannot see in the output
@@ -129,7 +129,10 @@ Because of quirk 1, treat every `enum` verdict as a claim to verify, not a fact.
 | numeric strings with decimals | `number` (with `precision` re-derived from the values) |
 | ISO dates / datetimes | `date` / `date-time` |
 | a handful of short lowercase tokens (`draft`, `active`, `archived`) | genuine `enum`; keep `enum_values` as-is (sorted, deduped) |
+| readable labels (`On hold`, `Key account`) | genuine `enum`: propose snake_case values with the file's text as the label, `{"value": "on_hold", "label": "On hold"}`; records store the value and the import translates each cell (the `coerce` enum branch matches a value, then a label, case-insensitively) |
 | longer free text, names, or values that clearly continue beyond the sample | `string`; the low cardinality is an artifact of a small file |
+
+**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` pair; records, `default_value` and comparisons always use the value. Against an existing field, compare by value: a file holding the labels of a live field's pairs is not a mismatch (the import translates them), and a label-only difference is cosmetic.
 
 Genuine enum extras: consider whether the CSV plausibly contains every lifecycle value. A 30-row export may miss states. When the user knows more values exist, add them to `enum_values` now; adding later is also possible via `update_field`.
 
@@ -149,7 +152,13 @@ The util's `field_name` suggestions are mechanically valid. The skill still veri
 
 **New entity (create path)** — this is where `id_mode` applies: the wrapper tells you whether the file brings a usable primary key, and the (deferred) preservation design below is about exactly this case. Until it is re-enabled, **report** the detection ("this file carries a usable primary key; preservation lands in a later iteration") and apply the classic policy. Entities this skill creates keep the platform default `id_column` of `id`.
 
-**Existing entity (reuse path)** — `id_mode` is **ignored**: the entity already has its primary key. Read the actual `id_column` from `read_entity` (never assume `id`) and apply the collision policy plus the payload guard.
+**Existing entity (reuse path)** — `id_mode` is **ignored**: the entity already has its primary key. Read the actual `id_column` from `read_entity` (never assume `id`) and apply the collision policy plus the payload guard. **The key type decides whether the file maps to `id` at all** (read `id_type` with it):
+
+| `id_type` | Map a column to `id`? |
+|---|---|
+| `bigint`, `text` | Yes: the caller supplies the key; every row needs one |
+| `auto_increment`, `uuid`, `typeid`, `is_a` | No: the database generates it |
+| `has_a` | Only when the file holds the ids of existing base records to attach to; without it, each row creates a base record too |
 
 | Column | Default resolution | Alternatives (one question for all collisions) |
 |---|---|---|
@@ -158,7 +167,7 @@ The util's `field_name` suggestions are mechanically valid. The skill still veri
 
 **The unique-key question (user-facing wording).** Any column that identifies a row in the source (an id, a code, a reference number) is a candidate. Ask once, in plain words: *"`<Header>` looks like a unique id from the source. Mark `<field>` as unique so re-running this import skips rows that are already there?"* Options: **Unique** (Recommended) — `unique_value: true` goes on the field, `natural_key` in `mapping.json` names it, the import skips rows whose value already exists; **Not unique** — plain insert, re-running the file inserts every row again. The phrase "natural key" is internal (`mapping.json`) and never appears in a question or a plan; the user decides about **uniqueness**. There is no "update existing rows" option: **updating existing records is postponed** (README → Postponed), the import is insert-only.
 
-**Why deferred:** explicit-id imports leave the platform id sequence behind and the first platform-side insert collides (verified live). The full preservation design, the sequence rule, and the repairing RPC's SQL live in the README under "Deferred design"; it returns once the `fix_id_sequence` RPC is installed.
+**Why deferred:** explicit-id imports leave the platform id sequence behind and the first platform-side insert collides (verified live). The full preservation design, the sequence rule, and the repairing RPC's SQL live in the README under "Deferred design"; the `fix_id_sequence` RPC it depended on now ships with the platform (the CLI's transfer import uses it), so re-enabling preservation is a planning item, not a platform blocker (README → roadmap).
 
 **Other reserved-name collisions.** `label`, the `<label_column>` field, `created_at`, and `updated_at` are auto-created; `_label` and `<fk>_label` are read-time projections. None may be targeted by `create_field`:
 
@@ -185,7 +194,7 @@ Offer `format: "reference"` + `reference_table` (with `reference_delete_mode: "r
 
 Otherwise keep the column scalar (`integer` or `string` as introspected) and note in the mapping that it can be converted to a reference later. Looking up target ids from display values (e.g. the CSV holds category *names*, not ids) is out of scope for this skill's import script; flag it and keep the column scalar, or let the user pre-process the CSV.
 
-`format: "parent"` (composition, cascade delete) is almost never right for an imported flat file; suggest it only when the user describes the relationship as ownership.
+`format: "parent"` (composition, cascade delete) is almost never right for an imported flat file; suggest it only when the user describes the relationship as ownership. On an `is_a` entity a `parent` or `reference` field never cascades (`90249`): use `restrict` or `clear`.
 
 ---
 
@@ -301,7 +310,7 @@ Per column:
 
 ## 9. Existing entities: field diff and change classification
 
-When the target entity already exists, diff the approved mapping against the live fields (`read_field '{"filters": "table_name=eq.<table>"}'`). Never target live fields with `input_type` `readonly` or `disabled`, and never the `_label` / `<fk>_label` projections.
+When the target entity already exists, diff the approved mapping against the live fields (`read_field '{"filters": "table_name=eq.<table>"}'`). **For an `is_a` / `has_a` entity the fields are the family's**: `read_field` lists only the fields the entity owns, so walk `id_refentity` up with `read_entity` and read every level at once (`table_name=in.(<entity>,<base>,…)`); a column may map to an inherited field like to an own one (platform facts: `../../use-semantius/references/entity-families.md`). Such an entity is imported with plain inserts (never an upsert, `42P10`). Never target live fields with `input_type` `readonly` or `disabled`, and never the `_label` / `<fk>_label` projections.
 
 Four diff buckets:
 
@@ -332,7 +341,7 @@ Four diff buckets:
 | Change | Why | Alternatives |
 |---|---|---|
 | Format change across Postgres primitives (`string` → `date`, `integer` → `string`, `number` → `boolean`, ...) | The platform rejects it; existing data cannot be retyped in place | coerce in the import script into the **live** format when lossless (e.g. CSV `integer` into live `string`); drop the column; report only; or abort and let the user remodel (abort is never a listed option on the mismatch question: the user types "stop" into its free-text slot) |
-| Removing `enum_values` in use | Would orphan existing rows | leave the value; treat the CSV's smaller set as a subset |
+| Removing `enum_values` in use (compared by value) | Would orphan existing rows | leave the value; treat the CSV's smaller set as a subset |
 | Touching auto-generated fields (`id`, `label`, `<label_column>` structure, `created_at`, `updated_at`) | Platform-owned | section 4 renames on the CSV side instead |
 
 Coercion direction matters: a CSV `integer` column imports losslessly into a live `string` field; a CSV `string` column does **not** import into a live `integer` field unless every value parses. When the user picks coerce-in-script, the script validates per row and routes failures to the failed-rows capture rather than aborting the batch.

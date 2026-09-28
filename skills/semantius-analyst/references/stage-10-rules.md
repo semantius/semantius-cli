@@ -40,13 +40,17 @@ A JSON array per entity. Each rule must evaluate truthy for the write to succeed
 ```json
 [
   {
-    "code": "amount_positive",
+    "code": "99001",
+    "name": "amount_positive",
     "message": "Amount must be positive.",
     "description": "Money never goes negative on this entity.",
     "jsonlogic": {">": [{"var": "amount"}, 0]}
   }
 ]
 ```
+
+- **`name`**: snake_case, unique within the entity. The rule's natural key (drift detection, merge, audit findings).
+- **`code`**: a class-99 SQLSTATE error code, exactly `99` followed by three digits (`^99[0-9]{3}$`); the platform rejects any other shape with `90905` and does not require uniqueness. Assign codes sequentially per spec starting at `99001`, in §3 entity order then array order, so every rule in the module has a distinct code the caller can branch on.
 
 Platform-extension operators:
 - `{"value_changed": "<field>"}` — true when field differs from `$old`, true on INSERT.

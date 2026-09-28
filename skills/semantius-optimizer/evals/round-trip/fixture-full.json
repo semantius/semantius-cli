@@ -17,8 +17,8 @@
     "default_manager_role_id": 82,
     "default_admin_role_id": 83,
     "view_permission": "demo-ops-pro:read",
-    "manage_permission_id": 912,
-    "admin_permission_id": 913
+    "manage_permission": "demo-ops-pro:manage",
+    "admin_permission": "demo-ops-pro:admin"
   },
   "ownedRaw": [
     {
@@ -31,6 +31,8 @@
       "label_column": "asset_tag",
       "order_column": "sort_key",
       "id_column": "id",
+      "id_type": "typeid",
+      "id_prefix": "asset",
       "audit_log": true,
       "edit_permission": "demo-ops-pro:manage",
       "edit_mode": "sidebar",
@@ -44,7 +46,8 @@
       "computed_fields": [],
       "validation_rules": [
         {
-          "code": "retire_needs_permission",
+          "code": "99001",
+          "name": "retire_needs_permission",
           "message": "Only asset managers can retire an asset.",
           "description": "Retiring is a gated transition.",
           "jsonlogic": { "if": [ { "==": [ { "var": "workflow_state" }, "retired" ] }, { "require_permission": "demo-ops-pro:retire_asset" }, true ] }
@@ -62,6 +65,8 @@
       "label_column": "vendor_name",
       "order_column": "",
       "id_column": "id",
+      "id_type": "uuid",
+      "id_prefix": "",
       "audit_log": false,
       "edit_permission": "demo-ops-pro:admin",
       "edit_mode": "auto",
@@ -86,6 +91,8 @@
       "label_column": null,
       "order_column": "",
       "id_column": "id",
+      "id_type": "auto_increment",
+      "id_prefix": "",
       "audit_log": false,
       "edit_permission": "demo-ops-pro:link",
       "edit_mode": "auto",
@@ -131,20 +138,20 @@
     }
   ],
   "perms": [
-    { "id": 911, "permission_name": "demo-ops-pro:read", "description": "Read access to every record in the module." },
-    { "id": 912, "permission_name": "demo-ops-pro:manage", "description": "Create and edit records in the module." },
-    { "id": 913, "permission_name": "demo-ops-pro:admin", "description": "Administer reference data and settings." },
-    { "id": 914, "permission_name": "demo-ops-pro:retire_asset", "description": "Retire an asset." },
-    { "id": 915, "permission_name": "demo-ops-pro:view_all_assets", "description": "See every asset, not only your own." },
-    { "id": 916, "permission_name": "demo-ops-pro:approve_vendor", "description": "Approve a vendor for use." },
-    { "id": 917, "permission_name": "demo-ops-pro:link", "description": "Link assets to secondary vendors." }
+    { "permission_name": "demo-ops-pro:read", "description": "Read access to every record in the module." },
+    { "permission_name": "demo-ops-pro:manage", "description": "Create and edit records in the module." },
+    { "permission_name": "demo-ops-pro:admin", "description": "Administer reference data and settings." },
+    { "permission_name": "demo-ops-pro:retire_asset", "description": "Retire an asset." },
+    { "permission_name": "demo-ops-pro:view_all_assets", "description": "See every asset, not only your own." },
+    { "permission_name": "demo-ops-pro:approve_vendor", "description": "Approve a vendor for use." },
+    { "permission_name": "demo-ops-pro:link", "description": "Link assets to secondary vendors." }
   ],
   "allHierarchy": [
-    { "including_permission_id": 913, "included_permission_id": 912 },
-    { "including_permission_id": 912, "included_permission_id": 911 },
-    { "including_permission_id": 913, "included_permission_id": 914 },
-    { "including_permission_id": 913, "included_permission_id": 915 },
-    { "including_permission_id": 912, "included_permission_id": 917 }
+    { "including_permission_name": "demo-ops-pro:admin", "included_permission_name": "demo-ops-pro:manage" },
+    { "including_permission_name": "demo-ops-pro:manage", "included_permission_name": "demo-ops-pro:read" },
+    { "including_permission_name": "demo-ops-pro:admin", "included_permission_name": "demo-ops-pro:retire_asset" },
+    { "including_permission_name": "demo-ops-pro:admin", "included_permission_name": "demo-ops-pro:view_all_assets" },
+    { "including_permission_name": "demo-ops-pro:manage", "included_permission_name": "demo-ops-pro:link" }
   ],
   "roles": [
     { "id": 81, "slug": "demo_ops_pro_viewer", "origin": "model", "catalog_role_code": "demo_ops_pro_viewer" },

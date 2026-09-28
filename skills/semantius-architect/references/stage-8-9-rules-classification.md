@@ -20,13 +20,14 @@ Walk every entity once and assign its **`entity_type`** — the closed 6-way dat
 1. **Platform built-in** (`users`, `roles`, `permissions` declared in §3 only for self-containment) → classify by data-kind: `users` → `operational_record`; `roles` / `permissions` → `catalog`. (Built-ins are dedup'd at deploy, so this is informational, but emit it.)
 2. **Pure junction (binary or N-ary)** — read **§5**: a link table with **two or more** `parent` FKs, no own attributes, and no lifecycle → `junction` (`entity_type = junction` auto-combines **all** legs — a binary `(user, role)` link or an N-ary `(user, role, tenant)` link work the same way). But an N-ary link that carries **its own attributes or a lifecycle** is an association class → classify it `operational_record` / `operational_workflow`, **not** `junction`.
 3. **No direct user writes, every field derived** → `computed`. Rare at blueprint level (it is usually a field-level fact), so this almost never fires for the architect; leave it to upstream / the analyst unless the entity is unambiguously a computed rollup.
-4. **Reference / config / lookup** — admin-maintained, **no gated lifecycle** — when **all three** of the old admin-tier test hold → `catalog`:
+4. **Family base** — the base of a family (a §3 `**Key types:**` row names it in `based on`) whose based entities are operational records: never `catalog`, however small it looks. Skip rung 5: classify it `operational_workflow` when it carries a gated §7 lifecycle (rung 6), otherwise `operational_record`. Example: `business_partners`, the base of `customers` and `suppliers`, is `operational_record`.
+5. **Reference / config / lookup** — admin-maintained, **no gated lifecycle** — when **all three** of the old admin-tier test hold → `catalog`:
    - **small and slowly-changing** (hundreds of rows at most, edited a handful of times a month, not continuously);
    - **referenced by operational entities as a lookup / category / stage / type / source** (other §3 entities FK *at* it to classify themselves; operational entities point *outward* at reference data, reference data is pointed *at*);
    - **typically ships seeded values** with the module or the org's initial config (the allowed sources / stages / categories / types / priorities / currencies / departments list, decided once and only occasionally extended).
    This is the Stage 9 admin-tier heuristic **preserved and promoted** — the admin test was always the `catalog` test.
-5. **Has a gated lifecycle state machine** — read **§7**: ≥1 lifecycle-states row, with one initial state and ≥1 terminal state, normally ≥1 `requires_permission?` gate. A single gated transition (e.g. `draft → submitted`) qualifies; state count is irrelevant, and a submit-then-lock posture is orthogonal and never makes it `catalog` → `operational_workflow`.
-6. **Otherwise** → `operational_record` (the default for an entity that captures work happening but has no gated lifecycle).
+6. **Has a gated lifecycle state machine** — read **§7**: ≥1 lifecycle-states row, with one initial state and ≥1 terminal state, normally ≥1 `requires_permission?` gate. A single gated transition (e.g. `draft → submitted`) qualifies; state count is irrelevant, and a submit-then-lock posture is orthogonal and never makes it `catalog` → `operational_workflow`.
+7. **Otherwise** → `operational_record` (the default for an entity that captures work happening but has no gated lifecycle).
 
 **Then DERIVE the write tier from `entity_type`** (this replaces the old direct tier classification):
 
@@ -77,7 +78,7 @@ The hint is **optional and per-entity**; omit it when the entity is not a master
 | Entity examples | Suggested cluster |
 |---|---|
 | `currencies`, `cost_centers`, `budget_periods`, `ledger_accounts`, `fiscal_years`, `tax_rates`, `gl_accounts` | `finance` |
-| `vendors`, `customers`, `partners`, `suppliers` | `parties` |
+| `business_partners`, `vendors`, `customers`, `partners`, `suppliers` (when a company can be several of these, one `business_partners` base with `has_a` entities: see `normalization.md`) | `parties` |
 | `departments`, `business_units`, `locations`, `sites` | `organization` |
 | `products`, `product_categories`, `skus` | `products` |
 | `employees`, `job_titles` | `employees` |
@@ -88,7 +89,8 @@ The hint never overrides the user — the deployer surfaces it as a recommendati
 
 > | Entity | entity_type | Write tier | Reason | Master cluster |
 > |---|---|---|---|---|
-> | `vendors` | catalog | :admin | small lookup, shipped seeded values | `parties` |
+> | `payment_terms` | catalog | :admin | small lookup, shipped seeded values | `finance` |
+> | `vendors` | operational_record | :manage | companies the business buys from, added continuously | `parties` |
 > | `cost_centers` | catalog | :admin | reference data, ships seeded | `finance` |
 > | `(other entities)` | operational_record | :manage | bulk records, changes continuously | (none) |
 

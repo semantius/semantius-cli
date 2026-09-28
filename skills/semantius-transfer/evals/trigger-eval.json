@@ -1,0 +1,18 @@
+[
+  {"query": "export the CRM module from staging and import it into prod", "should_trigger": true},
+  {"query": "clone the accounts and contacts tables with their data to the test host", "should_trigger": true},
+  {"query": "back up the hr module to a file before I start changing it", "should_trigger": true},
+  {"query": "restore crm.json into the test host", "should_trigger": true},
+  {"query": "can you snapshot all our modules so we have something to roll back to", "should_trigger": true},
+  {"query": "seed test.example.com with the orders data from prod", "should_trigger": true},
+  {"query": "promote the ticketing module we built on stage to acme.semantius.cloud", "should_trigger": true},
+  {"query": "copy just the schema of the vendors table over to the other instance, no rows", "should_trigger": true},
+  {"query": "import this CSV into semantius", "should_trigger": false},
+  {"query": "export the orders table to CSV", "should_trigger": false},
+  {"query": "generate a spec from the crm module", "should_trigger": false},
+  {"query": "someone built a module in the UI, get me a markdown spec for it", "should_trigger": false},
+  {"query": "deploy this blueprint", "should_trigger": false},
+  {"query": "clone the candidate-crm blueprint and deploy it", "should_trigger": false},
+  {"query": "set up a webhook receiver so our ERP can push order rows", "should_trigger": false},
+  {"query": "load this xlsx of customers into the accounts table", "should_trigger": false}
+]

@@ -1,6 +1,6 @@
 ---
 artifact: semantic-spec
-version: "5.5"
+version: "5.8"
 system_name: Demo Ops
 tagline: "Demo operations tracker"
 icon_name: wrench

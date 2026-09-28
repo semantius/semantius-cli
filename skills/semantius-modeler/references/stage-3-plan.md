@@ -162,15 +162,28 @@ When the spec carries `reuse-from <module>.<entity>` for a master/shared entity,
 
 ---
 
+### Family plan lines
+
+When the spec has `is_a` / `has_a` entities, the plan shows the creation levels and each family in plain words (Writing Convention 8: never `is_a`, `has_a`, `base`, `subtype`):
+
+```
+  📦 Created in order: Business Partners, Activities (first) → Customers, Emails (then)
+  🧬 Customers: something a Business Partner can also be (shares its record and id)
+  🧬 Emails: a kind of Activity (listed with every activity)
+```
+
+A base in another module adds `🔗 Writers of Customers also edit Business Partners in CRM` (the cross-module edit grant).
+
 ## Gate A: pre-write planned-state integrity check (fires here, in Stage 3)
 
 **Gate A: pre-write planned-state integrity check.** Fires in Stage 3, before any Stage 4 writes. Build the full intended end-state object graph in memory and verify internal consistency:
 
 - Every planned FK target exists or is being created in this run.
+- Every `**Based on:**` base is live or created in this run **at an earlier level** (no cycle), and no based entity carries a label column, label parent or order column.
 - Every role member is a real user.
 - No circular permission hierarchy. (Load-bearing: today's design only adds rows shaped `<consumer>:read → <master>:read` and `<consumer>:manage → <master>:manage`, which can't cycle. But a future feature that adds inclusions in the other direction, e.g. `<master>:read → <consumer>:read`, could form a cycle. The check stays in place to catch that.)
 - Every default-role slot in every module's scaffold has a planned role.
-- Every cross-module inclusion has both parent and child planned or live.
+- Every cross-module inclusion has both its including and included permission (by `permission_name`) planned or live.
 - Every merged JSON entry has a `source_module` value.
 
 If any check fails, surface as a 🛑 with the broken reference quoted. Catches design bugs before they touch the catalog.

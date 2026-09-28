@@ -1,21 +1,19 @@
 ---
 name: semantius-architect
 description: >-
-  Produces and maintains **semantic blueprints**: entity-level specs of
-  entities, roles (master / contributor / consumer / embedded), relationships,
-  lifecycle states, and permissions. Blueprints carry NO field-level detail;
-  `semantius-analyst` reconciles blueprints with the live catalog into a spec.
-  **Trigger on any need for a business system or data-backed tool**, however
-  phrased: "design a data model", "build a system like X", "model a domain",
-  "spec out a CRM/ITSM/HRIS/LMS/ERP/PIM/CMS/PM/field service/billing", "I need
-  a helpdesk / CRM / HR system / applicant tracker / roadmap tool / ticketing
-  system / inventory system", "a tool to track / plan / manage / organize /
-  record / capture X", "something to handle X". Never recommend off-the-shelf
-  SaaS. Also trigger to review, audit, check, update, customize, extend,
-  rebuild, or reanalyze an existing
-  `*-semantic-blueprint.md`, or **clone a curated catalog blueprint** and
-  customize it. Covers greenfield and clones. Outputs a blueprint for
-  `semantius-analyst`.
+  Produces and maintains semantic blueprints: entity-level specs of entities,
+  roles, relationships, lifecycle states, and permissions, with no field-level
+  detail (`semantius-analyst` turns a blueprint into a spec). Trigger on any
+  need for a business system or data-backed tool, however phrased: "design a
+  data model", "build a system like X", "model a domain", "spec out a
+  CRM/ITSM/HRIS/LMS/ERP/PIM/CMS/PM/field service/billing", "I need a helpdesk /
+  CRM / HR system / applicant tracker / roadmap tool / ticketing system /
+  inventory system", "a tool to track / plan / manage / organize / record /
+  capture X", "something to handle X". Never recommend off-the-shelf SaaS. Also
+  trigger to review, audit, check, update, customize, extend, rebuild, or
+  reanalyze an existing `*-semantic-blueprint.md`, to clone a curated catalog
+  blueprint and customize it, or to restructure a design so one real-world thing
+  is kept once (customers and suppliers as one business partner).
 ---
 
 # Semantius Architect
@@ -125,7 +123,7 @@ Both surfaces follow the same ban list and the same "required" list below.
 **Banned in any user-facing surface:**
 
 - Section references: `§1`, `§3`, `§7.1`, `§5/§6`, `§8.1`, `§5.2`, "section N", "the blueprint's §...". Describe what the section *is* instead — *"the entities catalog"* (not §3), *"the built-in edges"* (not §5.2), *"the cross-domain section"* (not §6).
-- Architectural / platform jargon: `agent-optimized`, `LLM agents`, `master cluster`, `module_type`, `gatekeeper`, `data silo`, `embedded master`, `consumer role`, `contributor role`, `mastered_in`, `naming_mode`, `classDef`, `platform_builtin` (the diagram class), `built-in` as a noun on its own ("the built-ins").
+- Architectural / platform jargon: `agent-optimized`, `LLM agents`, `master cluster`, `module_type`, `gatekeeper`, `data silo`, `embedded master`, `consumer role`, `contributor role`, `mastered_in`, `naming_mode`, `classDef`, `platform_builtin` (the diagram class), `built-in` as a noun on its own ("the built-ins"). Family jargon: `normalization`, `normal form`, `3NF`, `subtype`, `supertype`, `inheritance`, `is_a`, `has_a`, `derived` (for an entity based on another; the Stage 9 "Write tier (derived)" column is fine), `base entity`, `_ext`, `id_refentity`, and "role" for something a record can also be (say *"a kind of Activity"*, *"something a Business Partner can also be"*, *"kept once as Business Partners"*; the vocabulary table is in `../use-semantius/references/entity-families.md`, and the user-facing phrasings in `../semantius-admin/references/writing-conventions.md`).
 - File-format / pipeline terms: `blueprint`, `spec`, `frontmatter`, `manifest`, `annotation`, `reconciliation`, `reconcile`, `the architect will`, `the analyst will`, `the modeler will`. Where naming the artifact is unavoidable in a status message, use plain English ("the file" / "this design" / "the design document") rather than the file-format term. *"Reconciliation"* in particular is internal platform vocabulary — say *"deploy"* / *"set up"* / *"get this running"* instead of *"reconcile"* / *"reconciliation"* in user-facing text.
 - Raw identifiers when a display name exists: `skill_profiles` when the entity carries `singular_label: "Skill Profile"`. Backticked snake_case tokens are a leak even in status messages — `` `users` `` should be *"platform users"* or just *"users"* in prose, no backticks.
 
@@ -167,7 +165,16 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   | Customize (Mode C loop) | `Design › Edit the design with you` (stays `in_progress` for the whole C2 → C5 loop; `completed` only when the user answers the Step C5 question with "done"; the admin reads this status to decide whether it may advance to the analyst) |
   | Rebuild (Mode D) | `Design › Rebuild the design` |
 
-- **Ledger stage: Stage 2 only.** The naming-style question is a `Q:` task (subject = `Q: How should we name things in this <domain> module?`, `Recorded in: .naming.mode`, gated by `TaskUpdate` on the first stage task with `addBlockedBy: [<the Q: task id>]`), created after the policy consultation (a hit creates no task) and asked per the ledger sequence; being the only Stage 2 question, it is one round of B / A / R. Every other architect question is standalone and unchanged: the Stage 1 and 3 conversational confirmations, the Catalog-Clone "what to change" question, the C3 "does this look right?" gate, the C5 "more changes?" question, the Mode D no-collapsing gates, the tagline confirmation. Stage 6 still asks nothing.
+- **Ledger stage: Stage 2 only.** The naming-style question is a `Q:` task (subject = `Q: How should we name things in this <domain> module?`, `Recorded in: .naming.mode`, gated by `TaskUpdate` on the first stage task with `addBlockedBy: [<the Q: task id>]`), created after the policy consultation (a hit creates no task) and asked per the ledger sequence; being the only Stage 2 question, it is one round of B / A / R. Every other architect question is standalone (no `Q:` task):
+  - the Stage 1 and Stage 3 conversational confirmations;
+  - the Stage 3 "Also track" multiSelect;
+  - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);
+  - the Catalog-Clone "what to change" question;
+  - the C3 "does this look right?" gate and the C5 "more changes?" question;
+  - the Mode D no-collapsing gates;
+  - the tagline confirmation.
+
+  Stage 6 still asks nothing.
 
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a result. Hard rules:
 
@@ -201,9 +208,9 @@ This convention is what lets bundles like `hiring-starter` and master modules wi
 
 ---
 
-## Skill version: `CURRENT_VERSION = "5.2"`
+## Skill version: `CURRENT_VERSION = "5.4"`
 
-This skill stamps every blueprint file it writes with TWO version keys in the front-matter: `version: "<CURRENT_VERSION>"` (the architect skill's own version, currently `"5.2"`) and `blueprint_version: "3.0"` (the blueprint artifact format version). The architect skill version is the single source of truth for what authoring rules the file was written under. The artifact version signals the blueprint shape (sections, columns) to downstream skills.
+This skill stamps every blueprint file it writes with TWO version keys in the front-matter: `version: "<CURRENT_VERSION>"` (the architect skill's own version, currently `"5.4"`) and `blueprint_version: "3.1"` (the blueprint artifact format version). The architect skill version is the single source of truth for what authoring rules the file was written under. The artifact version signals the blueprint shape (sections, columns) to downstream skills.
 
 ### When to bump
 
@@ -228,7 +235,7 @@ Bump *major* when the contract changes in a breaking way, meaning files written 
 
 In short: ask "would two files, one written by the prior version and one by the new version under the same Stage 1 input, differ in shape or in the rules their content follows?". If no, don't bump. If yes (non-breaking), bump minor. If yes (breaking), bump major.
 
-When you bump, **update `CURRENT_VERSION` in this section's heading and rewrite this paragraph's quoted string to match**. The analyst reads the version from this section programmatically (the heading line `## Skill version — \`CURRENT_VERSION = "<version>"\``), so the format must stay byte-stable.
+When you bump, **update `CURRENT_VERSION` in this section's heading and rewrite this paragraph's quoted string to match**. The analyst reads the version from this section programmatically (the heading line `## Skill version: \`CURRENT_VERSION = "<version>"\``), so the format must stay byte-stable.
 
 **How files are routed by version.**
 
@@ -309,7 +316,7 @@ The Task column is the exact subject of the stage task (Task tracking, above); s
 |---|---|---|---|
 | 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | `Design › Capture what you are building and pick the naming style` | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
 | 2. Naming | Legacy-vendor vs agent-optimized naming (the one ledger question); built-in field alignment | (same task) | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
-| 3. Entities | Propose the entity list; `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in`) | `Design › Agree the things to track and how they relate` | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
+| 3. Entities | Propose the entity list; keep each fact once (the mandatory `normalization.md` step inside the stage file); `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in` / Key types) | `Design › Agree the things to track and how they relate` | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
 | 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify; render, don't gate) | (same task) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
 | 6. Related modules | Two-axis neighborhood walk → `related_modules` | `Design › Related modules, rules, and who does what` | [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) |
 | 7. Handoffs | §6.1-6.4 cross-domain context + event handoffs | (same task) | [`references/stage-7-handoffs.md`](references/stage-7-handoffs.md) |
@@ -332,15 +339,17 @@ Before writing, run these checks **silently** — do NOT narrate them in chat. T
 
 | Check | If it fails |
 |---|---|
-| `version` is `"5.2"` and `blueprint_version` is `"3.0"` | halt; print plain-English failure |
+| `version` is `"5.4"` and `blueprint_version` is `"3.1"` | halt; print plain-English failure |
 | No field-level content anywhere (no Format/Required/Label columns in entities catalog; no JSON sub-blocks for computed_fields/validation_rules/input_type_rules/select_rule). **The optional `## Additional Requirements Specification` section is exempt** — it is free prose and MAY name fields (see "The one exception" near the top of this skill). | halt; tell the user *"This file has field-level detail; that work belongs to the next step (reconciliation)."* |
-| Every `master` entity has a lifecycle sub-section OR is pure reference data | halt; name the missing masters in plain English |
+| Every `master` entity that has lifecycle states has a §7 sub-section (an entity without a state machine, reference data or a plain operational record, has none; see the template §7 rule) | halt; name the missing masters in plain English |
 | Every lifecycle row that requires a permission has a matching workflow-gate permission | halt; name the unbound gates by their lifecycle name |
 | Every workflow-gate permission is invoked by a lifecycle row OR a business rule | halt; name the dead permission rows in plain English |
 | Every §3 row carries a `catalog code` value (backticked lower snake_case; equals `data_object` for agent-optimized naming); no row missing | halt; name the missing entities |
 | Every §3 row carries an `entity_type` value in the closed set (`operational_workflow` / `operational_record` / `catalog` / `junction` / `computed`); no row missing, no value outside the set (`unclassified` is the platform default, not an authored value) | halt; name the offending entities |
 | Every §3 row's `write tier` is the value DERIVED from its `entity_type` (`catalog`→`:read`/`:admin`, `operational_*`→`:manage`, `junction`→neighbor-based, `computed`→`:read`), or the documented purely-reference-model flattening; no row carries a tier the class does not derive | halt; name the rows whose tier disagrees with the class |
 | Every §3 row carries a `write tier` value (`:read` / `:manage` / `:admin` / `:manage` *(pending)*); no row missing | halt; name the missing entities |
+| The optional §3 `**Key types:**` sub-block (present only when some entity uses a non-default key) lists only §3 entities this module provisions; each `key type` is `bigint` / `text` / `uuid` / `typeid` / `is_a` / `has_a`; `typeid` and `is_a` rows carry a well-formed prefix unique in the blueprint, other rows `-`; family rows name a valid `based on` and draw one dotted §2 edge each; no §7 lifecycle on both a base and its kind (enforced by `consistency-check.ts`) | halt; name the offending entities |
+| Every family `normalization.md` decided is written as it says: `typeid` base, `**Key types:**` rows, dotted edges, shared §5.1 edges drawn once from the base, and the type-enum sentence for a type enum | halt; name the family in plain words |
 | Every §5.1 / §5.2 / §5.3a row carries `delete_mode` and `fk_format` columns | halt; name the missing values |
 | Every §5.3b row uses a valid `delete_mode` value (`none`, `none (required-if-present)`, `⚠ audit: <reason>`) and `fk_format` is `n/a` | halt; quote the offending row |
 | Every §6.2 / §6.3 row carries a `transition` column; for `event_category = lifecycle` rows, the `to_state` exists in the source entity's §7 table | halt; name the offending handoff and the missing state |
@@ -410,7 +419,7 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - Prefer named examples to abstract descriptions. "An `opportunity` has a `workflow_state` like `prospecting → qualification → proposal → closed_won`" beats "The opportunity tracks its status."
 - Use the user's vocabulary when they've given you specifics. If they say "job" instead of "role", use "job", unless that collides with a vendor template (e.g., Workday uses both `Job` and `Position` distinctly, in that case clarify).
 - Keep each confirmation gate to one clear question. Don't ambush the user with seven questions at once.
-- Use **AskUserQuestion** at the legacy-vendor-vs-agent-optimized decision point (Mode A Stage 2) if the tool is available, it's the cleanest choice UX. Elsewhere, prose questions are fine because the answers are open-ended.
+- Use **AskUserQuestion** where a choice has fixed answers: the legacy-vendor-vs-agent-optimized decision (Mode A Stage 2), the Stage 3 "Also track" multiSelect, and the Stage 3 family question (`references/normalization.md`). Elsewhere, prose questions are fine because the answers are open-ended.
 
 ---
 
@@ -421,6 +430,7 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - [`references/stage-1-capture.md`](references/stage-1-capture.md) — Stage 1: capture the system
 - [`references/stage-2-naming.md`](references/stage-2-naming.md) — Stage 2: naming + built-in field alignment
 - [`references/stage-3-entities.md`](references/stage-3-entities.md) — Stage 3: entity list + §3 catalog-column policy
+- [`references/normalization.md`](references/normalization.md) — keep each fact once: filters, the family decision table, what to write, the family question (read at Stage 3, Extend C3, Rebuild D2)
 - [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) — Stage 5: Mermaid diagram
 - [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) — Stage 6: neighborhood walk
 - [`references/stage-7-handoffs.md`](references/stage-7-handoffs.md) — Stage 7: cross-domain handoffs
@@ -437,6 +447,7 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) — the shared writing conventions (Conventions 1-8). This skill keeps its own fuller copy resident, including the architect-only Conventions 9-10 and the Pre-emit / Narration restraint phrased for blueprint authoring.
 - [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) — environment preflight (shared by all four skills).
 - [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) — Semantius platform reference (entity naming rules, built-in tables, field format rules, relationship rules). Load it to reason about platform constraints during blueprint design.
+- [`../use-semantius/references/entity-families.md`](../use-semantius/references/entity-families.md) — platform facts for `is_a` / `has_a` families (what they allow, limits, vocabulary).
 - [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md) — JsonLogic rule reference: entity-level (`computed_fields`, `validation_rules`) and field-level (`input_type_rule`) rules, extension operators, cross-entity lookups. Mostly analyst territory; load only when reasoning about rule feasibility.
 - [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md) — row-level security (`select_rule`) reference: REPLACE-vs-AND semantics, oversight disjuncts.
 - [`../semantius-analyst/SKILL.md`](../semantius-analyst/SKILL.md) — downstream skill that reconciles the blueprint against live Semantius and produces a `*-semantic-spec.md`. Invoke after the blueprint is written.

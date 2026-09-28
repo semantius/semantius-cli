@@ -40,14 +40,16 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 
 ```json
 {
-  "code":        "release_only_when_committed",
+  "code":        "99001",
+  "name":        "release_only_when_committed",
   "message":     "A release can only be assigned once the feature is planned, in_progress, or shipped.",
   "jsonlogic":   { /* JsonLogic expression */ },
   "description": "Optional human note explaining why this rule exists"
 }
 ```
 
-- `code` (string, required) — snake_case, unique within the entity. Stable identifier for UI / i18n binding.
+- `code` (string, required): a class-99 SQLSTATE code of exactly five characters, `99` followed by three digits (`^99[0-9]{3}$`, e.g. `"99001"`). It is the error code the caller receives and branches on. The platform does not require it to be unique, but by convention codes are assigned sequentially per module starting at `99001` in spec order, so every rule in a module has a distinct code. (The platform's own rules use class-90 codes such as `"90201"` and carry `source_module: "platform"`; never author those.)
+- `name` (string, required by convention): snake_case, unique within the entity. The rule's stable natural key: agents diff and merge rules on `name`, never on `code`.
 - `message` (string, required) — default English text returned to the caller on failure.
 - `jsonlogic` (object, required) — must evaluate truthy for the record to be valid.
 - `description` (string, optional) — human note explaining *why* this rule exists.
@@ -77,7 +79,8 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 
 ```json
 {
-  "code": "released_is_terminal",
+  "code": "99001",
+  "name": "released_is_terminal",
   "message": "A release that has been released cannot move back to planned or in_progress.",
   "jsonlogic": {
     "or": [
@@ -107,7 +110,8 @@ In addition to standard JsonLogic operators, the platform provides three extensi
 
 ```json
 {
-  "code": "approve_offer_requires_approver_permission",
+  "code": "99001",
+  "name": "approve_offer_requires_approver_permission",
   "message": "Only users with the offer-approver permission can mark an offer approved.",
   "jsonlogic": {
     "if": [
@@ -126,7 +130,8 @@ In addition to standard JsonLogic operators, the platform provides three extensi
 
 ```json
 {
-  "code": "edit_restricted_to_author_or_manager",
+  "code": "99002",
+  "name": "edit_restricted_to_author_or_manager",
   "message": "Only the note's original author or a user with the manage-all-notes permission can edit this note.",
   "jsonlogic": {
     "if": [
@@ -344,7 +349,8 @@ When `create_entity` / `update_entity` accepts these properties, the platform ve
 
 - Both values are arrays (objects of any other shape are rejected).
 - Every `computed_fields[].name` resolves to an existing field on the entity.
-- Every `validation_rules[].code` is unique within the entity.
+- Every `validation_rules[].code` is a class-99 code matching `^99[0-9]{3}$`; anything else (`"9900A"`, `"990010"`, a snake_case string) is rejected with `90905` (`validation_rules[i] on <table> must carry a class 99 code`). Uniqueness is not enforced; keep `name` unique within the entity and `code` distinct within the module by convention.
+- Extra keys on a rule entry (such as `name`) are preserved as written.
 - Every `jsonlogic` expression parses; malformed expressions are rejected.
 
 JsonLogic-level column references (`{"var": "<name>"}`) are NOT checked against the entity's field list at parse time when they live under a `set_record` / `let` binding — the binding name is known only at evaluation time. A typo in `{"var": "order.staus"}` (a missing `t`) returns `null` at runtime rather than failing the deploy. Test cross-entity rules end-to-end before relying on them; the platform catches grosser malformations (the operator name itself, the binding name shape) at parse time.
@@ -388,7 +394,8 @@ semantius call crud create_entity '{
     ],
     "validation_rules": [
       {
-        "code": "release_only_when_committed",
+        "code": "99001",
+        "name": "release_only_when_committed",
         "message": "A release can only be assigned once the feature is planned, in_progress, or shipped.",
         "jsonlogic": {
           "or": [

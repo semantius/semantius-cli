@@ -29,7 +29,10 @@
  *
  * Every row kind is written as ONE set (deploy-lib `ensureMany` / `ensurePairs`):
  * one `in.()` read, ONE `create_*` call carrying every missing row, one re-read
- * for the ids, and one id-array `update_*` to converge a drifted `module_id`.
+ * for the keys, and one key-array `update_*` to converge a drifted `module_id`
+ * (`update_permission` is keyed by `permission_name`, `update_role` by numeric `id`).
+ * The module record's six references are three permission NAMES (`view_permission`,
+ * `manage_permission`, `admin_permission`) and three role ids (`default_*_role_id`).
  * Never a loop of single-record creates. Re-running is a pure no-op.
  *
  * It makes NO plan decisions. It takes the already-resolved §8.1 baseline
@@ -52,8 +55,15 @@
 
 import { read1, write, ensureMany, ensurePairs } from "./deploy-lib";
 
-/** Bump in lockstep with the modeler `EXPECTED_MAJOR` / analyst major. Schema-coupled. */
-export const SCAFFOLD_LIB_MAJOR = 5;
+/**
+ * Bump when the platform RBAC / module schema this file bakes in changes. Schema-coupled.
+ *   6: permissions are keyed by `permission_name` (no numeric id). `permission_hierarchy`
+ *      links `including_permission_name` → `included_permission_name` (id = "<including>.<included>"),
+ *      `role_permissions` carries `role_id` + `permission_name` (id = "<role_id>.<permission_name>"),
+ *      and the module record references `manage_permission` / `admin_permission` by NAME.
+ *      `update_permission` / `delete_permission` are keyed by `permission_name`.
+ */
+export const SCAFFOLD_LIB_MAJOR = 6;
 
 // ───────────────────────────── live-schema preflight ─────────────────────────
 
@@ -186,7 +196,8 @@ export interface ScaffoldConfig {
 
 export interface ScaffoldResult {
   moduleId: number;
-  permissionIds: { read: number; manage: number; admin?: number };
+  /** Permission NAMES (permissions are keyed by `permission_name`; there is no numeric permission id). */
+  permissionNames: { read: string; manage: string; admin?: string };
   roleIds: { viewer: number; manager: number; admin?: number };
 }
 
@@ -197,21 +208,23 @@ const isEmpty = (v: unknown): boolean => v === "" || v === null || v === undefin
 
 /**
  * Ensure the baseline permissions exist with `module_id` — as ONE set: one
- * `in.()` read, ONE `create_permission` call for the missing rows, one re-read
- * (ids come from the read, never off the create), then ONE `update_permission`
- * with an id ARRAY for any live row whose `module_id` drifted (same `data` for
- * every id, so it is one call). Returns `permission_name → id`.
+ * `in.()` read, ONE `create_permission` call for the missing rows, one re-read,
+ * then ONE `update_permission` keyed by a `permission_name` ARRAY for any live row
+ * whose `module_id` drifted (same `data` for every name, so it is one call).
+ * Permissions have no numeric id: `permission_name` is the primary key, and every
+ * reference to a permission (hierarchy, role grants, module record) uses the name.
  */
 async function ensurePermissions(
   rows: ReadonlyArray<{ permission_name: string; description: string }>, moduleId: number,
-): Promise<Map<string, number>> {
+): Promise<void> {
   const live = await ensureMany(
     "read_permission", "permission_name", (r) => r.permission_name,
     "create_permission", rows.map((r) => ({ ...r, module_id: moduleId })),
   );
-  const drifted = [...live.values()].filter((p) => isEmpty(p.module_id) || p.module_id !== moduleId).map((p) => p.id);
-  if (drifted.length) await write("update_permission", { id: drifted, data: { module_id: moduleId } });
-  return new Map([...live].map(([name, p]) => [name, p.id as number]));
+  const drifted = [...live.values()]
+    .filter((p) => isEmpty(p.module_id) || p.module_id !== moduleId)
+    .map((p) => p.permission_name as string);
+  if (drifted.length) await write("update_permission", { permission_name: drifted, data: { module_id: moduleId } });
 }
 
 /**
@@ -234,23 +247,27 @@ async function ensureRoles(
   return new Map([...live].map(([slug, r]) => [slug, r.id as number]));
 }
 
-/** Idempotent hierarchy edges (`including` *includes* `included`), created as ONE set via `ensurePairs`. */
+/**
+ * Idempotent hierarchy edges (`including` *includes* `included`), created as ONE set
+ * via `ensurePairs`. Both ends are permission NAMES (the platform keys the row as
+ * `"<including>.<included>"`).
+ */
 async function ensureHierarchy(
-  edges: ReadonlyArray<{ including_permission_id: number; included_permission_id: number }>, origin: Origin,
+  edges: ReadonlyArray<{ including_permission_name: string; included_permission_name: string }>, origin: Origin,
 ): Promise<void> {
   if (!edges.length) return;
   await ensurePairs(
-    "read_permission_hierarchy", "including_permission_id", "included_permission_id",
+    "read_permission_hierarchy", "including_permission_name", "included_permission_name",
     "create_permission_hierarchy", edges.map((e) => ({ ...e, origin })),
   );
 }
 
-/** Idempotent role↔permission grants, created as ONE set via `ensurePairs`. */
+/** Idempotent role↔permission grants (`role_id` + `permission_name`), created as ONE set via `ensurePairs`. */
 async function ensureRolePermissions(
-  grants: ReadonlyArray<{ role_id: number; permission_id: number }>,
+  grants: ReadonlyArray<{ role_id: number; permission_name: string }>,
 ): Promise<void> {
   if (!grants.length) return;
-  await ensurePairs("read_role_permission", "role_id", "permission_id", "create_role_permission", grants);
+  await ensurePairs("read_role_permission", "role_id", "permission_name", "create_role_permission", grants);
 }
 
 /**
@@ -327,27 +344,29 @@ export async function scaffoldModule(cfg: ScaffoldConfig): Promise<ScaffoldResul
                     "catalog_module_code", "domain_code", "icon_name", "home_page", "logo_color",
                     "access_scope", "settings"],
     create_permission: ["permission_name", "description", "module_id"],
-    create_permission_hierarchy: ["including_permission_id", "included_permission_id", "origin"],
+    create_permission_hierarchy: ["including_permission_name", "included_permission_name", "origin"],
     create_role: ["role_name", "slug", "description", "module_id", "origin", "catalog_role_code"],
-    create_role_permission: ["role_id", "permission_id"],
+    create_role_permission: ["role_id", "permission_name"],
+    update_module: ["view_permission", "manage_permission", "admin_permission",
+                    "default_viewer_role_id", "default_manager_role_id", "default_admin_role_id", "access_scope"],
   });
 
   // 1-2. Module (+ provenance), then the baseline permissions as ONE set (one in.() read, one
-  //      create_permission call for the missing rows, one re-read, one id-array converge).
+  //      create_permission call for the missing rows, one re-read, one name-array converge).
   const moduleId = await ensureModule(cfg.module, cfg.scope);
-  const perms = await ensurePermissions([
-    { permission_name: `${slug}:read`, description: cfg.permissions.read },
-    { permission_name: `${slug}:manage`, description: cfg.permissions.manage },
-    ...(hasAdmin ? [{ permission_name: `${slug}:admin`, description: cfg.permissions.admin! }] : []),
+  const readName = `${slug}:read`;
+  const manageName = `${slug}:manage`;
+  const adminName = hasAdmin ? `${slug}:admin` : undefined;
+  await ensurePermissions([
+    { permission_name: readName, description: cfg.permissions.read },
+    { permission_name: manageName, description: cfg.permissions.manage },
+    ...(adminName ? [{ permission_name: adminName, description: cfg.permissions.admin! }] : []),
   ], moduleId);
-  const readId = perms.get(`${slug}:read`)!;
-  const manageId = perms.get(`${slug}:manage`)!;
-  const adminId = hasAdmin ? perms.get(`${slug}:admin`)! : undefined;
 
   // 3. Baseline hierarchy as ONE set: manage→read, plus admin→manage when the admin tier exists.
   await ensureHierarchy([
-    { including_permission_id: manageId, included_permission_id: readId },
-    ...(adminId !== undefined ? [{ including_permission_id: adminId, included_permission_id: manageId }] : []),
+    { including_permission_name: manageName, included_permission_name: readName },
+    ...(adminName ? [{ including_permission_name: adminName, included_permission_name: manageName }] : []),
   ], origin);
 
   // 4. Baseline roles as ONE set, then their baseline grants as ONE set.
@@ -358,28 +377,29 @@ export async function scaffoldModule(cfg: ScaffoldConfig): Promise<ScaffoldResul
   const managerId = roles.get(roleSlug(cfg.roles.manager.slug))!;
   const adminRoleId = hasAdmin ? roles.get(roleSlug(cfg.roles.admin!.slug))! : undefined;
   await ensureRolePermissions([
-    { role_id: viewerId, permission_id: readId },
-    { role_id: managerId, permission_id: manageId },
-    ...(adminRoleId !== undefined && adminId !== undefined ? [{ role_id: adminRoleId, permission_id: adminId }] : []),
+    { role_id: viewerId, permission_name: readName },
+    { role_id: managerId, permission_name: manageName },
+    ...(adminRoleId !== undefined && adminName ? [{ role_id: adminRoleId, permission_name: adminName }] : []),
   ]);
 
-  // 5. Wire the six module-record FK columns + access_scope (the step most often dropped).
+  // 5. Wire the six module-record references + access_scope (the step most often dropped).
+  //    The three permission references are permission NAMES; the three role references are numeric role ids.
   const wire: Record<string, unknown> = {
-    view_permission: `${slug}:read`,           // text column (permission NAME)
-    manage_permission_id: manageId,            // numeric FK (permission id)
+    view_permission: readName,
+    manage_permission: manageName,
     default_viewer_role_id: viewerId,
     default_manager_role_id: managerId,
     access_scope: cfg.scope,
   };
   if (hasAdmin) {
-    wire.admin_permission_id = adminId;
+    wire.admin_permission = adminName;
     wire.default_admin_role_id = adminRoleId;
   }
   await write("update_module", { id: moduleId, data: wire });
 
   return {
     moduleId,
-    permissionIds: { read: readId, manage: manageId, ...(adminId !== undefined ? { admin: adminId } : {}) },
+    permissionNames: { read: readName, manage: manageName, ...(adminName ? { admin: adminName } : {}) },
     roleIds: { viewer: viewerId, manager: managerId, ...(adminRoleId !== undefined ? { admin: adminRoleId } : {}) },
   };
 }
@@ -444,40 +464,39 @@ export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
   if (mod.view_permission !== `${slug}:read`) fail("module.view_permission", `expected ${slug}:read, live ${mod.view_permission}`);
   else ok("module.view_permission", `${slug}:read`);
 
-  // Module permission FKs dereference to the right permission_name (or null under basic).
-  const checkPermFk = async (col: string, expectedName: string | null) => {
-    const id = mod[col];
+  // Module permission references hold the right permission_name (or null under basic).
+  // They are name references (a foreign key to permissions.permission_name), so no dereference is needed.
+  const checkPermRef = async (col: string, expectedName: string | null) => {
+    const v = mod[col];
     if (expectedName === null) {
-      if (!isEmpty(id)) warn(`module.${col}`, `expected null under basic, live ${id}`);
+      if (!isEmpty(v)) warn(`module.${col}`, `expected null under basic, live ${v}`);
       else ok(`module.${col}`, "null (basic)");
       return;
     }
-    if (isEmpty(id)) { fail(`module.${col}`, `null — expected to dereference to ${expectedName}`); return; }
-    const p = await read1("read_permission", `id=eq.${id}`);
-    if (!p) fail(`module.${col}`, `id ${id} dereferences to no permission`);
-    else if (p.permission_name !== expectedName) fail(`module.${col}`, `dereferences to ${p.permission_name}, expected ${expectedName}`);
+    if (isEmpty(v)) fail(`module.${col}`, `null — expected ${expectedName}`);
+    else if (v !== expectedName) fail(`module.${col}`, `is ${v}, expected ${expectedName}`);
     else ok(`module.${col}`, expectedName);
   };
-  await checkPermFk("manage_permission_id", `${slug}:manage`);
-  await checkPermFk("admin_permission_id", hasAdmin ? `${slug}:admin` : null);
+  await checkPermRef("manage_permission", `${slug}:manage`);
+  await checkPermRef("admin_permission", hasAdmin ? `${slug}:admin` : null);
 
   // Baseline permissions exist and carry module_id.
   const checkPerm = async (name: string): Promise<any | null> => {
     const p = await read1("read_permission", `permission_name=eq.${name}`);
     if (!p) { fail(`permission ${name}`, "missing"); return null; }
     if (isEmpty(p.module_id) || p.module_id !== mod.id) fail(`permission ${name}.module_id`, `expected ${mod.id}, live ${p.module_id}`);
-    else ok(`permission ${name}`, `id ${p.id}`);
+    else ok(`permission ${name}`, `module_id ${p.module_id}`);
     return p;
   };
   const readP = await checkPerm(`${slug}:read`);
   const manageP = await checkPerm(`${slug}:manage`);
   const adminP = hasAdmin ? await checkPerm(`${slug}:admin`) : null;
 
-  // Baseline hierarchy edges.
+  // Baseline hierarchy edges (keyed by the two permission names).
   const checkEdge = async (incl: any, included: any, label: string) => {
     if (!incl || !included) return;   // an upstream permission check already failed
     const e = await read1("read_permission_hierarchy",
-      `including_permission_id=eq.${incl.id}&included_permission_id=eq.${included.id}`);
+      `including_permission_name=eq.${incl.permission_name}&included_permission_name=eq.${included.permission_name}`);
     if (!e) fail(`hierarchy ${label}`, "edge missing");
     else ok(`hierarchy ${label}`, "present");
   };
@@ -498,7 +517,7 @@ export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
     if (r.origin !== "model" && r.origin !== "model_master") { fail(`role ${wantSlug}.origin`, `expected model/model_master, live ${r.origin}`); clean = false; }
     if (clean) ok(`role ${wantSlug}`, `id ${r.id}, origin ${r.origin}`);
     if (grantPerm) {
-      const rp = await read1("read_role_permission", `role_id=eq.${r.id}&permission_id=eq.${grantPerm.id}`);
+      const rp = await read1("read_role_permission", `role_id=eq.${r.id}&permission_name=eq.${grantPerm.permission_name}`);
       if (!rp) fail(`role_permission ${wantSlug}→${tier}`, "grant missing");
       else ok(`role_permission ${wantSlug}→${tier}`, "present");
     }

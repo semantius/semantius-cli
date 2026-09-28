@@ -22,7 +22,7 @@ cp "<skill-folder>/references/scaffold-lib.ts" .tmp_deploy/scaffold-lib.ts
 bun run .tmp_deploy/deploy_<slug>.ts
 ```
 
-> **Large deploys: run in the background, and re-run if it's killed — there is no progress file because none is needed.** Writes are batched (ALL entities in one `create_entity` call, all of an entity's fields in one `create_field` call, the baseline scaffold as one call per row kind), so a ~12-entity model is roughly 1 `create_entity` + ~12 `create_field` calls plus the read-before-write sweeps and per-field drift updates — on the order of 60-80 CLI calls at ~1-3s each, i.e. a couple of minutes, not the "hundreds of sequential writes" of the one-record-per-call era. That can still exceed a default 2-3 minute tool timeout. Two operational rules:
+> **Large deploys: run in the background, and re-run if it's killed — there is no progress file because none is needed.** Writes are batched (ALL entities in one `create_entity` call, or one per level when the spec has `is_a` / `has_a` entities, all of an entity's fields in one `create_field` call, the baseline scaffold as one call per row kind), so a ~12-entity model is roughly 1 `create_entity` + ~12 `create_field` calls plus the read-before-write sweeps and per-field drift updates — on the order of 60-80 CLI calls at ~1-3s each, i.e. a couple of minutes, not the "hundreds of sequential writes" of the one-record-per-call era. That can still exceed a default 2-3 minute tool timeout. Two operational rules:
 > 1. **Run `bun run` as a background process** (or with a generously raised tool timeout) so the harness does not kill it mid-deploy. The per-call latency is not the lever — the CLI's own `SEMANTIUS_TIMEOUT` defaults to 30 minutes; the wrapping *tool* timeout is what cuts a foreground run short.
 > 2. **If a run is killed partway, just re-run the SAME script.** Every write is read-before-write and idempotent (Cardinal rule #1), so already-created entities and fields read back as existing and are skipped, and the script reconciles forward from wherever it stopped. A bulk call is one transaction: either every row of that call landed or none did, so a kill never leaves half a batch. The live catalog IS the checkpoint — there is deliberately no `.deploy-progress.json` and none is wanted (a progress file would duplicate live state and risk trusting a stale copy over it). **Never hand-finish a partial deploy** by inspecting which entities exist and creating the rest manually; that is the exact error-prone path the re-run convergence model exists to remove.
 
@@ -33,11 +33,13 @@ bun run .tmp_deploy/deploy_<slug>.ts
 | `read1(tool, filters)` | read-before-write existence checks for ONE row | `0` → row, `1` → `null` (the create branch), `2/3/4/5` → **throws**. Never a `try/catch` probe. Never with an `in.()` filter (several matches exit `2`) — that is `readIn`. |
 | `readMany(tool, filters)` | live field dumps for the diff, dedup | array (`[]` = none); throws on transport/tool/auth error |
 | `readIn(tool, column, values, extraFilter?)` | the read-before-write sweep for a SET of records: `column=in.(…)`, chunked ≤100 keys per call | array in DB order (index it by key, never zip by position); `[]` for no keys with no call |
-| `write(tool, payload, label?)` | every single-record `create_*` / `update_*` / POST/PATCH, and id-array `update_*` / `delete_*` (`{ id: [...], data }`) | payload over stdin (prose-safe); **throws on any non-zero exit**; never adds `--single` |
+| `write(tool, payload, label?)` | every single-record `create_*` / `update_*` / POST/PATCH, and key-array `update_*` / `delete_*` (`{ id: [...], data }`; `{ permission_name: [...], data }` for permissions) | payload over stdin (prose-safe); **throws on any non-zero exit**; never adds `--single` |
 | `ensure(readTool, filters, writeTool, data)` | create-if-missing for ONE record that returns the real row (with its id) | re-reads by natural key; never trusts a create response for the id. Pass **raw fields** as the `data` arg — `ensure` wraps them in `{data}` for the write, so do NOT pre-wrap: `ensure(..., "create_entity", { table_name, ... })`, never `{ data: {...} }` (that double-wraps to `{data:{data:...}}` and the create fails). `write()` is the opposite — it takes the full payload, so there you DO pass `{ data: f }`. |
 | `createMany(tool, rows, keyOf?)` | the bare bulk create: ONE `create_*` call per ≤100 raw rows (`{data: [...]}` added by the lib) | one request, one transaction, all-or-nothing per call; asserts the row count back; throws naming the chunk's keys; **no per-row fallback**. Prefer `ensureMany`, which wraps it in the read-before-write. |
-| `ensureMany(readTool, keyColumn, keyOf, writeTool, rows, extraFilter?)` | create-if-missing for a whole SET of one kind (all entities of the spec, all fields of an entity, all §6 links) → `Map<key, liveRow>` | one `in.()` read → ONE `create_*` call for the missing rows only → one re-read for the ids (never off the create response). Same **raw rows** rule as `ensure`. Rejects duplicate keys; throws if a created key still reads back missing. |
-| `ensurePairs(readTool, colA, colB, writeTool, rows)` | create-if-missing for link rows keyed by a pair (`permission_hierarchy`, `role_permissions`, `user_roles`) | reads by `colA=in.(…)`, matches pairs locally, ONE `create_*` call for the missing pairs, re-reads |
+| `ensureEntitiesByLevel(entityRows)` | the entities pass of a spec → `Map<table_name, liveRow>` | groups by `id_refentity` depth and runs one `ensureMany` per level, bases first (one level = one call when the spec has no family). Throws before writing on a cycle, a missing base, `id_refentity` without `is_a` / `has_a`, or `label_column` / `label_parent` / `order_column` on a based row. |
+| `patchById(table, id, body)` | one Layer-2 record update | the insert-then-update path for `is_a` / `has_a` rows (never upsert them, 42P10). Throws unless one row comes back. |
+| `ensureMany(readTool, keyColumn, keyOf, writeTool, rows, extraFilter?)` | create-if-missing for a whole SET of one kind (all fields of an entity, all §6 links; the entities of a spec go through `ensureEntitiesByLevel`) → `Map<key, liveRow>` | one `in.()` read → ONE `create_*` call for the missing rows only → one re-read for the ids (never off the create response). Same **raw rows** rule as `ensure`. Rejects duplicate keys; throws if a created key still reads back missing. |
+| `ensurePairs(readTool, colA, colB, writeTool, rows)` | create-if-missing for link rows keyed by a pair (`permission_hierarchy` by `including_permission_name` + `included_permission_name`, `role_permissions` by `role_id` + `permission_name`, `user_roles` by `role_id` + `user_id`) | reads by `colA=in.(…)`, matches pairs locally, ONE `create_*` call for the missing pairs, re-reads |
 | `updateEntity(tableName, data)` | the update half of create-or-diff (entity column patches: `select_rule`, `computed_fields`, `module_id`, `label_parent`, …) | **owns the `update_entity` envelope** so you never hand-roll it: `table_name` is TOP-LEVEL, the changed columns go under `data`. Pass just the table name + the partial patch (`updateEntity("tickets", { select_rule })`); never write `{ table_name, data: {...} }` by hand and never bury `table_name` inside the patch. Blind PATCH — pair with a `read1`/`readMany` diff. |
 | `postMany(path, rows)` / `seedEnsureMany(path, rows, keyField)` | Layer-2 seed inserts: ONE `postgrestRequest` POST per ≤100 rows (re-run-safe variant reads the keys first) | every row must carry the SAME key set (asserted); returns the rows WITH ids; never `--single`. See `stage-6-sample-data.md`. |
 | `runDeploy(fn)` | wrap the whole orchestration | owns the `try/catch`; loud non-zero halt on any throw; success line only on clean resolve |
@@ -46,7 +48,7 @@ bun run .tmp_deploy/deploy_<slug>.ts
 
 | Export | Use for | Guarantee |
 |---|---|---|
-| `scaffoldModule(cfg)` | the entire baseline scaffold (module + permissions + hierarchy + roles + the six FK wires + provenance) in one idempotent call | self-preflights its tools' field names; returns the resolved `{moduleId, permissionIds, roleIds}`; `scope: "basic"` skips the admin tier |
+| `scaffoldModule(cfg)` | the entire baseline scaffold (module + permissions + hierarchy + roles + the six module-record references + provenance) in one idempotent call | self-preflights its tools' field names (every create it issues plus the `update_module` reference keys); returns `{moduleId, permissionNames: {read, manage, admin?}, roleIds}` (permissions are keyed by name, so there are no permission ids); `scope: "basic"` skips the admin tier. Stamped `SCAFFOLD_LIB_MAJOR = 6` |
 | `preflightSchemas({tool: [keys]})` | assert your hand-authored payloads' field names against the LIVE tool schema before writing | throws naming the available keys (kills the `name`-vs-`role_name` class) |
 | `verifyScaffold(cfg)` | the executable self-audit — re-reads live and asserts the Stage 5 scaffold checks as code | returns findings for the report; **throws on any drift**, so run as the last step inside `runDeploy` and a failed audit halts the deploy |
 
@@ -54,7 +56,7 @@ bun run .tmp_deploy/deploy_<slug>.ts
 
 ```typescript
 // .tmp_deploy/deploy_<slug>.ts
-import { read1, readMany, readIn, write, ensure, ensureMany, ensurePairs, updateEntity, runDeploy } from "./deploy-lib";
+import { read1, readMany, readIn, write, ensure, ensureMany, ensureEntitiesByLevel, ensurePairs, updateEntity, runDeploy } from "./deploy-lib";
 import { scaffoldModule, verifyScaffold, preflightSchemas } from "./scaffold-lib";
 
 runDeploy(async () => {
@@ -68,14 +70,15 @@ runDeploy(async () => {
   //    listing it here would false-fail against the tool's `data` schema.
   await preflightSchemas({
     create_entity: ["table_name", "singular_label", "module_id", "view_permission", "edit_permission",
-                    "edit_mode", "cube_mode", "order_column", "id_column", "icon_url"],
+                    "edit_mode", "cube_mode", "order_column", "id_column", "icon_url", "id_type", "id_prefix",
+                    "id_refentity"],
     create_field:  ["table_name", "field_name", "format", "reference_table", "width", "searchable",
                     "input_type", "default_value", "precision", "cube_type", "singular_label_parent",
-                    "plural_label_parent"],
+                    "plural_label_parent", "catalog_field_code"],
   });
 
-  // 1. Baseline module scaffold — module (+ provenance) + permissions + hierarchy + roles + the six FK
-  //    wires, all idempotent. Replaces hand-rolling §2a-scaffold steps 1-5 (where orphan roles, null
+  // 1. Baseline module scaffold — module (+ provenance) + permissions + hierarchy + roles + the six
+  //    module-record references, all idempotent. Replaces hand-rolling §2a-scaffold steps 1-5 (where orphan roles, null
   //    module FKs, and missing provenance kept creeping in). Pass parsed §8.1 baseline descriptions,
   //    §9.1 role slugs, and the Stage-2.5 scope; "basic" auto-skips the admin tier:
   const cfg = {
@@ -93,8 +96,9 @@ runDeploy(async () => {
       // admin: { … } only when the module has an admin tier AND scope is "full"
     },
   };
-  const { moduleId, permissionIds, roleIds } = await scaffoldModule(cfg);
-  // moduleId / permissionIds / roleIds are resolved for the entity creates below.
+  const { moduleId, permissionNames, roleIds } = await scaffoldModule(cfg);
+  // moduleId / roleIds are resolved numeric ids for the creates below; permissionNames are the names written
+  // directly into view_permission / edit_permission and role grants (permissions have no numeric id).
 
   // 2. Non-baseline RBAC (if any) — workflow-gate §8.1 permissions, extra §9.1 hierarchy edges, persona /
   //    RACI roles, and the cosmetic logo_color fallback (fires ONLY when the frontmatter omitted logo_color
@@ -105,10 +109,12 @@ runDeploy(async () => {
 
   // 3. ENTITIES FIRST — every ✨-new / rename-incoming / promote-create payload (4c checklist: module_id from the
   //    scaffold, provenance stamped, computed_fields/validation_rules [] for now, NO label_parent) goes into ONE
-  //    create_entity call. Nothing below creates a field until this resolves, so every reference_table already
+  //    create_entity call — or, when the spec has is_a / has_a entities, one call per level, bases first
+  //    (a based row carries id_type + id_refentity, id_prefix for is_a, and NO label_column / label_parent /
+  //    order_column). Nothing below creates a field until this resolves, so every reference_table already
   //    exists when 4d runs: self-references, cross-references, targets declared later in §3, promote-create rows
   //    in the master module (same array, different module_id). There is NO second pass.
-  const entities = await ensureMany("read_entity", "table_name", (r) => r.table_name, "create_entity", entityRows);
+  const entities = await ensureEntitiesByLevel(entityRows);   // one ensureMany when there is no family
   //    entities.get("<t>") is the LIVE row (id, module_id, …) — ids never come off the create response.
   //    ♻️ same-module / 🛑 merge / promote-existing hosts are NOT in entityRows: they need create-OR-DIFF, so read1
   //    the live row and `updateEntity(t, { ...drifted })` per host (each patch differs, so these stay per entity).
@@ -131,6 +137,10 @@ runDeploy(async () => {
   }
   //    Same data for several fields → ONE id-array call, e.g. the label columns that carry the `unique` marker:
   if (uniqueLabelIds.length) await write("update_field", { id: uniqueLabelIds, data: { unique_value: true } });
+  //    Each auto-created label column then gets ONE post-create update_field carrying what create_entity did not set:
+  //    the §3 title (when it differs), the §3 description (when non-empty), and catalog_field_code = its field_name.
+  //    When diffing JSON columns (computed_fields, validation_rules, select_rule, input_type_rule) against live, compare
+  //    STRUCTURALLY with object keys sorted: jsonb reorders keys, so a raw JSON.stringify compare always reports drift.
 
   // 5. Rules + Spine pass — computed_fields / validation_rules (4e) and select_rule / input_type_rule (4f) via
   //    updateEntity(t, {...}) / update_field per entity (each payload differs), then label_parent via
@@ -187,11 +197,11 @@ Reserve `catch` for one deliberate, narrow case: a single retry of a known-trans
 2. **Every write is loud** — `write` throws on any non-zero exit.
 3. **The script halts on the first failure** — `runDeploy` exits non-zero with the "incomplete, re-run" message. No catch-and-continue inside the callback.
 4. **Never print success over a partial deploy** — the success line is reachable only on a clean resolve, and even then the "model is live" line waits for Stage 5.
-5. **Provenance on every create** — module per the 4a checklist, entity per the 4c checklist.
+5. **Provenance on every create** — module per the 4a checklist, entity per the 4c checklist, and `catalog_field_code` (the spec `field_name`) on every `create_field` item per 4d.
 6. **Fields and entities are diffed, not skipped** when they already exist (4d).
-7. **Use `scaffoldModule()` for the baseline scaffold** — it builds the module, permissions, hierarchy, roles, and (the step most often hand-dropped) the six module-record FK wires + `access_scope` in one idempotent call, and self-preflights its field names. Hand-rolling §2a-scaffold steps 1-5 is what produced orphan roles (`origin: "user"`, null `module_id`) and a `user:read` module header across past deploys. Stage 5 still verifies the result.
+7. **Use `scaffoldModule()` for the baseline scaffold** — it builds the module, permissions, hierarchy, roles, and (the step most often hand-dropped) the six module-record references + `access_scope` in one idempotent call, and self-preflights its field names. Hand-rolling §2a-scaffold steps 1-5 is what produced orphan roles (`origin: "user"`, null `module_id`) and a `user:read` module header across past deploys. Stage 5 still verifies the result.
 8. **End with `verifyScaffold(cfg)`** — the mechanized self-audit re-reads live and asserts the scaffold, and **throws on drift so a failed audit halts the deploy exactly like a failed write**. This is what makes "finished" contingent on the scaffold actually being correct, instead of a Stage 5 spot-check that gets skipped. (It is a mechanical check; it does not catch "built the wrong thing" — that needs an independent reviewer.)
-9. **Batch every set of records of one kind, and create every entity before any field.** All entities of the spec go out in ONE `create_entity` call (`ensureMany`), all of an entity's fields in ONE `create_field` call, the baseline scaffold as one call per row kind (`scaffoldModule` does this), same-data updates as one id-array call. No field is created until every entity of the deploy exists — that is what lets a field reference an entity declared later in the spec, a self-reference, or a promote-create row resolve immediately (there is no second pass). A loop of single-record creates is a defect, not a style choice.
+9. **Batch every set of records of one kind, and create every entity before any field.** All entities of the spec go out in ONE `create_entity` call (`ensureEntitiesByLevel`; one call per level, bases first, when the spec has `is_a` / `has_a` entities), all of an entity's fields in ONE `create_field` call, the baseline scaffold as one call per row kind (`scaffoldModule` does this), same-data updates as one key-array call. No field is created until every entity of the deploy (every level) exists — that is what lets a field reference an entity declared later in the spec, a self-reference, or a promote-create row resolve immediately (there is no second pass). A loop of single-record creates is a defect, not a style choice.
 
 ## Where the script lives, and cleanup
 

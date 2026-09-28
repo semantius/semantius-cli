@@ -28,7 +28,8 @@ type ColumnSpec = {
   reason?: string;
   title?: string;
   precision?: number;
-  enum_values?: string[];
+  // An entry is a value or a {value, label} pair; records store the value.
+  enum_values?: Array<string | { value: string; label?: string }>;
   input_type?: string;
   field_order?: number;
   reference_table?: string;
@@ -56,7 +57,7 @@ function extras(c: ColumnSpec): string {
   const parts: string[] = [];
   if (typeof c.precision === "number" && c.format === "number") parts.push(`precision ${c.precision}`);
   if (c.enum_values) {
-    const list = c.enum_values.join(", ");
+    const list = c.enum_values.map((e) => (typeof e === "object" ? e.value : e)).join(", ");
     parts.push(`enum: ${list.length > 60 ? `${c.enum_values.length} values` : list}`);
   }
   if (c.bool_pair) parts.push(`pair ${c.bool_pair.true}/${c.bool_pair.false}`);

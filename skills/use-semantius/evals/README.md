@@ -146,7 +146,7 @@ the best-scoring version to replace the frontmatter `description:` with.
 Good candidates:
 - Import from Excel (Bun + xlsx package)
 - `sqlToRest` conversion for a complex SQL query
-- `refresh_schema_cache` after adding a field
+- `refresh_schema_cache` only when a just-added field is missing from PostgREST responses (not routinely)
 - `compareDateRange` period-over-period comparison in cube
 - Funnel or retention analysis
 - Safe entity evolution (adding new fields, warning on risky changes)

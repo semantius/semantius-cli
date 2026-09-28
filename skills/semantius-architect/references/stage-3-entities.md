@@ -17,6 +17,13 @@ With the naming convention locked in, draft the entities from your own knowledge
 >
 > When the user's ask sits on one of these ambiguity lines (a lead manager, a helpdesk, a deal/opportunity tracker), **state which vendor object you're picking and why before proposing the entity list**, so the user can correct a wrong pick before a dozen fields are built on top of it.
 
+**Before presenting (mandatory): keep each fact once.** Read [`normalization.md`](normalization.md) now, then apply it to the drafted list:
+
+1. Run its filters, then its decision table on every set of candidates that are kinds of one real-world thing (and on every wide entity whose kinds use different fields).
+2. Adjust the list: add each family's base, turn small differences into a type enum (the fixed "Each <Singular> is one of: …" sentence in the Description), drop parallel duplicates.
+3. Note for the write: the `**Key types:**` rows (`typeid` base with a prefix, `based on` for each based entity), the dotted diagram edges, and the shared §5.1 edges drawn from the base.
+4. Prepare exactly one plain-words aside per family for the presentation, and the family question only when the deciding fact is unknown.
+
 Present the list as a table with **Table name**, **Singular label**, **Purpose (one line)**, and, in template mode only, a **Vendor object** column showing the exact vendor object name (e.g., `HubSpot Lead (0-136)`, `Salesforce Contact`, `Zendesk Ticket`).
 
 Then ask the user a single open question: *"Does this entity list look right, or would you like to add, remove, rename, or merge any?"* Loop on their feedback until they confirm. **When the user renames an entity that carries an inherited `catalog code` (catalog-clone or prior version), apply the silo-rename rule under `catalog code` in §3: pin the catalog code to the pre-rename concept and keep `role` / `mastered in`; change only `data_object` and labels — unless the user says it is a genuinely new concept.** Keep the list tight, 6–15 entities is the sweet spot for most mid-sized systems; if you feel the urge to go over 20, that's a signal you're over-modeling.
@@ -46,7 +53,7 @@ After presenting the core entity list, identify 3-6 *commonly-related but not al
 - Verdict `excluded` → silently drop the concept. Do not include it in the multiSelect.
 - No entry → the concept appears in the multiSelect as today.
 
-Only fire the multiSelect if at least one concept remains un-decided. **Widget shape** (a standalone question, not a ledger task):
+Only fire the multiSelect if at least one concept remains un-decided. Any family question from [`normalization.md`](normalization.md) goes first in the same call, at most 4 question objects per call (overflow in the next call). **Widget shape** (a standalone question, not a ledger task):
 
 - **question**: domain-phrased, e.g. `"Roadmap tools commonly also track these. Want any of them in your module?"`
 - **header**: `"Also track"`
@@ -101,12 +108,13 @@ The §3 catalog columns are: `# | data_object | catalog code | singular | plural
 - **`singular`** — the entity's singular display label (e.g. `Candidate`). Must equal the parenthetical in this entity's §7 lifecycle heading. Maps to the platform `entities.singular_label`.
 - **`plural`** — the entity's plural display label (e.g. `Candidates`). Must equal the §2 `Name` column and the §2 Mermaid node label. Maps to the platform `entities.plural_label`.
 
-Use one of four role values in §3:
+Use one of four role values in §3 (a fifth, `derived`, arrives only from the catalog; see its bullet below):
 
 - **`master`** — this module is the catalog owner. `mastered in` = `-`, `mastered label` = `-`.
 - **`embedded_master`** — this module declares the entity locally for self-containment, but a *different* module is the intended catalog owner. Used when (a) the blueprint must stand alone (catalog-clone) even though a future shared master will own this concept, or (b) greenfield blueprints reference a system-of-record that may or may not be deployed in the user's instance. `mastered in` = `<owner_module_slug>`, `mastered label` = owner module's display name. Example: `candidates` in `hiring-starter` with `mastered in: ats-candidate-crm`, `mastered label: Candidate CRM`.
 - **`contributor`** — entity is mastered elsewhere AND this module participates in its workflows (writes some fields). `mastered in` and `mastered label` carry the owner. Example: `skill_profiles` in `ats-candidate-crm` with `mastered in: lms-skills`, `mastered label: Skills and Learning Paths`.
 - **`consumer`** — entity is mastered elsewhere AND this module only reads it. `mastered in` and `mastered label` carry the owner. Example: `career_aspirations` with `mastered in: talent-succession-career`, `mastered label: Succession and Career Planning`.
+- **`derived`** — never authored by the architect. Catalog clones carry it from the catalog's role set: the module republishes signals it computes from other modules' masters (People Analytics reading `employees`). `mastered in` = `-`. Carry the row verbatim; `consistency-check.ts` accepts exactly these five values.
 
 **`mastered label` column rule:** whenever `mastered in` is not `-`, fill `mastered label` with the owner module's display name (the same string that would appear as `system_name` in the owner's blueprint frontmatter). It names the owner module, NOT this entity (the entity's own labels are `singular` / `plural`). Never leave `mastered label` empty when `mastered in` is filled. For platform built-ins (`users`, `roles`), use `_(platform built-in)_` in both `mastered in` and `mastered label`.
 
@@ -121,3 +129,15 @@ Why both: `mastered in` is the slug the analyst uses for cross-module FK resolut
 - `⚠ audit: <reason>` — a required-composed-child-out-of-scope flag (see Writing Convention 9). The architect surfaces; the analyst expects the source data fixed.
 
 For §5.3a (this scope's masters point outbound at sibling targets), the `delete_mode` vocabulary is the normal Semantius set (`restrict` / `clear` / `cascade`). For §5.3b (context edges driven by the catalog owner, shown for informational completeness when the in-scope endpoint is `embedded_master` / `consumer` / `derived`), the vocabulary expands as above. The architect emits the resolved `delete_mode` and `fk_format` directly into the §5 row so the analyst consumes verbatim.
+
+#### Key type (the optional §3 `**Key types:**` sub-block)
+
+Every entity this module provisions (`master` / `embedded_master`) gets a primary-key type, decided here because it is **locked once the entity is deployed** (changing it means rebuilding the entity). The default, `auto_increment` (sequential numbers the database assigns), needs no row. Record a row in §3 `**Key types:**` only for a different choice:
+
+- **`typeid`** for records whose ids users or other systems see: named in links, emails, support conversations, or integrations (accounts, orders, invoices, tickets). Ids read like `acct_01h455vb4pex5vsknk084sn02q`: sortable, and the prefix says what the record is. Pick a short, recognizable prefix (`acct`, `inv`, `tkt`), lower-case letters and underscores, starting and ending with a letter, unique within the blueprint.
+- **`uuid`** when ids must be globally unique but no prefix is wanted.
+- **`bigint`** / **`text`** only when the records mirror an external system whose ids must be kept: the caller then supplies the id on every insert.
+- **`is_a`** / **`has_a`** only for the families [`normalization.md`](normalization.md) decided. The row's fourth column, `based on`, names the base (`-` for every other key type). A family base is `typeid` with a prefix; an `is_a` entity needs its own prefix; a `has_a` entity has none (`-`). Format and rules: the template's `**Key types:**` block.
+- Internal tables (junctions, lookups, logs, line items) keep the default. Contributor, consumer, and built-in entities keep their owner's key and never get a row. Never `computed` (system tables only).
+
+No separate question for the key type: mention the choice in plain words when presenting the entity list (e.g. *"Accounts and invoices get prefixed ids like `acct_…`, which read well in links and support emails"*) so the user can object in the same confirmation loop. **The one exception is the family question** from `normalization.md`, asked only when the deciding fact is unknown. The analyst carries each row verbatim into the spec. Row format and rules: [`semantic-blueprint-template.md`](semantic-blueprint-template.md) → `**Key types:**`.

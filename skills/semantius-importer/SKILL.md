@@ -1,21 +1,20 @@
 ---
 name: semantius-importer
 description: >-
-  Imports a CSV into Semantius: introspects CSV schema with the CLI's
-  `get_csvschema` util, maps columns to Semantius field formats, detects
-  whether a matching entity exists (field-by-field diff), optionally creates
-  the entity (and its module first), then generates and runs a Bun script that
-  bulk-loads rows in batches. Also supports schema-only runs (create the
-  entity, no rows) and compare-only runs (diff report, zero writes). Trigger
-  on "import this CSV", "load this file into semantius", "create an entity
-  from this file / spreadsheet export", "introspect this CSV", "bulk load
-  these rows", "does this CSV match our table?", or asking what entity shape a
-  CSV implies. Do NOT trigger for deploying blueprints or specs
+  Imports a CSV into Semantius: maps its columns to field formats, diffs them
+  against an existing entity, optionally creates the entity (and its module),
+  and bulk-loads the rows with a Bun script. Also schema-only runs (no rows)
+  and compare-only runs (no writes). Trigger on "import this CSV", "load this
+  CSV into semantius", "create an entity from this CSV / spreadsheet export",
+  "introspect this CSV", "bulk load these CSV rows", "does this CSV match our
+  table?", "export the orders table to CSV", or asking what entity shape a CSV
+  implies. Do NOT trigger for JSON transfer files (from `export_entities` /
+  `export_module`), moving modules or tables between hosts, backups or
+  restores (semantius-transfer), deploying blueprints or specs
   (semantius-admin / semantius-modeler), designing a multi-entity system
   (semantius-architect), CSV work with no Semantius target, or
-  webhook-receiver ingestion (an external system pushes rows; see
-  use-semantius references/webhook-import.md). For xlsx, ask for a CSV export
-  first; CSV-only.
+  webhook-receiver ingestion (see use-semantius references/webhook-import.md).
+  For xlsx, ask for a CSV export first; CSV-only.
 ---
 
 # semantius-importer Skill
@@ -131,7 +130,7 @@ Apply schema-mapping.md sections 2–7 to produce the proposed mapping:
 
 - format passthrough (the CLI vocabulary is aligned; unlisted formats flow through verbatim per the fallback rule) plus the `multiline` naming heuristic;
 - **enum review** for every `enum` verdict (low-cardinality columns masquerade as enums);
-- **the id line** (schema-mapping.md section 4): `id_mode` applies to the **new-entity path only** — report the detection ("this file carries a usable primary key" / "the first column is an id candidate"), then apply the **classic policy**: id-named column renamed to `external_id` (offered as the unique key, below), an `id_move_column` kept as its own integer field. Importing source ids into a newly created entity's primary key is **deferred** until the `fix_id_sequence` RPC exists (design and roadmap in the README). For an **existing target entity**, `id_mode` is ignored; the live `id_column` drives the collision policy and the payload guard;
+- **the id line** (schema-mapping.md section 4): `id_mode` applies to the **new-entity path only** — report the detection ("this file carries a usable primary key" / "the first column is an id candidate"), then apply the **classic policy**: id-named column renamed to `external_id` (offered as the unique key, below), an `id_move_column` kept as its own integer field. Importing source ids into a newly created entity's primary key is **deferred** (design and roadmap in the README; the `fix_id_sequence` RPC it needs now ships with the platform, but re-enabling preservation still needs its own plan). For an **existing target entity**, `id_mode` is ignored; the live `id_column` drives the collision policy and the payload guard;
 - **the unique-key question** (schema-mapping.md section 4): when the file carries a column that identifies each row (a source system id, a code, an external reference), ask **once**, in plain words, whether to **mark that field unique** so re-imports cannot create duplicates: *"`<Header>` looks like a unique id from the source. Mark `<field>` as unique so re-running this import skips rows that are already there?"* with two options — **Unique** (Recommended: `unique_value: true` on the field; the import skips rows whose value already exists) / **Not unique** (plain insert; re-running the file inserts every row again). Never say "natural key" to the user; that is only the internal `mapping.json` name (`natural_key`) for the field the script dedupes on. Never offer an "update existing rows" option: **updating existing records is postponed** (README → Postponed), the import is insert-only;
 - field-name verification, digit-leading renames, and **reserved-column resolutions** (`created_at`, `updated_at`, `label`);
 - **FK candidates** (only with a live target and user confirmation);
@@ -180,7 +179,7 @@ The "Decision" column below is the ledger for this stage: at the start of Stage 
 
 Creation order (mechanics in data-modeling.md, `read_*` before every `create_*` so a re-run never double-creates):
 
-1. Module (when needed): `create_module`, then `<slug>:read` + `<slug>:manage` permissions in **one** `create_permission` call (`data` is an array of the two rows), then `update_module` to wire `view_permission` / `manage_permission_id`.
+1. Module (when needed): `create_module`, then `<slug>:read` + `<slug>:manage` permissions in **one** `create_permission` call (`data` is an array of the two rows), then `update_module` to wire `view_permission` / `manage_permission` (both take the permission name).
 2. Entity: `create_entity` with `table_name`, symmetric `singular_label` / `plural_label`, description, **`label_column`** (the platform auto-creates that field and the computed `label` field), `module_id`, `view_permission`, `edit_permission`.
 3. Fields: run `bun run <run-folder>/create-fields.ts` from `<cwd>` (by path, never after a `cd`; the runner spawns `semantius call` and the CLI must keep reading the session's `.env`) — it creates every `disposition: "create"` column from `mapping.json` in **one bulk `create_field` call** (`data` is an array of all the field objects; up to 100 per call, so a wide file is at most a few calls; items may differ in keys — `enum_values` here, `precision` there — the typed tool handles that) with the mapping's explicit `field_order` (increments of 10 starting at 30 — 10 and 20 belong to the auto-created fields; the platform preserves explicit order, so the position in the array carries no meaning), skips field names that already exist live (read-before-create, so a re-run never double-creates), **retries transient failures** (exit 3: up to 3 retries per call with 1s/3s/9s backoff, re-reading the live fields before each retry so rows that landed are never resent), and **fails fast and loud on real errors** (exit 4 validation / exit 5 auth, never retried): a bulk call is one transaction, so a failed call landed nothing — every field of it is reported `failed` with the platform's first stderr line, later calls are `not-run`, non-zero exit; on success it re-reads the live fields and asserts every requested name is present. Never hand-roll a shell loop for field creation — ad-hoc loops swallow errors, and one call per field is against the platform's batching rule anyway. The label column (`disposition: "label"`) and skipped columns are never created. When the label field deserves a more specific title than `singular_label`, follow up with `update_field` on that field's `title` (importer-essentials.md).
 
@@ -214,9 +213,9 @@ A failed batch is loud: the run is reported as incomplete with the re-run instru
 
 ---
 
-## Exporting back out
+## Download as CSV
 
-Small enough to not need its own skill: PostgREST serves CSV directly. `postgrestRequest` has no header override, so for a CSV download use the raw endpoint with the CLI's token, or simply deliver JSON-to-CSV via a few lines of Bun:
+For a spreadsheet copy of a table; a CSV is not re-importable with its ids, references and schema. Anything that must be restored or moved to another host is a JSON transfer file from `utils/export_entities` (the `semantius-transfer` skill). PostgREST serves CSV directly. `postgrestRequest` has no header override, so for a CSV download use the raw endpoint with the CLI's token, or simply deliver JSON-to-CSV via a few lines of Bun:
 
 ```bash
 semantius call crud postgrestRequest '{"method":"GET","path":"/products?select=product_code,list_price&order=product_code"}' \

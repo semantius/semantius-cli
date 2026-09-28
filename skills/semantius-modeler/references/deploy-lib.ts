@@ -27,13 +27,15 @@
  *     loop of single-record calls. `createMany` / `ensureMany` / `ensurePairs`
  *     (Layer 1, `create_*` with an array `data`) and `postMany` /
  *     `seedEnsureMany` (Layer 2, `postgrestRequest` with an array `body`) are the
- *     primitives; `BATCH_SIZE` (100) caps one call. A failed bulk call landed
+ *     primitives; `BATCH_SIZE` (100) caps one call. The one ordering exception:
+ *     `is_a` / `has_a` entities go one `create_entity` call per level, bases
+ *     first (`ensureEntitiesByLevel`). A failed bulk call landed
  *     NOTHING (one request, one transaction, all-or-nothing) and is never retried
  *     row-by-row: fix the cause and re-run, the read-before-write converges.
  *
  * Not a CLI — import it:
- *   import { read1, readMany, readIn, write, ensure, ensureMany, ensurePairs,
- *            createMany, updateEntity, postMany, seedEnsureMany, runDeploy } from "./deploy-lib";
+ *   import { read1, readMany, readIn, write, ensure, ensureMany, ensureEntitiesByLevel, ensurePairs,
+ *            createMany, updateEntity, postMany, seedEnsureMany, patchById, runDeploy } from "./deploy-lib";
  */
 
 let writeCount = 0;
@@ -75,7 +77,7 @@ export async function write(tool: string, payload: unknown, label = tool): Promi
  * `filters` are natural keys (slugs, table_names, permission codes); Bun.spawn
  * with an arg array bypasses the shell, so the inline JSON is safe.
  * Multiple conditions join with `&` (PostgREST AND across columns), e.g.
- * `role_id=eq.1&permission_id=eq.2` — a comma is NOT an AND separator and
+ * `role_id=eq.1&permission_name=eq.crm:read` — a comma is NOT an AND separator and
  * silently matches nothing (reads as "not found", then a duplicate create).
  */
 export async function read1(tool: string, filters: string): Promise<any | null> {
@@ -137,10 +139,23 @@ export async function ensure(
  * Goes through `write`, so it is loud (throws on non-zero) and counts as a write.
  * It is a blind PATCH — pair it with a `read1`/`readMany` diff for create-or-diff
  * paths; `ensure` is the create-if-missing helper, this is the update half.
+ * `id_type` and `id_refentity` are refused here: the key type and the base of an
+ * `is_a` / `has_a` entity are set on `create_entity` only and are locked once the table
+ * exists (the platform answers `90233` / `90241`); a spec that wants a different key
+ * type or base on an existing entity is a rebuild, routed back to the analyst (Stage 2k).
+ * `id_prefix` may be updated, except on an `is_a` entity (`90245`).
  */
 export async function updateEntity(
   tableName: string, data: Record<string, unknown>,
 ): Promise<any> {
+  for (const [col, code] of [["id_type", "90233"], ["id_refentity", "90241"]] as const) {
+    if (col in data) {
+      throw new Error(
+        `updateEntity(${tableName}): ${col} is create-only (locked once the table exists, ${code}); ` +
+        `a different value on an existing entity means rebuilding it. Route back to semantius-analyst.`,
+      );
+    }
+  }
   return write("update_entity", { table_name: tableName, data });
 }
 
@@ -271,6 +286,8 @@ export async function createMany(
  *   const entities = await ensureMany("read_entity", "table_name", (r) => r.table_name,
  *                                     "create_entity", entityRows);          // ONE create_entity call
  *   const mod = entities.get("tickets");                                     // live row, real id
+ * For the entities of a spec, call `ensureEntitiesByLevel` instead: it is this call
+ * when the spec has no `is_a` / `has_a` entity, and one call per level when it has.
  */
 export async function ensureMany(
   readTool: string, keyColumn: string, keyOf: (row: any) => string | number,
@@ -295,6 +312,76 @@ export async function ensureMany(
     }
   }
   return live;
+}
+
+const BASED_KEY_TYPES = new Set(["is_a", "has_a"]);
+
+/**
+ * Entity create for a spec, family-aware: the ONE entry point for the entities
+ * pass. A spec without `is_a` / `has_a` entities is one level, so this is exactly
+ * one `ensureMany` (one `create_entity` call per ≤100 rows). With a family, a
+ * based entity must be created AFTER its base (the platform fills its id and label
+ * columns from the base row; a based entity named first fails with 23503 on
+ * `entities_id_refentity_fkey`), so the rows are grouped by `id_refentity` depth
+ * and each level goes out as its own `ensureMany`, bases first:
+ *   level 0 = every plain entity plus every family root (and every based entity
+ *             whose base already exists live), level 1 = entities based on level 0, …
+ * Fields (including FKs to based entities) are created only after ALL levels
+ * exist, so FK targets never affect the levels.
+ * Throws, before any write, on: a cycle in `id_refentity`; a base that is neither
+ * in `rows` nor live; `id_refentity` on a row that is not is_a / has_a (or missing
+ * on one that is); `label_column` / `label_parent` / `order_column` on a based row
+ * (they come from the base, 90242 / 90249).
+ *
+ *   const entities = await ensureEntitiesByLevel(entityRows);   // one create_entity call per level
+ *   entities.get("emails").id                                     // live row, real id
+ */
+export async function ensureEntitiesByLevel(
+  rows: ReadonlyArray<Record<string, unknown>>,
+): Promise<Map<string, any>> {
+  const byName = new Map(rows.map((r) => [String(r.table_name), r] as const));
+  const problems: string[] = [];
+  for (const [name, r] of byName) {
+    const based = BASED_KEY_TYPES.has(String(r.id_type ?? ""));
+    const base = r.id_refentity ? String(r.id_refentity) : "";
+    if (based && !base) problems.push(`${name}: id_type ${r.id_type} needs id_refentity`);
+    if (!based && base) problems.push(`${name}: id_refentity is only for id_type is_a / has_a`);
+    if (based) {
+      for (const col of ["label_column", "label_parent", "order_column"]) {
+        if (r[col] !== undefined && r[col] !== null && r[col] !== "") problems.push(`${name}: ${col} comes from its base; leave it out`);
+      }
+    }
+  }
+  // Bases outside this spec must already exist live.
+  const outside = [...new Set([...byName.values()].map((r) => String(r.id_refentity ?? "")).filter((b) => b && !byName.has(b)))];
+  if (outside.length) {
+    const live = new Set((await readIn("read_entity", "table_name", outside)).map((e) => String(e.table_name)));
+    for (const b of outside) if (!live.has(b)) problems.push(`base ${b} is neither in this spec nor live`);
+  }
+  // Depth per row; a revisit on the current path is a cycle.
+  const depth = new Map<string, number>();
+  const depthOf = (name: string, path: string[]): number => {
+    if (depth.has(name)) return depth.get(name)!;
+    if (path.includes(name)) {
+      problems.push(`cycle in id_refentity: ${[...path, name].join(" → ")}`);
+      return 0;
+    }
+    const base = String(byName.get(name)?.id_refentity ?? "");
+    const d = base && byName.has(base) ? depthOf(base, [...path, name]) + 1 : 0;
+    depth.set(name, d);
+    return d;
+  };
+  for (const name of byName.keys()) depthOf(name, []);
+  if (problems.length) throw new Error(`ensureEntitiesByLevel: refusing to write:\n  - ${[...new Set(problems)].join("\n  - ")}`);
+  const levels: Record<string, unknown>[][] = [];
+  for (const [name, r] of byName) (levels[depth.get(name)!] ??= []).push(r);
+  const all = new Map<string, any>();
+  for (const [i, level] of levels.entries()) {
+    if (!level?.length) continue;
+    if (levels.length > 1) console.log(`  entities level ${i}: ${level.length} row(s)`);
+    for (const [k, v] of await ensureMany("read_entity", "table_name", (r) => r.table_name as string, "create_entity", level)) all.set(k, v);
+  }
+  return all;
 }
 
 /**
@@ -455,7 +542,19 @@ export async function postMany(
  * and per-table counts work exactly like `postMany`). `keyField` must be a
  * unique, stable-across-runs column present on every row (a `unique_value`
  * field built with `uniq(base, i)` / `combine(...)`); empty or duplicate keys are
- * rejected. Same uniform-keys rule as `postMany`.
+ * rejected. Same uniform-keys rule as `postMany`. It never upserts (no
+ * `on_conflict`, no `merge-duplicates`): existing rows are returned unchanged,
+ * which is what `is_a` / `has_a` entities require (an upsert on them fails 42P10).
+ *
+ * Families (see use-semantius entity-families.md → Writing):
+ *   - Seed level by level, bases first, each level at its OWN path.
+ *   - An `is_a` record is ONE insert at its own table, carrying the base's fields
+ *     too. Never a base row and then a subtype row: that makes two records, and a
+ *     record's type never changes.
+ *   - A `has_a` row without `id` creates its base record too (send the base fields);
+ *     a row WITH the id of an existing base record attaches to it and must carry
+ *     only the extension's own fields plus `id` (a differing base value is refused,
+ *     90246). Change base values afterwards with `patchById(<base table>, id, …)`.
  *
  *   const leads = await seedEnsureMany("/leads", leadRows, "email");
  */
@@ -482,6 +581,25 @@ export async function seedEnsureMany(
     throw new Error(`seedEnsureMany ${table}: ${still.length} row(s) neither found nor returned by the insert: ${preview(still)}`);
   }
   return keys.map((k) => byKey.get(k));
+}
+
+/**
+ * Loud Layer-2 update of ONE record by id: `PATCH /<table>?id=eq.<id>` with `body`.
+ * The insert-then-update path for `is_a` / `has_a` entities, which cannot be
+ * upserted (42P10): insert with `postMany` / `seedEnsureMany`, then patch the rows
+ * that changed, one call each (PostgREST has no bulk update with per-row values).
+ * Throws unless exactly one row came back.
+ */
+export async function patchById(
+  table: string, id: string | number, body: Record<string, unknown>,
+): Promise<any> {
+  const path = `${table.startsWith("/") ? table : `/${table}`}?id=eq.${encodeURIComponent(String(id))}`;
+  const res = await pgRequest("PATCH", path, body);
+  if (!Array.isArray(res) || res.length !== 1) {
+    throw new Error(`patchById ${path}: expected 1 row back, got ${Array.isArray(res) ? res.length : typeof res}`);
+  }
+  writeCount++;
+  return res[0];
 }
 
 /**
@@ -535,6 +653,11 @@ export const uniq = (base: string, i: number, suffix = ""): string => `${base}${
  * tally names a table not in `tables` (a typo). This is what makes the count
  * un-skippable — agents kept eyeballing row arrays and under-seeding (18 vs 50,
  * 2-3 per entity), or silently skipping a whole table.
+ * Families: each level is its own table here, tallied from ITS OWN inserts
+ * (`counts.emails = emails.length`, `counts.activities = activityRows.length`),
+ * never from a GET of the base: a base read also lists every `is_a` descendant's
+ * records (and every base record a `has_a` insert created), so a live base count
+ * = its own seeds + its descendants' seeds.
  */
 export function assertSeedCounts(
   counts: Record<string, number>,

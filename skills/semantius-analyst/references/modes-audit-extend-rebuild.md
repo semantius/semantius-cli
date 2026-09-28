@@ -19,7 +19,7 @@ Load the file and walk every section. **Do not rewrite the file** unless the use
 These run on every owned entity (skip `reuse-from` / `dropped`):
 
 - **Entity health**:
-  - `label_column` is a scalar field, not a FK (🔴 if FK). Every non-junction entity carries a `**Label column:**` line (🔴 if missing); an `entity_type: junction` entity may omit it (valid — the platform composes its `_label` from the parent legs).
+  - `label_column` is a scalar field, not a FK (🔴 if FK). Every non-junction entity carries a `**Label column:**` line (🔴 if missing); an `entity_type: junction` entity may omit it (valid — the platform composes its `_label` from the parent legs); a based entity (`**Based on:**`) never carries it (🔴 if present: its label comes from its base).
   - No `id` / `created_at` / `updated_at` / auto-label field in the §3 field table (🔴 if present).
   - Every `enum` field has `enum_values` (🔴 if missing).
   - Effective default satisfies all `validation_rules` (🔴 if default would reject on auto-fill).
@@ -32,6 +32,9 @@ These run on every owned entity (skip `reuse-from` / `dropped`):
   - §2 Mermaid edge direction + verb matches what §3 `relationship_label` + §4 `Cardinality`/`Kind` derive (🔴 if drift — mechanically enforced by `consistency-check.ts`, not an eyeball check; see `stage-11-write.md` "Generate §2, never hand-author it"). If a hand-edit drifted §2 out of sync, regenerate it with `consistency-check.ts --emit-mermaid` rather than patching the diagram by hand.
   - `format: parent` + `Delete: clear` is a 🔴 (parent-owned child cannot orphan-survive parent).
   - `format: reference` + `Delete: cascade` is a 🟡 (probably should be `parent`).
+  - Any `Delete: cascade` on an `is_a` entity (a §4 row whose `From` is `is_a`) is a 🔴 (the platform refuses it, `90249`; use `restrict` or `clear`).
+  - Families (platform facts: `../../use-semantius/references/entity-families.md`): a based entity repeating a base field, a `**Based on:**` whose base key type does not fit, or a `_process_gates_` row on a based entity is a 🔴; `consistency-check.ts` reports each.
+  - Keep each fact once: run Stage 4's N-checks on every owned entity and report each finding as a 🟡 with its fix (N1 copies, N2 numbered repeats, N3 junction fields about one side, N6 family placement, N7 a type enum switching more than 3 fields, N8 a live duplicate).
 
 - **Permissions consistency** (cross-check §8.1 Permissions catalog + §9.1 hierarchy vs every entity / rule):
   - Every `require_permission` argument is in §8.1 (🔴 if not).
@@ -44,7 +47,7 @@ These run on every owned entity (skip `reuse-from` / `dropped`):
 - **Rule blocks** (computed_fields, validation_rules, input_type_rules, select_rule):
   - JSON is valid (🔴 if not parseable).
   - Every `computed_fields[].name` resolves to an existing scalar field on the same entity (🔴).
-  - Every `validation_rules[].code` is snake_case and unique within the entity (🔴 on collision).
+  - Every `validation_rules[].name` is snake_case and unique within the entity (🔴 on collision), and every `validation_rules[].code` matches `^99[0-9]{3}$` (🔴 otherwise; the platform rejects any other code shape with `90905`). Codes need not be unique; a missing `name` is 🔴.
   - Every column referenced inside any JsonLogic is on the same entity (🔴 on dangling) — unless wrapped in `set_record` / `let`.
   - Bypass-prose in a `select_rule` `description` reconciles with the JsonLogic body (🔴 on disagreement).
   - No throwing operator (`require_permission` / `throw_error`) inside a `select_rule` body (🔴: `select_rule` runs per-row on every read, so a throw aborts the read; use the non-throwing `has_permission`).
@@ -83,12 +86,12 @@ End with: *"Run `semantius-analyst` Extend mode to fix specific items, or fix ma
 
 When the user wants to add entities, fields, rules, or §6 link rows to an existing spec:
 
-1. Read the current spec. Note its `version` (must be `"5.5"` major; older → Mode D Rebuild first).
+1. Read the current spec. Note its `version` (must be major `5`, i.e. `"5.x"`; older → Mode D Rebuild first).
 2. Capture what to add (entity / field / rule) via conversation.
 3. **If adding entities**, re-run Stage 2 reconciliation against the live catalog for the new entities only. Same collision detection, same widgets, same ledger: the widgets are `Q:` tasks under the `Match › Extend the design` stage task, and step 4 starts only when `TaskList` shows none pending or in progress.
 4. **If adding fields to an existing owned entity**, apply Stage 4 field elicitation for the new fields. Then re-run Stages 5-10 (scans, consistency gate) on the affected entity.
 5. **If adding rules**, draft the JsonLogic; run the Stage 8 consistency gate.
-6. Stamp `version: "5.5"` (no bump unless skill version bumped).
+6. Stamp `version: "5.8"` (the current `CURRENT_VERSION`). When the spec being extended predates 5.7, its `validation_rules` carry snake_case `code` values and no `name`: move each old `code` into `name` and reassign every `code` sequentially from `99001` (§3 entity order, then array order) before saving.
 7. Write the updated file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input file you read in step 1 sits at the workspace root, leave that file alone; the `semantius/specs/` path is the truth-source. Run the pre-save verification block from Stage 11.
 
 ---
@@ -101,4 +104,4 @@ Use when the blueprint has materially changed (entities added/removed, role clas
 2. Drive a fresh Stage 1-10 pass with the current blueprint as input.
 3. **Carry forward** the preserved decisions where they still apply (e.g. a `promote-to-master` decision for an entity that's still in the blueprint).
 4. Show the user a diff summary: what's new, what's changed, what's removed.
-5. Stamp `version: "5.5"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.
+5. Stamp `version: "5.8"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.

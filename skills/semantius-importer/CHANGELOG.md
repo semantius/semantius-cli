@@ -2,6 +2,26 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Unreleased: description under the 1024-character limit
+
+2026-09-28. The description was 1191 characters; the mechanism detail (introspection util, field-by-field diff wording) was shortened, every trigger phrase and exclusion kept. Now 992.
+
+## Unreleased: enum labels and entity families
+
+2026-09-28. The platform added `{"value", "label"}` enum entries and `is_a` / `has_a` entities (sharing their base's key through `id_refentity`).
+
+- `enum_values` typings accept pairs in `import.template.ts`, `render-plan.ts` and `create-fields.ts` (sent verbatim); the plan renders values.
+- `coerce` gains an `enum` branch: a cell matches a value exactly, then a value or label case-insensitively, and imports the **value**; anything else fails the row with a reason instead of reaching the platform.
+- `schema-mapping.md`: readable labels become snake_case values with the text as label; existing fields compare by value (a label-only difference is cosmetic); the key type decides whether a column maps to `id` (`bigint` / `text` yes; `has_a` only to attach to existing base records; generated otherwise); an `is_a` / `has_a` target diffs against the family's fields (every level via `id_refentity`) and is never upserted (42P10); no cascade on an `is_a` entity's FKs.
+
+## Unreleased: routing boundary with semantius-transfer; `fix_id_sequence` premise corrected
+
+Description and docs only, no contract change (2026-09-26).
+
+- The description names CSV in every trigger and excludes JSON transfer files, moves between hosts, backups and restores, which now belong to the new `semantius-transfer` skill. Three should-not-trigger evals added ("export the crm module from staging and import it into prod", "restore crm.json into the test host", "export the orders table to another host"); "export the orders table to CSV" stays a positive.
+- "Exporting back out" is now "Download as CSV", with a pointer to `export_entities` for anything that must be re-importable.
+- The `fix_id_sequence` RPC is no longer described as missing: it ships with current platform databases and the CLI's transfer import calls it. Id preservation stays deferred; re-enabling it is a separate planning item (README roadmap, `schema-mapping.md` section 4, SKILL.md Stage 2).
+
 ## Unreleased: task-tool call economy
 
 Guidance only, no contract change (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (writing convention 7 "Stage tasks" and "Ledger stages"; Stage 2 review-loop step 1, E). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.

@@ -26,8 +26,8 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 **Frontmatter (required keys), both modes:**
 
 - `artifact: semantic-blueprint` (fixed)
-- `blueprint_version: "3.0"`
-- `version: "<CURRENT_VERSION>"` (currently `"5.2"`)
+- `blueprint_version: "3.1"`
+- `version: "<CURRENT_VERSION>"` (currently `"5.4"`)
 - `system_name`, `system_slug`, `icon_name` (icon-set handle, not a URL)
 - `tagline` (one-line marketing-voice line; also feeds `modules.description`)
 - `domain_modules` (typically `[<system_slug>]`)

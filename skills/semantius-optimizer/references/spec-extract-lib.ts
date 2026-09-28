@@ -1,6 +1,6 @@
 /**
  * spec-extract-lib.ts — deterministic reverse-engineer of a live Semantius module
- * into a `*-semantic-spec.md` (analyst artifact, version "5.5").
+ * into a `*-semantic-spec.md` (analyst artifact, version "5.7").
  *
  * READ-ONLY against Semantius. Every read shells out via `Bun.spawn` with an
  * ARG ARRAY (bypasses the shell — inline JSON is safe on Windows and POSIX),
@@ -20,7 +20,7 @@
  * attributable.
  */
 
-const SPEC_VERSION = "5.5";
+const SPEC_VERSION = "5.8";
 
 /** Semantius platform built-ins — reused by the deployer, not owned by any module. */
 const BUILTINS = new Set([
@@ -87,6 +87,12 @@ const isStripped = (f: any): boolean =>
 const isLabelCol = (f: any, e: any): boolean => f.field_name === e.label_column;
 const isRef = (f: any): boolean => !!f.reference_table;
 
+/** An `is_a` / `has_a` entity: based on `id_refentity`, sharing its key (template §3 `**Based on:**`). */
+const isBased = (e: any): boolean => e.id_type === "is_a" || e.id_type === "has_a";
+
+/** An `enum_values` entry is a value or a `{value, label}` pair; records store the value. */
+const enumValue = (v: any): string => (v !== null && typeof v === "object" ? String(v.value) : String(v));
+
 /** Live format → spec format vocabulary. */
 function mapFormat(f: any, e: any): string {
   if (f.format === "text") return isLabelCol(f, e) ? "string" : "multiline";
@@ -134,7 +140,7 @@ function mapNotes(f: any, e: any): string {
   // `searchable` is true; the platform default false appends nothing.
   if (f.searchable) parts.push("`searchable`");
   if (f.format === "enum" && Array.isArray(f.enum_values) && f.enum_values.length) {
-    const vals = f.enum_values.map((v: string) => `\`${v}\``).join(", ");
+    const vals = f.enum_values.map((v: any) => `\`${enumValue(v)}\``).join(", ");
     let s = `enum_values: ${vals}`;
     if (f.default_value) s += `; default: "${f.default_value}"`;
     parts.push(s);
@@ -174,6 +180,9 @@ function mapNotes(f: any, e: any): string {
 
 function reconciliation(e: any): string {
   if (BUILTINS.has(e.table_name)) return `reuse-from semantius_builtin.${e.table_name}`;
+  // A related entity owned by another module (a cross-module FK target or a family base):
+  // referenced, not provisioned (`render` sets `_reuse_module`).
+  if (e._reuse_module) return `reuse-from ${e._reuse_module}.${e.table_name}`;
   const aliases = Array.isArray(e.catalog_entity_aliases) ? e.catalog_entity_aliases : [];
   if (!e.catalog_owner_module && aliases.length === 0) return "create-new";
   // rename-incoming-from / promote-to-master / dropped are out of scope (untested).
@@ -272,6 +281,14 @@ function mermaid(entities: any[], fieldsByTable: Record<string, any[]>): string 
       if (BUILTINS.has(f.reference_table)) builtinTargets.add(f.reference_table);
     }
   }
+  // Family edges (template §2): dotted, from the based entity to its base, after the
+  // relationship edges. The same lines `consistency-check.ts --emit-mermaid` derives.
+  for (const e of entities) {
+    if (!isBased(e) || !e.id_refentity) continue;
+    edgeLines.push(`    ${e.table_name} -.->|${e.id_type === "is_a" ? "is a kind of" : "extends"}| ${e.id_refentity}`);
+    referenced.add(e.table_name);
+    referenced.add(e.id_refentity);
+  }
   // `master` tags non-builtin entities whose reconciliation is `reuse-from` /
   // `promote-to-master` and that take part in an edge — the same criterion the
   // architect's consistency-check.ts `emitSpecMermaid` uses, so the checker's
@@ -300,7 +317,7 @@ function entityDetail(e: any, fields: any[]): string {
   out.push(`### 3.${e._num} \`${e.table_name}\` - ${e.singular_label}`);
   out.push("");
 
-  if (BUILTINS.has(e.table_name)) {
+  if (BUILTINS.has(e.table_name) || e._reuse_module) {
     // Built-in / reuse block: referenced, not provisioned, so no owned Fields table.
     // It still carries a Label column and participates in relationships — every inbound
     // FK from an owned entity is fully recoverable from live state, so emit the same
@@ -336,13 +353,24 @@ function entityDetail(e: any, fields: any[]): string {
   // Label column: required on every non-junction entity; OPTIONAL on a junction (the
   // platform composes `_label` from the parent legs). Omit the line when live
   // `label_column` is null/empty instead of emitting `` `null` `` (template §3 rule).
-  if (e.label_column) out.push(`**Label column:** \`${e.label_column}\``);
+  // A based entity (`is_a` / `has_a`) takes its label column, label parent and order column
+  // from its base (the platform sets them), so none of the three lines is emitted for it.
+  const based = isBased(e);
+  if (e.label_column && !based) out.push(`**Label column:** \`${e.label_column}\``);
   // v5.4 identity-spine lines (canonical spec §1), pinned right after **Label column:**.
   // Both backticked as a `field_name` like **Label column:**. Order column: omit when
   // empty/null. Id column: omit when the platform default `id` (or empty) — every live
   // entity reads back id_column "id" unless explicitly overridden.
-  if (e.order_column) out.push(`**Order column:** \`${e.order_column}\``);
+  if (e.order_column && !based) out.push(`**Order column:** \`${e.order_column}\``);
   if (e.id_column && e.id_column !== "id") out.push(`**Id column:** \`${e.id_column}\``);
+  // Key type / Key prefix (template §3), pinned right after **Id column:**. Bare values, no
+  // backticks. Key type: omit at the platform default `auto_increment` (a spec without the
+  // line means auto_increment). Key prefix: only with `typeid` (the platform keeps it empty
+  // for every other type). Locked after create, so this is what a re-deploy must match.
+  if (e.id_type && e.id_type !== "auto_increment") out.push(`**Key type:** ${e.id_type}`);
+  if ((e.id_type === "typeid" || e.id_type === "is_a") && e.id_prefix) out.push(`**Key prefix:** ${e.id_prefix}`);
+  // Based on (template §3), right after **Key prefix:**: the base, backticked. Create-only.
+  if (based && e.id_refentity) out.push(`**Based on:** \`${e.id_refentity}\``);
   out.push(`**Audit log:** ${e.audit_log ? "yes" : "no"}`);
   if (editSuffix !== "manage") out.push(`**Edit permission:** ${editSuffix}`);
   // v5.4 UI/cube/icon lines (canonical spec §1), pinned right after **Edit permission:**.
@@ -355,7 +383,7 @@ function entityDetail(e: any, fields: any[]): string {
   out.push(`**Catalog entity code:** \`${e.catalog_entity_code || e.table_name}\``);
   out.push(`**Entity type:** ${e.entity_type}`);
   if (e.catalog_owner_module) out.push(`**Catalog owner:** ${e.catalog_owner_module}`);
-  if (e.label_parent) out.push(`**Label parent:** \`${e.label_parent}\``);
+  if (e.label_parent && !based) out.push(`**Label parent:** \`${e.label_parent}\``);
   if (recon !== "create-new") out.push(`**Reconciliation:** ${recon}`);
   out.push(`**Description:** ${e.description}`);
   out.push("");
@@ -444,6 +472,15 @@ function relationshipsProse(
   const isJunction = (t: any): boolean => !!t && t.entity_type === "junction";
   const refsOf = (t: string): any[] => (fieldsByTable[t] || []).filter(isRef);
 
+  // A based entity's family link comes first (template: one canonical sentence).
+  if (isBased(e) && e.id_refentity) {
+    lines.push(
+      e.id_type === "is_a"
+        ? `- ${art} \`${e.table_name}\` record is a kind of \`${e.id_refentity}\` and shares its key (is_a).`
+        : `- ${art} \`${e.table_name}\` record extends one \`${e.id_refentity}\` record and shares its key (has_a).`,
+    );
+  }
+
   // Junction entity: a single link line instead of its two raw N:1 legs.
   if (isJunction(e)) {
     const legs = refsOf(e.table_name);
@@ -525,7 +562,7 @@ function enumerations(entities: any[], fieldsByTable: Record<string, any[]>): st
   // `table.field` and emit an unnumbered `### `table.field`` heading (analyst
   // v5.4+ convention). The member values inside each block keep their defined
   // (lifecycle / semantic) order; only the block order and headings change.
-  const blocks: Array<{ key: string; values: string[] }> = [];
+  const blocks: Array<{ key: string; values: any[] }> = [];
   for (const e of entities) {
     for (const f of fieldsByTable[e.table_name] || []) {
       if (f.format !== "enum" || !Array.isArray(f.enum_values) || !f.enum_values.length) continue;
@@ -539,7 +576,10 @@ function enumerations(entities: any[], fieldsByTable: Record<string, any[]>): st
   }
   for (const b of blocks) {
     out.push(`### \`${b.key}\``);
-    for (const v of b.values) out.push(`- \`${v}\``);
+    // A `{value, label}` entry is a labeled bullet (`- `value` - Label`); a plain entry the bare value.
+    for (const v of b.values) {
+      out.push(v !== null && typeof v === "object" && v.label ? `- \`${enumValue(v)}\` - ${v.label}` : `- \`${enumValue(v)}\``);
+    }
     out.push("");
   }
   return out.join("\n").trimEnd();
@@ -551,12 +591,13 @@ function permSuffix(name: string, slug: string): string {
   return name.startsWith(`${slug}:`) ? name.slice(slug.length + 1) : (name.split(":").pop() || name);
 }
 
-/** Set of permission ids transitively included by `rootId` via the hierarchy edges. */
-function includedClosure(rootId: number, hierarchy: any[]): Set<number> {
-  const adj: Record<number, number[]> = {};
-  for (const h of hierarchy) (adj[h.including_permission_id] ||= []).push(h.included_permission_id);
-  const seen = new Set<number>();
-  const stack = [rootId];
+/** Set of permission names transitively included by `rootName` via the hierarchy edges
+ *  (permissions are keyed by `permission_name`; hierarchy rows link the two names). */
+function includedClosure(rootName: string, hierarchy: any[]): Set<string> {
+  const adj: Record<string, string[]> = {};
+  for (const h of hierarchy) (adj[h.including_permission_name] ||= []).push(h.included_permission_name);
+  const seen = new Set<string>();
+  const stack = [rootName];
   while (stack.length) {
     const id = stack.pop()!;
     for (const next of adj[id] || []) if (!seen.has(next)) { seen.add(next); stack.push(next); }
@@ -596,7 +637,7 @@ function permissionsCatalog(mod: any, perms: any[], hierarchy: any[], owned: any
     .map((e) => JSON.stringify([e.validation_rules || [], e.select_rule || {}]))
     .join("\n");
   const adminPerm = perms.find((p) => permSuffix(p.permission_name, slug) === "admin");
-  const adminClosure = adminPerm ? includedClosure(adminPerm.id, hierarchy) : null;
+  const adminClosure = adminPerm ? includedClosure(adminPerm.permission_name, hierarchy) : null;
 
   // Deterministic order: read, manage, admin, then the rest by name.
   const rank = (p: any) => {
@@ -621,7 +662,7 @@ function permissionsCatalog(mod: any, perms: any[], hierarchy: any[], owned: any
     else tier = "workflow-gate (lifecycle)";
     let inAdmin: string;
     if (tier === "baseline-admin") inAdmin = "-";
-    else if (adminClosure) inAdmin = adminClosure.has(p.id) ? "✓" : "-";
+    else if (adminClosure) inAdmin = adminClosure.has(p.permission_name) ? "✓" : "-";
     else inAdmin = "✓";
     out.push(`| \`${name}\` | ${tier} | ${p.description} | ${inAdmin} | (none) |`);
   }
@@ -629,7 +670,7 @@ function permissionsCatalog(mod: any, perms: any[], hierarchy: any[], owned: any
 }
 
 function governance(
-  mod: any, perms: any[], hierarchy: any[], permById: Record<number, any>, roles: any[],
+  mod: any, perms: any[], hierarchy: any[], permByName: Record<string, any>, roles: any[],
   processes: any[],
 ): string {
   // §9.1 heading key is the system_slug uppercased (template `{{SYSTEM_SLUG_UPPER}}`),
@@ -672,8 +713,8 @@ function governance(
   for (const r of roles) roleById[r.id] = r;
   const roleGrants: Array<[number | null, string | undefined]> = [
     [mod.default_viewer_role_id, mod.view_permission],
-    [mod.default_manager_role_id, permById[mod.manage_permission_id]?.permission_name],
-    [mod.default_admin_role_id, permById[mod.admin_permission_id]?.permission_name],
+    [mod.default_manager_role_id, mod.manage_permission ?? undefined],   // permission NAME reference
+    [mod.default_admin_role_id, mod.admin_permission ?? undefined],     // permission NAME reference
   ];
   for (const [roleId, grant] of roleGrants) {
     if (!roleId || !roleById[roleId]) continue;
@@ -691,8 +732,10 @@ function governance(
   out.push("| permission | includes | reconciliation |");
   out.push("| --- | --- | --- |");
   for (const h of hierarchy) {
-    const inc = permById[h.including_permission_id]?.permission_name;
-    const included = permById[h.included_permission_id]?.permission_name;
+    const inc = permByName[h.including_permission_name]?.permission_name;
+    // The included side may be another module's permission only for a family edit grant
+    // (the `hierarchy` filter in `render` admits nothing else from outside the module).
+    const included = permByName[h.included_permission_name]?.permission_name ?? h.included_permission_name;
     if (inc && included) out.push(`| \`${inc}\` | \`${included}\` | ♻ exists |`);
   }
   out.push("");
@@ -784,8 +827,10 @@ async function loadLive(slug: string): Promise<LiveData> {
   // Discover related tables (built-ins pulled in as reuse-from §3 blocks).
   const related: any[] = [];
   const seen = new Set(ownedTables);
+  const baseOf = new Map(ownedRaw.map((e: any) => [e.table_name, e.id_refentity] as const));
   for (const t of ownedTables) {
-    for (const f of fieldsByTable[t]) {
+    // FK targets, plus the base of a based entity (a family base in another module).
+    for (const f of [...fieldsByTable[t], { reference_table: baseOf.get(t) }]) {
       const tgt = f.reference_table;
       if (tgt && !seen.has(tgt)) {
         seen.add(tgt);
@@ -842,6 +887,12 @@ function render(data: LiveData): string {
   // built-in entities appended last, sorted the same way.
   const owned = sortEntities(data.ownedRaw);
   const related = data.related;
+  const moduleSlugById = new Map(data.relatedModules.map((m: any) => [m.id, m.module_slug] as const));
+  for (const e of related) {
+    if (!BUILTINS.has(e.table_name) && e.module_id !== mod.id && moduleSlugById.has(e.module_id)) {
+      e._reuse_module = moduleSlugById.get(e.module_id);
+    }
+  }
   const allEntities = [...owned, ...sortEntities(related)];
   allEntities.forEach((e, i) => {
     e._num = i + 1;
@@ -849,11 +900,17 @@ function render(data: LiveData): string {
     e._fieldsByTable = fieldsByTable;
   });
 
-  const permIds = perms.map((p) => p.id);
-  const permById: Record<number, any> = {};
-  for (const p of perms) permById[p.id] = p;
+  // Permissions are keyed by permission_name (no numeric id); hierarchy rows link two names.
+  const permByName: Record<string, any> = {};
+  for (const p of perms) permByName[p.permission_name] = p;
+  // A cross-module row is kept only when it is a family edit grant: one of this module's
+  // permissions including the edit permission of the base of one of its based entities.
+  const baseEditPerms = new Set(
+    owned.filter(isBased).map((e: any) => related.find((r: any) => r.table_name === e.id_refentity)?.edit_permission).filter(Boolean),
+  );
   const hierarchy = data.allHierarchy.filter(
-    (h) => permIds.includes(h.including_permission_id) && permIds.includes(h.included_permission_id),
+    (h) => h.including_permission_name in permByName &&
+      (h.included_permission_name in permByName || baseEditPerms.has(h.included_permission_name)),
   );
 
   const relatedVersions: Record<string, number> = {};
@@ -914,7 +971,7 @@ function render(data: LiveData): string {
   parts.push("");
   parts.push(permissionsCatalog(mod, perms, hierarchy, owned));
   parts.push("");
-  parts.push(governance(mod, perms, hierarchy, permById, roles, processes));
+  parts.push(governance(mod, perms, hierarchy, permByName, roles, processes));
   parts.push("");
 
   return parts.join("\n");
@@ -928,7 +985,8 @@ async function main() {
   const force = rawArgs.includes("--force");
   const fixtureIdx = rawArgs.indexOf("--from-fixture");
   const fixturePath = fixtureIdx >= 0 ? rawArgs[fixtureIdx + 1] : null;
-  const positional = rawArgs.filter((a, i) => a !== "--force" && a !== "--from-fixture" && i !== fixtureIdx + 1);
+  // Drop the fixture path only when --from-fixture is present (fixtureIdx -1 would otherwise drop argv[0], the slug).
+  const positional = rawArgs.filter((a, i) => a !== "--force" && a !== "--from-fixture" && (fixtureIdx < 0 || i !== fixtureIdx + 1));
   const usage =
     "usage: bun run spec-extract-lib.ts <module_slug> [outfile] [--force]\n" +
     "       bun run spec-extract-lib.ts --from-fixture <fixture.json> [outfile] [--force]";

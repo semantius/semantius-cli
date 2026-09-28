@@ -36,6 +36,7 @@ All three surfaces follow the same ban list and the same "required" list below.
 - Reconciliation annotation values as words: `reuse-from`, `rename-incoming-from`, `promote-to-master`, `dropped`, `create-new`. Phrases like "annotate as reuse-from", "flag in §7.1".
 - File-format / pipeline terms: `spec`, `blueprint`, `frontmatter`, `manifest`, `annotation`, `reconciliation`, `reconcile`, `the spec will own`, `the analyst will`, `the modeler will deploy`. Where naming the artifact is unavoidable in a status message, use plain English ("the file" / "this design" / "the design document"). *"Reconciliation"* in particular is the internal name for what this skill *does* — never narrate it back to the user using that word; say *"check against what's deployed"* / *"figure out what to reuse"* / *"set up"* / *"deploy"* instead.
 - Architectural jargon: `gatekeeper`, `data silo`, `silo`, `embedded master`, `consumer role`, `contributor role`, `mastered_in`, `master cluster`, `module_type`, `classDef`, `platform_builtin` (the diagram class).
+- Family jargon (entities that share a key): `normalization`, `normal form`, `3NF`, `subtype`, `supertype`, `inheritance`, `is_a`, `has_a`, `derived` (for an entity based on another), `base entity`, `_ext`, `id_refentity`, and "role" for something a record can also be. Use the user-facing column of the translation table below; ask only business facts ("Can the same company be both a customer and a supplier?").
 - Raw identifiers when a display name exists: `skill_profiles` when the blueprint carries `singular_label: "Skill Profile"`, `lms-skills` when the catalog knows the module's display name as "LMS Skills". Backticked snake_case tokens are a leak even in status messages.
 
 **Required in any user-facing surface:**
@@ -60,6 +61,12 @@ The internal annotation value (`reuse-from <X>.<Y>`, `promote-to-master <host>.<
 | "gatekeeper" | "<Module Display Name>'s owners need to approve future shape changes" |
 | "the catalog" / "the live catalog" | "your semantic model" / "your live semantic model" |
 | "master / consumer / contributor / embedded role" | (translate per case; usually doesn't need naming) |
+| the base of a family (`business_partners`) | "the shared record", or its Plural Label ("business partners") |
+| an `is_a` entity (`emails` is_a `activities`) | "a kind of <Singular>" ("an email is a kind of activity") |
+| a `has_a` entity (`customers` has_a `business_partners`) | "something a <Singular> can also be" ("being a customer is something a business partner can also be") |
+| a family | "kept once as <Plural>" ("each company is kept once as a business partner") |
+| a type enum | "a type choice on <Plural>" ("each expense has a type: mileage or receipt") |
+| "normalize" / "keep each fact once" | never named; describe the outcome ("each company is kept once") |
 
 **Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending.
 

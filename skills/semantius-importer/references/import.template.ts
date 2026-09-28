@@ -44,7 +44,8 @@ type ColumnSpec = {
   reason?: string;
   title?: string;
   precision?: number;
-  enum_values?: string[];
+  // An entry is a value or a {value, label} pair; records store the value.
+  enum_values?: Array<string | { value: string; label?: string }>;
   input_type?: string;
   field_order?: number;
   reference_table?: string;
@@ -151,8 +152,20 @@ function coerce(spec: ColumnSpec, raw: string | undefined): { ok: boolean; value
       if (Number.isNaN(Date.parse(v))) return { ok: false, reason: `invalid date: "${v}"` };
       return { ok: true, value: v };
     }
+    case "enum": {
+      // Records store the VALUE. A file may hold the value or the label ("On hold" for
+      // on_hold): match the value exactly, then a label or value case-insensitively.
+      if (!spec.enum_values || !spec.enum_values.length) return { ok: true, value: v };
+      const entries = spec.enum_values.map((e) => (typeof e === "object" ? e : { value: e, label: undefined }));
+      const exact = entries.find((e) => e.value === v);
+      if (exact) return { ok: true, value: exact.value };
+      const lv = v.toLowerCase();
+      const loose = entries.find((e) => e.value.toLowerCase() === lv || (e.label ?? "").toLowerCase() === lv);
+      if (loose) return { ok: true, value: loose.value };
+      return { ok: false, reason: `not one of the enum values: "${v}"` };
+    }
     default:
-      return { ok: true, value: v }; // string / multiline / enum / reference / email / url pass through
+      return { ok: true, value: v }; // string / multiline / reference / email / url pass through
   }
 }
 

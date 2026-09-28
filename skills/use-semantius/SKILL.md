@@ -3,7 +3,9 @@ name: use-semantius
 description: >-
   Use this skill for anything involving the Semantius platform via the semantius CLI. us1-9d4f2a7b   Trigger when the user wants to: create, read, update, or delete entities,
   fields, modules, permissions, roles, users, or business records; build or query
-  a semantic data model; set up RBAC; insert or import data into Semantius
+  a semantic data model, including subtypes and extensions of an entity (emails
+  and calls as kinds of activities, customers and suppliers as business
+  partners) and enum values with labels; set up RBAC; insert or import data into Semantius
   tables; run analytical queries across Semantius data; get a web UI link
   (deep link) to a record, list, or module; or send transactional emails via
   the Semantius email service (`crud sendEmail`). Also trigger when
@@ -15,7 +17,7 @@ description: >-
 
 **Semantius** is a low-code platform that lets you define a semantic data model, entities, fields, relationships, and access rules, and instantly get a fully managed PostgreSQL database with a REST API, auto-generated UI, and an analytics layer behind it. You define *what* your data looks like (Layer 1), and Semantius handles storage, querying (Layer 2), and cross-table analytics (Layer 3).
 
-`semantius` is the official CLI that gives shell and agent access to two servers: `crud` (schema management + record operations) and `cube` (CubeJS-compatible analytics).
+`semantius` is the official CLI that gives shell and agent access to three servers: `crud` (schema management + record operations), `cube` (CubeJS-compatible analytics), and the built-in `utils` (CSV introspection, moving entities and modules between hosts).
 
 ---
 
@@ -52,8 +54,9 @@ Understanding which layer you're working with determines which tools to use:
 
 | File | When to read |
 |------|-------------|
-| `references/cli-usage.md` | CLI commands, shell patterns, chaining, installation |
-| `references/data-modeling.md` | Layer 1, entities, fields, modules, relationships, safe evolution |
+| `references/cli-usage.md` | CLI commands and their tiers, credentials and hosts, options, shell patterns, chaining, installation; § "Moving Entities and Modules Between Hosts" |
+| `references/data-modeling.md` | Layer 1, entities, fields, modules, relationships, safe evolution; § "Enum values and labels" |
+| `references/entity-families.md` | Layer 1, subtypes and extensions (`id_type: is_a` / `has_a`, `id_refentity`): when to use them, create order, reads and writes across levels, limits, deletes, error codes. Read before the first `create_entity` of such an entity |
 | `references/jsonlogic.md` | Layer 1, JsonLogic rules: `computed_fields`, `validation_rules`, extension operators, cross-entity lookups, dynamic `input_type_rule` (conditional readonly/hidden/required) |
 | `references/select-rule.md` | Layer 1, row-level security: `select_rule`, who sees which rows, REPLACE-vs-AND semantics, admin-lockout risk |
 | `references/rbac.md` | Layer 1, permissions, roles, user assignments, hierarchy |
@@ -68,6 +71,9 @@ Understanding which layer you're working with determines which tools to use:
 
 **Managing schema, create/modify entities, fields, modules?**
 → Layer 1, read `references/data-modeling.md`, follow mandatory creation order
+
+**Several kinds of one thing ("emails and calls are both activities"), or something a record can also be ("a business partner can also be a customer")?**
+→ Layer 1, read `references/entity-families.md` before creating anything: it decides between `is_a`, `has_a`, an enum field and separate entities, and changes the creation order (one `create_entity` call per level, bases first). The choice is locked at creation, so confirm with the user
 
 **Computed fields, validation rules, or conditional field behavior (readonly/hidden/required depending on the record)?**
 → Layer 1, read `references/jsonlogic.md`, entity-level and field-level JsonLogic, operators, cross-entity lookups
@@ -93,6 +99,9 @@ Understanding which layer you're working with determines which tools to use:
 **Importing a CSV file?**
 → The `semantius-importer` skill is the front door: it introspects the file (`utils/get_csvschema`), creates or reuses the entity, and bulk-loads in batches. `references/webhook-import.md` covers the signed-webhook path (external systems pushing rows).
 
+**Moving entities or a module to another host, backing one up, restoring an export?**
+→ The `semantius-transfer` skill runs the workflow; `references/cli-usage.md` § "Moving Entities and Modules Between Hosts" has the mechanics.
+
 **Sending a transactional email?**
 → Layer 2 utility, use `crud sendEmail`, see `references/crud-tools.md` § "sendEmail"
 
@@ -116,37 +125,17 @@ If it is not found (POSIX `command not found` / exit code 127, or PowerShell `Co
 
 Do not proceed with any other tasks until the CLI is installed and `semantius --version` returns successfully. After a Windows install, the user may need to open a new terminal so the updated PATH is picked up.
 
-**Then verify environment variables:**
+**Then verify the connection:**
 
 ```bash
-semantius info
+semantius whoami
 ```
 
-If this fails with "Missing required environment variables" or similar error, list what's missing and STOP. Required variables:
-- `SEMANTIUS_API_KEY`, your API key
-- `SEMANTIUS_ORG`, your organization name
+- **Succeeds:** note `host`, `host_source` and `auth_method`, and continue. A zero exit does not mean the user is set up as they think: `host_source` `current` means the host was pinned with `semantius use`; `env`, `dotenv:<path>` or `org` means it came from the environment or a `.env` (possibly a project default), so name the host and where it came from. If the user expects their browser session but `auth_method` is `apikey`, an API key in the environment is winning: the fix is `semantius use <host>` or `--auth oauth`, not another sign-in.
+- **Exits `1` with `MISSING_ENV_VAR`:** no host is configured. Ask which host; once the user names it, `semantius use <host>` signs them in and pins it.
+- **Exits `5`:** quote the error (it names the host) and STOP. The user runs `semantius use <host>` or `semantius login --host <host>` themselves, or, for automation, sets `SEMANTIUS_API_KEY` with `SEMANTIUS_ORG` / `SEMANTIUS_HOST`.
 
-Do not proceed until both are set and `semantius info` returns successfully.
-
-Once verified, set up credentials. Set them for your shell, or (preferred) put them in a `.env` file.
-
-**Linux / macOS (bash/zsh):**
-```bash
-export SEMANTIUS_API_KEY=your-api-key
-export SEMANTIUS_ORG=your-org-name
-```
-
-**Windows (PowerShell):**
-```powershell
-$env:SEMANTIUS_API_KEY = "your-api-key"
-$env:SEMANTIUS_ORG = "your-org-name"
-```
-
-Or place them in a `.env` file — next to the executable on Windows, or in the current working directory on Linux/macOS:
-```
-SEMANTIUS_API_KEY=your-api-key
-SEMANTIUS_ORG=your-org-name
-```
+Never run `login` or `logout`, and never run `use` unprompted: they change machine-global state and need a human. `whoami`, `ping` and `hosts` are safe read-only diagnostics. Commands, tiers, host and credential precedence: `references/cli-usage.md`.
 
 ---
 
@@ -179,7 +168,7 @@ Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably.
 
 ### `crud`: Schema Management + Record Operations (Layers 1 & 2)
 
-**Layer 1 typed tools** manage the semantic data model: `create_entity`, `create_field`, `create_module`, `create_permission`, `create_role`, etc. These operate on Semantius's own schema tables. Every `create_*` takes `data` as one object **or an array of objects** (several fields, permissions, roles in one call), and every `update_*` / `delete_*` takes `id` (or `table_name` for entities) as one value **or an array**.
+**Layer 1 typed tools** manage the semantic data model: `create_entity`, `create_field`, `create_module`, `create_permission`, `create_role`, etc. These operate on Semantius's own schema tables. Every `create_*` takes `data` as one object **or an array of objects** (several fields, permissions, roles in one call), and every `update_*` / `delete_*` takes `id` (or `table_name` for entities, `permission_name` for permissions) as one value **or an array**.
 
 **Layer 2 `postgrestRequest`** operates on your actual business data. Any entity you define becomes a PostgreSQL table accessible via PostgREST:
 ```bash
@@ -233,12 +222,12 @@ Full detail: `references/crud-tools.md` § `getCurrentUser`.
    - Before `create_role` → run `read_role` first
    - If the read returns results, use those IDs instead of creating duplicates. Only create if it returns empty.
    - For a bulk create, **one** `read_*` with an `in.(...)` filter covers every item (`"filters": "field_name=in.(description,cost)&table_name=eq.services"`); never one `--single` read per record.
-2. **Schema first**, Module → Permissions → **all** Entities → Fields. Never skip steps, and create every entity of a model before any of its fields, so each field's `reference_table` (self-references included) already exists.
-3. **Never create auto-generated fields**, `id`, `label`, `created_at`, `updated_at`, and the `label_column` field are created automatically by `create_entity`.
+2. **Schema first**, Module → Permissions → **all** Entities → Fields. Never skip steps, and create every entity of a model before any of its fields, so each field's `reference_table` (self-references included) already exists. **Exception:** with `is_a` / `has_a` entities, create bases before the entities based on them, one `create_entity` call per level; fields still come after every level (`references/entity-families.md`).
+3. **Never create auto-generated fields**, `id`, `label`, `created_at`, `updated_at`, and the `label_column` field are created automatically by `create_entity`. On an `is_a` / `has_a` entity also never create a field of its base: create only the entity's own fields.
 4. **`reference_table` mandates relational format**, Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
 5. **Warn before risky changes**, Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
 6. **Surface a UI link whenever it helps the user**, after schema changes *and* after record operations (create / find / update). Pattern: `{ui_baseurl}/{module_slug}/{table_name}`, append `/{id}` for one record. See "Linking to the web UI" above for the rules (derive `ui_baseurl` from `getCurrentUser`; use the lowercase `module_slug`).
-7. **Always batch: one call per set of records, never a loop of single calls.** Whenever more than one record of the same kind is pending (several fields for an entity, several permissions for a module, several `role_permission` rows, several ids to update or delete, several rows for a table), send them **in one call**: pass an array in `data` to `create_*` (`'{"data": [{...}, {...}]}'`), or an array in `id` (`table_name` for entities) to `update_*` / `delete_*` (`'{"id": [4, 5, 6]}'`, the same `data` applied to every id). Array items do **not** need the same keys (a key omitted from one item takes the column default). One call is one request and one transaction (all-or-nothing); the response is always an array of the affected records. Keep a call to roughly 100 rows / ids. Issuing N single-record calls where one array call would do is a mistake. `postgrestRequest` also takes an array `body`, but under raw PostgREST rules (identical keys per item, or `?columns=` on the path with omitted keys becoming NULL). See `references/crud-tools.md` § "Bulk operations".
+7. **Always batch: one call per set of records, never a loop of single calls.** Whenever more than one record of the same kind is pending (several fields for an entity, several permissions for a module, several `role_permission` rows, several ids to update or delete, several rows for a table), send them **in one call**: pass an array in `data` to `create_*` (`'{"data": [{...}, {...}]}'`), or an array in `id` (`table_name` for entities, `permission_name` for permissions) to `update_*` / `delete_*` (`'{"id": [4, 5, 6]}'`, the same `data` applied to every id). Array items do **not** need the same keys (a key omitted from one item takes the column default). One call is one request and one transaction (all-or-nothing); the response is always an array of the affected records. Keep a call to roughly 100 rows / ids. Issuing N single-record calls where one array call would do is a mistake. The one ordering exception is entities of a family: one `create_entity` call per level, bases first. `postgrestRequest` also takes an array `body`, but under raw PostgREST rules (identical keys per item, or `?columns=` on the path with omitted keys becoming NULL). See `references/crud-tools.md` § "Bulk operations".
 
 ## Response handling: exit code is not enough
 

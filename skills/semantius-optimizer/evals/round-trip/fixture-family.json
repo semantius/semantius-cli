@@ -1,0 +1,343 @@
+{
+  "mod": {
+    "id": 9,
+    "module_name": "Partners",
+    "module_slug": "partners",
+    "description": "Partners and their timeline",
+    "icon_name": "handshake",
+    "module_type": "domain",
+    "settings": {
+      "module_kind": "starter",
+      "naming_mode": "agent-optimized"
+    },
+    "access_scope": "basic",
+    "domain_code": "CRM",
+    "logo_color": "",
+    "home_page": "/",
+    "version": 5,
+    "version_date": "2026-09-28T10:00:00+00:00",
+    "default_viewer_role_id": 91,
+    "default_manager_role_id": 92,
+    "default_admin_role_id": null,
+    "view_permission": "partners:read",
+    "manage_permission": "partners:manage",
+    "admin_permission": null
+  },
+  "ownedRaw": [
+    {
+      "id": 901,
+      "module_id": 9,
+      "table_name": "business_partners",
+      "singular_label": "Business Partner",
+      "plural_label": "Business Partners",
+      "description": "A company or person the business deals with.",
+      "label_column": "partner_name",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "typeid",
+      "id_prefix": "bp",
+      "id_refentity": null,
+      "audit_log": false,
+      "edit_permission": "partners:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "business_partners",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 902,
+      "module_id": 9,
+      "table_name": "activities",
+      "singular_label": "Activity",
+      "plural_label": "Activities",
+      "description": "Anything logged on a business partner's timeline.",
+      "label_column": "subject",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "typeid",
+      "id_prefix": "act",
+      "id_refentity": null,
+      "audit_log": false,
+      "edit_permission": "partners:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "activities",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 903,
+      "module_id": 9,
+      "table_name": "customers",
+      "singular_label": "Customer",
+      "plural_label": "Customers",
+      "description": "A business partner the business sells to.",
+      "label_column": "partner_name",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "has_a",
+      "id_prefix": "",
+      "id_refentity": "business_partners",
+      "audit_log": false,
+      "edit_permission": "partners:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "customers",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 904,
+      "module_id": 9,
+      "table_name": "emails",
+      "singular_label": "Email",
+      "plural_label": "Emails",
+      "description": "An email on a business partner's timeline.",
+      "label_column": "subject",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "is_a",
+      "id_prefix": "eml",
+      "id_refentity": "activities",
+      "audit_log": false,
+      "edit_permission": "partners:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "emails",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 905,
+      "module_id": 9,
+      "table_name": "vendors",
+      "singular_label": "Vendor",
+      "plural_label": "Vendors",
+      "description": "A company the business buys from, kept once as an organization.",
+      "label_column": "org_name",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "has_a",
+      "id_prefix": "",
+      "id_refentity": "organizations",
+      "audit_log": false,
+      "edit_permission": "partners:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_url": "",
+      "catalog_entity_code": "vendors",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    }
+  ],
+  "fieldsByTable": {
+    "business_partners": [
+      {
+        "field_name": "partner_name",
+        "format": "text",
+        "title": "Partner Name",
+        "description": "",
+        "input_type": "required",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "label",
+        "field_order": 1
+      },
+      {
+        "field_name": "tax_id",
+        "format": "text",
+        "title": "Tax ID",
+        "description": "",
+        "input_type": "default",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 2
+      }
+    ],
+    "activities": [
+      {
+        "field_name": "subject",
+        "format": "text",
+        "title": "Subject",
+        "description": "",
+        "input_type": "required",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "label",
+        "field_order": 1
+      },
+      {
+        "field_name": "business_partner_id",
+        "format": "reference",
+        "title": "Business Partner",
+        "description": "",
+        "input_type": "required",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 2,
+        "reference_table": "business_partners",
+        "reference_delete_mode": "restrict",
+        "relationship_label": "logs"
+      }
+    ],
+    "customers": [
+      {
+        "field_name": "customer_tier",
+        "format": "enum",
+        "title": "Customer Tier",
+        "description": "",
+        "input_type": "required",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 1,
+        "enum_values": [
+          "standard",
+          {
+            "value": "kam",
+            "label": "Key account"
+          }
+        ],
+        "default_value": "standard"
+      }
+    ],
+    "emails": [
+      {
+        "field_name": "from_address",
+        "format": "email",
+        "title": "From",
+        "description": "",
+        "input_type": "required",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 1
+      },
+      {
+        "field_name": "thread_id",
+        "format": "reference",
+        "title": "Thread",
+        "description": "",
+        "input_type": "default",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 2,
+        "reference_table": "activities",
+        "reference_delete_mode": "clear",
+        "relationship_label": "continues"
+      }
+    ],
+    "vendors": [
+      {
+        "field_name": "payment_terms_days",
+        "format": "integer",
+        "title": "Payment Terms",
+        "description": "",
+        "input_type": "default",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 1
+      }
+    ]
+  },
+  "related": [
+    {
+      "id": 301,
+      "module_id": 3,
+      "table_name": "organizations",
+      "singular_label": "Organization",
+      "plural_label": "Organizations",
+      "description": "A company, kept once across modules.",
+      "label_column": "org_name",
+      "entity_type": "operational_record",
+      "id_type": "typeid",
+      "id_prefix": "org",
+      "id_refentity": null,
+      "edit_permission": "crm:manage"
+    }
+  ],
+  "perms": [
+    {
+      "permission_name": "partners:read",
+      "description": "Read access to every record in the module."
+    },
+    {
+      "permission_name": "partners:manage",
+      "description": "Create and edit records in the module."
+    }
+  ],
+  "allHierarchy": [
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "partners:read"
+    },
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "crm:manage"
+    },
+    {
+      "including_permission_name": "partners:read",
+      "included_permission_name": "crm:read"
+    },
+    {
+      "including_permission_name": "other:manage",
+      "included_permission_name": "other:read"
+    }
+  ],
+  "roles": [
+    {
+      "id": 91,
+      "slug": "partners_viewer",
+      "origin": "model",
+      "catalog_role_code": ""
+    },
+    {
+      "id": 92,
+      "slug": "partners_manager",
+      "origin": "model",
+      "catalog_role_code": ""
+    }
+  ],
+  "processes": [],
+  "relatedModules": [
+    {
+      "id": 3,
+      "module_slug": "crm",
+      "version": 4
+    }
+  ]
+}

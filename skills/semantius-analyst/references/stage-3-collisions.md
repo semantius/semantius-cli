@@ -174,9 +174,9 @@ Stage 2 has already applied the role-driven placement table (top of Stage 3) usi
 
 ### 3c. Similar-name collisions
 
-**Policy path:** `.aliases.<incoming_slug>` (the rename IS the alias). Options 1 and 2 write an alias object `{slug, singular_label, plural_label}` using `headComment` for provenance; option 3 ("different, keep both names") writes nothing.
+**Policy path:** `.aliases.<incoming_slug>` (the rename IS the alias). Options 1 and 2 write an alias object `{slug, singular_label, plural_label}` using `headComment` for provenance; option 3 ("different, keep both names") writes nothing; option 4 writes `.shared_bases.<incoming_slug>.<existing_entity>` (see `stage-3-shared-base.md`).
 
-For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`:
+For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`, or a **four-option** one when Stage 2e.1 also flagged the pair as the same real-world thing **and** the live entity can serve as a base (the eligibility test in `stage-3-shared-base.md`). Four is the tool's maximum, so this pair gets no separate 3c.1 widget:
 
 - **question**: `"<This Plural Label> looks similar to <Existing Plural Label> in <Existing Module Display Name>. Are they the same concept?"`
 - **header**: `"Similar name"`
@@ -188,11 +188,14 @@ For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`:
      description: `"This module reads <Existing Module Display Name>'s <Existing Plural Label>. We won't create a duplicate."`
   3. label: `"Different concept, keep both names"`
      description: `"They look alike but aren't actually related. Create our own."`
+  4. (only with the 2e.1 flag and an eligible live base) label: `"Keep each one once"`
+     description: `"A <This Singular> becomes something a <Existing Singular> can also be. The shared details (name, address, and so on) are entered once, in <Existing Plural Label>."`
 
 **Internal mapping**:
 - Option 1 → `rename-incoming-from <existing_module>.<existing_entity> as <new_name>`.
 - Option 2 → `reuse-from <existing_module>.<existing_entity>`.
 - Option 3 → `create-new` (default, no annotation needed; record the comparison was inspected).
+- Option 4 → the 3c.1 "a live base fits" outcome: `create-new` with `**Key type:** has_a` and `` **Based on:** `<existing_entity>` ``, fields the base already holds dropped, and `.shared_bases.<incoming_slug>.<existing_entity> = role_of`. Follow `stage-3-shared-base.md` from its outcomes table on.
 
 ### 3d. Modules-not-deployed-yet (external owner absent)
 

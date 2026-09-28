@@ -8,6 +8,44 @@ Entries below are newest first. `SPEC_VERSION` tracks the analyst's `CURRENT_VER
 
 ---
 
+## Description under the 1024-character limit (`SPEC_VERSION` unchanged)
+
+2026-09-28. The description was 1156 characters; the read list and mechanism detail were condensed, every trigger phrase and exclusion kept. Now 995.
+
+## 5.8: entity families and enum labels
+
+2026-09-28. `SPEC_VERSION` 5.7 → 5.8 in lockstep with the analyst. The platform added `is_a` / `has_a` key types (`entities.id_refentity`) and `{"value", "label"}` enum entries; the extractor now reads both back.
+
+1. **Families.** A based entity (`id_type` `is_a` / `has_a`) emits `**Key type:**`, `**Key prefix:**` for `is_a` (prefix now also for `is_a`, not only `typeid`), and `` **Based on:** `<id_refentity>` ``; it emits no `**Label column:**` / `**Label parent:**` / `**Order column:**` (the platform sets them from the base). Its Relationships prose starts with the canonical family sentence, and §2 gets a dotted edge (`<entity> -.->|is a kind of| <base>` / `-.->|extends|`) after the relationship edges, matching `consistency-check.ts --emit-mermaid`.
+2. **Cross-module related entities.** Related-table discovery also follows `id_refentity`, and a related non-built-in entity owned by another module now renders as a `reuse-from <module>.<table>` block (like a built-in: no Fields table) instead of an empty create-new block. §9.1 keeps a cross-module hierarchy row only when it is a family edit grant (this module's permission including the base's `edit_permission`).
+3. **Enum labels.** Notes `enum_values:` list values only; §5 emits `` - `value` - Label `` for a pair and `` - `value` `` otherwise.
+4. **Round-trip:** new `fixture-family.json` / `expected-family.md`; the basic and full goldens changed only in the `version` line.
+5. **Fix: live extraction lost its slug.** The argument filter dropped `argv[0]` whenever `--from-fixture` was absent (`fixtureIdx + 1` is `0`), so `spec-extract-lib.ts <slug> [outfile]` read the outfile as the slug (or failed with the usage message). Found by extracting a live family module on the tests instance; the fixture path was unaffected, which is why the round-trip stayed green.
+
+## 5.7: `SPEC_VERSION` follows the analyst (class-99 rule codes)
+
+2026-09-26. `SPEC_VERSION` 5.6 → 5.7 in lockstep with the analyst. Validation rules are emitted verbatim from live state, so live rules already carry the class-99 `code` plus the `name` identifier; the extractor needs no mapping change. `fixture-full.json` now carries a class-99 rule (`"code": "99001", "name": "retire_needs_permission"`) and both goldens were regenerated (the version line, plus that rule entry).
+
+---
+
+## Platform: name-keyed permissions (reader only; `SPEC_VERSION` unchanged)
+
+2026-09-26. The platform keys `permissions` by `permission_name` (no numeric id), `permission_hierarchy` rows link `including_permission_name` to `included_permission_name`, and the module record references `manage_permission` / `admin_permission` by name. `spec-extract-lib.ts` now indexes permissions by name, computes the `included in :admin?` closure over names, filters the module's hierarchy edges by name, and reads the baseline role grants from the module's name references. The emitted spec is byte-identical (both round-trip goldens unchanged); the fixtures `fixture-basic.json` / `fixture-full.json` were converted to the live shape.
+
+---
+
+## 5.6: extractor emits the entity key type
+
+`SPEC_VERSION` `5.5` → `5.6` (2026-09-26), in lockstep with the analyst. `entityDetail()` emits `**Key type:** <id_type>` right after `**Id column:**` when live `id_type` is not the default `auto_increment`, and `**Key prefix:** <id_prefix>` after it when the type is `typeid`: bare values, no backticks, the same omit-when-default rule as `**Edit mode:**`. Both read off the `entities` row already loaded; no new CLI reads. Built-in blocks emit neither (as with the other entity lines).
+
+Round-trip eval: `fixture-full.json` gains `id_type` / `id_prefix` on its entities (`assets` `typeid` / `asset`, `vendors` `uuid`, `asset_vendors` default) and `fixture-basic.json` the defaults; goldens regenerated (version stamp, plus the three new lines in `expected-full.md`). `bun evals/round-trip/check.ts` is green.
+
+Files: `references/spec-extract-lib.ts`, SKILL.md (version), `evals/round-trip/{README.md,fixture-basic.json,fixture-full.json,expected-basic.md,expected-full.md}`.
+
+## Unreleased: routing exclusion for semantius-transfer
+
+Description only, `SPEC_VERSION` unchanged (2026-09-26). "Export" and "snapshot" in the trigger list also match moving a module with its records between hosts, or backing it up as a restorable file, which this skill cannot do (it writes a markdown spec, no records). The description now routes those to the new `semantius-transfer` skill.
+
 ## 5.5: byte-alignment with the pure-skeleton template; modeler-accepted tiers; offline round-trip eval
 
 `SPEC_VERSION` `5.4` → `5.5` (2026-08-19), in lockstep with the analyst. The analyst template is now a pure skeleton (see the analyst CHANGELOG); this entry makes the extractor agree with it literal-for-literal and fixes four emitter defects that produced specs the analyst or modeler rejected.

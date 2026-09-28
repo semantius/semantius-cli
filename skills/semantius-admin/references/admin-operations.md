@@ -23,28 +23,9 @@ Referenced by `semantius-admin/SKILL.md` Step 5. These operations don't involve 
 
 Implementation: read workspace front-matters; call `read_module` / `read_entity` / `read_permission` via use-semantius to list live state.
 
-## 5.2 Backup (semantic-model snapshot)
+## 5.2 Backup and restore
 
-**Backup** — when the user asks to back up or snapshot, dump the live semantic model into a versioned JSON file (optionally scoped to one module).
-
-Scope:
-- With a `module-slug` argument: snapshot just that module (entities, fields, permissions, role-permissions, permission-hierarchy edges, webhook receivers).
-- Without an argument: snapshot every module.
-
-Output: `semantius-backup-<YYYYMMDD-HHMMSS>.json` in the current working directory. The format is a stable, replay-friendly JSON shape (one top-level key per resource type, arrays of records).
-
-> Backup does NOT deploy or modify anything. It is read-only.
-
-Implementation:
-
-```bash
-mkdir -p .tmp_admin
-# Use postgrestRequest or read_* to dump each resource type
-# Combine into a single JSON file with deterministic key ordering
-# Move to workspace with timestamped filename
-```
-
-Backup files include a `_backup_format_version` field so future restore tooling can reject incompatible dumps.
+Not run by the admin. Route to the `semantius-transfer` skill: it exports a module (or a table list) to a restorable JSON file with the CLI's `utils/export_module` / `export_entities`, restores it with `import_module` / `import_entities`, and moves modules or tables between hosts. The file is the CLI's transfer format; there is no separate backup format.
 
 ## 5.3 Listing operations
 
@@ -63,12 +44,11 @@ These are convenience wrappers that produce readable terminal output. No interac
 **Health** — when the user asks to check the connection, verify the instance is reachable and a known entity reads back.
 
 ```bash
-# Probe — pass '{}' explicitly even though this tool takes no args: a bare
-# no-argument call reads its payload from stdin, which hangs indefinitely on
-# Windows/PowerShell (see use-semantius/SKILL.md "Core CLI Commands").
-semantius call crud getCurrentUser '{}'
-# Verify a known built-in
-semantius call crud read_entity '{"slug": "users"}'
+semantius whoami     # host, where it came from (host_source), user, credential in use (auth_method)
+semantius ping       # one getCurrentUser round trip; exit 5 = no usable credential for this host
+# Verify a known built-in. A filter is required: read_entity has no "slug" key, and an
+# unfiltered read proves nothing about any one entity.
+semantius call crud read_entity --single '{"filters": "table_name=eq.users"}'
 ```
 
-Report `OK / FAIL` with the failure mode. Exit code matches the underlying call.
+Report `OK / FAIL` with the host, `host_source`, `auth_method` and the failure mode. Exit code matches the underlying call.

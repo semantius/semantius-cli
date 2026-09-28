@@ -54,15 +54,25 @@ Ambiguity detection requires every entity in the instance:
 semantius call crud read_entity '{}'
 ```
 
-Build an index keyed by `table_name`, carrying `{module_id, module_name, module_slug, module_type, singular_label, plural_label, description, label_column}` **plus the provenance columns** `{catalog_entity_code, catalog_owner_module, entity_type, catalog_entity_aliases}`. These are returned by `read_entity` / `read_field` like any other column.
+Build an index keyed by `table_name`, carrying `{module_id, module_name, module_slug, module_type, singular_label, plural_label, description, label_column, id_type, id_prefix, id_refentity, managed}` **plus the provenance columns** `{catalog_entity_code, catalog_owner_module, entity_type, catalog_entity_aliases}`, and per field the `fields.catalog_field_code` provenance column (the blueprint field name, stamped write-once by the modeler at `create_field`). These are returned by `read_entity` / `read_field` like any other column.
 
 **The catalog provenance columns are the authoritative source for authoring intent.** Each authoring fact is a platform read on this index:
 
 | Authoring fact | Read from |
 |---|---|
 | Is this live entity the catalog's X under a renamed table? | `catalog_entity_code` (the catalog code; equality-join across dialects / silos) |
+| Is this live field the blueprint's field X under a renamed column? | `catalog_field_code` (the design-time field name; equality-join for field-rename detection) |
 | Is this an `embedded_master` placeholder awaiting a catalog owner (and which)? | `catalog_owner_module` (non-empty = the catalog-owner-arrival signal) |
 | Did my domain's X get unified into this entity by a reuse/merge? | `catalog_entity_aliases` (JSON array, matched on the `(alias_code, source_domain)` pair) |
+| Is a `**Key prefix:**` this spec introduces already taken? | `id_prefix` (unique among all entities; Stage 9 rule 5 checks every new prefix against this index) |
+| Is this live entity based on another, or the base of others? | `id_type` (`is_a` / `has_a`) and `id_refentity` (its base); the entities based on X are the rows with `id_refentity = X` |
+| Can a live entity serve as a base? | managed, not a built-in, `id_type` `typeid` (for `has_a`) or `typeid` / `is_a` (for `is_a`); see 3c.1 |
+| Is a based entity's storage name free? | no live `table_name` equals `<table_name>_ext` for any `is_a` / `has_a` entity this spec creates (the platform reserves it, `90250`) |
+
+**Family checks at inspect time** (platform facts: [`../../use-semantius/references/entity-families.md`](../../use-semantius/references/entity-families.md)):
+
+- Every `is_a` / `has_a` entity the spec will create: `<table_name>_ext` must not exist live; a hit is a 🛑 rename question in Stage 3 (the incoming name is taken).
+- Every base the spec does **not** create (a blueprint `based on` naming a `contributor` / `consumer` entity, or a live base chosen in 3c.1) must be live, managed, not a built-in, and of the right key type (`typeid` for `has_a`; `typeid` or `is_a` for `is_a`). A miss is a 🔴 blocker naming the base; the key type is locked, so only a rebuild of the base fixes it.
 
 Test emptiness as `= ''` / `= '[]'::jsonb` / `= 'unclassified'`, **never `IS NULL`** (the columns are NOT NULL with empty defaults). An empty `catalog_entity_code` means "created outside the pipeline" (a genuine custom / pre-provenance entity) — that is the **only** case where the Stage 3 placement falls back to the workspace blueprint/spec scan.
 
@@ -92,7 +102,9 @@ Apply, in this order:
 
 7. **`drift.*`**, **`links.*`** — read into memory; consulted by Stage 3e / 3f before firing.
 
-One-line narration after applying: *"Applied N rules from your customizations: <plain English summary>."* (e.g. *"Applied 3 rules from your customizations: renamed suppliers to vendors, excluded locations, shared vendors via the Parties module."*). Do NOT enumerate paths or yq syntax in the narration; Convention 8 applies.
+8. **`shared_bases`** — for every pair entry `<entity>.<live_table>: <outcome>`, note the override, like `collisions`. Stage 3c.1 and Step 4.N consult it per pair before firing: `role_of` → auto-resolve as `has_a` on that live table; `kind_of` → `is_a` on it; `separate` → keep separate. No widget fires for that pair. A recorded base that is no longer eligible (deleted, or its key type no longer fits) voids the entry: fire the widget.
+
+One-line narration after applying: *"Applied N rules from your customizations: <plain English summary>."* (e.g. *"Applied 3 rules from your customizations: renamed suppliers to vendors, excluded locations, shared vendors via the Parties module."*; a `shared_bases` rule reads *"kept vendors once as business partners"*). Do NOT enumerate paths or yq syntax in the narration; Convention 8 applies.
 
 ### 2d. Classify every blueprint entity
 
@@ -119,6 +131,29 @@ Flag any pair where:
 - Edit distance is small and the tokens look related.
 
 If you're uncertain whether two names refer to the same concept, **flag it**. A false positive costs the user one click; a missed collision pollutes the catalog permanently.
+
+### 2e.1 Same real-world thing (a flag on the entity, not a new 2d bucket)
+
+Names can differ while the records describe the same thing: an incoming `vendors` while a live `business_partners` already holds companies. The name heuristic above misses these, so check them separately. The result is a **flag on the incoming entity** (`shared_base_candidate: <live table>`), not a new 2d bucket; Stage 3c.1 asks about each flag.
+
+1. **Classify both sides** into one first-pass type from the entity's labels and description: `organization`, `person`, `place`, `product`, `asset`, `activity`, `other`.
+2. **Pick candidate pairs:** an incoming blueprint entity and a live, non-built-in entity with the same type, where that type is not `other`. Skip pairs 3b already covers (same name) and pairs `.shared_bases` holds.
+3. **Read the candidates' fields in one batch** (candidates only): `semantius call crud read_field '{"filters": "table_name=in.(<live_a>,<live_b>)"}'`.
+4. **Flag the pair** when the live entity has at least **2** fields from its type's identifying list:
+
+   | Type | Identifying fields (any spelling of the same fact) |
+   |---|---|
+   | organization | legal or company name, tax id / VAT number, registration number, DUNS, website / domain, billing or registered address |
+   | person | first and last name, email, phone, date of birth, national or employee id |
+   | place | address lines, city, postal code, country, coordinates |
+   | product | SKU, product code, GTIN / EAN, product name |
+   | asset | serial number, asset tag, model, manufacturer |
+   | activity | subject, occurred-at / due date, a link to the party it concerns |
+
+   **The test decides, nothing else.** Flag every pair that passes it, even when the live entity sits in a module whose name or purpose looks unrelated (a test module, a sample module, another department): whether to keep the companies once is the user's call in 3c.1, not an inspection judgment. Never skip a passing pair because it "looks like scaffolding".
+5. **`other` pairs** still get the main test: *"Would someone entering these two records describe the same real-world thing?"* Flag only on a clear yes.
+
+Negative examples: live `business_partners` vs incoming `projects` (organization vs activity: never flagged); incoming `employees` vs the built-in `users` (a built-in is never a base: the analyst references `users` with a field instead, and nothing is flagged). As in 2e, a false positive costs one click.
 
 ### 2f. Build comparison blocks for every 🛑
 
@@ -168,15 +203,15 @@ semantius call crud read_entity --single '{"filters": "table_name=eq.<entity>"}'
 # Existing field set, with full format / enum_values / required / etc.
 semantius call crud read_field '{"filters": "table_name=eq.<entity>"}'
 
-# Existing permission tier for the entity's edit_permission column
-semantius call crud read_permission --single '{"filters": "id=eq.<entity.edit_permission_id>"}'
+# Existing permission tier for the entity's edit_permission column (permission_name is the key)
+semantius call crud read_permission --single '{"filters": "permission_name=eq.<entity.edit_permission>"}'
 
 # Live record count + sample of distinct values per enum field (to catch "drop value that's in use" drift)
 # For each enum field on the entity:
 semantius call cube query '{"measures": ["<entity>.count"], "dimensions": ["<entity>.<enum_field>"]}'
 ```
 
-**Build per-adopted-entity index — capture the COMPLETE comparable property set, not a subset.** Every column `read_entity` / `read_field` returns is a drift axis EXCEPT the platform-managed / auto columns the analyst never authors (`id`, `created_at`, `updated_at`, `field_order`, `ctype` / `is_core`, `module_id`). A divergence on ANY captured property is drift the user must resolve in Stage 3f. Shape (used by Stage 3f and Stage 11 verification):
+**Build per-adopted-entity index — capture the COMPLETE comparable property set, not a subset.** Every column `read_entity` / `read_field` returns is a drift axis EXCEPT the platform-managed / auto columns the analyst never authors (`id`, `created_at`, `updated_at`, `field_order`, `ctype` / `is_core`, `module_id`) and the write-once provenance values (`catalog_entity_code`, `catalog_field_code`), which the index records for identity joins but never surfaces as drift for the user to resolve. A divergence on ANY captured property is drift the user must resolve in Stage 3f. Shape (used by Stage 3f and Stage 11 verification):
 
 ```
 adopted_entity_index[<entity_slug>] = {
@@ -185,10 +220,11 @@ adopted_entity_index[<entity_slug>] = {
   entity: {
     description, singular_label, plural_label,
     label_column, label_parent, order_column, id_column,
+    id_type, id_prefix, id_refentity,  // key type and base are LOCKED after create (3f.6 locked tier)
     view_permission, edit_permission, edit_mode, cube_mode, icon_url,
     select_rule,                       // JsonLogic object (whole)
     computed_fields,                   // JsonLogic array, keyed by .name
-    validation_rules,                  // JsonLogic array, keyed by .code
+    validation_rules,                  // JsonLogic array, keyed by .name (.code is a class-99 error code, compared as a property)
   },
   fields: {
     <field_name>: {
@@ -200,6 +236,8 @@ adopted_entity_index[<entity_slug>] = {
       reference_table, reference_delete_mode,    // FK shape
       width, searchable,                         // UI columns
       input_type_rule,                           // JsonLogic object
+      // provenance (identity join for renames; recorded, not compared):
+      catalog_field_code,
       // live-usage signals, to grade risk (not compared, used to classify):
       live_records_using_field, live_distinct_enum_values_in_use,
     },
@@ -211,11 +249,11 @@ adopted_entity_index[<entity_slug>] = {
 The index is the truth-source for Stage 3f drift detection. **Compare EVERY captured property (entity-level and field-level) live-vs-intended by name — the categories below are exhaustive, not illustrative. No property is exempt from the scan.** The first five categories have specialized handling (rename migration, live-record data risk, JsonLogic cascade); **every remaining scalar property falls to the generic resolver 3f.6, and every JsonLogic block to the rule-block resolver 3f.7** — so `description`, `default_value`, `precision`/`scale`, `title`, `unique_value`, `reference_delete_mode`, `view_permission`, the UI columns, and every `select_rule` / `computed_fields` / `validation_rules` / `input_type_rule` are validated, never silently kept. Compare:
 
 - **Field-name drift candidate**: the spec declares `<spec_field>` that doesn't exist live, AND there exists a live field with similar semantic role (same format family, same general purpose). Common case: the lifecycle state field — the spec always names it `workflow_state` (fixed; see Stage 4), but a live entity may hold the same state under `status` / `state` / `lifecycle_state`. Both are conceptually "where in the lifecycle this record is." Flag as a 🛑 for Stage 3f resolution; because the deployer requires the canonical `workflow_state` name, that resolution is a rename/migration to `workflow_state`, not "keep the live name" (see 3f.1).
-- **Enum-value drift**: a live field's `enum_values` and the blueprint's `enum_values` differ in either direction (live has values the blueprint doesn't, or blueprint introduces values that re-classify live values). When `live_distinct_enum_values_in_use` includes any value the blueprint *drops*, this is high-risk drift. Flag for Stage 3f.
+- **Enum-value drift**: a live field's `enum_values` and the blueprint's `enum_values` differ in either direction (live has values the blueprint doesn't, or blueprint introduces values that re-classify live values). **Compare by value**: a live entry may be a `{"value", "label"}` pair, so take its `value`; entries that differ only in their label are a cosmetic 3f.6 difference, not enum-value drift. When `live_distinct_enum_values_in_use` includes any value the blueprint *drops*, this is high-risk drift. Flag for Stage 3f.
 - **Format drift**: blueprint declares a different `format` than live (e.g., live `text`, blueprint `string`). Cross-primitive changes (text → integer, text → date) are 🔴 blockers; same-primitive variations (text ↔ string ↔ multiline, integer ↔ int32 ↔ int64) are 🟡 warnings the modeler can auto-resolve.
 - **Required-ness drift**: blueprint requires a field the live entity has as optional, or vice versa. Often safe; flag for Stage 3f when the change would leave live records violating the new constraint.
 - **Permission-tier drift**: blueprint's intended `edit_permission` differs from live `edit_permission`. Tier downgrades (admin → manage) need explicit confirmation; tier upgrades (manage → admin) are usually safe but still surfaced. The blueprint's intended tier is consumed from the §3 `write tier` column verbatim; the analyst does not re-derive it via its own Stage 9 classification (Stage 9 is validation-only).
-- **Any-other-scalar-property drift (the catch-all — this is what makes the scan exhaustive)**: the live value differs from the intended value on ANY remaining property not covered above — `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` (entity- or field-level as applicable). Route every one to **Stage 3f.6**. None is auto-kept.
-- **Rule-block drift**: a JsonLogic block differs, matched by natural key — `select_rule` (per entity), `computed_fields[]` (by `.name`), `validation_rules[]` (by `.code`), `input_type_rule` (per field). A body / message / `title` / `description` difference, OR a rule present on only one side, is drift. Route to **Stage 3f.7**.
+- **Any-other-scalar-property drift (the catch-all — this is what makes the scan exhaustive)**: the live value differs from the intended value on ANY remaining property not covered above — `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `id_type`, `id_prefix`, `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` (entity- or field-level as applicable). Route every one to **Stage 3f.6** (`id_type` lands in its locked tier: it cannot be applied to an existing entity). None is auto-kept.
+- **Rule-block drift**: a JsonLogic block differs, matched by natural key — `select_rule` (per entity), `computed_fields[]` (by `.name`), `validation_rules[]` (by `.name`), `input_type_rule` (per field). A body / message / `title` / `description` difference, OR a rule present on only one side, is drift. Compare the blocks structurally (object keys sorted recursively, array order kept): the platform stores them as `jsonb`, which reorders object keys, so a key-order difference alone is never drift. Route to **Stage 3f.7**.
 
 Any drift found here drives Stage 3f. No drift = Stage 3f is silent. **Completeness is mandatory:** every property in the index is compared, and every divergence gets a 3f decision or a §7.1 blocker — the Stage 11 pre-save gate ("adopted-entity drift resolution complete") fails the save if any detected drift is left unresolved.

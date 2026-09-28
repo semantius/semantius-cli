@@ -72,6 +72,18 @@ semantius call crud getCurrentUser '{}'
 
 Never map to `input_type: "readonly"` or `input_type: "disabled"` fields — both indicate a non-caller-writable column (computed fields land in `disabled`; manual locks land in `readonly`). Never map to `_label` or a `<fk>_label` companion (e.g. `_label`, `customer_id_label`) either — they are read-only composed labels the platform derives, not writable columns.
 
+**Enum columns.** An enum field accepts only the values of its `enum_values`. When the source sends labels instead (e.g. "On hold" for `on_hold`), translate each to the `value` of the matching `{"value", "label"}` entry.
+
+**The key column depends on the entity's `id_type`:**
+
+| `id_type` | Map a source column to `id`? |
+|---|---|
+| `bigint`, `text` | Yes: the caller supplies the key on every row |
+| `auto_increment`, `uuid`, `typeid`, `is_a` | No: the database generates it |
+| `has_a` | Only when the source holds the ids of existing base records to attach to; without it, each row creates a base record too |
+
+**Inherited fields.** For an `is_a` / `has_a` entity the fields include the ones it inherits from its base (`get_schema` marks them `inherited_from`), and a source column may map to them like to the entity's own fields. See `entity-families.md`.
+
 ---
 
 ## Signing Scheme (Standard Webhooks)

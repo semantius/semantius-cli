@@ -1,20 +1,20 @@
 ---
 name: semantius-optimizer
 description: >-
-  Reverse-engineers a `*-semantic-spec.md` file (the analyst artifact, version
-  "5.5") from a live Semantius module: reads the module's entities, fields,
-  enum values, permissions, roles, and permission hierarchy via `semantius`,
-  pulls in referenced built-ins (e.g. `users`) so the output is
-  self-contained, and writes a spec byte-compatible with the template
-  `semantius-analyst` produces and `semantius-modeler` deploys. Deterministic:
-  the mapping runs through `references/spec-extract-lib.ts`. After saving,
-  optionally runs an audit pass. Trigger when the user wants to extract /
-  export / optimize / snapshot / reverse-engineer / pull / regenerate a spec
-  from a live Semantius module, build a spec for a module created without one,
-  or bring a customized live module back in sync with a markdown spec. Example
-  phrases: "generate a spec from the `{slug}` module", "reverse-engineer the
-  `{slug}` module into a spec", "someone built a module in the UI, get me a
-  spec", "pull `{slug}` down to a semantic spec".
+  Reverse-engineers a `*-semantic-spec.md` file (the analyst artifact) from a
+  live Semantius module: entities, fields, enum values, permissions, roles,
+  and permission hierarchy, plus referenced built-ins (e.g. `users`),
+  byte-compatible with what `semantius-analyst` writes and `semantius-modeler`
+  deploys. Deterministic, with an optional audit pass after saving. Trigger
+  when the user wants to extract / export / optimize / snapshot /
+  reverse-engineer / pull / regenerate a spec from a live Semantius module,
+  build a spec for a module created without one, or bring a customized live
+  module back in sync with a markdown spec. Example phrases: "generate a spec
+  from the `{slug}` module", "reverse-engineer the `{slug}` module into a
+  spec", "someone built a module in the UI, get me a spec", "pull `{slug}`
+  down to a semantic spec". Do NOT trigger for moving a module with its data
+  between hosts, or backing it up as a restorable file: that is
+  semantius-transfer; this skill produces a markdown spec.
 ---
 
 # semantius-optimizer Skill
@@ -65,7 +65,7 @@ from live state, which then feeds `semantius-analyst` Extend/Audit or a
 
 ## Schema compatibility
 
-This skill writes files at `version: "5.5"` (the analyst's `CURRENT_VERSION`; the
+This skill writes files at `version: "5.8"` (the analyst's `CURRENT_VERSION`; the
 `SPEC_VERSION` constant in `spec-extract-lib.ts`). The `semantius-modeler` carries
 an `EXPECTED_MAJOR` and rejects a mismatched major, so the constant must track the
 analyst. A major analyst bump (section renumber, table-shape change, new required
@@ -235,12 +235,17 @@ to this reader, and in one line — never a key-by-key list.
 
 **Category A — faithful from live (trust; nothing to flag):** all platform
 frontmatter; §2 table & labels; the Mermaid edge set; every §3 entity annotation
-(plural label, label column — omitted on a junction whose live value is null, audit
-log, edit permission, entity type, label parent, reconciliation); every §3 field's
-name / format / required / Notes; §3 Relationships prose; §4 rows; §5 enumerations;
+(plural label, label column — omitted on a junction whose live value is null and on a
+based entity, audit log, edit permission, entity type, label parent, key type / prefix /
+`**Based on:**`, reconciliation, including `reuse-from <module>.<table>` for a related
+entity of another module such as a family base); every §3 field's name / format /
+required / Notes; §3 Relationships prose (with the family sentence); §4 rows; §5
+enumerations (a `{value, label}` entry as `` - `value` - Label ``); the dotted family
+edges;
 §8.1 permission names, descriptions, and `included in :admin?` (derived from the live
 hierarchy); §9.1 baseline roles (with `♻ exists`, since live is the source), §9.1
-hierarchy, §9.1 Processes catalog. Entity order is the canonical `entity_type` tier
+hierarchy (plus a cross-module row only when it is a family edit grant), §9.1
+Processes catalog. Entity order is the canonical `entity_type` tier
 then `table_name` A->Z, so it round-trips against a convention-compliant spec.
 
 **Category B — best-effort or omitted (this is your fix-by-hand source):**

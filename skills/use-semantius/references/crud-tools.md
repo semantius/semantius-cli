@@ -17,7 +17,7 @@ Use this when: inserting, reading, updating, or deleting actual business data re
 ```
 Layer 1 typed tools  →  managing the schema itself
 postgrestRequest     →  reading and writing business records in any table
-sqlToRest            →  translating a SQL query into PostgREST path syntax
+sqlToRest            →  translating a SQL query into PostgREST path syntax (with --crud-mcp only)
 ```
 
 ---
@@ -78,6 +78,8 @@ semantius call crud postgrestRequest '{"method":"GET","path":"/contacts?search_v
 semantius call crud postgrestRequest '{"method":"GET","path":"/orders?status=eq.pending&total=gte.100&order=created_at.desc&limit=50"}'
 ```
 
+**Records of an `is_a` / `has_a` entity** are read and written at the entity's own path, which carries the whole record (the base's fields and its own). A read of the base also lists its subtypes' records. Enum fields hold the value, never the label. Never upsert these entities: `on_conflict`, `resolution=merge-duplicates` and `PUT` fail with `42P10`, so insert, then `PATCH`. See `data-modeling.md` → "Enum values and labels" and `entity-families.md` → "Writing".
+
 **Schema management examples (Semantius system tables):**
 ```bash
 # Read all entities in a module
@@ -125,20 +127,22 @@ If you find yourself building the body in many short steps, chunk into separate 
 ### `sqlToRest`
 Translates a SQL query into a PostgREST path. Useful when you think in SQL and need the equivalent PostgREST syntax.
 
+**Cloud only, and only with `--crud-mcp`:** the CLI's built-in `crud` tools do not include `sqlToRest` (a plain `semantius call crud sqlToRest …` fails with `TOOL_NOT_FOUND`); `--crud-mcp` runs it on the Semantius cloud MCP server.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sql` | string | yes | SQL query to convert, e.g. `SELECT * FROM products WHERE status = 'active' ORDER BY name` |
 
 ```bash
-semantius call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
+semantius --crud-mcp call crud sqlToRest '{"sql": "SELECT id, name, price FROM products WHERE category = '\''electronics'\'' ORDER BY price DESC LIMIT 10"}'
 ```
 
-### `refresh_schema_cache` *(deno server only)*
-Forces PostgREST to reload its schema cache after structural changes.
+### `refresh_schema_cache`
+Forces PostgREST to reload its schema cache. Takes no parameters.
 ```bash
-semantius call deno refresh_schema_cache '{}'
+semantius call crud refresh_schema_cache '{}'
 ```
-> Call this if PostgREST returns errors about unknown columns or tables after you've just added/modified fields.
+> The cache refreshes automatically after structural changes, so do **not** call this routinely after every `create_entity` / `create_field`. Reach for it only when the cache is visibly stale — a just-created entity or field is missing from `postgrestRequest` responses, or PostgREST reports an unknown table/column that you know exists.
 
 ### `sendEmail`
 
@@ -219,14 +223,14 @@ The typed tools accept a structured object instead of raw path strings:
 **Rule: if more than one record of the same kind is pending, send them in ONE call. Never loop single-record calls.** One array call is one HTTP request and one database transaction; N single calls are N round trips with partial-failure risk and no atomicity.
 
 - **`create_*`**: `data` is either one object or a **non-empty array of objects**. **Items do not need the same keys** — the server sends the union of keys (`?columns=`) with `Prefer: return=representation,missing=default`, so a key omitted from one item takes the column default (an explicit `null` still inserts NULL). All rows are inserted in one request and one transaction (all-or-nothing). Example: `create_field` with `data: [ {…description}, {…cost} ]`.
-- **`update_*`**: `id` is either one value or a **non-empty array of ids** (for `update_entity` the key is `table_name`); sent as `id=in.(...)`. The **same** `data` is applied to every listed record. For per-record values, call once per record (or use a filter-based `postgrestRequest` PATCH).
-- **`delete_*`**: `id` (or `table_name` for entities) is either one value or a **non-empty array**; all listed records are deleted in one request.
-- **Key types** follow the table: string ids for `field` (`"<table>.<field>"`), `permission_hierarchy`, `role_permission`, `user_role`, and entity `table_name`; integer ids for `module`, `permission`, `role`, `user`, `webhook_receiver`, `webhook_receiver_log`.
+- **`update_*`**: `id` is either one value or a **non-empty array of ids** (for `update_entity` the key is `table_name`, for `update_permission` it is `permission_name`); sent as `id=in.(...)`. The **same** `data` is applied to every listed record. For per-record values, call once per record (or use a filter-based `postgrestRequest` PATCH).
+- **`delete_*`**: `id` (or `table_name` for entities, `permission_name` for permissions) is either one value or a **non-empty array**; all listed records are deleted in one request.
+- **Key types** follow the table: string keys for `field` (`"<table>.<field>"`), `permission_hierarchy` (`"<including>.<included>"`), `role_permission` (`"<role_id>.<permission_name>"`), `user_role` (`"<user_id>.<role_id>"`), entity `table_name`, and permission `permission_name`; integer ids for `module`, `role`, `user`, `webhook_receiver`, `webhook_receiver_log`.
 - **Responses** are always an array of the created / updated / deleted records. Never combine an array input with `accept: application/vnd.pgrst.object+json` or the CLI's `--single` (the CLI rejects that before sending: exit 1, `SINGLE_ARRAY_INPUT`).
 - **Duplicate checks still apply**: before a bulk `create_*`, run **one** `read_*` with an `in.(...)` filter covering all items (e.g. `"filters": "field_name=in.(description,cost)&table_name=eq.services"`) — never a `--single` read per item (an `in.()` matching several rows exits 2 with `--single`).
 - **Failure is all-or-nothing**: a rejected bulk call landed nothing. Quote the platform error (it names the offending row / constraint), fix, re-issue the one call. Do not fall back to a loop of single calls to "find the bad row".
 - Keep batches reasonable (roughly up to 100 rows or ids per call); split larger sets into a few calls.
-- **Order across kinds still matters**: create every entity of a model (one `create_entity` call) before any of their fields (one `create_field` call per entity), so each field's `reference_table` already exists.
+- **Order across kinds still matters**: create every entity of a model (one `create_entity` call) before any of their fields (one `create_field` call per entity), so each field's `reference_table` already exists. With `is_a` / `has_a` entities, one `create_entity` call per level instead, bases first (`entity-families.md`).
 - Typical batches: all fields of a new entity, the `<module>:read` + `<module>:manage` permissions of a new module, all `role_permission` rows of a role, all `permission_hierarchy` rows of a module, all `user_role` rows of a role, several ids to delete.
 - `postgrestRequest` also accepts an array `body`, but with raw PostgREST rules (identical keys per item unless `?columns=` is added, and omitted keys become NULL — no `missing=default`). Prefer the typed tools for bulk writes to the catalog tables; use the array-body POST for business rows (see "Bulk insert via `postgrestRequest`" above).
 
@@ -254,21 +258,21 @@ semantius call crud read_field '{"filters": "table_name=eq.services&field_name=i
 ### `create_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | Entity fields — one object, or a **non-empty array** to create several entities in one request (all entities of a model go in one call, before any of their fields; items may have different keys). See data-modeling.md for required fields and auto-generated fields. `module_id` is **required** and must be a valid integer module id (`null` is rejected). `singular` is **optional**. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in jsonlogic.md. Also accepts the optional `label_parent` (the FK field name that is this entity's identity spine; must name a `reference`/`parent` FK, must not be set on a junction or target one). |
+| `data` | object \| object[] | yes | Entity fields — one object, or a **non-empty array** to create several entities in one request (all entities of a model go in one call, before any of their fields; items may have different keys; with `is_a` / `has_a` entities, one call per level, bases first). See data-modeling.md for required fields and auto-generated fields. `module_id` is **required** and must be a valid integer module id (`null` is rejected). `singular` is **optional**. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in jsonlogic.md. Also accepts the optional `label_parent` (the FK field name that is this entity's identity spine; must name a `reference`/`parent` FK, must not be set on a junction or target one). Also accepts the optional key type `id_type` and its `id_prefix` (see data-modeling.md → Key Entity Fields): set on create, locked afterwards. With `id_type` `is_a` / `has_a` it also needs `id_refentity` (the base's `table_name`, create-only) and takes no `label_column`, `label_parent` or `order_column`; see entity-families.md. |
 
 ### `read_entity`
-Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties, plus `label_parent` (the identity-spine FK field name, or null).
+Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties, plus `label_parent` (the identity-spine FK field name, or null), `id_type`, `id_prefix` and `id_refentity` (the base of an `is_a` / `has_a` entity, or null). Filter `id_refentity=eq.<table_name>` to find the entities based on one.
 
 ### `update_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `table_name` | string \| string[] | yes | Identifier of the entity to update, or an array of `table_name`s to apply the same `data` to several entities in one request (`table_name=in.(...)`) |
-| `data` | object | yes | Fields to update (partial, omitted fields unchanged). `module_id` stays optional, but **when provided** must be a non-null integer (`null` is now rejected). `singular` is optional (unchanged). `computed_fields` and `validation_rules` are **replaced wholesale** when present in `data`, not merged; send the full intended array. Sending an empty array removes the per-record trigger. `label_parent` may be set or cleared here (re-points the identity spine; no data migration — `_label` is derived at read time). |
+| `data` | object | yes | Fields to update (partial, omitted fields unchanged). `module_id` stays optional, but **when provided** must be a non-null integer (`null` is now rejected). `singular` is optional (unchanged). `computed_fields` and `validation_rules` are **replaced wholesale** when present in `data`, not merged; send the full intended array. Sending an empty array removes the per-record trigger. `label_parent` may be set or cleared here (re-points the identity spine; no data migration — `_label` is derived at read time). Never send `id_type`: it is locked once the table exists (`90233`). Never send `id_refentity` either (`90241`). `id_prefix` may be changed, except on an `is_a` entity (`90245`). |
 
 ### `delete_entity`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `table_name` | string \| string[] | yes | ⚠️ Permanent. Check all field references first. An array deletes several entities in one request. |
+| `table_name` | string \| string[] | yes | ⚠️ Permanent. Check all field references first, and the entities based on this one (`read_entity` with `id_refentity=eq.<table_name>`; refused with `90248` while any exist). An array deletes several entities in one request. |
 
 ---
 
@@ -277,7 +281,7 @@ Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`)
 ### `create_field`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | Field definition — one object, or a **non-empty array** to create several fields in one request (all new fields of an entity go in one call; items may have different keys, e.g. `enum_values` on one and `precision` on another). See data-modeling.md for formats and constraints. |
+| `data` | object \| object[] | yes | Field definition — one object, or a **non-empty array** to create several fields in one request (all new fields of an entity go in one call; items may have different keys, e.g. `enum_values` on one and `precision` on another). An `enum_values` entry is a value or a `{"value", "label"}` pair; `default_value` is always a value. On an `is_a` / `has_a` entity create only its own fields (a base field name fails with `90243`). See data-modeling.md for formats and constraints. |
 
 ### `read_field`
 Accepts common read parameters. Key filter: `"table_name=eq.<name>"` to get all fields for an entity.
@@ -313,7 +317,7 @@ Every entity exposes a read-only **`_label`** — its composed, human-readable l
 ### `create_module`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a non-empty array to create several modules in one request. Requires `module_name` and `module_slug`. Optional: `description`, `icon_name`, `domain_code`, `access_scope`, `view_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
+| `data` | object \| object[] | yes | One object, or a non-empty array to create several modules in one request. Requires `module_name` and `module_slug`. Optional: `description`, `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
 
 #### `modules` field reference
 
@@ -325,7 +329,9 @@ Every entity exposes a read-only **`_label`** — its composed, human-readable l
 | `icon_name` | string | Name of the icon shown for the module in the UI (an icon-set handle, **not** a URL — distinct from the entity-level `icon_url` and from the module `logo_url`). Optional. |
 | `domain_code` | string | Short uppercase business-domain code the module belongs to (e.g. `ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`. Optional. |
 | `access_scope` | enum | Access-control scope: `basic` (default) for simple read/edit, or `full` for role tiers, approvals, and lifecycle gating. `enum_values: ["basic", "full"]`, default `basic`. Optional. |
-| `view_permission` | string | Permission name required to see the module in the selector (e.g. `crm:read`). Optional; when omitted the module is visible to anyone with at least one entity permission inside it. |
+| `view_permission` | string | Permission name required to see the module in the selector (e.g. `crm:read`). FK to `permissions.permission_name`, so the permission must already exist when `create_module` runs (each request is its own transaction). Defaults to `user:read`: create the module with that default (or another existing permission), create the module's own permissions, then point the module at them with `update_module`. Optional. |
+| `manage_permission` / `admin_permission` | string | The module's manage and admin permission, by name (e.g. `crm:manage`). FKs to `permissions.permission_name`; same must-already-exist rule, so wire them with `update_module` after the permissions are created. Optional. |
+| `default_viewer_role_id` / `default_manager_role_id` / `default_admin_role_id` | integer | The module's default roles, as numeric role ids (FK to `roles.id`). Wire with `update_module` once the roles exist. Optional. |
 | `logo_url` | string | URL or `data:` URI for the module logo shown in the selector chip. Optional. |
 | `logo_color` | string | Hex color for the logo background tile (e.g. `#4F46E5`). Optional. |
 | `home_page` | string | Path the module's landing button routes to (e.g. `/crm/dashboard`). Optional. |
@@ -353,46 +359,46 @@ Accepts common read parameters.
 ### `create_permission`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create several permissions in one request (a new module's `<slug>:read` + `<slug>:manage` go in one call). Each requires: `permission_name` (format: `<module>:<action>`), `description`, `module_id` |
+| `data` | object \| object[] | yes | One object, or a **non-empty array** to create several permissions in one request (a new module's `<slug>:read` + `<slug>:manage` go in one call). Each requires: `permission_name` (format: `<module>:<action>`), `description`, `module_id`. `permission_name` is the primary key (there is no numeric id); every other table names a permission by it. |
 
 ### `read_permission`
-Accepts common read parameters. Key filter: `"permission_name=ilike.<module>:*"` to find a module's permissions.
+Accepts common read parameters. Key filters: `"permission_name=eq.<code>"` for one permission, `"permission_name=ilike.<module>:*"` to find a module's permissions.
 
 ### `update_permission`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Permission ID, or an array of ids to apply the same `data` to several permissions (e.g. converge `module_id` on every drifted row in one call) |
-| `data` | object | yes | Fields to update |
+| `permission_name` | string \| string[] | yes | Permission name, or an array of names to apply the same `data` to several permissions (e.g. converge `module_id` on every drifted row in one call: `{"permission_name": ["crm:read", "crm:manage"], "data": {"module_id": 12}}`) |
+| `data` | object | yes | Fields to update. Setting `permission_name` renames the permission and cascades to every table that names it. |
 
 ### `delete_permission`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | ⚠️ Check roles using this permission first. An array deletes several permissions in one request. |
+| `permission_name` | string \| string[] | yes | ⚠️ Check roles using this permission first. Refused while an entity, module or queue still names it. An array deletes several permissions in one request. |
 
 ---
 
 ## Permission Hierarchy Tools
 
 ### `create_permission_hierarchy`
-Creates an inheritance link: a broader permission includes a narrower one. Reads as `including_permission_id` ── *includes* ──▶ `included_permission_id` (e.g. `crm:manage` includes `crm:read`).
+Creates an inheritance link: a broader permission includes a narrower one. Reads as `including_permission_name` ── *includes* ──▶ `included_permission_name` (e.g. `crm:manage` includes `crm:read`).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create every edge of a module's chain in one request. Each requires: `including_permission_id` (broader), `included_permission_id` (narrower). `id` is auto-generated as `"<including_permission_id>.<included_permission_id>"`. |
+| `data` | object \| object[] | yes | One object, or a **non-empty array** to create every edge of a module's chain in one request. Each requires: `including_permission_name` (broader), `included_permission_name` (narrower); optional `origin` (`model` for a deployed module, `model_master`, `user`). `id` is auto-generated as `"<including_permission_name>.<included_permission_name>"` (e.g. `"crm:manage.crm:read"`). Example: `{"data": {"including_permission_name": "crm:manage", "included_permission_name": "crm:read", "origin": "model"}}` |
 
 ### `read_permission_hierarchy`
-Accepts common read parameters. Filter by `including_permission_id` or `included_permission_id`.
+Accepts common read parameters. Filter by `including_permission_name` or `included_permission_name`.
 
 ### `update_permission_hierarchy`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Hierarchy record ID (`"<including_permission_id>.<included_permission_id>"`), or an array of ids (same `data` for all) |
-| `data` | object | yes | Fields to update (`including_permission_id`, `included_permission_id`). `origin` is immutable. |
+| `id` | string \| string[] | yes | Hierarchy record ID (`"<including_permission_name>.<included_permission_name>"`), or an array of ids (same `data` for all) |
+| `data` | object | yes | Fields to update (`including_permission_name`, `included_permission_name`). `origin` is immutable. |
 
 ### `delete_permission_hierarchy`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Hierarchy record ID (`"<including_permission_id>.<included_permission_id>"`), or an array of ids to delete several edges in one request |
+| `id` | string \| string[] | yes | Hierarchy record ID (`"<including_permission_name>.<included_permission_name>"`), or an array of ids to delete several edges in one request |
 
 ---
 
@@ -424,21 +430,21 @@ Accepts common read parameters.
 ### `create_role_permission`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to grant several permissions (or several roles) in one request — all `role_permission` rows of a role go in one call. Each requires: `role_id`, `permission_id` |
+| `data` | object \| object[] | yes | One object, or a **non-empty array** to grant several permissions (or several roles) in one request — all `role_permission` rows of a role go in one call. Each requires: `role_id` (numeric role id), `permission_name` (e.g. `{"role_id": 7, "permission_name": "crm:read"}`). `id` is auto-generated as `"<role_id>.<permission_name>"` (e.g. `"7.crm:read"`). |
 
 ### `read_role_permission`
-Accepts common read parameters. Key filters: `"role_id=eq.<id>"` or `"permission_id=eq.<id>"`.
+Accepts common read parameters. Key filters: `"role_id=eq.<id>"` or `"permission_name=eq.<code>"`.
 
 ### `update_role_permission`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Role permission record ID, or an array of ids (same `data` for all) |
+| `id` | string \| string[] | yes | Role permission record ID (`"<role_id>.<permission_name>"`), or an array of ids (same `data` for all) |
 | `data` | object | yes | Fields to update |
 
 ### `delete_role_permission`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Role permission record ID, or an array of ids to revoke several grants in one request |
+| `id` | string \| string[] | yes | Role permission record ID (`"<role_id>.<permission_name>"`), or an array of ids to revoke several grants in one request |
 
 ---
 
@@ -447,7 +453,7 @@ Accepts common read parameters. Key filters: `"role_id=eq.<id>"` or `"permission
 ### `create_user`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | User fields (email, name, etc.) — one object, or a non-empty array to create several users in one request |
+| `data` | object \| object[] | yes | User fields (`email`, `display_name`, `external_id`, optional `first_name` / `last_name` / `is_agent`) — one object, or a non-empty array to create several users in one request |
 
 ### `read_user`
 Accepts common read parameters. Key filter: `"email=eq.user@example.com"`.
@@ -470,7 +476,7 @@ Accepts common read parameters. Key filter: `"email=eq.user@example.com"`.
 ### `create_user_role`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to assign several users (or several roles) in one request. Each requires: `user_id`, `role_id` |
+| `data` | object \| object[] | yes | One object, or a **non-empty array** to assign several users (or several roles) in one request. Each requires: `user_id`, `role_id` (both numeric). `id` is auto-generated as `"<user_id>.<role_id>"` (e.g. `"1001.1"`). |
 
 ### `read_user_role`
 Accepts common read parameters. Filter by `user_id` or `role_id`.
@@ -478,13 +484,13 @@ Accepts common read parameters. Filter by `user_id` or `role_id`.
 ### `update_user_role`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | User role record ID, or an array of ids (same `data` for all) |
+| `id` | string \| string[] | yes | User role record ID (`"<user_id>.<role_id>"`), or an array of ids (same `data` for all) |
 | `data` | object | yes | Fields to update |
 
 ### `delete_user_role`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | User role record ID, or an array of ids to remove several assignments in one request |
+| `id` | string \| string[] | yes | User role record ID (`"<user_id>.<role_id>"`), or an array of ids to remove several assignments in one request |
 
 ---
 

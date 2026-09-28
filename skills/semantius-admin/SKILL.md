@@ -1,26 +1,26 @@
 ---
 name: semantius-admin
 description: >-
-  Orchestrates the Semantius pipeline (`semantius-architect`,
-  `semantius-analyst`, `semantius-modeler`) and handles instance
-  administration. **Trigger when intent spans more than one skill, on a remote
-  blueprint URL, or on "deploy this blueprint", "deploy these blueprints",
-  "deploy all of these", "set up these systems", "build me a system and deploy
-  it", "set up a CRM end-to-end", "clone the candidate-crm blueprint and
-  deploy", "what's deployed in our instance?", "status of semantius", "audit
-  this file" (naming no specific skill), "back up the catalog", "snapshot the
-  module", "get started", "I'm new here, set this up", or anything needing
-  workspace artifacts inspected and routed to the right sub-skill.** Also
-  trigger on a deploy request with multiple URLs, paths, or a glob. Do NOT
-  trigger when the user invokes one sub-skill directly (not "audit this spec
-  with semantius-analyst", not "run the modeler"); let those through. Front
-  door for end-to-end and ambiguous requests, not a wrapper on Semantius
-  calls.
+  Orchestrates the Semantius pipeline (architect, analyst, modeler) and
+  instance administration. Trigger when intent spans more than one skill, on a
+  remote blueprint URL, or on "deploy this blueprint", "deploy these
+  blueprints", "deploy all of these", "set up these systems", "build me a
+  system and deploy it", "set up a CRM end-to-end", "clone the candidate-crm
+  blueprint and deploy", "what's deployed in our instance?", "status of
+  semantius", "audit this file" (naming no specific skill), "get started",
+  "I'm new here, set this up", or anything needing workspace artifacts
+  inspected and routed to the right sub-skill. Also trigger on a deploy
+  request with multiple URLs, paths, or a glob. Do NOT trigger when the user
+  invokes one sub-skill directly (not "audit this spec with
+  semantius-analyst", not "run the modeler"); let those through. Front door
+  for end-to-end and ambiguous requests. Backing up, restoring, or moving
+  modules or tables with their data between hosts is semantius-transfer, not
+  this skill.
 ---
 
 # Semantius Admin
 
-The orchestrator for the three-skill Semantius pipeline plus administrative operations. Sits in front of `semantius-architect`, `semantius-analyst`, and `semantius-modeler`; routes composite operations to the right sequence of sub-skills; handles inspection, backup, and other instance-level admin tasks.
+The orchestrator for the three-skill Semantius pipeline plus administrative operations. Sits in front of `semantius-architect`, `semantius-analyst`, and `semantius-modeler`; routes composite operations to the right sequence of sub-skills; handles inspection and other instance-level admin tasks; backup and restore belong to `semantius-transfer`.
 
 ## Writing conventions
 
@@ -114,10 +114,10 @@ Six request types, in roughly priority order:
 |---|---|---|
 | **Get started / onboarding** | "get started", "I'm new here, set this up", "what can I build?" | admin-only (Step 5.5): run preflight (install check) → verify the connection by querying the database → count deployed modules → point to the blueprint catalog |
 | **End-to-end build** | "build me a CRM and deploy", "set up an ATS end-to-end", "I need a helpdesk live in our instance" | architect → analyst → modeler |
-| **Clone-and-deploy** | "clone the candidate-crm blueprint and deploy", "use ats-candidate-crm as a starting point and deploy", "deploy a copy of the X blueprint" | architect (Catalog-Clone) → analyst → modeler |
+| **Clone-and-deploy** | "clone the candidate-crm blueprint and deploy", "use ats-candidate-crm as a starting point and deploy", "deploy a copy of the X blueprint" | architect (Catalog-Clone) → analyst → modeler. Copying live tables or a live module *with their data* to another host is a transfer, not a clone-and-deploy: route to `semantius-transfer` |
 | **Deploy existing artifact** | "deploy this blueprint", "deploy https://...md", "deploy the file in my workspace" | (fetch if URL) → analyst (if blueprint) → modeler |
 | **Inspect / audit / status** | "what's deployed?", "status of semantius", "audit this file" | admin-only (no sub-skill chain), or routes to the right Audit mode |
-| **Admin operation** | "back up the catalog", "snapshot module X", "list modules", "rotate API key" | admin-only (operates directly via use-semantius) |
+| **Admin operation** | "list modules", "check the connection", "rotate API key" | admin-only (operates directly via use-semantius). Backup and restore route to `semantius-transfer` |
 
 If the request is ambiguous, ask one clarifying question via `AskUserQuestion`. Do not guess.
 
@@ -271,7 +271,7 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 | Audit | Spec named | `analyst (Audit)` on the spec (does NOT route through Step 6). |
 | Audit | Both, no name | Ask which to audit (`AskUserQuestion`, `multiSelect: false`, 3 options: the blueprint, the spec, both one after the other). |
 | Status | n/a | Admin-only (Step 5). |
-| Admin (backup, list, ...) | n/a | Admin-only (Step 5). |
+| Admin (status, list, health) | n/a | Admin-only (Step 5). Backup and restore: `semantius-transfer`. |
 
 **Why everything-deploy routes through Step 6:** one item or many, the pipeline is the same. Step 6 has the customize/deploy flag plumbing, the customizations-file handoff, the unified report. Greenfield builds and catalog clones also route through Step 6 for the analyst → modeler half and the unified report, but they carry NO `customize` / `review` / `deploy` questions: the architect's Create pass already covered design and `deploy` is implied (see "Greenfield and clone builds skip scope flags"). The only request types that bypass Step 6 are pure-architect operations (Audit on a blueprint), pure-analyst operations (Audit on a spec), and admin-only operations (status, backup, health). Anything that ends in writes to the live semantic model goes through Step 6.
 
@@ -331,14 +331,14 @@ Each sub-skill enforces its own version contract on input. The admin trusts thos
 
 ## Step 5: Admin-only operations
 
-Operations that don't involve the architect / analyst / modeler chain. The admin executes these directly via `use-semantius` (CLI patterns) without spawning sub-skill agents. Full procedures (the exact Status output template, the backup JSON shape, the listing wrappers, and the health probe) live in [`references/admin-operations.md`](./references/admin-operations.md); load it when running one of these.
+Operations that don't involve the architect / analyst / modeler chain. The admin executes these directly via `use-semantius` (CLI patterns) without spawning sub-skill agents. Full procedures (the exact Status output template, the listing wrappers, and the health probe) live in [`references/admin-operations.md`](./references/admin-operations.md); load it when running one of these.
 
 | Operation | Trigger | What it does |
 |---|---|---|
 | **Status** (5.1) | "what's deployed?", "status of semantius" | Show workspace artifacts and live modules (entity / permission counts, last deploy). Read-only. |
-| **Backup** (5.2) | "back up the catalog", "snapshot module X" | Dump the live model (optionally one module) to `semantius-backup-<ts>.json`. Read-only. |
+| **Backup** (5.2) | "back up the catalog", "snapshot module X", "restore this backup" | Not run here: route to `semantius-transfer`, which exports to a restorable file with the CLI's `export_module` and restores with `import_module`. |
 | **Listing** (5.3) | "list modules / entities / permissions / users / roles" | Convenience read wrappers producing readable tables. Read-only. |
-| **Health** (5.4) | "check the connection" | Probe `getCurrentUser`, read a known built-in, report OK / FAIL. |
+| **Health** (5.4) | "check the connection" | `semantius whoami` and `semantius ping`, read a known built-in, report OK / FAIL. |
 
 Get started (5.5) stays resident below: it is a top-level request type (Step 0) with its own onboarding flow.
 
@@ -348,12 +348,12 @@ Get started (5.5) stays resident below: it is a top-level request type (Step 0) 
 
 Flow:
 
-1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and configures `.env` auth (asking for the API key when needed). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the API key was not supplied), surface that and stop — there is nothing to get started against until the platform is reachable.
+1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and settles the connection (asking which host when none is configured, and asking the user to sign in when there is no usable credential). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the user has not signed in yet), surface that and stop — there is nothing to get started against until the platform is reachable.
 2. **Verify the connection by querying the database.** Confirm the catalog actually reads back, not just that the CLI authenticated:
 
    ```bash
-   semantius call crud read_entity '{"slug": "users"}'   # a known built-in must read back
-   semantius call crud read_module '{}'                  # the deployed modules
+   semantius call crud read_entity --single '{"filters": "table_name=eq.users"}'   # a known built-in must read back
+   semantius call crud read_module '{}'                                            # the deployed modules
    ```
 
    If either errors, surface the verbatim error and stop: the platform is reachable but the catalog is not queryable, which the user must resolve before anything else.
@@ -363,7 +363,7 @@ Flow:
    - **Some modules already deployed:** *"You're connected to `<org>` with N data module(s) live: <plain-English names>. Every system in the catalog is a customizable blueprint you can tailor into a hyper-customized data platform — browse more at https://www.semantius.com/blueprints, and just ask me for a full status anytime."*
 5. **Offer the next step, don't force it.** One short line: ask me to deploy a catalog blueprint, build a new system from an idea, or show a full status. Then wait.
 
-Read-only against the catalog. The only writes are the tool installs and `.env` save done by the preflight, which the user implicitly authorized by asking to get started.
+Read-only against the catalog. The only writes are the tool installs, the host pin (`semantius use`, after the user names the host) and any `.env` key save done by the preflight, which the user authorized by asking to get started.
 
 ---
 
@@ -672,7 +672,7 @@ The operational detail lives in [`references/customizations-protocol.md`](./refe
 After successful execution:
 
 - **Pipeline runs**: state what's now live, where the produced files landed, and give the user a way **into the product**: the same clickable browser link the final report uses (Step 6.8, never a developer slash command). Lead with the **System Name**, not the raw slug; surface file paths here, not in the plan line. Example (single item): *"Done. **ATS Candidate CRM** is live in your semantic model (6 entities, 7 permissions). [Open ATS Candidate CRM in Semantius →](<ui_baseurl>/ats-candidate-crm). The spec is saved under `semantius/specs/`."* For multi-item runs, use the Step 6.8 per-item link list.
-- **Admin-only runs**: state what was produced (backup file path, list output, status report) and stop.
+- **Admin-only runs**: state what was produced (list output, status report, health result) and stop.
 
 After unsuccessful execution:
 
@@ -689,8 +689,9 @@ Every phrasing maps to one of the six request types in Step 0 (whose table carri
 - A URL deploy is *fetch → analyst → modeler*; a workspace blueprint is *analyst → modeler*; "deploy the spec" skips the analyst (*modeler* only).
 - "Set up X from scratch" is an end-to-end build unless a catalog blueprint named X exists, in which case it is a clone.
 - "Audit this file" routes by artifact type to the architect's or analyst's Audit mode (it does not go through Step 6).
-- Status, backup, snapshot, and list are admin-only (Step 5).
+- Status, list, and health are admin-only (Step 5).
 - Importing a data file (CSV) into a single entity, existing or new, is not admin territory and not a pipeline deploy: route to the `semantius-importer` skill.
+- Moving, backing up or restoring modules or tables, with or without their data, is a transfer: route to the `semantius-transfer` skill.
 
 When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess.
 
@@ -700,7 +701,7 @@ When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess
 
 - **Re-decide what a sub-skill decided.** If analyst chose `reuse-from <module>.<entity>` for some entity, the admin does not second-guess. The spec is the source of truth.
 - **Skip the analyst when deploying a blueprint.** The modeler refuses to consume blueprints directly; routing a blueprint straight to the modeler is a bug. Always go via analyst.
-- **Delete catalog records.** Same `delete_*` ban as the other three skills. Backup is read-only.
+- **Delete catalog records.** Same `delete_*` ban as the other three skills.
 - **Move, rename, overwrite, edit, or delete a workspace file it did not create this run.** Pre-existing files, especially anything at the repo root, are off-limits — this explicitly includes **editing them in place**. A customize / extend / rebuild pass must run against the convention-folder working copy made up front (Step 6.1 / Step 1.1), never the root original. The ONLY files the admin may relocate are ones it downloaded this run (`.tmp_admin/` to the convention folder). Matching a `*-semantic-blueprint.md` / `*-semantic-spec.md` filename pattern is NOT proof of ownership. See Step 1.1.
 - **Auto-recover from a sub-skill failure.** Surface the failure; let the user choose the next step.
 - **Modify built-in tables silently.** Additive fields are allowed; replacement is not.
@@ -718,7 +719,7 @@ This skill's own references (load on demand):
 - `./references/writing-conventions.md` — shared writing conventions (canonical copy)
 - `./references/task-tracking.md` — task tools, stage tracking, and the question ledger (canonical copy)
 - `./references/output-discipline.md` — per-run diagnostic-log mechanics
-- `./references/admin-operations.md` — Step 5 admin-op procedures (status / backup / list / health)
+- `./references/admin-operations.md` — Step 5 admin-op procedures (status / list / health; backup points to `semantius-transfer`)
 - `./references/plan-shapes.md` — plan-line authoring rules, the four plan patterns, and worked examples
 - `../../docs/architecture.md` — full architecture spec, failure modes, debugging invariants
 
@@ -728,3 +729,4 @@ Sibling skills:
 - `../semantius-analyst/SKILL.md` — produces specs (reconciliation logic, AskUserQuestion widgets)
 - `../semantius-modeler/SKILL.md` — deploys specs (idempotent diff & apply)
 - `../use-semantius/SKILL.md` — CLI patterns this skill uses for admin operations
+- `../semantius-transfer/SKILL.md` — backup, restore, and moving modules or tables between hosts

@@ -30,7 +30,7 @@ Never use free-form names like `"can_edit"` or `"admin"`, always scope to a modu
 
 ## Step-by-Step: Full RBAC Setup for a New Module
 
-Every step below writes a **set** of records of one kind, so each is **one** call with an array in `data` (Golden Rule 7): both permissions in one `create_permission`, both roles in one `create_role`, both grants in one `create_role_permission`. Duplicate-check each set with one `read_*` using an `in.(...)` filter first (`read_permission '{"filters": "permission_name=in.(crm:read,crm:manage)"}'`); resolve ids from that read, never from the create response.
+Every step below writes a **set** of records of one kind, so each is **one** call with an array in `data` (Golden Rule 7): both permissions in one `create_permission`, both roles in one `create_role`, both grants in one `create_role_permission`. Duplicate-check each set with one `read_*` using an `in.(...)` filter first (`read_permission '{"filters": "permission_name=in.(crm:read,crm:manage)"}'`). A permission is keyed by its `permission_name`, so every reference to it (hierarchy edges, grants, module wiring) writes the name directly; only roles and users carry a numeric `id`, and those ids come from that read, never from the create response.
 
 ### 1. Create Permissions
 
@@ -59,8 +59,9 @@ Make `crm:manage` implicitly include `crm:read`, so assigning `manage` is suffic
 ```bash
 semantius call crud create_permission_hierarchy '{
   "data": {
-    "including_permission_id": <crm:manage id>,
-    "included_permission_id": <crm:read id>
+    "including_permission_name": "crm:manage",
+    "included_permission_name": "crm:read",
+    "origin": "model"
   }
 }'
 ```
@@ -102,11 +103,11 @@ semantius call crud create_role_permission '{
   "data": [
     {
       "role_id": <crm_viewer id>,
-      "permission_id": <crm:read id>
+      "permission_name": "crm:read"
     },
     {
       "role_id": <crm_manager id>,
-      "permission_id": <crm:manage id>
+      "permission_name": "crm:manage"
     }
   ]
 }'
@@ -185,20 +186,20 @@ When a user gets "permission denied":
 ```bash
 # One permission
 semantius call crud create_role_permission '{
-  "data": {"role_id": 5, "permission_id": 12}
+  "data": {"role_id": 5, "permission_name": "crm:read"}
 }'
 # Several permissions (or several roles) — ONE call
 semantius call crud create_role_permission '{
-  "data": [{"role_id": 5, "permission_id": 12}, {"role_id": 5, "permission_id": 13}, {"role_id": 6, "permission_id": 12}]
+  "data": [{"role_id": 5, "permission_name": "crm:read"}, {"role_id": 5, "permission_name": "crm:export"}, {"role_id": 6, "permission_name": "crm:read"}]
 }'
 ```
 
 ### Remove permissions from a role
 ```bash
-# Find the role_permission record(s) first
-semantius call crud read_role_permission '{"filters": "role_id=eq.5&permission_id=in.(12,13)"}'
+# The id is "<role_id>.<permission_name>"; read first to confirm the grants exist
+semantius call crud read_role_permission '{"filters": "role_id=eq.5&permission_name=in.(crm:read,crm:export)"}'
 # Then delete by id — several ids in one call
-semantius call crud delete_role_permission '{"id": ["<id-1>", "<id-2>"]}'
+semantius call crud delete_role_permission '{"id": ["5.crm:read", "5.crm:export"]}'
 ```
 
 ### Assign several users to a role (or several roles to a user) — one `create_user_role` call

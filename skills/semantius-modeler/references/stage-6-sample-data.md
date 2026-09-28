@@ -87,6 +87,8 @@ A new entity often has FKs to built-ins or existing entities (e.g. `subscription
 
 Create records in dependency order (entities with no parent FKs first, junction tables last, the model §4 order is usually correct), restricted to the eligible set defined above.
 
+**Key type decides who supplies `id`.** For an entity whose spec carries `**Key type:** bigint` or `**Key type:** text`, the database assigns no id: every sample row must carry its own unique `id` (a number, or a short text key), and FK values into it are those ids. For the default key and `uuid` / `typeid`, never send `id`; take it from the insert response. FK columns into a `uuid` / `typeid` / `text` entity hold that id as given, never a number.
+
 **Generate a single Bun (TypeScript) script** for all sample data rather than making individual CLI calls. This avoids context bloat from dozens of sequential tool invocations. Write the script under `<cwd>/.tmp_deploy/seed_<short>.ts`, run it once with `bun run`, check the output, and delete it. **Never write generated scripts into the skill folder or the working directory root.** They are ephemeral one-shots; persisting them across runs accumulates as catalog drift, mixes throw-away artifacts with skill source, and survives session boundaries. See the "Generated artifacts" section above for the full rule.
 
 A Bun script is preferred over a `.sh` script for seeding because it keeps JSON construction, response-envelope unwrapping, and FK-id capture in one cross-platform runtime — no `python3 -c` extractors, no shell-quoting puzzles for record bodies containing apostrophes or Unicode, no Windows-vs-Git-Bash subprocess-piping surprises. The script builds each table's rows in a loop and inserts them with **one `postgrestRequest` POST per table** (an array `body`; `postMany` / `seedEnsureMany` in `deploy-lib.ts`, ≤100 rows per call), capturing the inserted ids from the returned array for use in FK fields of the next table. Never one call per record: 10 rows × 6 tables is 6 calls, not 60.
@@ -123,6 +125,8 @@ ID=$(... | bun -e 'console.log((await Bun.stdin.json()).response.data[0].id)')
 COUNT=$(semantius call crud postgrestRequest '{"method":"GET","path":"/campaigns?select=id"}' \
   | bun -e 'console.log((await Bun.stdin.json()).length)')
 ```
+
+A `GET` on the base of a family also returns every `is_a` descendant's records (and every base record a `has_a` insert created), so its live count is its own seeds **plus** its descendants'. Tally each level from its own inserts instead (see "Families" below).
 
 `python3 -c "import json,sys; ..."` extractors are forbidden — they don't work reliably on Windows where `python3` may not be on `PATH`, and they pull a second runtime into a deploy that otherwise only needs Bun and `semantius`.
 
@@ -267,7 +271,15 @@ bun run <cwd>/.tmp_deploy/seed_<short>.ts
 
 **Important for FK fields:** Capture IDs directly from the array each table's POST returns (`postMany` / `seedEnsureMany` hand you the rows with ids), do not make a separate GET query to look them up by name. Filters with spaces (e.g. `?campaign_name=eq.Spring Launch`) require URL encoding; capturing from the POST response avoids this entirely. (This is a Layer-2 rule: catalog writes via `create_*` still resolve ids by re-reading — see the deploy script's `ensureMany`.)
 
-**Enum safety, read the model, not your intuition:** Before writing any enum value into a seed record, look it up in the model's §5 enum tables for *that specific field*. Different fields on different entities may look similar but have different allowed values (e.g., `campaigns.type` includes `"Direct Mail"` but `leads.lead_source` does not, using the wrong one will fail with a check constraint error). Never guess or copy enum values across fields.
+**Families (`is_a` / `has_a` entities).** Seed them with the rules of `../../use-semantius/references/entity-families.md` → Writing:
+
+- **Seed level by level, bases first**, each level at its own path (`/business_partners`, then `/customers`; `/activities`, then `/emails`).
+- **An `is_a` record is ONE insert at its own table**, carrying the base's fields too (`POST /emails` with `subject`, `occurred_at` and `from_address`). Never insert a base row and then a subtype row: that creates two records, and a record's type cannot change.
+- **A `has_a` row without `id` creates its base record too** (send the base's fields in the same row). To attach to base records you seeded earlier, send only the extension's own fields plus `id`; a differing base value is refused (`90246`).
+- **Never upsert** (`seedEnsureMany` never does; `on_conflict` / `merge-duplicates` fail with `42P10`). A changed row is a `patchById(table, id, body)` after the insert.
+- **Tally each level from its own inserts** (`counts.emails = emails.length`), and list every level in `eligibleTables`.
+
+**Enum safety, read the model, not your intuition:** Before writing any enum value into a seed record, look it up in the model's §5 enum tables for *that specific field*. Seeds always write the **value** (the backticked token), never the label after ` - ` on a labeled bullet. Different fields on different entities may look similar but have different allowed values (e.g., `campaigns.type` includes `"Direct Mail"` but `leads.lead_source` does not, using the wrong one will fail with a check constraint error). Never guess or copy enum values across fields.
 
 **Nullability safety, `""` not `null` for required text:** Most formats are `NOT NULL` — only `reference`, `date`, and `date-time` accept `null` (data-modeling.md → *`default_value`*). For a non-nullable TEXT column (`string`, `text`, `multiline`, `html`, `code`) that a row should leave empty, send an **empty string `""`**, never `null`: a `null` fails with a NOT NULL violation and aborts the run before `assertSeedCounts`. Only omit a field or pass `null` when its format is `reference` / `date` / `date-time` *and* it is not `input_type: "required"`.
 

@@ -50,11 +50,11 @@ Every `crud` tool returns a JSON **array** by default — including `create_*`/`
 ```bash
 semantius call crud create_module '{"data": {"module_name": "CRM", "module_slug": "crm", "description": "Customer Relationship Management"}}'
 semantius call crud create_permission '{"data": [{"permission_name": "crm:read", "description": "Read CRM data", "module_id": <id>}, {"permission_name": "crm:manage", "description": "Manage CRM data", "module_id": <id>}]}'
-semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "crm:read", "manage_permission_id": <id of crm:manage>}}'
+semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "crm:read", "manage_permission": "crm:manage"}}'
 ```
 
 - `module_slug`: required, `^[a-z0-9_-]+$`. Permission names are always `<module_slug>:<action>` (slug, never display name).
-- Wiring types differ: `view_permission` is the permission **name** (text); `manage_permission_id` is the permission **id** (number). Skipping the `update_module` wiring leaves the module on the `user:read` default.
+- `view_permission` / `manage_permission` / `admin_permission` hold the permission **name** (text FK to `permissions.permission_name`); write the name directly. The FK means a permission must exist before a module names it, hence create the module on the `user:read` default, create the permissions, then wire. Skipping the `update_module` wiring leaves the module on the `user:read` default.
 - `description` is a ≤40-char tagline.
 
 ### Entity
@@ -92,7 +92,7 @@ Properties the importer uses:
 | `width` | `"default"` unless a layout need exists. |
 | `unique_value` | `true` enforces DB-level uniqueness (the "mark this field unique" answer; the import then skips rows whose value already exists). On an existing field it fails when live duplicates exist. |
 | `searchable` | `true` adds the field to full-text search. |
-| `default_value` | Only when the platform auto-default is wrong (e.g. a required enum whose starting value is not `enum_values[0]`). |
+| `default_value` | Only when the platform auto-default is wrong (e.g. a required enum whose starting value is not `enum_values[0]`, the first entry's value). Always a value, never a label. |
 | `reference_table` (+ `reference_delete_mode`) | **Mandates `format: "reference"` or `"parent"`** — never combine `reference_table` with a scalar format. Delete modes: `restrict`, `clear`, `cascade`. |
 
 **Nullability is computed from `format`**: only `reference`, `date`, `date-time` accept NULL; every other format is NOT NULL with an auto-default (`''`, `0`, `false`, first enum value). This drives the empty-cell policy in schema-mapping.md section 7.

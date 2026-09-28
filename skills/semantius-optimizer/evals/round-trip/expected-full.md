@@ -1,6 +1,6 @@
 ---
 artifact: semantic-spec
-version: "5.5"
+version: "5.8"
 system_name: Demo Ops Pro
 tagline: "Demo operations tracker (governed)"
 icon_name: wrench
@@ -53,6 +53,7 @@ flowchart LR
 
 **Plural label:** Vendors
 **Label column:** `vendor_name`
+**Key type:** uuid
 **Audit log:** no
 **Edit permission:** admin
 **Cube mode:** disabled
@@ -77,6 +78,8 @@ flowchart LR
 **Plural label:** Assets
 **Label column:** `asset_tag`
 **Order column:** `sort_key`
+**Key type:** typeid
+**Key prefix:** asset
 **Audit log:** yes
 **Edit mode:** sidebar
 **Icon URL:** https://example.invalid/asset.svg
@@ -106,7 +109,8 @@ flowchart LR
 ```json
 [
   {
-    "code": "retire_needs_permission",
+    "code": "99001",
+    "name": "retire_needs_permission",
     "message": "Only asset managers can retire an asset.",
     "description": "Retiring is a gated transition.",
     "jsonlogic": {

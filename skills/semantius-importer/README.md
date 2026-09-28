@@ -40,30 +40,8 @@ The full preservation design lives here so the skill's runtime files spend no re
 ## Pending platform/tooling work (roadmap)
 
 1. **Batched upsert — needs an MCP change.** The `postgrestRequest` tool currently has no `prefer` input; the server hardcodes `Prefer: return=representation`, so `resolution=merge-duplicates` cannot reach PostgREST. A `prefer` passthrough in `postgrest-mcp` (`src/tools/postgrestRequest.ts`) unlocks batched upsert, which is the prerequisite for bringing the postponed update mode back.
-2. **Sequence-fix RPC — needs a platform DB function.** To make id preservation safe, install this function in the Semantius platform database (same place as the existing `/rpc/get_userinfo`-style functions) and grant execute to the appropriate role only:
-
-   ```sql
-   create or replace function fix_id_sequence(p_table text)
-   returns bigint
-   language plpgsql
-   security definer
-   as $$
-   declare
-     v_next bigint;
-   begin
-     execute format(
-       'select setval(pg_get_serial_sequence(%L, ''id''), coalesce(max(id), 0) + 1, false) from %I',
-       p_table, p_table
-     ) into v_next;
-     return v_next;
-   end
-   $$;
-   -- grant execute on function fix_id_sequence(text) to <admin role>;
-   -- revoke execute on function fix_id_sequence(text) from public;
-   ```
-
-   Call site (no MCP change needed): `postgrestRequest {"method":"POST","path":"/rpc/fix_id_sequence","body":{"p_table":"<table>"}}` right after a preserve-ids import.
-3. **id preservation re-enable** once 1 and 2 are live: import explicit ids, call the RPC, sequence healthy — the deferred blocks in the references become active again.
+2. **Sequence-fix RPC — now on the platform.** `fix_id_sequence(p_table)` exists on current platform databases (a 0.5.0-beta1 database lacks it until it is rebuilt); the CLI's own transfer import (`utils/import_entities` / `import_module`) calls it after every table. Call site: `postgrestRequest {"method":"POST","path":"/rpc/fix_id_sequence","body":{"p_table":"<table>"}}` right after a preserve-ids import; `PGRST202` means the database lacks it.
+3. **id preservation re-enable** once 1 is live too (2 is), after re-planning against the RPC as shipped: import explicit ids, call the RPC, sequence healthy — the deferred blocks in the references become active again.
 
 ## Layout
 

@@ -85,13 +85,15 @@ The canonical built-in field shapes live in `use-semantius/references/data-model
 | Built-in | Use the existing field for… | …instead of inventing |
 |---|---|---|
 | `users.display_name` | the user's human-readable name | `name`, `full_name`, `user_name` |
+| `users.first_name` / `users.last_name` | given name / family name | `given_name`, `surname`, `family_name` |
 | `users.is_disabled` | account suspension state (inverted) | `is_active`, `enabled`, `active` |
+| `users.is_agent` | service principal / agent account (`true`) vs human | `is_service_account`, `is_bot`, `account_type` |
 | `users.email` | login identifier | `username`, `login` |
 | `users.settings` | per-user preferences blob | `preferences`, `config` |
 | `roles.role_name` | role display name | `name`, `title` |
 | `roles.slug` | stable snake_case handle | `code`, `role_code`, `key` |
 | `permissions.permission_name` | permission code (`<slug>:<action>`) | `name`, `code` |
 
-When the model legitimately needs an extra field on a built-in (e.g. `users.is_agent` to distinguish service accounts, `users.primary_team_id` to point at a domain entity, `users.job_title`), include it normally — the deployer adds these additively to the live built-in via `create_field`.
+When the model legitimately needs an extra field on a built-in (e.g. `users.primary_team_id` to point at a domain entity, `users.job_title`), include it normally — the deployer adds these additively to the live built-in via `create_field`.
 
 When in doubt about whether a concept is already covered by a built-in, **read the field-shape table in `data-modeling.md`** before writing §3. Don't guess and let the deployer's confirmation prompt sort it out later.
