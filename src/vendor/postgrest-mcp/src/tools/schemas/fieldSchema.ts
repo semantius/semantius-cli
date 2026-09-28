@@ -32,7 +32,8 @@ export const fieldSchema = z.looseObject({
   ctype: z.enum(['', 'id', 'label', 'audit', 'core']).optional()
     .describe('Marks a DD-managed core column: empty (normal user field), id (primary key), label (display field), audit (record-versioning columns such as created_at and updated_at) or core (other system columns). A core column cannot be deleted or renamed (the label column may be renamed), and its format and default value cannot change. Set by the DD only and never changed.'),
   searchable: z.boolean().optional().describe('Whether field is included in full-text search'),
-  enum_values: z.unknown().optional().nullable().describe('JSON array of the allowed values of an enum field, e.g. ["active", "inactive", "pending"]'),
+  enum_values: z.array(z.union([z.string(), z.object({ value: z.string(), label: z.string() })])).optional().nullable()
+    .describe('The allowed values of an enum field, in the order they are offered: a JSON array whose entries are a value or a {"value", "label"} pair, e.g. ["active", {"value": "on_hold", "label": "On hold"}]. Records store the value; the label is display text. Use a pair when the value is a code or abbreviation.'),
   reference_table: z.string().optional().describe('Entity this field references, by table name. Required for reference and parent fields, empty for all others, and must name an existing entity.'),
   reference_delete_mode: z.enum(['', 'restrict', 'clear', 'cascade']).optional()
     .describe('What happens to this record when the referenced record is deleted: restrict (the delete is blocked), clear (this field is set to NULL) or cascade (this record is deleted too). Empty on fields that are not a reference or parent; on a reference, empty acts as restrict.'),

@@ -114,13 +114,17 @@ export const ENTITY_COLUMNS = without(
 /**
  * Sent on create, never on update. `id_type` is locked once the table exists:
  * patching it is refused with 90233, so a re-import of an entity that already
- * exists on the target must leave it out. `id_prefix` is deliberately absent —
- * a TypeID prefix may be changed later (new ids take it, existing ids keep
- * theirs), so it stays updatable.
+ * exists on the target must leave it out. `id_refentity` likewise (90241): an
+ * is_a or has_a entity's records are stored in its base. `id_prefix` is
+ * deliberately absent — a TypeID prefix may be changed later (new ids take it,
+ * existing ids keep theirs), so it stays updatable; an is_a entity's is fixed
+ * (90245), and a changed one in the file is refused like any other conflict.
+ * The same list as the platform's ensure_entities (c_entity_create_only).
  */
 export const ENTITY_CREATE_ONLY = [
   'id_column',
   'id_type',
+  'id_refentity',
   'catalog_entity_code',
   'catalog_entity_aliases',
 ];

@@ -1634,6 +1634,45 @@ describe('import: files and schema', () => {
     expect(ENTITY_CREATE_ONLY).not.toContain('id_prefix');
   });
 
+  test('id_refentity is sent on create and never patched: changing it is refused with 90241', async () => {
+    const source = fake('source.example.test');
+    seedCrm(source);
+    source.update('entities', 'accounts', {
+      id_type: 'typeid',
+      id_prefix: 'acct',
+    });
+    source.update('entities', 'contacts', {
+      id_type: 'has_a',
+      id_refentity: 'accounts',
+    });
+    const target = emptyTarget();
+    const path = join(dir, 'crm.json');
+    await call(source, 'export_module', {
+      name: 'CRM',
+      path,
+      exclude_data: true,
+    });
+
+    await call(target, 'import_module', { path });
+    expect(target.row('entities', 'contacts')?.id_refentity).toBe('accounts');
+
+    // The target's entity names another base: the platform would refuse the
+    // patch, so a re-import leaves the column alone.
+    target.update('entities', 'contacts', { id_refentity: null });
+    const from = target.requests.length;
+    const again = await call(target, 'import_module', { path });
+    expect(again.entities).toContainEqual(
+      expect.objectContaining({ table_name: 'contacts', entity: 'unchanged' }),
+    );
+    const patches = target.requests
+      .slice(from)
+      .filter((r) => r.method === 'PATCH' && r.target === 'entities');
+    for (const p of patches) {
+      expect(p.body as Row).not.toHaveProperty('id_refentity');
+    }
+    expect(ENTITY_CREATE_ONLY).toContain('id_refentity');
+  });
+
   test('select_rule is written before the records, with the validation rules', async () => {
     const source = fake('source.example.test');
     seedCrm(source);

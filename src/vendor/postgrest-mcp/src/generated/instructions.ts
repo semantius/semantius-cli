@@ -137,13 +137,13 @@ export const instructions = `   ---
    2. **Resolve permissions** – Use \`read_permission\` to find suitable \`view_permission\` and \`edit_permission\`. Use module-level permissions (e.g., \`crm:read\`, \`crm:manage\`) or create entity-specific ones if needed.
 
    3. **Create the entity** with:
-      - \`table_name\` (lowercase, snake_case, **always plural**; e.g., \`customers\`, \`categories\`) — renaming is high-risk: breaks all references
+      - \`table_name\` (lowercase, snake_case, **always plural**; e.g., \`customers\`, \`categories\`; never ending in \`_ext\`, which is reserved) — renaming is high-risk: breaks all references
       - \`singular\` – machine-readable singular form (e.g., \`service\`, \`company\`) — required
       - \`singular_label\` – human-readable singular name, also becomes the title of the label field (e.g., "Service Name", "Company Name")
       - \`plural\` – machine-readable plural form (e.g., \`services\`, \`companies\`) — required
       - \`plural_label\` (e.g., "Services", "Companies")
       - \`description\` (clear explanation of what this concept represents)
-      - \`label_column\` – the snake_case **field name** whose value identifies a record (e.g., \`service_name\`, \`company_name\`). This must be a snake_case identifier, not a human-readable title.
+      - \`label_column\` – the snake_case **field name** whose value identifies a record (e.g., \`service_name\`, \`company_name\`). This must be a snake_case identifier, not a human-readable title. Omit it for an \`is_a\` or \`has_a\` entity: it comes from the base (\`90242\`).
       - \`module_id\` (required — use resolved module)
       - \`view_permission\` and \`edit_permission\` (required)
       - Optional: \`icon_url\`
@@ -157,16 +157,20 @@ export const instructions = `   ---
         - \`uuid\`: a time-ordered UUIDv7 the database assigns. Use when ids must be unguessable or created by several systems without coordination.
         - \`typeid\`: a prefixed, sortable id such as \`acct_01h455vb4pex5vsknk084sn02q\`, assigned by the database. Use when ids appear in URLs, logs or support tickets and should say what they are. **Requires \`id_prefix\`.**
         - \`bigint\` / \`text\`: the caller supplies the key on every insert (e.g. an external system's numeric id, or a natural code like an ISO country code). Only when the user has such a key.
+        - \`is_a\` / \`has_a\`: a subtype or an optional extension of another entity, sharing its key. **Requires \`id_refentity\`** (and \`id_prefix\` for \`is_a\`). See **Inheritance and Extensions** below before choosing either.
         - \`computed\` is for system tables only; never use it.
-      - \`id_prefix\` — only with \`id_type: "typeid"\`, and then required: a short lowercase name for the records (e.g. \`acct\`, \`inv\`, \`cust\`), up to 63 lowercase letters and underscores, starting and ending with a letter, unique among entities. It can be changed later, but ids already issued keep the old prefix, and records exported before the change can no longer be re-imported with their ids.
+      - \`id_prefix\` — only with \`id_type: "typeid"\` or \`"is_a"\`, and then required: a short lowercase name for the records (e.g. \`acct\`, \`inv\`, \`cust\`), up to 63 lowercase letters and underscores, starting and ending with a letter, unique among entities. A \`typeid\` prefix can be changed later, but ids already issued keep the old prefix, and records exported before the change can no longer be re-imported with their ids. An \`is_a\` prefix never changes (\`90245\`).
+      - \`id_refentity\` — only with \`id_type: "is_a"\` or \`"has_a"\`, and then required: the entity this one is based on. Set once on create; never send it on update (\`90241\`).
 
       **The system automatically creates these fields — do NOT create them manually:**
-      - \`id\` — primary key field (\`ctype: "id"\`, \`is_pk: true\`), typed from \`id_type\`: format \`int64\` for \`auto_increment\` and \`bigint\`, \`text\`, \`uuid\`, or \`string\` for \`typeid\`
+      - \`id\` — primary key field (\`ctype: "id"\`, \`is_pk: true\`), typed from \`id_type\`: format \`int64\` for \`auto_increment\` and \`bigint\`, \`text\`, \`uuid\`, or \`string\` for \`typeid\`, \`is_a\` and \`has_a\`
       - \`label\` — display field (\`ctype: "label"\`) that reads from \`label_column\`
       - The field named in \`label_column\` (e.g., \`service_name\`) with title from \`singular_label\`
       - \`created_at\` and \`updated_at\` timestamp fields
 
       > ⚠️ **Never call \`create_field\` for \`id\`, \`label\`, \`created_at\`, \`updated_at\`, or the field named in \`label_column\`. They already exist.**
+
+      > ℹ️ An \`is_a\` or \`has_a\` entity gets only \`id\`, \`created_at\` and \`updated_at\`: its label field, and every other field of its base, is its base's. Its \`label_column\` is set from the base.
 
       > ℹ️ \`searchable\` and \`is_child\` on the entity are **read-only** and computed automatically (\`searchable\` when any field has \`searchable: true\`; \`is_child\` when any field uses \`format: "parent"\`). Never set these manually.
 
@@ -222,7 +226,7 @@ export const instructions = `   ---
    2. **Create parent field** with:
       - \`format: "parent"\`
       - \`reference_table: "<target_table_name>"\`
-      - \`reference_delete_mode: "cascade"\` (default — children are deleted with the parent)
+      - \`reference_delete_mode: "cascade"\` (default — children are deleted with the parent). On an \`is_a\` entity \`cascade\` is refused (\`90249\`): set \`"restrict"\` or \`"clear"\` explicitly.
       - Optional: \`relationship_label\` — verb label for ER diagrams and navigation
       - Optional: \`singular_label_parent\` / \`plural_label_parent\` — override the default labels inherited from the parent entity (e.g. use \`"Billing Address"\` instead of \`"Address"\` when a customer has multiple address roles)
 
@@ -246,6 +250,42 @@ export const instructions = `   ---
    - \`create_field\` once with both parent fields in \`data\`:
      - \`product_id\`: \`format: "parent"\`, \`reference_table: "products"\`, \`reference_delete_mode: "cascade"\`
      - \`tag_id\`: \`format: "parent"\`, \`reference_table: "tags"\`, \`reference_delete_mode: "cascade"\`
+
+   ---
+
+   ### Inheritance and Extensions (\`is_a\`, \`has_a\`)
+
+   When user says: *"Emails and tasks are both activities"*, *"Customers and suppliers are business partners"*, or *"A person can also be a customer"*
+
+   Two key types let records of one entity share the key of another (its base, named in \`id_refentity\`):
+
+   - **\`is_a\` — a subtype.** \`activities\` > \`emails\` > \`classified_emails\`, and \`tasks\` is_a \`activities\`; \`persons\` and \`organizations\` is_a \`business_partners\`. Every record is exactly one type, fixed when it is created: an email has an \`eml_…\` id, and \`activities\` lists it with every other activity. The base must be a managed \`typeid\` or \`is_a\` entity (\`90240\`); the subtype needs its own \`id_prefix\`.
+   - **\`has_a\` — an optional extension.** \`customers\` and \`suppliers\` has_a \`business_partners\`: a partner has at most one customer record and at most one supplier record, and both use the partner's \`bp_…\` key. The base must be a managed \`typeid\` entity (\`90240\`). One level only.
+
+   **Choose the right tool — inheritance is not a way to reuse fields:**
+
+   | Situation | Use |
+   |-----------|-----|
+   | The kind of record is fixed when it is created, and every subtype record is also a valid record of the base (an email *is* an activity) | \`is_a\` |
+   | An optional role a record may take on or drop (a partner becomes a customer) | \`has_a\` |
+   | A classification that can change during the record's life (lead → customer, draft → approved) | an \`enum\` field, plus \`input_type_rule\` to show fields per value |
+   | 1:n data per organizational level (a customer's data per sales area or company code) | a child entity with a \`parent\` field |
+   | Two entities that merely share some field names | nothing — give each its own fields |
+
+   **Creating one:**
+   1. Create the base as a \`typeid\` entity (or use an existing one), with its fields.
+   2. \`create_entity\` with \`id_type: "is_a"\` (plus \`id_prefix\`) or \`"has_a"\`, and \`id_refentity: "<base table_name>"\`. Do not set \`label_column\` or \`label_parent\`: they come from the base (\`90242\`). The entity's table is \`<table_name>_ext\`, so that name must be free too (\`90250\`).
+   3. Add only the entity's **own** fields with \`create_field\`. A field belongs to the entity that owns it: an inherited field is changed through its owner, and a field name may not repeat one of the base's or of an entity based on this one (\`90243\`); siblings (emails and tasks) may share names.
+
+   **Reading and writing:** each entity is read and written at its own \`table_name\`, which shows the whole record — the base's fields and its own. \`get_schema\` lists the inherited properties with \`"inherited_from": "<owner>"\`, and a has_a base lists its \`extensions: [{table, properties, required}]\`. A reader needs the view permission of every level, a writer the edit permission of every level it writes; a record the caller cannot write whole is skipped, never half-written.
+   - **Writes through any level reach the record's own type.** \`PATCH /activities?id=eq.<eml id>\` runs the emails rules too, and \`DELETE /activities?id=eq.<eml id>\` deletes the email completely, running the delete rules of every level (any of them may refuse). An update writes the level that changed and the levels below it.
+   - **Create a \`has_a\` record** without an \`id\` to create the base record too, or with the \`id\` of an existing base record to **attach** to it: only the extension's fields are written, and a base value that differs from the stored one is refused (\`90246\`) — change it through the base. An \`id\` that no base record has creates the base record with that id, which must carry the base's prefix (\`90237\`).
+   - **Delete a \`has_a\` record** to detach it; the base record stays. A base record with an extension cannot be deleted (\`90251\`): remove the extensions first.
+   - The \`<table_name>_ext\` tables store each entity's own fields; never write them directly (\`90244\`).
+
+   **Limits:** a \`reference\` or \`parent\` field of an \`is_a\` entity cannot use \`reference_delete_mode: "cascade"\` (\`90249\`; use \`restrict\` or \`clear\`) — \`parent\` defaults to \`cascade\`, so set the mode explicitly on every \`parent\` field of an \`is_a\` entity; \`order_column\`, queue mappings and RACI process gates are not available on \`is_a\`/\`has_a\` entities (\`90249\`); a base cannot be switched to \`managed: false\` while entities are based on it (\`90252\`); an upsert (\`Prefer: resolution=merge-duplicates\`, \`PUT\`) fails with \`42P10\` — insert, then update; a search spans every level but is slower on large tables.
+
+   **Deleting:** an \`is_a\`/\`has_a\` entity, or the base of one, cannot be deleted while it has records (\`90247\`), and a base cannot be deleted while entities are based on it (\`90248\`). Deleting a module is refused the same way while one of these entities in it has records (\`90247\`); entities of the same module that are based on each other do not block it. Before deleting an entity, check its dependents with \`read_entity(filters: "id_refentity=eq.<table_name>")\`.
 
    ---
 
@@ -480,6 +520,7 @@ export const instructions = `   ---
       - \`search_vector\` is a computed column automatically maintained by the system across all searchable fields
       - Always use \`wfts(simple)\` — the \`simple\` text search configuration is language-agnostic and required for multilingual content. Never use bare \`wfts\` or \`fts\`.
    3. Only use field-specific filters (\`ilike\`, \`eq\`, etc.) when the user specifies a particular column or when the table is not searchable
+   - For an \`is_a\` or \`has_a\` entity, \`search_vector\` covers the searchable fields of its base as well as its own. That search cannot use an index, so on large tables add a narrowing filter.
 
    ---
 
@@ -524,6 +565,8 @@ export const instructions = `   ---
    - Deleting entities or fields (permanent data loss)
    - Removing permissions still in use by roles
    - Changing primary key fields (\`id_type\` cannot change at all; a record's key value cannot change either, the update fails with \`90236\`)
+   - Choosing \`is_a\` or \`has_a\` (\`id_refentity\` and an \`is_a\` prefix are fixed at creation; a record's type cannot change later)
+   - Deleting an entity that others are based on (refused with \`90248\`; check \`id_refentity=eq.<table_name>\` first)
    - **Always check dependencies before deletion**
 
    ---
@@ -565,10 +608,12 @@ export const instructions = `   ---
    | **Dates/Time** | \`date\`, \`time\`, \`date-time\`, \`duration\` |
    | **Relationships** | \`reference\` (cross-entity link, independent lifecycle — default delete: \`restrict\`) |
    | **Composition** | \`parent\` (ownership/composition, child lifecycle bound to parent — default delete: \`cascade\`; also used for M:N junction FKs) |
-   | **Choice** | \`enum\` (requires \`enum_values\` array) |
+   | **Choice** | \`enum\` (requires \`enum_values\`: an array whose entries are a value or a \`{"value", "label"}\` pair, e.g. \`["draft", {"value": "on_hold", "label": "On hold"}]\`. Records store the value; the label is what the UI shows. Use a pair when the value is a code or abbreviation. Never an object map like \`{"draft": "Draft"}\`) |
    | **Boolean** | \`boolean\` |
    | **Structured** | \`json\`, \`jsonlogic\`, \`object\`, \`array\` |
    | **Identifiers** | \`uuid\`, \`email\`, \`uri\`, \`url\` |
+
+   > ℹ️ **An enum record stores the value, never the label.** \`enum_values\`, and the \`enum\` list of an enum property in \`get_schema\` output, hold the entries as defined: an entry may be a \`{"value", "label"}\` object, so write its \`value\`. \`get_schema\` also lists \`""\` for an enum that is not required.
 
    ---
 
@@ -579,7 +624,7 @@ export const instructions = `   ---
    | Format(s) | PostgreSQL type | Auto default | Nullable? |
    |-----------|-----------------|--------------|-----------|
    | \`string\`, \`text\`, \`multiline\`, \`html\`, \`code\`, \`email\`, \`url\`, \`uri\`, \`uuid\`, \`password\` | TEXT | \`''\` | NOT NULL |
-   | \`enum\` | TEXT | \`''\` unless \`input_type: "required"\`, then first entry of \`enum_values\` | NOT NULL |
+   | \`enum\` | TEXT | \`''\` unless \`input_type: "required"\`, then the value of the first entry of \`enum_values\` | NOT NULL |
    | \`integer\`, \`int32\` / \`int64\` | INTEGER / BIGINT | \`0\` | NOT NULL |
    | \`number\`, \`float\`, \`double\` | NUMERIC / REAL | \`0.0\` | NOT NULL |
    | \`boolean\` | BOOLEAN | \`FALSE\` | NOT NULL |
@@ -781,7 +826,11 @@ Compare file headers to entity field names/titles:
 
 Never map file columns to fields with \`input_type: "readonly"\` — these are system-controlled and cannot be imported.
 
-If the entity's \`id_type\` is \`bigint\` or \`text\`, the caller supplies the key: map a file column to \`id\` (every row needs one). For the other key types (\`auto_increment\`, \`uuid\`, \`typeid\`) \`id\` is generated by the database and must not be mapped.
+An enum field accepts only the values of its \`enum_values\`. When the file holds labels instead (e.g. "On hold" for \`on_hold\`), the import script translates each to the \`value\` of the matching entry.
+
+If the entity's \`id_type\` is \`bigint\` or \`text\`, the caller supplies the key: map a file column to \`id\` (every row needs one). For the other key types (\`auto_increment\`, \`uuid\`, \`typeid\`, \`is_a\`) \`id\` is generated by the database and must not be mapped. For a \`has_a\` entity, map \`id\` only when the file holds the ids of existing base records to attach to; without it, each row creates a base record too.
+
+For an \`is_a\` or \`has_a\` entity the fields include the ones it inherits from its base (\`get_schema\` marks them \`inherited_from\`), and a file column may map to them like to the entity's own fields.
 
 ### Step 5 — Generate the Python Import Script
 
