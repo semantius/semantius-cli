@@ -105,6 +105,6 @@ from the file, and in `ensure_entities`.
   - 90237 and 90246.
 - Add a round-trip test of a family (typeid base, `is_a` and `has_a`
   entities, records at every level).
-- Update the "Transfer files carry names, not host ids" section of CLAUDE.md,
+- Update the "Transfer files carry names, not host ids" section of AGENTS.md,
   and the tool descriptions in `src/local-tools/import-*.ts`, which say records
   are upserted by id.

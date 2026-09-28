@@ -62,7 +62,7 @@ beforeEach(async () => {
   }
   setEnvPrefix('SEMANTIUS');
   setHostFlag(undefined);
-  // Per CLAUDE.md: a real current host in hosts.json would win over
+  // Per AGENTS.md: a real current host in hosts.json would win over
   // SEMANTIUS_HOST and send the tools elsewhere.
   hostsDir = await mkdtemp(join(tmpdir(), 'semantius-transfer-hosts-'));
   setHostsIndexDirForTests(hostsDir);

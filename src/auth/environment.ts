@@ -8,7 +8,7 @@
  * Every value is read from `process.env` at call time rather than captured at
  * module load: a spawned child or a test may set DISPLAY / CI between import
  * and use, and Bun fixes some process-level values at startup (see the
- * os.homedir() note in CLAUDE.md).
+ * os.homedir() note in AGENTS.md).
  */
 
 /** Values of CI that mean "not CI" despite being a non-empty string. */

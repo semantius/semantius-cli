@@ -395,7 +395,7 @@ function cacheKey(resource: string | undefined): string {
  *                             has to read the code before it expires
  *   6. otherwise              refuse, naming which of the three reasons applies
  *
- * Selection is on the advertised endpoint, never on idp_type, which CLAUDE.md
+ * Selection is on the advertised endpoint, never on idp_type, which AGENTS.md
  * defines as advisory.
  */
 type GrantChoice =

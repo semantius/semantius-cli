@@ -29,7 +29,7 @@
 #     only place it can run), typecheck, lint and the full test suite. They
 #     prove only the OS you run them on — the CI line in the summary is where
 #     the other platforms show up (see "Linux is a first-class target" in
-#     CLAUDE.md);
+#     AGENTS.md);
 #   * no CHANGELOG.md: the workflow uses GitHub's generated release notes.
 #
 # Usage: ./release.sh v0.9.0 [-y]

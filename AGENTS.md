@@ -89,4 +89,4 @@ Any test that spawns the CLI as a subprocess must redirect `APPDATA`, `LOCALAPPD
 
 ## Memory
 
-Do NOT use the local Claude memory system (`~/.claude/...`) for anything in this project. All conventions, rules, and notes must go in this file (CLAUDE.md) so they are committed to the repo and visible to all users and agents.
+Do NOT use the local Claude memory system (`~/.claude/...`) for anything in this project. All conventions, rules, and notes must go in this file (AGENTS.md) so they are committed to the repo and visible to all users and agents. `CLAUDE.md` is only a symlink to it, kept for tools that read no other name: edit AGENTS.md, never replace the link with a copy.
