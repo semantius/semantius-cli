@@ -41,6 +41,7 @@
  */
 
 import { debug, getConnectTimeoutMs } from '../config.js';
+import { isTransientStatus } from '../errors.js';
 import {
   type HostFacts,
   HostResolutionError,
@@ -318,10 +319,13 @@ async function fetchJson(url: string): Promise<Record<string, unknown>> {
   } catch (error) {
     throw new HostResolutionError(
       `could not reach ${url}: ${(error as Error).message}`,
+      { transient: true },
     );
   }
   if (!response.ok) {
-    throw new HostResolutionError(`${url} returned ${response.status}`);
+    throw new HostResolutionError(`${url} returned ${response.status}`, {
+      transient: isTransientStatus(response.status),
+    });
   }
   try {
     return (await response.json()) as Record<string, unknown>;

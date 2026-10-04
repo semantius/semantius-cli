@@ -13,11 +13,13 @@ import { existsSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { getCredentialSource } from '../src/auth/token';
 import {
   getApiKeyOrgInfo,
   getDefaultConfig,
   getJwtOrgInfo,
   getMissingRequiredEnvVars,
+  isSessionOnlyHost,
   loadConfig,
   loadDotEnv,
   normalizeCredentialEnv,
@@ -853,6 +855,90 @@ describe('host resolution', () => {
       propagateOrg();
       expect(process.env.SEMANTIUS_ORG).toBe('keep');
     });
+
+    // Regression: propagateOrg() used to write ${PREFIX}_ORG with no source
+    // attribution, so the next resolution (main()'s checkRequiredEnvVars ->
+    // getHost) read it as a *shell* value, resolved at the shell layer, and
+    // suppressed the .env's own org-bound credential as "never reached".
+    //
+    // Private prefixes, for the reason the suppression test above gives:
+    // _envSources outlives every test in this file, so a name an earlier test
+    // already loaded from a .env would carry that stale attribution.
+    // setEnvPrefix also clears any --token and credential orgs left behind.
+    // Each call mirrors main()'s order: isSessionOnlyHost(), propagateOrg(),
+    // then the host and credential lookups.
+
+    test("a .env's org-bound API key survives propagateOrg (source org)", async () => {
+      const projectDir = await mkdtemp(join(tmpdir(), 'semantius-host-prop-'));
+      const originalCwd = process.cwd();
+      try {
+        setEnvPrefix('HOSTPROP1');
+        await writeFile(
+          join(projectDir, '.env'),
+          'HOSTPROP1_API_KEY=acme:sk-secret\n',
+        );
+        process.chdir(projectDir);
+        await loadDotEnv();
+
+        expect(isSessionOnlyHost()).toBe(false);
+        propagateOrg();
+
+        expect(process.env.HOSTPROP1_ORG).toBe('acme');
+        expect(getHost()).toBe('acme.semantius.cloud');
+        expect(getHostSource()).toBe('org');
+        expect(process.env.HOSTPROP1_API_KEY).toBe('sk-secret');
+        expect(getCredentialSource()).toBe('apikey');
+      } finally {
+        setEnvPrefix('SEMANTIUS');
+        delete process.env.HOSTPROP1_ORG;
+        delete process.env.HOSTPROP1_API_KEY;
+        process.chdir(originalCwd);
+        await rm(projectDir, { recursive: true, force: true });
+      }
+    });
+
+    test("a .env's cloud HOST keeps its dotenv source after propagateOrg, and its bound key", async () => {
+      const projectDir = await mkdtemp(join(tmpdir(), 'semantius-host-prop-'));
+      const originalCwd = process.cwd();
+      try {
+        setEnvPrefix('HOSTPROP2');
+        await writeFile(
+          join(projectDir, '.env'),
+          'HOSTPROP2_HOST=acme.semantius.cloud\nHOSTPROP2_API_KEY=acme:sk-secret\n',
+        );
+        process.chdir(projectDir);
+        await loadDotEnv();
+
+        expect(isSessionOnlyHost()).toBe(false);
+        propagateOrg();
+
+        expect(getHost()).toBe('acme.semantius.cloud');
+        expect(getHostSource()).toMatch(/^dotenv:.*\.env$/);
+        expect(process.env.HOSTPROP2_API_KEY).toBe('sk-secret');
+        expect(getCredentialSource()).toBe('apikey');
+      } finally {
+        setEnvPrefix('SEMANTIUS');
+        delete process.env.HOSTPROP2_HOST;
+        delete process.env.HOSTPROP2_ORG;
+        delete process.env.HOSTPROP2_API_KEY;
+        process.chdir(originalCwd);
+        await rm(projectDir, { recursive: true, force: true });
+      }
+    });
+
+    test('a shell-only ORG still resolves after propagateOrg', () => {
+      setEnvPrefix('HOSTPROP3');
+      try {
+        process.env.HOSTPROP3_ORG = 'Acme';
+        propagateOrg();
+        expect(process.env.HOSTPROP3_ORG).toBe('acme');
+        expect(getHost()).toBe('acme.semantius.cloud');
+        expect(getHostSource()).toBe('org');
+      } finally {
+        setEnvPrefix('SEMANTIUS');
+        delete process.env.HOSTPROP3_ORG;
+      }
+    });
   });
 
   describe('--crud-mcp config routing', () => {
@@ -1086,10 +1172,12 @@ describe('host CLI surface', () => {
     }
   });
 
-  test('--help documents --host, --crud-mcp and --reset-cache', async () => {
+  test('--help documents --host, -c/--config, --crud-mcp and --reset-cache', async () => {
     const result = await runCli(['--help']);
     expect(result.exitCode).toBe(0);
     for (const text of [
+      '-c, --config <path>',
+      'Also: SEMANTIUS_CONFIG_PATH',
       '--host <hostname>',
       '--crud-mcp',
       '--reset-cache',

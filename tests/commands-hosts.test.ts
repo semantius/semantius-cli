@@ -6,15 +6,28 @@
  * touches the real OS keyring or a developer's own hosts.json.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from 'bun:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hasStoredSessionFor } from '../src/auth/session';
 import { hostsCommand, useCommand } from '../src/commands/hosts';
-import { type SecretsApi, setSecretsForTests } from '../src/auth/storage';
+import {
+  type SecretsApi,
+  createSecretStorage,
+  sessionName,
+  setSecretsForTests,
+} from '../src/auth/storage';
 import { getUserConfigDir, setEnvPrefix, setHostFlag } from '../src/config';
-import { setHostCacheDirForTests } from '../src/host';
+import { getHostCachePath, setHostCacheDirForTests } from '../src/host';
 import {
   getCurrentHost,
   hasHost,
@@ -56,6 +69,86 @@ async function captureLog(fn: () => Promise<void>): Promise<string[]> {
   return lines;
 }
 
+/**
+ * Run `fn` with console.error captured, returning its lines and whatever `fn`
+ * threw (undefined when it resolved) — the useCommand cases below assert on
+ * both what was printed and how it failed.
+ */
+async function captureError(
+  fn: () => Promise<void>,
+): Promise<{ lines: string[]; error: Error | undefined }> {
+  const lines: string[] = [];
+  const orig = console.error;
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  try {
+    await fn();
+    return { lines, error: undefined };
+  } catch (error) {
+    return { lines, error: error as Error };
+  } finally {
+    console.error = orig;
+  }
+}
+
+/** The exit code an error names for main() to exit with, if any. */
+function exitCodeOf(error: unknown): number | undefined {
+  return (error as { exitCode?: number } | undefined)?.exitCode;
+}
+
+/** The tenant every seeded cloud host resolves to. */
+const TENANT_ID = 'fake-tenant';
+
+/**
+ * Seed a cloud host's control-plane record in the (redirected) host cache, so
+ * resolving it — which `use` now does to verify the session — needs no
+ * network.
+ */
+async function seedCloudHost(host: string): Promise<void> {
+  await writeFile(
+    getHostCachePath(host),
+    JSON.stringify({
+      fetched_at: new Date().toISOString(),
+      record: {
+        id: TENANT_ID,
+        postgrest_url: 'https://pg.example.test/rest/v1/',
+        client_id_cli: null,
+      },
+    }),
+  );
+}
+
+/**
+ * Store a session for `host` through the storage API, sealed to its name as a
+ * real login leaves it (AGENTS.md: never reach into the fake keyring).
+ * `resource` is the key its access token is filed under: a cloud host's is
+ * its tenant (resourceIndicator in src/auth/session.ts); a self-hosted host
+ * with no audience has none. `fresh: false` stores one already due for
+ * refresh, so reading it means a round trip to the token endpoint: a minute
+ * left, inside the CLI's 5-minute refresh margin. Not one already expired —
+ * the storage drops those on save, and a session with no access token left
+ * reads as no session at all.
+ */
+async function storeSession(
+  host: string,
+  opts: { resource?: string; fresh?: boolean } = {},
+): Promise<void> {
+  const key = opts.resource ? `resource=${opts.resource}` : '';
+  const expiresAt =
+    opts.fresh === false ? Date.now() + 60_000 : Date.now() + 3_600_000;
+  await createSecretStorage(sessionName(host)).save({
+    refresh_token: 'r',
+    tokens: { [key]: { access_token: 'a', expires_at: expiresAt } },
+  });
+}
+
+/** A usable session on a cloud host, as `use` finds it after a login. */
+async function storeCloudSession(host: string): Promise<void> {
+  await seedCloudHost(host);
+  await storeSession(host, { resource: `tenant://${TENANT_ID}` });
+}
+
 describe('commands/hosts (in-process)', () => {
   let configDir: string;
   let secrets: ReturnType<typeof fakeSecrets>;
@@ -87,17 +180,6 @@ describe('commands/hosts (in-process)', () => {
     await rm(configDir, { recursive: true, force: true });
   });
 
-  /** Seeds a session directly into the fake keyring, keyed as storage.ts does. */
-  function storeFakeSession(host: string): void {
-    secrets.store.set(
-      `semantius:SEMANTIUS:${host}`,
-      JSON.stringify({
-        refresh_token: 'r',
-        tokens: { '': { access_token: 'a', expires_at: Date.now() + 3_600_000 } },
-      }),
-    );
-  }
-
   describe('hostsCommand', () => {
     test('an empty index hints at "use"', async () => {
       const lines = await captureLog(() => hostsCommand({}));
@@ -110,7 +192,7 @@ describe('commands/hosts (in-process)', () => {
       recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
       recordHost('x.example.com', { mode: 'selfhosted', org: null });
       setCurrentHost('acme.semantius.cloud');
-      storeFakeSession('acme.semantius.cloud');
+      await storeSession('acme.semantius.cloud');
       // x.example.com is recorded but has no session: the index and the
       // credential store have drifted apart.
 
@@ -141,7 +223,7 @@ describe('commands/hosts (in-process)', () => {
         { loggedInAt: '2026-01-01T00:00:00.000Z' },
       );
       setCurrentHost('acme.semantius.cloud');
-      storeFakeSession('acme.semantius.cloud');
+      await storeSession('acme.semantius.cloud');
       // The current host beats SEMANTIUS_ORG now, unlike under the old
       // last-rung design — set it here to prove that, not just to give
       // getHost() something to resolve.
@@ -239,7 +321,7 @@ describe('commands/hosts (in-process)', () => {
 
   describe('useCommand: success path (a session is already stored)', () => {
     test('sets the current host and records a not-yet-indexed host, "none before"', async () => {
-      storeFakeSession('acme.semantius.cloud');
+      await storeCloudSession('acme.semantius.cloud');
       expect(hasHost('acme.semantius.cloud')).toBe(false);
 
       const lines = await captureLog(() =>
@@ -252,7 +334,7 @@ describe('commands/hosts (in-process)', () => {
     });
 
     test('reports the previous current host', async () => {
-      storeFakeSession('b.semantius.cloud');
+      await storeCloudSession('b.semantius.cloud');
       setCurrentHost('a.semantius.cloud');
 
       const lines = await captureLog(() => useCommand({ host: 'b.semantius.cloud' }));
@@ -263,13 +345,13 @@ describe('commands/hosts (in-process)', () => {
     });
 
     test('normalizes the host argument', async () => {
-      storeFakeSession('acme.semantius.cloud');
+      await storeCloudSession('acme.semantius.cloud');
       await useCommand({ host: 'https://acme.semantius.app/' });
       expect(getCurrentHost()).toBe('acme.semantius.cloud');
     });
 
     test('does not overwrite an already-indexed host entry', async () => {
-      storeFakeSession('acme.semantius.cloud');
+      await storeCloudSession('acme.semantius.cloud');
       recordHost(
         'acme.semantius.cloud',
         { mode: 'cloud', org: 'acme' },
@@ -281,18 +363,278 @@ describe('commands/hosts (in-process)', () => {
     });
   });
 
+  describe('useCommand: a stored session must still work', () => {
+    // A self-hosted loopback host: resolving it needs no control plane, and
+    // this stub is its legacy discovery chain and token endpoint. Each test
+    // stores a session for it and picks how the token endpoint answers a
+    // refresh.
+    let tokenReply: () => Response;
+    let requests: string[];
+    let server: ReturnType<typeof Bun.serve>;
+    let host: string;
+
+    beforeAll(() => {
+      server = Bun.serve({
+        hostname: '127.0.0.1',
+        port: 0,
+        fetch(req) {
+          const { origin, pathname } = new URL(req.url);
+          requests.push(pathname);
+          if (pathname === '/.well-known/oauth-protected-resource') {
+            return Response.json({
+              resource: `${origin}/mcp`,
+              authorization_servers: [`${origin}/api/auth`],
+            });
+          }
+          if (pathname === '/.well-known/oauth-authorization-server/api/auth') {
+            return Response.json({
+              issuer: `${origin}/api/auth`,
+              authorization_endpoint: `${origin}/api/auth/oauth2/authorize`,
+              token_endpoint: `${origin}/token`,
+              code_challenge_methods_supported: ['S256'],
+              authorization_response_iss_parameter_supported: true,
+            });
+          }
+          if (pathname === '/token') return tokenReply();
+          // Including /.well-known/semantius.json: no platform document, so
+          // discovery takes the legacy chain above.
+          return new Response('not found', { status: 404 });
+        },
+      });
+      host = `127.0.0.1:${server.port}`;
+    });
+
+    afterAll(() => server.stop(true));
+
+    // CI is what makes login() refuse instead of opening a browser, so a
+    // "signs in again" case ends in a recognizable error on every platform,
+    // headless Linux included. A forced login flow would bypass that check.
+    let savedCi: string | undefined;
+    let savedFlow: string | undefined;
+    beforeEach(() => {
+      requests = [];
+      tokenReply = () => Response.json({ error: 'unexpected' }, { status: 500 });
+      savedCi = process.env.CI;
+      savedFlow = process.env.SEMANTIUS_LOGIN_FLOW;
+      process.env.CI = 'true';
+      delete process.env.SEMANTIUS_LOGIN_FLOW;
+    });
+    afterEach(() => {
+      if (savedCi === undefined) delete process.env.CI;
+      else process.env.CI = savedCi;
+      if (savedFlow === undefined) delete process.env.SEMANTIUS_LOGIN_FLOW;
+      else process.env.SEMANTIUS_LOGIN_FLOW = savedFlow;
+    });
+
+    test('a still-fresh access token: success without contacting the host', async () => {
+      await storeSession(host);
+
+      const lines = await captureLog(() => useCommand({ host }));
+
+      expect(lines).toEqual([`Current host: ${host} (none before)`]);
+      expect(getCurrentHost()).toBe(host);
+      expect(requests).toEqual([]);
+    });
+
+    test('a stale token that refreshes: success', async () => {
+      await storeSession(host, { fresh: false });
+      tokenReply = () =>
+        Response.json({
+          access_token: 'fresh',
+          refresh_token: 'r2',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        });
+
+      await captureLog(() => useCommand({ host }));
+
+      expect(getCurrentHost()).toBe(host);
+      expect(requests).toContain('/token');
+    });
+
+    test('a refresh token the provider rejects (invalid_grant): signs in again', async () => {
+      await storeSession(host, { fresh: false });
+      tokenReply = () =>
+        Response.json({ error: 'invalid_grant' }, { status: 400 });
+
+      const { lines, error } = await captureError(() => useCommand({ host }));
+
+      expect(lines).toContain(
+        `The session stored for ${host} can no longer be renewed; signing in again.`,
+      );
+      // The login it went on to start, refused here because CI is set: a
+      // missing credential, so 5 — not the 3 of a transient failure.
+      expect(error?.message).toMatch(/CI environment/);
+      expect(exitCodeOf(error)).toBe(5);
+      expect(getCurrentHost()).toBeNull();
+    });
+
+    test('a bare 401 from the token endpoint: signs in again', async () => {
+      await storeSession(host, { fresh: false });
+      tokenReply = () => new Response('', { status: 401 });
+
+      const { lines, error } = await captureError(() => useCommand({ host }));
+
+      expect(lines.join('\n')).toContain('can no longer be renewed');
+      expect(error?.message).toMatch(/CI environment/);
+    });
+
+    test('a 503 says nothing against the session: exit 3, no new login, host unchanged', async () => {
+      await storeSession(host, { fresh: false });
+      setCurrentHost('previous.semantius.cloud');
+      tokenReply = () => new Response('', { status: 503 });
+
+      const { lines, error } = await captureError(() => useCommand({ host }));
+
+      expect(error?.message).toBe(
+        `Error [SESSION_REFRESH_FAILED]: the session stored for ${host} could not be refreshed right now (Token request failed with status 503)\n  Suggestion: The token endpoint could not be reached or reported trouble of its own; it did not refuse the session. Try again shortly.`,
+      );
+      expect(exitCodeOf(error)).toBe(3);
+      expect(lines.join('\n')).not.toContain('signing in again');
+      expect(getCurrentHost()).toBe('previous.semantius.cloud');
+    });
+
+    test('temporarily_unavailable is transient even with an OAuth error body', async () => {
+      await storeSession(host, { fresh: false });
+      tokenReply = () =>
+        Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+
+      const { lines, error } = await captureError(() => useCommand({ host }));
+
+      expect(error?.message).toMatch(/temporarily_unavailable/);
+      expect(exitCodeOf(error)).toBe(3);
+      expect(lines.join('\n')).not.toContain('signing in again');
+      expect(getCurrentHost()).toBeNull();
+    });
+
+    test('a 503 is transient even when its body says invalid_grant', async () => {
+      // A gateway or an identity provider in trouble may answer with any body;
+      // only a refusal with a status of its own is a spent session.
+      await storeSession(host, { fresh: false });
+      tokenReply = () =>
+        Response.json({ error: 'invalid_grant' }, { status: 503 });
+
+      const { lines, error } = await captureError(() => useCommand({ host }));
+
+      expect(error?.message).toContain('SESSION_REFRESH_FAILED');
+      expect(exitCodeOf(error)).toBe(3);
+      expect(lines.join('\n')).not.toContain('signing in again');
+      expect(getCurrentHost()).toBeNull();
+    });
+
+    test('a 429 from the token endpoint exits 3 too', async () => {
+      await storeSession(host, { fresh: false });
+      tokenReply = () => new Response('', { status: 429 });
+
+      const { error } = await captureError(() => useCommand({ host }));
+
+      expect(error?.message).toMatch(/status 429/);
+      expect(exitCodeOf(error)).toBe(3);
+    });
+
+    test('discovery answering 502 exits 3', async () => {
+      // A stale session sends the refresh through discovery first; a broken
+      // front door there is as transient as one at the token endpoint. A
+      // server of its own: discovery is memoized per host name.
+      const broken = Bun.serve({
+        hostname: '127.0.0.1',
+        port: 0,
+        fetch: () => new Response('', { status: 502 }),
+      });
+      try {
+        const brokenHost = `127.0.0.1:${broken.port}`;
+        await storeSession(brokenHost, { fresh: false });
+
+        const { error } = await captureError(() =>
+          useCommand({ host: brokenHost }),
+        );
+
+        expect(error?.message).toMatch(/HOST_RESOLUTION_FAILED.*returned 502/);
+        expect(exitCodeOf(error)).toBe(3);
+        expect(getCurrentHost()).toBeNull();
+      } finally {
+        broken.stop(true);
+      }
+    });
+  });
+
   describe('useCommand: no stored session', () => {
     test('attempts a login instead of erroring NO_SESSION, and records nothing on failure', async () => {
       // A loopback port nothing listens on: login()'s discovery fetch fails
       // fast (ECONNREFUSED), with no DNS lookup and no browser involved.
       expect(hasHost('localhost:1')).toBe(false);
 
-      await expect(useCommand({ host: 'localhost:1' })).rejects.toThrow(
-        'HOST_RESOLUTION_FAILED',
+      const error = await useCommand({ host: 'localhost:1' }).catch(
+        (e: Error) => e,
       );
 
+      expect(error?.message).toContain('HOST_RESOLUTION_FAILED');
+      expect(error?.message).toContain('could not reach');
+      // Nothing listening is the network's trouble, not the host name's.
+      expect(exitCodeOf(error)).toBe(3);
       expect(hasHost('localhost:1')).toBe(false);
       expect(getCurrentHost()).toBeNull();
+    });
+  });
+
+  describe('useCommand: the control plane cannot resolve a cloud host', () => {
+    let originalFetch: typeof fetch;
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      setCurrentHost('previous.semantius.cloud');
+    });
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    /** Every request — here only the control plane's — gets `reply`. */
+    function stubFetch(reply: () => Response): void {
+      globalThis.fetch = (async () => reply()) as unknown as typeof fetch;
+    }
+
+    test('a 503 exits 3 and leaves the current host', async () => {
+      stubFetch(() => new Response('', { status: 503 }));
+
+      const error = await useCommand({ host: 'acme.semantius.cloud' }).catch(
+        (e: Error) => e,
+      );
+
+      expect(error?.message).toContain(
+        'the Semantius control plane returned 503',
+      );
+      expect(exitCodeOf(error)).toBe(3);
+      expect(getCurrentHost()).toBe('previous.semantius.cloud');
+    });
+
+    test('no answer at all exits 3', async () => {
+      globalThis.fetch = (async () => {
+        throw new Error('Unable to connect. Is the computer able to access the url?');
+      }) as unknown as typeof fetch;
+
+      const error = await useCommand({ host: 'acme.semantius.cloud' }).catch(
+        (e: Error) => e,
+      );
+
+      expect(error?.message).toContain(
+        'could not reach the Semantius control plane',
+      );
+      expect(exitCodeOf(error)).toBe(3);
+      expect(getCurrentHost()).toBe('previous.semantius.cloud');
+    });
+
+    test('an unknown organization stays a client error (exit 1)', async () => {
+      stubFetch(() => new Response('', { status: 404 }));
+
+      const error = await useCommand({ host: 'nope.semantius.cloud' }).catch(
+        (e: Error) => e,
+      );
+
+      expect(error?.message).toContain(
+        'organization "nope" not found on the Semantius control plane',
+      );
+      // No exit code of its own: main() reports it as the generic 1.
+      expect(exitCodeOf(error)).toBeUndefined();
+      expect(getCurrentHost()).toBe('previous.semantius.cloud');
     });
   });
 
@@ -312,7 +654,7 @@ describe('commands/hosts (in-process)', () => {
     });
 
     test('leaves the hosts-index entry and session untouched', async () => {
-      storeFakeSession('acme.semantius.cloud');
+      await storeSession('acme.semantius.cloud');
       recordHost('acme.semantius.cloud', { mode: 'cloud', org: 'acme' });
       setCurrentHost('acme.semantius.cloud');
 
@@ -371,11 +713,24 @@ describe('commands/hosts CLI surface (spawned)', () => {
 
   test('"use" with no stored session attempts a login instead of erroring NO_SESSION', async () => {
     // A loopback port nothing listens on: the login attempt's discovery
-    // fetch fails fast (ECONNREFUSED), with no DNS lookup and no browser.
+    // fetch fails fast (ECONNREFUSED), with no DNS lookup and no browser —
+    // a network failure, so exit 3.
     const result = await runCli(['use', 'localhost:1']);
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr).not.toContain('Error [NO_SESSION]:');
     expect(result.stderr).toContain('could not reach');
+  });
+
+  test('"login" exits 3 when the host cannot be reached, like "use"', async () => {
+    const result = await runCli(['login', '--host', 'localhost:1']);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr).toContain('could not reach');
+  });
+
+  test('"use" with an invalid host name is a client error (exit 1)', async () => {
+    const result = await runCli(['use', 'ftp://acme.semantius.cloud']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('INVALID_HOST');
   });
 
   test('"use" without a host argument is a missing argument', async () => {

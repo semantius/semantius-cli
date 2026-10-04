@@ -182,7 +182,8 @@ describe('acceptance: host resolution and credential binding', () => {
       // No conflict: --host always wins over a credential bound at a
       // lower-precedence layer (the project .env), so login proceeds to (and
       // fails at) actually reaching the host, instead of erroring up front.
-      expect(login.exitCode).toBe(1);
+      // Nothing listening is the network's trouble: exit 3.
+      expect(login.exitCode).toBe(3);
       expect(login.stderr).not.toContain('HOST_CONFLICT');
       expect(login.stderr).toContain('could not reach');
       expect(tokenRequestsA).toEqual([]);
@@ -274,6 +275,66 @@ describe('acceptance: host resolution and credential binding', () => {
         expect(result.stdout).toContain('host_source  current');
       } finally {
         await rm(otherProjectDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('the .env beside a config file (-c)', () => {
+    // Spawned, not in-process: loading that file in-process would leave its
+    // variables attributed to it in config.ts's module state for later tests.
+    test.each(['SEMANTIUS', 'PROD'])('fills the ${VAR}s of the config, but cannot switch the host or its credential (%s_)', async (prefix) => {
+      // The host comes from the global .env: an org whose control-plane
+      // record is seeded to point at stub A, and a static JWT, so nothing
+      // leaves the machine. The .env beside the config is read only when the
+      // command loads its config, after whoami printed the host — and there a
+      // <PREFIX>_HOST would rank above the global .env's org.
+      await seedHostCache(configDir, 'acme.semantius.cloud', `http://${hostA}/rest`);
+      await mkdir(semantiusDir(configDir), { recursive: true });
+      await writeFile(
+        join(semantiusDir(configDir), '.env'),
+        `${prefix}_ORG=acme\n${prefix}_JWT=${JWT}\n`,
+      );
+      const cfgDir = await mkdtemp(join(tmpdir(), 'semantius-accept-cfgfile-'));
+      const emptyDir = await mkdtemp(join(tmpdir(), 'semantius-accept-empty-'));
+      try {
+        const configPath = join(cfgDir, 'mcp_servers.json');
+        await writeFile(
+          configPath,
+          JSON.stringify({
+            mcpServers: {
+              crud: { postgrest: true },
+              // Unresolved, this would fail the run: SEMANTIUS_STRICT_ENV is on.
+              echo: { command: 'echo', args: ['${SEMANTIUS_TEST_CFG_VAR}'] },
+            },
+          }),
+        );
+        await writeFile(
+          join(cfgDir, '.env'),
+          [
+            `${prefix}_HOST=late.invalid`,
+            `${prefix}_API_KEY=sk-late-key`,
+            'SEMANTIUS_TEST_CFG_VAR=filled',
+            '',
+          ].join('\n'),
+        );
+
+        const result = await runCli(emptyDir, configDir, [
+          '--env',
+          prefix,
+          '-c',
+          configPath,
+          'whoami',
+        ]);
+
+        expect(result.stderr).not.toContain('MISSING_ENV_VAR');
+        expect(result.stderr).not.toContain('late.invalid');
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout).toContain('host  acme.semantius.cloud');
+        expect(result.stdout).toMatch(/auth_method\s+jwt/);
+        expect(tokenRequestsA).toEqual([]); // the late API key went nowhere
+      } finally {
+        await rm(cfgDir, { recursive: true, force: true });
+        await rm(emptyDir, { recursive: true, force: true });
       }
     });
   });

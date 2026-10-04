@@ -28,6 +28,7 @@ import {
   DEFAULT_RETRY_DELAY_MS,
   DEFAULT_TIMEOUT_SECONDS,
   type LoginFlow,
+  getGlobalEnvPath,
   getLoginFlow,
   getMissingRequiredEnvVars,
   getUserConfigDir,
@@ -714,8 +715,15 @@ function missingHostWarning(): string {
    Set it in ${getUserConfigDir()}/.env or export it in your shell.
    Or run "semantius use <host>" to sign in (with the browser, if needed) and
    make it your current host for every directory.
-   Generate an API key at https://app.semantius.com/dashboard`;
+   ${API_KEY_HINT}`;
 }
+
+/**
+ * Where API keys are created: each instance's own settings page, which the
+ * dashboard's "API Keys" link opens.
+ */
+const API_KEY_HINT =
+  'Create an API key under "API Keys" at https://<your-org>.semantius.app/settings (linked from https://app.semantius.com/dashboard)';
 
 function printHelp(): void {
   const orgVar = prefixedEnvName('ORG');
@@ -740,7 +748,7 @@ Usage:
   semantius [options] login                        Sign in with the browser and store the session for the host
   semantius [options] logout                       Revoke and delete the stored session for the host
   semantius [options] hosts [--json]                List every host this machine has a session or is current for
-  semantius use <host>                             Make <host> the current host (signs in with the browser first if needed)
+  semantius use <host>                             Make <host> the current host (signs in first unless a usable session is stored)
   semantius use --clear                            Unset the current host (session and hosts entry untouched)
 
 Formats (both work):
@@ -760,22 +768,27 @@ Built-in servers:
     semantius --host prod.example.com call utils/import_module '{"path":"crm.json"}'
 
 Credentials (first match wins):
-  1. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
-  2. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached per host
-  3. ${'browser login'.padEnd(22)} The session stored for this host (kept in the OS keyring,
+  1. ${'--token/--token-file'.padEnd(22)} A JWT for this invocation only (see below); not affected by --auth
+  2. ${jwtVar.padEnd(22)} Static token, sent as-is (no exchange, no cache)
+  3. ${apiKeyVar.padEnd(22)} Exchanged for a short-lived token at the host; cached per host
+  4. ${'browser login'.padEnd(22)} The session stored for this host (an encrypted file,
                             refreshed automatically)
   Without any of them, commands that call the platform exit 5 ("Authentication required").
-  --auth jwt|apikey|oauth picks one source explicitly. --token/--token-file supply their
-  own JWT directly (see below) and are not affected by --auth.
+  --auth jwt|apikey|oauth picks one of 2-4 explicitly.
+
+  Variables are read from the shell, then ./.env (or, when there is none, the .env next to
+  the executable), then the global .env — a file never overrides a variable already set:
+    ${getGlobalEnvPath()}
 
   With --host, or on the current host (see "hosts"/"use" below), only a stored browser
   session is used — a leftover API key / JWT / org in the environment is ignored (not
   an error). To pair a host with an API key instead, set ${hostVar} alongside
-  ${apiKeyVar} (shell, or the same .env file), or use --env <prefix> for a second pair.
+  ${apiKeyVar} (shell, or the same .env file) with no current host set, or use --env <prefix>
+  for a second pair.
 
   An "org:" prefix on ${apiKeyVar} / ${jwtVar} binds it to that org's host. It is only
-  compared against a ${hostVar} set alongside it (same shell, or the same .env file):
-  naming a *different* host there is a HOST_CONFLICT error. A ${hostVar} or current host
+  compared against a ${hostVar} or a plain ${orgVar} set alongside it (same shell, or the
+  same .env file): naming a *different* host there is a HOST_CONFLICT error. A host
   resolved before that credential is even reached is never compared against it — and the
   credential itself is then ignored, since it was never issued for the host actually in use.
 
@@ -783,12 +796,13 @@ Hosts:
   The CLI talks to one host per invocation, first match wins: --host, then --token's own
   org, then the current host ("semantius use", below), then ${hostVar} / ${orgVar} — checked
   in the shell environment, then the project's .env, then the global .env, host before org
-  at each. "semantius use <host>" signs in with the browser first if there is no stored
-  session yet, then makes <host> the current host, overriding ${hostVar} / ${orgVar}
-  everywhere until changed; "semantius use --clear" unsets it again (the session and hosts
-  entry are kept — "semantius logout" is what removes those). "semantius login" only stores
-  a session for the host it resolves to — it never changes the current host. "semantius
-  hosts" lists every host this machine knows about, marking the current one.
+  at each. "semantius use <host>" signs in first if there is no stored session, or the
+  stored one can no longer be renewed, then makes <host> the current host, overriding
+  ${hostVar} / ${orgVar} everywhere until changed; "semantius use --clear" unsets it again
+  (the session and hosts entry are kept — "semantius logout" is what removes those).
+  "semantius login" only stores a session for the host it resolves to — it never changes
+  the current host. "semantius hosts" lists every host this machine knows about, marking
+  the current one.
 
 Options:
   -h, --help               Show this help message
@@ -807,7 +821,11 @@ Options:
                            (applies only where --stream is valid)
   -n [count]               (ping only) Run N pings and report min/max/avg. Default: 5 when -n is given
   --env <prefix>           Env var prefix (default: SEMANTIUS). E.g. --env PROD uses PROD_API_KEY / PROD_ORG
-  --host <hostname>        Semantius host, hostname[:port] (a leading https:// is ignored):
+  -c, --config <path>      Path to mcp_servers.json, instead of searching ./mcp_servers.json,
+                           ~/.mcp_servers.json and ~/.config/mcp/mcp_servers.json. A .env beside
+                           it fills unset variables, but never ${hostVar}, ${orgVar},
+                           ${apiKeyVar} or ${jwtVar}. Also: ${prefixedEnvName('CONFIG_PATH')}
+  --host <hostname>       Semantius host, hostname[:port] (a leading https:// is ignored):
                            <org>.semantius.cloud is the managed cloud, any other host is self-hosted.
                            Always HTTPS, except localhost / 127.x.x.x (plain HTTP). Uses only the
                            credentials stored for that host (see Credentials)
@@ -826,7 +844,10 @@ Options:
                            device code grant (RFC 8628 — a code you enter on another device) when
                            it does not and the host offers it; it refuses in CI, where nobody can
                            complete a sign-in. browser and device force one and both bypass that
-                           CI check. Also: ${prefixedEnvName('LOGIN_FLOW')}
+                           CI check. Use device whenever the person signing in is not at this
+                           machine (a server, container, SSH session or always-on agent): on
+                           Windows and macOS auto always opens a local browser.
+                           Also: ${prefixedEnvName('LOGIN_FLOW')}
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
                            local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
   --disable-jwt-cache      Skip the encrypted token cache (re-authenticate every request). Also: SEMANTIUS_DISABLE_JWT_CACHE=1
@@ -843,9 +864,10 @@ Exit codes:
   0   Success
   1   Client error (bad args, config, JSON)  — or --single: 0 rows
   2   --single: 2+ rows
-  3   Network / transport error (transient: ECONNREFUSED, ETIMEDOUT, 5xx)
+  3   Network / transport error (transient: ECONNREFUSED, ETIMEDOUT, 5xx, 429), also when it
+      hits a session refresh: the session stays usable, try again
   4   Server error (tool execution failed: RLS, dup key, schema errors)
-  5   Auth error (missing/invalid API key, 401, 403)
+  5   Auth error (missing/invalid API key, 401, 403, a session the server refuses to refresh)
 
 Examples:
   semantius                                        # List all servers
@@ -876,7 +898,9 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
                                "hosts"/"use") have all left the host unset. <org>.semantius.app
                                / .ai / .io map to <org>.semantius.cloud
   ${apiKeyVar.padEnd(28)} API key for Semantius (needed to call tools unless ${jwtVar} is set).
-                               Value may be "org:key" — the org prefix overrides ${orgVar}
+                               Value may be "org:key": the prefix names the host like ${orgVar};
+                               disagreeing with ${orgVar} / ${hostVar} in the same place is a
+                               HOST_CONFLICT
   ${jwtVar.padEnd(28)} Static JWT sent as "Authorization: Bearer" directly; skips
                                the token exchange and the token cache. Value may be "org:jwt"
   SEMANTIUS_CRUD_MCP=1         Same as --crud-mcp
@@ -891,7 +915,7 @@ Environment Variables (all respect --env <prefix>; default prefix shown):
   SEMANTIUS_DISABLE_JWT_CACHE=1 Disable the encrypted token cache (re-authenticate every request)
   SEMANTIUS_DAEMON_TIMEOUT=N   Daemon idle timeout in seconds (default: 300)
   SEMANTIUS_STRICT_ENV=false   Warn (don't error) on unresolved \${VAR} refs in config
-  SEMANTIUS_CONFIG_PATH=<path> Path to mcp_servers.json (overrides default search)
+  SEMANTIUS_CONFIG_PATH=<path> Path to mcp_servers.json (overrides default search); same as -c/--config
   SEMANTIUS_LOG_FILE=<path>    Append one JSONL line per invocation to <path>.
                                Bare filename (e.g. semantius.jsonl) is written
                                next to the loaded .env (or in the user config
@@ -928,7 +952,7 @@ function checkRequiredEnvVars(): void {
         `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host, or run "semantius use <host>")`,
       );
     }
-    console.error('Generate an API key at https://app.semantius.com/dashboard');
+    console.error(API_KEY_HINT);
     process.exit(ErrorCode.CLIENT_ERROR);
   }
 }

@@ -300,7 +300,7 @@ describe('getAccessToken', () => {
       const error = await getAccessToken(CLOUD).catch((e: Error) => e);
       expect(error).toBeInstanceOf(NoCredentialsError);
       expect((error as Error).message).toBe(
-        'Authentication required: no credentials stored for acme.semantius.cloud. Run "semantius login --host acme.semantius.cloud" (with --host, SEMANTIUS_API_KEY and SEMANTIUS_JWT are not used).',
+        'Authentication required: no credentials stored for acme.semantius.cloud. While a host is pinned with --host, API keys and JWTs from the environment or a .env (SEMANTIUS_API_KEY, SEMANTIUS_JWT) are ignored. Run "semantius login --host acme.semantius.cloud" to sign in, or drop --host and set SEMANTIUS_HOST=acme.semantius.cloud next to the key to use it instead.',
       );
       expect(calls).toEqual([]);
     } finally {
@@ -373,13 +373,26 @@ describe('getCredentialSource: --token and the current host', () => {
     expect(getCredentialSource()).toBe('jwt');
   });
 
-  test('NoCredentialsError on the current host names it and points at plain "semantius login"', async () => {
+  test('NoCredentialsError on the current host says the key is ignored, and names both ways out', async () => {
     setCurrentHost(CLOUD.host);
     const error = await getAccessToken(CLOUD).catch((e: Error) => e);
     expect(error).toBeInstanceOf(NoCredentialsError);
     expect((error as Error).message).toBe(
-      `Authentication required: no credentials stored for ${CLOUD.host} (the current host). Run "semantius login" (SEMANTIUS_API_KEY and SEMANTIUS_JWT apply only when they name a host of their own).`,
+      `Authentication required: no credentials stored for ${CLOUD.host} (the current host). While a host is pinned with "semantius use", API keys and JWTs from the environment or a .env (SEMANTIUS_API_KEY, SEMANTIUS_JWT) are ignored. Run "semantius use ${CLOUD.host}" to sign in, or "semantius use --clear" to use the key instead (with the host SEMANTIUS_HOST or SEMANTIUS_ORG names).`,
     );
     expect(isAuthErrorMessage((error as Error).message)).toBe(true);
+  });
+
+  test('NoCredentialsError on a pinned host names the --env prefix variables', async () => {
+    setEnvPrefix('PROD');
+    setCurrentHost(CLOUD.host);
+    const error = await getAccessToken(CLOUD).catch((e: Error) => e);
+    expect((error as Error).message).toContain(
+      '(PROD_API_KEY, PROD_JWT) are ignored',
+    );
+    expect((error as Error).message).toContain(
+      'with the host PROD_HOST or PROD_ORG names',
+    );
+    expect((error as Error).message).not.toContain('SEMANTIUS_');
   });
 });

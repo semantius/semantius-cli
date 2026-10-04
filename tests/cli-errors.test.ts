@@ -736,9 +736,94 @@ describe('CLI errors through the local crud layer', () => {
     );
     expect(result.exitCode).toBe(5);
     expect(result.stderr.trim()).toBe(
-      `Authentication required: no credentials stored for 127.0.0.1:${server.port}. Run "semantius login --host 127.0.0.1:${server.port}" (with --host, SEMANTIUS_API_KEY and SEMANTIUS_JWT are not used).`,
+      `Authentication required: no credentials stored for 127.0.0.1:${server.port}. While a host is pinned with --host, API keys and JWTs from the environment or a .env (SEMANTIUS_API_KEY, SEMANTIUS_JWT) are ignored. Run "semantius login --host 127.0.0.1:${server.port}" to sign in, or drop --host and set SEMANTIUS_HOST=127.0.0.1:${server.port} next to the key to use it instead.`,
     );
     expect(requests).toBe(0); // neither the key nor the JWT went anywhere
+  });
+
+  // whoami / ping: a getCurrentUser call that never got a real answer exits
+  // 3, as a failure to connect does; the tool's own failure stays 4.
+  describe('whoami: failures during the getCurrentUser call', () => {
+    const USERINFO = '/rest/rpc/get_userinfo';
+
+    test('a 502 with no PostgREST body → exit 3', async () => {
+      reply = (path) =>
+        path === USERINFO
+          ? new Response('<html>Bad Gateway</html>', { status: 502 })
+          : Response.json([]);
+      const result = await runLocal(['whoami']);
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr).toContain('(HTTP 502) Bad Gateway from POST');
+    });
+
+    test("a 503 PostgREST explains in its own body → exit 3 (the status decides)", async () => {
+      reply = (path) =>
+        path === USERINFO
+          ? Response.json(
+              { code: 'PGRST001', message: 'Database client error. Retrying the connection.' },
+              { status: 503 },
+            )
+          : Response.json([]);
+      const result = await runLocal(['whoami']);
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr).toContain('(PGRST001) Database client error');
+    });
+
+    test('a 500 from the database → exit 3', async () => {
+      reply = (path) =>
+        path === USERINFO
+          ? Response.json(
+              { code: '57014', message: 'canceling statement due to statement timeout' },
+              { status: 500 },
+            )
+          : Response.json([]);
+      const result = await runLocal(['whoami']);
+      expect(result.exitCode).toBe(3);
+    });
+
+    test('the instance not reachable at all → exit 3', async () => {
+      // Nothing is needed to connect (a JWT, a self-hosted host), so the
+      // call itself is the first request, and it finds a closed port.
+      const closed = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response() });
+      const { port } = closed;
+      closed.stop(true);
+      const offline = `http://127.0.0.1:${port}`;
+
+      const result = await runLocal(['whoami'], {}, offline);
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr).toContain(`POST ${offline}/rest/rpc/get_userinfo failed:`);
+      // The host was printed before the call, and is the one that failed.
+      expect(result.stdout).toContain(`host  127.0.0.1:${port}`);
+    });
+
+    test('ping exits 3 the same way', async () => {
+      reply = (path) =>
+        path === USERINFO ? new Response('', { status: 504 }) : Response.json([]);
+      const result = await runLocal(['ping']);
+      expect(result.exitCode).toBe(3);
+    });
+
+    test("the tool's own failure stays exit 4", async () => {
+      reply = (path) =>
+        path === USERINFO
+          ? Response.json(
+              { code: '42883', message: 'function public.get_userinfo() does not exist' },
+              { status: 404 },
+            )
+          : Response.json([]);
+      const result = await runLocal(['whoami']);
+      expect(result.exitCode).toBe(4);
+      expect(result.stderr).toContain('(42883) function public.get_userinfo() does not exist');
+    });
+
+    test('a 401 stays exit 5', async () => {
+      reply = (path) =>
+        path === USERINFO
+          ? new Response('', { status: 401 })
+          : Response.json([]);
+      const result = await runLocal(['whoami']);
+      expect(result.exitCode).toBe(5);
+    });
   });
 
   test('info crud and -md work offline through the local layer', async () => {

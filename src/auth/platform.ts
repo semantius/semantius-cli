@@ -26,6 +26,7 @@
  */
 
 import { debug, getConnectTimeoutMs } from '../config.js';
+import { isTransientStatus } from '../errors.js';
 import {
   type CachedPlatform,
   type HostFacts,
@@ -150,12 +151,15 @@ async function fetchDocument(url: string): Promise<DocumentResult> {
   } catch (error) {
     throw new HostResolutionError(
       `could not reach ${url}: ${(error as Error).message}`,
+      { transient: true },
     );
   }
 
   if (response.status === 404) return { kind: 'absent', why: 'HTTP 404' };
   if (!response.ok) {
-    throw new HostResolutionError(`${url} returned ${response.status}`);
+    throw new HostResolutionError(`${url} returned ${response.status}`, {
+      transient: isTransientStatus(response.status),
+    });
   }
 
   // The un-upgraded deployment: the path falls through to the SPA, which

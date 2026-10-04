@@ -44,13 +44,22 @@ case "$OS" in
             *) echo -e "${RED}Unsupported architecture: $ARCH${NC}"; exit 1 ;;
         esac
         ;;
+    mingw*|msys*|cygwin*)
+        # Git Bash, MSYS2 or Cygwin on Windows: the Windows build and its PATH
+        # setup come from install.ps1, which any shell can start.
+        echo -e "${RED}Unsupported OS: $OS${NC}"
+        echo "On Windows, install with PowerShell instead (this works from Git Bash too):"
+        echo "  powershell -NoProfile -Command \"irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex\""
+        exit 1
+        ;;
     *)
         echo -e "${RED}Unsupported OS: $OS${NC}"
         exit 1
         ;;
 esac
 
-# Installation directory - prefer ~/.local/bin (no sudo needed)
+# Installation directory: $INSTALL_DIR if set, else /usr/local/bin when it is
+# writable (root, many Intel Macs), else ~/.local/bin (no sudo needed)
 if [ -z "${INSTALL_DIR:-}" ]; then
     if [ -w "/usr/local/bin" ]; then
         INSTALL_DIR="/usr/local/bin"
@@ -70,10 +79,17 @@ echo -e "  ${BOLD}Binary${NC}:    $BINARY"
 echo -e "  ${BOLD}Location${NC}:  $INSTALL_DIR/semantius"
 echo ""
 
-# Check for existing installation
-if command -v semantius &> /dev/null; then
-    EXISTING_VERSION=$(semantius --version 2>/dev/null || echo "unknown")
-    echo -e "${YELLOW}Note: Updating existing installation ($EXISTING_VERSION)${NC}"
+INSTALLED="$INSTALL_DIR/semantius"
+
+# Check for existing installation: the one on PATH may live somewhere else
+EXISTING=$(command -v semantius 2>/dev/null || true)
+if [ -n "$EXISTING" ]; then
+    EXISTING_VERSION=$("$EXISTING" --version 2>/dev/null || echo "unknown")
+    if [ "$EXISTING" -ef "$INSTALLED" ]; then
+        echo -e "${YELLOW}Note: Updating existing installation ($EXISTING_VERSION)${NC}"
+    else
+        echo -e "${YELLOW}Note: Another semantius is on your PATH: $EXISTING ($EXISTING_VERSION)${NC}"
+    fi
     echo ""
 fi
 
@@ -131,10 +147,10 @@ fi
 # Install
 echo -e "${BLUE}Installing...${NC}"
 if [ -w "$INSTALL_DIR" ]; then
-    mv "$TMP_FILE" "$INSTALL_DIR/semantius"
+    mv "$TMP_FILE" "$INSTALLED"
 else
     echo -e "${YELLOW}Requires sudo to install to $INSTALL_DIR${NC}"
-    sudo mv "$TMP_FILE" "$INSTALL_DIR/semantius"
+    sudo mv "$TMP_FILE" "$INSTALLED"
 fi
 TMP_FILE=""  # Clear so cleanup doesn't try to delete
 
@@ -143,32 +159,64 @@ echo ""
 echo -e "${GREEN}✓ semantius installed successfully!${NC}"
 echo ""
 
-# Check if in PATH and show version
-if command -v semantius &> /dev/null; then
-    semantius --version
+# Which semantius the shell finds now. The lookup above may have been hashed
+# to an older binary; forget it so this sees the PATH as it is.
+hash -r 2>/dev/null || true
+FOUND=$(command -v semantius 2>/dev/null || true)
+
+# Whether $INSTALL_DIR is on PATH at all
+case ":$PATH:" in
+    *":$INSTALL_DIR:"*) ON_PATH=1 ;;
+    *) ON_PATH="" ;;
+esac
+
+if [ -n "$FOUND" ] && [ "$FOUND" -ef "$INSTALLED" ]; then
+    "$INSTALLED" --version
 else
-    # Not in PATH - show setup instructions
-    echo -e "${YELLOW}Add semantius to your PATH:${NC}"
-    echo ""
-    
-    SHELL_NAME=$(basename "$SHELL")
-    case "$SHELL_NAME" in
-        bash)
-            echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
-            echo "  source ~/.bashrc"
-            ;;
-        zsh)
-            echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
-            echo "  source ~/.zshrc"
-            ;;
-        fish)
-            echo "  fish_add_path ~/.local/bin"
-            ;;
-        *)
-            echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-            ;;
-    esac
-    echo ""
+    if [ -n "$FOUND" ]; then
+        # Another semantius comes first on PATH: running "semantius" starts
+        # that one, not the binary just installed.
+        echo -e "${YELLOW}Warning: another semantius comes first on your PATH and shadows the one just installed:${NC}"
+        echo "  found on PATH:  $FOUND"
+        echo "  just installed: $INSTALLED"
+        if [ -n "$ON_PATH" ]; then
+            echo "Remove the other one, or put $INSTALL_DIR ahead of its directory on your PATH."
+        else
+            echo "Remove the other one, and add $INSTALL_DIR to your PATH as shown below."
+        fi
+        echo ""
+    fi
+
+    if [ -z "$ON_PATH" ]; then
+        # Not on PATH - show setup instructions for the directory installed into,
+        # written with $HOME when it is under it, as a shell startup file has it
+        case "$INSTALL_DIR" in
+            "$HOME"/*) PATH_DIR="\$HOME/${INSTALL_DIR#"$HOME"/}" ;;
+            *) PATH_DIR="$INSTALL_DIR" ;;
+        esac
+
+        echo -e "${YELLOW}Add $INSTALL_DIR to your PATH:${NC}"
+        echo ""
+
+        SHELL_NAME=$(basename "${SHELL:-sh}")
+        case "$SHELL_NAME" in
+            bash)
+                echo "  echo 'export PATH=\"$PATH_DIR:\$PATH\"' >> ~/.bashrc"
+                echo "  source ~/.bashrc"
+                ;;
+            zsh)
+                echo "  echo 'export PATH=\"$PATH_DIR:\$PATH\"' >> ~/.zshrc"
+                echo "  source ~/.zshrc"
+                ;;
+            fish)
+                echo "  fish_add_path \"$PATH_DIR\""
+                ;;
+            *)
+                echo "  export PATH=\"$PATH_DIR:\$PATH\""
+                ;;
+        esac
+        echo ""
+    fi
 fi
 
 echo "Get started:"

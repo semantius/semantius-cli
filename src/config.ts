@@ -692,9 +692,13 @@ function parseDotEnv(content: string): Record<string, string> {
 /**
  * Load a single .env file into process.env.
  * Shell environment takes precedence — existing vars are never overwritten.
+ * Variables named in `skip` are left out entirely (see selectionVarNames).
  * Returns true if the file was found and read.
  */
-async function loadEnvFile(envPath: string): Promise<boolean> {
+async function loadEnvFile(
+  envPath: string,
+  skip?: ReadonlySet<string>,
+): Promise<boolean> {
   if (!existsSync(envPath)) return false;
 
   const content = await Bun.file(envPath).text();
@@ -702,6 +706,14 @@ async function loadEnvFile(envPath: string): Promise<boolean> {
 
   let loaded = 0;
   for (const [key, value] of Object.entries(vars)) {
+    if (skip?.has(key)) {
+      if (!process.env[key] && value) {
+        debug(
+          `Ignored ${key} in ${envPath}: the .env beside a config file cannot choose the host or its credential`,
+        );
+      }
+      continue;
+    }
     const current = process.env[key];
     if (current === undefined) {
       process.env[key] = value;
@@ -761,6 +773,24 @@ export function getEnvVarPosition(name: string): EnvPosition | undefined {
   return source === _localEnvPath ? 'local' : 'global';
 }
 
+/**
+ * Set a variable the CLI derives from another one, attributed to the same
+ * place as `sameSourceAs` — so getEnvVarPosition, and with it host.ts's
+ * per-layer resolution, finds it where its origin was rather than in the
+ * shell. Without `sameSourceAs`, or when that variable came from the shell,
+ * the derived value counts as a shell value too.
+ */
+export function setDerivedEnv(
+  name: string,
+  value: string,
+  sameSourceAs?: string,
+): void {
+  process.env[name] = value;
+  const source = sameSourceAs ? _envSources.get(sameSourceAs) : undefined;
+  if (source) _envSources.set(name, source);
+  else _envSources.delete(name);
+}
+
 // Directory of the first .env file that was actually loaded (local or,
 // failing that, global). Used by the logger to resolve bare
 // SEMANTIUS_LOG_FILE filenames next to the project's .env.
@@ -786,14 +816,32 @@ export function getGlobalEnvPath(): string {
 }
 
 /**
+ * The variables that choose the host and its credential:
+ * ${PREFIX}_HOST, _ORG, _API_KEY and _JWT. main() settles both from the first
+ * loadDotEnv() call, before any command loads its config file; the .env
+ * beside that file is read only afterwards, by loadConfig. A value from it
+ * would come too late to be used consistently — ${PREFIX}_API_KEY is
+ * backfilled to '' by then, so it could never apply, while a ${PREFIX}_HOST
+ * would switch the host halfway through the run, after `whoami` has already
+ * printed the old one. So that file supplies none of them.
+ */
+function selectionVarNames(): ReadonlySet<string> {
+  return new Set(['HOST', 'ORG', 'API_KEY', 'JWT'].map(prefixedEnvName));
+}
+
+/**
  * Load .env files and populate process.env.
  * Shell environment takes precedence — existing vars are never overwritten.
  *
  * Search order (first local .env found wins; user config dir always checked as fallback):
  *   1. Current working directory
- *   2. searchDir (config file's directory or user-specified)
+ *   2. searchDir (the config file's directory; only loadConfig passes it)
  *   3. Executable directory (for installs where binary lives next to .env)
- *   4. User config dir (~/.config/semantius on Linux/macOS, %APPDATA%\semantius on Windows)
+ *   4. User config dir (~/.config/semantius/cli on Linux/macOS, %APPDATA%\semantius\cli on Windows)
+ *
+ * The searchDir .env fills every variable that is still unset — a ${VAR} the
+ * config file refers to, a timeout — except those that choose the host and
+ * its credential (selectionVarNames).
  */
 export async function loadDotEnv(searchDir?: string): Promise<void> {
   const execDir = dirname(process.execPath);
@@ -807,7 +855,8 @@ export async function loadDotEnv(searchDir?: string): Promise<void> {
     const envPath = join(dir, '.env');
     if (seen.has(envPath)) continue;
     seen.add(envPath);
-    if (await loadEnvFile(envPath)) {
+    const skip = dir === searchDir ? selectionVarNames() : undefined;
+    if (await loadEnvFile(envPath, skip)) {
       if (!_loadedEnvDir) _loadedEnvDir = dir;
       if (!_localEnvPath) _localEnvPath = envPath;
       break;

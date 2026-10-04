@@ -2,7 +2,7 @@
  * Info command - Show server or tool details
  */
 
-import { isCredentialError } from '../auth/token.js';
+import { authLayerExitCode } from '../auth/token.js';
 import { type McpConnection, getConnection, safeClose } from '../client.js';
 import {
   type McpServersConfig,
@@ -64,9 +64,10 @@ export async function infoCommand(options: InfoOptions): Promise<void> {
   try {
     connection = await getConnection(serverName, serverConfig);
   } catch (error) {
-    if (isCredentialError(error)) {
+    const own = authLayerExitCode(error);
+    if (own !== undefined) {
       console.error((error as Error).message);
-      process.exit(ErrorCode.AUTH_ERROR);
+      process.exit(own);
     }
     const message = (error as Error).message;
     console.error(formatCliError(serverConnectionError(serverName, message)));

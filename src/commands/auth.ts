@@ -3,10 +3,23 @@
  * host the invocation resolves to (see host.ts's resolveHostValue).
  */
 
-import { login, logout } from '../auth/session.js';
+import { isTransientFailure, login, logout } from '../auth/session.js';
 import { stopAllDaemons } from '../daemon-client.js';
+import { ErrorCode } from '../errors.js';
 import { resolveHost } from '../host.js';
 import { recordHost, removeHost } from '../hosts-index.js';
+
+/**
+ * The network's or a server's trouble — not the host name's (1), not the
+ * session's (5): exit 3, so a script knows that trying again can work. The
+ * same rule `semantius use` applies (commands/hosts.ts).
+ */
+function markTransient(error: unknown): never {
+  if (isTransientFailure(error)) {
+    (error as Error & { exitCode?: number }).exitCode = ErrorCode.NETWORK_ERROR;
+  }
+  throw error;
+}
 
 /**
  * Run the browser login and store the session for the resolved host.
@@ -18,8 +31,8 @@ import { recordHost, removeHost } from '../hosts-index.js';
 export async function loginCommand(
   opts: { openUrl?: (url: string) => void } = {},
 ): Promise<void> {
-  const host = await resolveHost();
-  await login(host, opts);
+  const host = await resolveHost().catch(markTransient);
+  await login(host, opts).catch(markTransient);
   recordHost(
     host.host,
     { mode: host.mode, org: host.org },
@@ -32,8 +45,8 @@ export async function loginCommand(
 
 /** Revoke and delete the stored session for the resolved host. */
 export async function logoutCommand(): Promise<void> {
-  const host = await resolveHost();
-  const hadSession = await logout(host);
+  const host = await resolveHost().catch(markTransient);
+  const hadSession = await logout(host).catch(markTransient);
   const { wasCurrent } = removeHost(host.host);
   console.log(
     hadSession

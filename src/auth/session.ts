@@ -14,7 +14,7 @@ import {
   isSessionOnlyHost,
   prefixedEnvName,
 } from '../config.js';
-import { ErrorCode, formatCliError } from '../errors.js';
+import { ErrorCode, formatCliError, isTransientStatus } from '../errors.js';
 import {
   type CachedPlatform,
   type HostFacts,
@@ -46,6 +46,7 @@ import {
   expireStoredAccessTokens,
   sessionName,
 } from './storage.js';
+import { SessionRefreshFailedError } from './token.js';
 
 /** Where the browser sends the authorization code back to. */
 interface Callback {
@@ -126,6 +127,20 @@ export class LoginFailedError extends Error {
   constructor(detail: string) {
     super(`Error [LOGIN_FAILED]: ${detail}`);
     this.name = 'LoginFailedError';
+  }
+}
+
+/**
+ * A request cli-auth made got no answer at all: DNS, a refused or reset
+ * connection, TLS. cli-auth lets fetch's own error through unwrapped, and in
+ * Bun that is a plain Error that names no URL; tokenLoggingFetch replaces it
+ * with this, so the message says which server was out of reach, and the
+ * failure can be told from one the server reported (see isTransientFailure).
+ */
+class AuthServerUnreachableError extends Error {
+  constructor(url: string, cause: unknown) {
+    super(`could not reach ${url}: ${(cause as Error)?.message ?? cause}`);
+    this.name = 'AuthServerUnreachableError';
   }
 }
 
@@ -248,9 +263,199 @@ export async function getSessionToken(
   requireHonestResource(host, platform, stored, docUrl);
   const resource = resourceIndicator(host, platform);
   const metadata = await getOAuthMetadata(host, { platform });
-  const auth = createAuth(host, storage, { metadata, platform });
   debug(`Using the OAuth session stored for ${host.host}`);
-  return auth.getToken(tokenOptions(resource));
+  return tokenUnderLock(host, storage, resource, { metadata, platform });
+}
+
+/**
+ * The access token for `resource`, refreshed under the session's file lock.
+ *
+ * The lock is taken here, not left to cli-auth. Its getToken refreshes a stale
+ * token inside a try/finally that releases the lock, returning the refresh
+ * promise without awaiting it (`return this.refreshForKey(…)`, dist/index.js).
+ * A failed refresh then rejects while nothing is attached to it, and Bun
+ * reports that as unhandled — a stack trace on stderr and exit code 1 — even
+ * though the same error goes on to reach our caller (as SessionExpiredError in
+ * getAccessToken, or 'spent' in verifyStoredSession). So cli-auth is shown the
+ * session without the stale token: it then refreshes straight away, with no
+ * lock and no finally, and this function holds the lock and awaits the result.
+ *
+ * A refresh that fails is sorted here, once, for both callers: a refused
+ * refresh token is rethrown as cli-auth raised it (refreshWasRefused says so),
+ * and every other failure of the refresh itself — the endpoint unreachable, or
+ * answering with trouble of its own — becomes SessionRefreshFailedError.
+ */
+async function tokenUnderLock(
+  host: HostFacts,
+  storage: ReturnType<typeof storageFor>,
+  resource: string | undefined,
+  resolved: ResolvedHost,
+): Promise<string> {
+  const release = await storage.lock?.();
+  // The status of the token endpoint's answer, for withTokenStatus below.
+  let tokenStatus: number | undefined;
+  try {
+    // Another process may have refreshed while this one waited for the lock.
+    const current = await storage.load();
+    const fresh = current ? freshAccessToken(resource, current) : null;
+    if (fresh) return fresh;
+    const view = withoutAccessToken(storage, cacheKey(resource));
+    const auth = createAuth(host, view, resolved, {
+      onTokenStatus: (status) => {
+        tokenStatus = status;
+      },
+    });
+    return await auth.getToken(tokenOptions(resource));
+  } catch (error) {
+    const failure = withTokenStatus(error, tokenStatus);
+    if (refreshWasRefused(failure) || !isRefreshFailure(failure)) {
+      throw failure;
+    }
+    throw new SessionRefreshFailedError(host.host, (failure as Error).message);
+  } finally {
+    await release?.();
+  }
+}
+
+/**
+ * Put the token endpoint's HTTP status on a `provider.rejected` error.
+ * cli-auth keeps the OAuth `error` of the body but drops the status it came
+ * with, and the status is what says whose trouble it is: a 503 whose body
+ * names invalid_grant (a gateway, or an identity provider having a bad
+ * moment) has refused nothing. The status is observed on its way through
+ * tokenLoggingFetch; cli-auth offers it nowhere else, neither on the error's
+ * data nor in its message. `request.failed` carries its own already.
+ */
+function withTokenStatus(error: unknown, status: number | undefined): unknown {
+  if (status === undefined || !isCliAuthError(error)) return error;
+  const { code, data } = error as Error & {
+    code?: string;
+    data?: { status?: number };
+  };
+  if (code === 'provider.rejected' && data && data.status === undefined) {
+    data.status = status;
+  }
+  return error;
+}
+
+/**
+ * Whether an error came from the refresh itself — cli-auth's own, or the
+ * token endpoint out of reach — rather than from reading the session or
+ * resolving the host, which are reported as they are.
+ */
+function isRefreshFailure(error: unknown): boolean {
+  return isCliAuthError(error) || error instanceof AuthServerUnreachableError;
+}
+
+/** cli-auth's error class, recognized by its name. */
+function isCliAuthError(error: unknown): error is Error {
+  return error instanceof Error && error.name === 'CliAuthError';
+}
+
+/**
+ * `storage` as cli-auth sees it for a refresh: the access token under `key`
+ * left out, so the refresh token is spent, and no lock of its own — the
+ * caller holds it. What cli-auth saves goes through to the real storage.
+ */
+function withoutAccessToken(
+  storage: ReturnType<typeof storageFor>,
+  key: string,
+): ReturnType<typeof storageFor> {
+  return {
+    load: async () => {
+      const set = await storage.load();
+      if (!set?.tokens?.[key]) return set;
+      const { [key]: _stale, ...tokens } = set.tokens;
+      return { ...set, tokens };
+    },
+    save: (value) => storage.save(value),
+    clear: () => storage.clear(),
+  };
+}
+
+/**
+ * Whether the session stored for this host can still produce a token — what
+ * `semantius use` must know before it reports success. Asked the way the next
+ * command will ask it (getSessionToken): a still-fresh access token costs no
+ * network, a stale one is refreshed once.
+ *
+ * 'spent' means only a new login can help: nothing is stored, or the token
+ * endpoint turned the refresh token down — an OAuth error such as
+ * invalid_grant (expired or revoked), or a bare 400/401/403. Everything else
+ * is thrown, because it says nothing against the session and must not send
+ * anyone to a browser: a refresh the endpoint could not serve — unreachable,
+ * a 5xx, 408 or 429, or the OAuth errors that mean the same, server_error /
+ * temporarily_unavailable — as SessionRefreshFailedError (exit 3, see
+ * tokenUnderLock), and a host that cannot be resolved as it is.
+ */
+export async function verifyStoredSession(
+  host: HostFacts,
+): Promise<'usable' | 'spent'> {
+  try {
+    return (await getSessionToken(host)) ? 'usable' : 'spent';
+  } catch (error) {
+    if (refreshWasRefused(error)) return 'spent';
+    throw error;
+  }
+}
+
+/** OAuth errors that report the server's trouble, not the token's. */
+const TRANSIENT_OAUTH_ERRORS = new Set([
+  'server_error',
+  'temporarily_unavailable',
+]);
+
+/** Statuses a token endpoint answers a refresh token it will never accept with. */
+const REFUSED_STATUSES = new Set([400, 401, 403]);
+
+/**
+ * Whether a cli-auth error means the refresh token itself was refused — the
+ * one classifier for it, shared by getAccessToken (SessionExpiredError),
+ * verifyStoredSession ('spent') and tokenUnderLock. cli-auth reads any non-2xx
+ * body carrying an `error` as `provider.rejected`, whatever its status, which
+ * is why the transient OAuth errors are excluded by name, and an answer that
+ * came with a 5xx, 408 or 429 is excluded whatever its body says: the status
+ * is put on the error by withTokenStatus, as cli-auth does not keep it.
+ */
+export function refreshWasRefused(error: unknown): boolean {
+  if (!isCliAuthError(error)) return false;
+  const { code, data } = error as Error & {
+    code?: string;
+    data?: { error?: string; status?: number };
+  };
+  if (code === 'token.refresh_failed') return true;
+  if (code === 'provider.rejected') {
+    return (
+      !isTransientStatus(data?.status) &&
+      !TRANSIENT_OAUTH_ERRORS.has(data?.error ?? '')
+    );
+  }
+  return code === 'request.failed' && REFUSED_STATUSES.has(data?.status ?? 0);
+}
+
+/**
+ * Whether a failure of host resolution, discovery, a refresh or a login is the
+ * network's or a server's trouble, so that trying again later can succeed: a
+ * server that could not be reached (DNS, refused, reset, TLS, a timeout), one
+ * that answered 5xx / 408 / 429, an OAuth error that says the same
+ * (server_error, temporarily_unavailable), or a refresh that failed for any
+ * such reason. `semantius use` exits 3 on these; it has no other way to tell
+ * them from a host name that is simply wrong (1).
+ */
+export function isTransientFailure(error: unknown): boolean {
+  if (error instanceof SessionRefreshFailedError) return true;
+  if (error instanceof AuthServerUnreachableError) return true;
+  if (error instanceof HostResolutionError) return error.transient;
+  if (!isCliAuthError(error)) return false;
+  const { code, data } = error as Error & {
+    code?: string;
+    data?: { error?: string; status?: number };
+  };
+  if (code !== 'provider.rejected' && code !== 'request.failed') return false;
+  return (
+    isTransientStatus(data?.status) ||
+    TRANSIENT_OAUTH_ERRORS.has(data?.error ?? '')
+  );
 }
 
 /**
@@ -401,7 +606,12 @@ function cacheKey(resource: string | undefined): string {
 type GrantChoice =
   | { grant: 'browser' }
   | { grant: 'device' }
-  | { grant: 'refuse'; because: 'ci' | 'no-endpoint' | 'cannot-show' };
+  | {
+      grant: 'refuse';
+      because: 'ci' | 'no-endpoint' | 'cannot-show';
+      /** Whether the host advertises the device grant (see noInteractiveLogin). */
+      deviceOffered?: boolean;
+    };
 
 function chooseGrant(metadata: OAuthMetadata): GrantChoice {
   const advertised = Boolean(metadata.deviceAuthorizationEndpoint);
@@ -412,7 +622,9 @@ function chooseGrant(metadata: OAuthMetadata): GrantChoice {
       ? { grant: 'device' }
       : { grant: 'refuse', because: 'no-endpoint' };
   }
-  if (isCi()) return { grant: 'refuse', because: 'ci' };
+  if (isCi()) {
+    return { grant: 'refuse', because: 'ci', deviceOffered: advertised };
+  }
   if (hasLocalBrowser()) return { grant: 'browser' };
   if (advertised && canShowUser()) return { grant: 'device' };
   return {
@@ -449,7 +661,9 @@ export async function login(
   // deviceAuthorizationEndpoint and would silently demote a capable host.
   const choice = chooseGrant(metadata);
   if (choice.grant === 'refuse') {
-    throw noInteractiveLogin(facts.host, choice.because);
+    throw noInteractiveLogin(facts.host, choice.because, {
+      deviceOffered: choice.deviceOffered,
+    });
   }
   if (choice.grant === 'device') {
     return loginWithDeviceCode(facts, storage, { metadata, platform });
@@ -482,10 +696,12 @@ async function loginWithBrowser(
     storage,
     { metadata, platform },
     {
-      ...callback,
-      check: (callbackUrl) => {
-        issuerError = issuerMismatch(metadata, callbackUrl);
-        return issuerError;
+      flow: {
+        ...callback,
+        check: (callbackUrl) => {
+          issuerError = issuerMismatch(metadata, callbackUrl);
+          return issuerError;
+        },
       },
     },
   );
@@ -614,10 +830,15 @@ async function loginWithDeviceCode(
  *
  * "Authentication required" is load-bearing: isAuthErrorMessage() maps it to
  * exit 5.
+ *
+ * `deviceOffered` says whether the host advertises the device grant. It is
+ * implied for 'cannot-show' and ruled out for 'no-endpoint'; only a 'ci'
+ * refusal can go either way, so only there must the caller say.
  */
-function noInteractiveLogin(
+export function noInteractiveLogin(
   host: string,
   because: 'ci' | 'no-endpoint' | 'cannot-show',
+  opts: { deviceOffered?: boolean } = {},
 ): Error {
   // The no-endpoint case is reached two ways — auto, having already found no
   // browser, and --login-flow device, where a browser may well exist. Only the
@@ -640,11 +861,26 @@ function noInteractiveLogin(
       : isSessionOnlyHost()
         ? `Drop --host and set ${hostVar}=${host} with ${key} instead.`
         : `Set ${key} (or ${prefixedEnvName('JWT')}).`;
+  // The host offers the device grant, and only the automatic choice stands in
+  // the way: no terminal to show its code on, or a CI environment. Forcing the
+  // grant skips both checks, which is the way in for an agent, a service or a
+  // pipeline whose output reaches a person some other way.
+  const deviceOffered =
+    because === 'cannot-show' ||
+    (because === 'ci' && opts.deviceOffered === true);
+  const device = deviceOffered
+    ? [
+        `  Or force the device code grant with "--login-flow device": it prints a URL and a code (on stderr) to enter on any other device, and waits up to ${DEVICE_LOGIN_TIMEOUT_MS / 60_000} minutes.`,
+      ]
+    : [];
 
   const error = new Error(
-    `Authentication required: cannot sign in to ${host} interactively — ${reason}.\n` +
-      `  ${fix}\n` +
+    [
+      `Authentication required: cannot sign in to ${host} interactively — ${reason}.`,
+      `  ${fix}`,
+      ...device,
       `  A browser on this machine can still be used with "--login-flow browser" if one is reachable at ${DEFAULT_CALLBACKS.map((c) => c.port).join(' / ')} (e.g. over "ssh -L <port>:localhost:<port>").`,
+    ].join('\n'),
   );
   // Reaches the shell as 5 (AUTH_ERROR) rather than the generic client error:
   // this is a missing credential, not a malformed command line.
@@ -820,13 +1056,18 @@ interface ResolvedHost {
   platform: PlatformConfig | null;
 }
 
+/**
+ * `flow` is the loopback leg of a login; `onTokenStatus` sees the HTTP status
+ * of every answer from the token endpoint (see withTokenStatus).
+ */
 function createAuth(
   host: HostFacts,
   storage: ReturnType<typeof storageFor>,
   resolved: ResolvedHost,
-  flow?: LoginFlow,
+  opts: { flow?: LoginFlow; onTokenStatus?: (status: number) => void } = {},
 ): Auth {
   const { metadata, platform } = resolved;
+  const { flow, onTokenStatus } = opts;
   const resource = resourceIndicator(host, platform);
   return createCliAuth({
     ...(flow
@@ -851,7 +1092,7 @@ function createAuth(
         }
       : {}),
     strategy: 'authorization-code',
-    ...sharedAuthConfig(host, storage, resolved, resource),
+    ...sharedAuthConfig(host, storage, resolved, resource, onTokenStatus),
   });
 }
 
@@ -874,6 +1115,7 @@ function sharedAuthConfig(
   storage: ReturnType<typeof storageFor>,
   resolved: ResolvedHost,
   resource: string | undefined,
+  onTokenStatus?: (status: number) => void,
 ) {
   const { metadata, platform } = resolved;
   return {
@@ -893,7 +1135,7 @@ function sharedAuthConfig(
     scope: buildScope(metadata, platform),
     storage,
     tokenRefreshThreshold: TOKEN_REFRESH_THRESHOLD_S,
-    fetch: tokenLoggingFetch(metadata.tokenEndpoint),
+    fetch: tokenLoggingFetch(metadata.tokenEndpoint, onTokenStatus),
     ...(resource ? { resource } : {}),
   };
 }
@@ -948,8 +1190,17 @@ function effectiveClientId(
  *
  * Only the token endpoint is logged, and only its grant type: the request body
  * carries the refresh token or the authorization code, and is never recorded.
+ *
+ * It is also where the CLI learns what cli-auth does not pass on: the status of
+ * the token endpoint's answer (to `onTokenStatus`, see withTokenStatus), and
+ * which server a request that got no answer at all was for — every request
+ * cli-auth makes, not only the token endpoint's, fails as
+ * AuthServerUnreachableError then.
  */
-function tokenLoggingFetch(tokenEndpoint: string): typeof fetch {
+function tokenLoggingFetch(
+  tokenEndpoint: string,
+  onTokenStatus?: (status: number) => void,
+): typeof fetch {
   return (async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
@@ -960,7 +1211,13 @@ function tokenLoggingFetch(tokenEndpoint: string): typeof fetch {
         : input instanceof URL
           ? input.toString()
           : input.url;
-    if (url !== tokenEndpoint) return globalThis.fetch(input, init);
+    if (url !== tokenEndpoint) {
+      try {
+        return await globalThis.fetch(input, init);
+      } catch (error) {
+        throw new AuthServerUnreachableError(url, error);
+      }
+    }
 
     const grant = grantType(init?.body);
     const started = Date.now();
@@ -976,6 +1233,7 @@ function tokenLoggingFetch(tokenEndpoint: string): typeof fetch {
         durationMs,
       });
       debug(`Token request: ${response.status} in ${durationMs} ms`);
+      onTokenStatus?.(response.status);
       return response;
     } catch (error) {
       logTokenEvent({
@@ -985,7 +1243,7 @@ function tokenLoggingFetch(tokenEndpoint: string): typeof fetch {
         durationMs: Date.now() - started,
         error: (error as Error).message,
       });
-      throw error;
+      throw new AuthServerUnreachableError(url, error);
     }
   }) as typeof fetch;
 }

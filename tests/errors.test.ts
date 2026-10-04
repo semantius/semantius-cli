@@ -22,6 +22,8 @@ import {
   tooManyArgumentsError,
   ErrorCode,
   isAuthErrorMessage,
+  isNetworkErrorMessage,
+  isTransientStatus,
 } from '../src/errors';
 
 describe('errors', () => {
@@ -240,6 +242,52 @@ describe('errors', () => {
     test('returns false for empty/undefined input', () => {
       expect(isAuthErrorMessage(undefined)).toBe(false);
       expect(isAuthErrorMessage('')).toBe(false);
+    });
+  });
+
+  describe('isTransientStatus', () => {
+    test("5xx, 408 and 429 are the server's trouble", () => {
+      for (const status of [500, 502, 503, 504, 599, 408, 429]) {
+        expect(isTransientStatus(status)).toBe(true);
+      }
+    });
+    test('anything else is not', () => {
+      for (const status of [undefined, 200, 400, 401, 403, 404, 409, 499, 600]) {
+        expect(isTransientStatus(status)).toBe(false);
+      }
+    });
+  });
+
+  describe('isNetworkErrorMessage', () => {
+    test("the local crud layer's wording of a status and of a request that failed", () => {
+      expect(
+        isNetworkErrorMessage(
+          'Error: (HTTP 502) Bad Gateway from POST https://x/rest/rpc/get_userinfo',
+        ),
+      ).toBe(true);
+      expect(isNetworkErrorMessage('(HTTP 429) Too Many Requests from GET https://x/rest/t')).toBe(true);
+      expect(
+        isNetworkErrorMessage(
+          'Error: POST https://x/rest/rpc/get_userinfo failed: Unable to connect. Is the computer able to access the url?',
+        ),
+      ).toBe(true);
+    });
+    test('PostgREST connection errors and transport errors', () => {
+      expect(isNetworkErrorMessage('Error: (PGRST001) Database client error')).toBe(true);
+      expect(isNetworkErrorMessage('Error: (PGRST003) Timed out acquiring connection')).toBe(true);
+      expect(isNetworkErrorMessage('connect ECONNREFUSED 127.0.0.1:3000')).toBe(true);
+      expect(isNetworkErrorMessage('TypeError: fetch failed')).toBe(true);
+      expect(isNetworkErrorMessage('The operation timed out.')).toBe(true);
+      expect(isNetworkErrorMessage('socket hang up')).toBe(true);
+    });
+    test("a tool's own failure is not", () => {
+      expect(isNetworkErrorMessage('Error: (42501) permission denied for table t')).toBe(false);
+      expect(isNetworkErrorMessage('Error: (PGRST116) JSON object requested, multiple rows')).toBe(false);
+      expect(isNetworkErrorMessage('Error: (HTTP 404) Not Found from POST https://x/rest/t')).toBe(false);
+      expect(isNetworkErrorMessage('Error: (HTTP 401) Unauthorized from GET https://x/rest/t')).toBe(false);
+      expect(isNetworkErrorMessage('duplicate key value violates unique constraint')).toBe(false);
+      expect(isNetworkErrorMessage(undefined)).toBe(false);
+      expect(isNetworkErrorMessage('')).toBe(false);
     });
   });
 

@@ -2,19 +2,13 @@
 
 The official CLI for the [Semantius](https://semantius.com) platform. Connect to your Semantius organization's MCP servers to interact with your data, tools, and APIs directly from the command line or AI agents.
 
-## Features
-
-- 🪶 **Lightweight** - Minimal dependencies, fast startup
-- 🔧 **Shell-Friendly** - JSON output for call, pipes with `jq`, chaining support
-- 🤖 **Agent-Optimized** - Designed for AI coding agents (Gemini CLI, Claude Code, etc.)
-- 🔌 **Semantius Platform** - Runs the `crud` tools directly against your organization's PostgREST API and connects to the `cube` (analytics) MCP server
-- ⚡ **Fast** - Connections and tokens are cached between calls, so repeated invocations stay responsive
-- 🔑 **Zero Config** - Works out of the box with `SEMANTIUS_API_KEY` and `SEMANTIUS_ORG` set (or a single `SEMANTIUS_API_KEY=org:key`)
-- 💡 **Actionable Errors** - Structured error messages with available servers and recovery suggestions
-
 ## Quick Start
 
-### 1. Installation
+> **Setting up through an AI agent?** Read
+> [Setting up through an AI agent](#setting-up-through-an-ai-agent), below
+> the steps, first.
+
+### 1. Install the CLI
 
 **Linux / macOS:**
 
@@ -22,7 +16,14 @@ The official CLI for the [Semantius](https://semantius.com) platform. Connect to
 curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash
 ```
 
-The Linux/macOS installer places `semantius` in `/usr/local/bin` (if writable), otherwise `~/.local/bin`, and adds it to your PATH automatically.
+The installer puts `semantius` in `$INSTALL_DIR` if you set it, else in
+`/usr/local/bin` if you can write there (as root, and on many Intel Macs),
+otherwise in `~/.local/bin`. It does not change your PATH: if the directory it
+installed into is not on it, it prints the line that adds that directory to
+your shell's startup file. macOS never has `~/.local/bin` on the PATH; many
+Linux distributions add it at your next login. If another `semantius` comes
+earlier on your PATH, the installer warns and names both files: typing
+`semantius` would start that one, not the one just installed.
 
 **Windows (PowerShell):**
 
@@ -30,105 +31,112 @@ The Linux/macOS installer places `semantius` in `/usr/local/bin` (if writable), 
 irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex
 ```
 
-The Windows installer places `semantius.exe` in `%LOCALAPPDATA%\Programs\Semantius` and adds it to your user PATH automatically.
+The installer puts `semantius.exe` in `%LOCALAPPDATA%\Programs\Semantius` and
+adds that folder to your user PATH, which only programs started afterwards
+see: open a new terminal, and restart VS Code or any other app whose terminals
+or agents should find `semantius`. Use this installer from Git Bash too —
+`install.sh` does not support Windows; run there, it stops with
+`Unsupported OS` and prints the PowerShell command to use instead.
 
-### 2. Set up credentials
+Until your PATH has it, run the binary by the path on the installer's
+`Location:` line.
 
-Set your Semantius credentials. The CLI looks for a `.env` file in the current directory, then next to the executable (Windows), or you can export them in your shell. Shell environment variables always take precedence over `.env` values.
-
-```bash
-# Option 1: Export in shell
-export SEMANTIUS_API_KEY=your-api-key
-export SEMANTIUS_ORG=your-org-name
-
-# Option 2: .env file (current directory first, then next to the executable)
-# SEMANTIUS_API_KEY=your-api-key
-# SEMANTIUS_ORG=your-org-name
-
-# Option 3: single-value credential — an "org:" prefix on the API key
-# replaces SEMANTIUS_ORG (the prefix wins if both are set)
-export SEMANTIUS_API_KEY=your-org-name:your-api-key
-
-# Option 4: bring your own token — a static JWT is sent directly
-# (no token exchange, no token cache); also accepts the "org:" prefix
-export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
-```
+### 2. Install the agent skills
 
 ```bash
-# Option 5: no keys at all — sign in with the browser
-semantius use acme.semantius.cloud           # signs in (if needed) and makes it your host
-semantius use semantius.example.com          # a self-hosted instance
-semantius login --host acme.semantius.app    # sign in only, without changing your host
+npx skills add semantius/semantius-cli -g
 ```
+
+This installs the Semantius skills (`use-semantius`, `semantius-architect`,
+`semantius-admin`, …) from this repository's [`skills/`](skills/) folder for
+your coding agents, for your user account. **Keep `-g`:** without it they land
+in `.claude/skills/` (or your agent's equivalent) of whatever directory you run
+it in. It asks which agents to install into only if it cannot detect one.
+Requires Node.js 22.20 or later, and git. Your agent may need a new session to
+pick the skills up.
+
+### 3. Sign up or sign in
+
+Sign up for a Semantius data platform, or sign in to yours, at
+**https://app.semantius.com/**. Once your instance is provisioned, the
+dashboard's Get Started card shows its address,
+`https://<your-org>.semantius.app`. Already have an instance? Go straight to
+step 4.
+
+### 4. Connect the CLI to your instance
 
 ```bash
-# Option 6: a token for just this one invocation, without an .env at all
-echo your-org-name:eyJhbGciOi... | semantius --token - whoami   # from stdin (preferred)
-semantius --token-file ./token.txt whoami                        # from a file
-semantius --token your-org-name:eyJhbGciOi... whoami              # literal (shell history!)
+semantius use https://<your-org>.semantius.app
 ```
 
-Credentials are tried in this order, first match wins:
+Use the address from step 3 as it is (a path after the host is not accepted).
+Unless a usable session for it is already stored, `use` opens your browser to
+sign in (it waits up to 5 minutes), then makes the instance your **current
+host** in every directory.
 
-1. `--token` / `--token-file` — a JWT for just this invocation (see below)
-2. `SEMANTIUS_JWT` — a static token, sent as-is (no exchange, no cache)
-3. `SEMANTIUS_API_KEY` — exchanged for a short-lived token at your host's token endpoint and cached (see [Token cache](#token-cache))
-4. The session stored by `semantius login` for this host (see [Browser login](#browser-login))
+- **Not sitting at this machine?** On a server, in a container or an SSH
+  session, on a remote VM, or for an always-on agent, add
+  `--login-flow device`: it prints a URL and a code to enter on your phone or
+  laptop instead. See
+  [Signing in on a headless or always-on machine](#signing-in-on-a-headless-or-always-on-machine).
+- From now on the CLI — and any agent using it — acts **as you**, with your
+  permissions. For narrower access you can revoke on its own, use an API key
+  instead: see [Delegated vs. dedicated access](#delegated-vs-dedicated-access).
+- A self-hosted instance works the same way:
+  `semantius use https://semantius.example.com`.
 
-Without any of them, commands that call the platform exit `5` with "Authentication required".
-`--auth jwt|apikey|oauth` picks one source explicitly.
-Which host the CLI talks to — including the **current host** `semantius use`
-sets, which then applies in every directory until you change it — is covered
-in [Hosts](#hosts-managed-cloud-and-self-hosted).
-
-**A credential that names its own organization is bound to that host.** An
-`"org:"` prefix on `SEMANTIUS_API_KEY` / `SEMANTIUS_JWT` binds it to
-`<org>.semantius.cloud`, the same way a bare `SEMANTIUS_ORG` would. It's only
-compared against `--host` / `SEMANTIUS_HOST` — or a plain `SEMANTIUS_ORG` —
-when they're set in the *same* place (the same shell, or the same `.env`
-file) — naming a *different* host or org there is an error (`HOST_CONFLICT`).
-A host that's already settled by something with higher precedence (`--host`,
-`--token`, or the current host — see [Hosts](#hosts-managed-cloud-and-self-hosted))
-is never compared against the credential at all, and the credential is then
-ignored rather than silently sent to a host it wasn't issued for. `--token` /
-`--token-file` bind the invocation to `<org>.semantius.cloud` too, but can't
-be combined with `--host` — the token already names its own host.
-
-The environment's credentials belong to the environment's host. **With
-`--host`, or on the current host (see below), only a stored browser session is
-used:** the CLI ignores a leftover API key, JWT or org from the environment
-(silently — not an error), so they are never sent to another host by mistake.
-`--token` is the exception: it's a credential for *this* invocation, so it's
-unaffected. One session is stored per host, by `semantius login --host <host>`
-(or by `semantius use <host>`, which signs in for you first if there's no
-session yet). To pair a host with an API key instead, set `SEMANTIUS_HOST`
-next to it, or keep several pairs side by side with `--env <prefix>`
-(`<PREFIX>_HOST`, `<PREFIX>_API_KEY`).
-
-No config file is needed: the `crud` tools run inside the CLI against your
-organization's PostgREST API, and `cube` (analytics) is reached as a Semantius
-MCP server. `--crud-mcp` sends the `crud` tools through the Semantius cloud MCP
-server instead (the only way to use `sqlToRest`).
-
-### 3. Discover available tools
+### 5. Verify the connection
 
 ```bash
-# List all servers and tools
-semantius
-
-# With descriptions
-semantius -d
+semantius whoami
 ```
 
-### 4. Call a tool
+It calls your instance and shows the host (as
+`<your-org>.semantius.cloud (current)`), where that host came from, your user
+and roles, `auth_method  oauth`, and when the session's access token expires.
+If the instance cannot be reached — a network failure, a timeout or a 5xx,
+while connecting or during the call — it exits `3`, and trying again later can
+work; without a usable credential it exits `5`.
 
-```bash
-# View tool schema first
-semantius info crud
+### Setting up through an AI agent
 
-# Call a tool
-semantius call crud list_records '{}'
-```
+Notes for an agent that follows the steps above for its user:
+
+- **Step 1.** On Windows, use `install.ps1` from any shell:
+  `powershell -NoProfile -Command "irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex"`.
+  Your shell does not see the new PATH (and on Linux/macOS there is none), so
+  call the binary by its full path: PowerShell
+  `& "$env:LOCALAPPDATA\Programs\Semantius\semantius.exe"`, Git Bash
+  `"$LOCALAPPDATA/Programs/Semantius/semantius.exe"`, Linux/macOS the path on
+  the installer's `Location:` line. Tell the user to restart the agent app
+  (Windows) or to add the PATH line the installer printed (Linux/macOS);
+  otherwise the skills will not find `semantius` in the next session.
+- **Step 2.** Inside Claude Code, `npx -y skills add semantius/semantius-cli -g`
+  runs without prompting. Elsewhere add `-a <agent> -y` (e.g.
+  `-a claude-code`). Without Node.js or git, copy each folder under
+  [`skills/`](skills/) into the agent's skills folder (`~/.claude/skills/` for
+  Claude Code).
+- **Step 4.** Start `semantius use <address>` as a **background** command,
+  read its output and give the user the sign-in URL; on Windows and macOS a
+  browser tab opens on this machine as well. Whenever the user is not at this
+  machine's screen — a cloud or always-on agent, a remote or SSH session, a
+  container, headless Linux — add `--login-flow device` and give the user the
+  URL and code it prints; it waits up to 10 minutes. Don't run it in the
+  foreground: you can show the user nothing until it ends, and a tool timeout
+  can kill the sign-in. If a usable session is already stored, it finishes at
+  once, without a browser.
+- **Step 5.** `semantius whoami`.
+- **Fully non-interactive:** an API key, in the global `.env` or the `.env`
+  next to the executable, and no `semantius use` (a current host makes the CLI
+  ignore API keys). See
+  [Credentials](#credentials-sources-and-evaluation-order).
+
+API keys, `.env` files, static JWTs and `--token` — for scripts and CI — are
+covered in [Credentials](#credentials-sources-and-evaluation-order); everyday
+use in [Usage](#usage). No config file is needed: the `crud` tools run inside
+the CLI against your organization's PostgREST API, and `cube` (analytics) is
+reached as a Semantius MCP server. `--crud-mcp` sends the `crud` tools through
+the Semantius cloud MCP server instead (the only way to use `sqlToRest`).
 
 ## Usage
 
@@ -144,7 +152,7 @@ semantius [options] whoami                      Show current user (email, org, r
 semantius [options] login                       Sign in with the browser; stores the session for the host
 semantius [options] logout                      Revoke and delete the stored session for the host
 semantius [options] hosts [--json]              List every host this machine has a session or is current for
-semantius use <host>                            Make <host> the current host (signs in with the browser first if needed)
+semantius use <host>                            Make <host> the current host (signs in first unless a usable session is stored)
 semantius use --clear                           Unset the current host (session and hosts entry untouched)
 ```
 
@@ -160,16 +168,18 @@ semantius use --clear                           Unset the current host (session 
 | `-h, --help` | Show help message |
 | `-v, --version` | Show version number |
 | `-d, --with-descriptions` | Include tool descriptions |
-| `-md, --markdown` | Dump full documentation as markdown (README, SKILL, all tools) |
+| `-md, --markdown` | Dump full documentation as markdown: this README, then every server's tools |
 | `-n [count]` | (ping only) Run N pings and report per-request latency + min/max/avg. `-n` without a value defaults to 5 |
 | `--json` | (`hosts` only) Machine-readable output instead of the table |
 | `--clear` | (`use` only) Unset the current host instead of setting one: `semantius use --clear` |
 | `--env <prefix>` | Env var prefix (default `SEMANTIUS`), e.g. `--env PROD` reads `PROD_API_KEY` / `PROD_ORG` |
+| `-c, --config <path>` | Path to `mcp_servers.json`, instead of searching `./mcp_servers.json`, `~/.mcp_servers.json` and `~/.config/mcp/mcp_servers.json`. A `.env` beside it fills unset variables, but never the host or credential ones (see [Where variables come from](#where-variables-come-from)). Also `SEMANTIUS_CONFIG_PATH` |
 | `--host <hostname>` | Semantius host to talk to, `hostname[:port]` (see [Hosts](#hosts-managed-cloud-and-self-hosted)). Also `SEMANTIUS_HOST`. Not combinable with `--token`/`--token-file` |
 | `--auth <source>` | Use exactly one credential source: `jwt`, `apikey` or `oauth` (the stored browser session). Not combinable with `--host` for `jwt`/`apikey` |
 | `--token <org:jwt \| ->` | A JWT for just this invocation, binding it to `<org>.semantius.cloud` — wins over the current host and any `SEMANTIUS_HOST`/`SEMANTIUS_ORG` from the environment or `.env`. `-` reads it from stdin; a literal value is visible in the shell history and process list, so prefer `-` or `--token-file`. Not combinable with `--host`, `--auth apikey`/`oauth`, or `--login` |
 | `--token-file <path>` | Same as `--token`, read from a file (`org:jwt`, trimmed) |
-| `--login` | Sign in with the browser first, then run the command with that session (needs an interactive terminal) |
+| `--login` | Sign in with the browser first, then run the command with that session (needs an interactive terminal). On `cube` and with `--crud-mcp`, an API key or JWT from the environment still takes precedence over the session |
+| `--login-flow <mode>` | How an interactive sign-in happens: `auto` (default), `browser` or `device` (a URL and a code to enter on another device). Use `device` whenever the person signing in is not at this machine — see [Signing in on a headless or always-on machine](#signing-in-on-a-headless-or-always-on-machine). Also `SEMANTIUS_LOGIN_FLOW` |
 | `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
 | `--stream` | (`call crud postgrestRequest` only) Pipe the PostgREST response body to stdout unchanged — see [Streaming large reads](#streaming-large-reads---stream). Also `SEMANTIUS_STREAM=1` |
 | `--disable-jwt-cache` | Skip the token cache and re-authenticate on every request (see [Token cache](#token-cache)) |
@@ -182,6 +192,17 @@ semantius use --clear                           Unset the current host (session 
 |--------|---------|
 | **stdout** | Tool results and human-readable info |
 | **stderr** | Errors and diagnostics |
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Client error: bad arguments, config or JSON, an invalid host name, an organization the control plane does not know — or, with `--single`, 0 rows |
+| `2` | `--single`: 2+ rows |
+| `3` | Network or transport failure, transient: no answer, a timeout, a 5xx or a 429. Includes a session refresh the token endpoint could not serve (the session is kept), and `use`, `login`, `logout` or `whoami` running into any of these. Trying again later can work |
+| `4` | The tool failed: RLS, a duplicate key, schema errors |
+| `5` | Authentication: no credentials, an API key or token refused (401/403), a session the token endpoint refuses to refresh, or a sign-in that cannot happen here |
 
 ### Commands
 
@@ -376,6 +397,158 @@ fi
 
 ## Configuration
 
+### Credentials: sources and evaluation order
+
+There are four ways to authenticate:
+
+| Credential | How you set it | Typical use |
+|---|---|---|
+| Browser session | `semantius use <host>`, or `semantius login` | Working as yourself (see [Quick Start](#quick-start)) |
+| API key | `SEMANTIUS_API_KEY`, with `SEMANTIUS_ORG` or an `org:` prefix | Scripts, CI, unattended agents |
+| Static JWT | `SEMANTIUS_JWT` | A token obtained elsewhere, sent as-is |
+| One-off token | `--token -`, `--token-file <path>`, `--token <org:jwt>` | A single invocation, without any `.env` |
+
+```bash
+# An API key and its organization, exported in the shell (or put in a .env, see below)
+export SEMANTIUS_API_KEY=your-api-key
+export SEMANTIUS_ORG=your-org-name
+
+# The same in one value: an "org:" prefix names the key's organization
+export SEMANTIUS_API_KEY=your-org-name:your-api-key
+
+# A static JWT: sent directly, with no token exchange and no token cache;
+# it takes the "org:" prefix too
+export SEMANTIUS_JWT=your-org-name:eyJhbGciOi...
+
+# A token for just this one invocation
+echo your-org-name:eyJhbGciOi... | semantius --token - whoami   # from stdin (preferred)
+semantius --token-file ./token.txt whoami                        # from a file
+semantius --token your-org-name:eyJhbGciOi... whoami              # literal (shell history!)
+```
+
+API keys are created under **API Keys** at
+`https://<your-org>.semantius.app/settings`, which the dashboard at
+https://app.semantius.com/dashboard links to.
+
+#### Where variables come from
+
+Variables are read from these places, in this order. A place never overrides a
+variable an earlier one already set — not even one exported as empty:
+
+1. **Your shell environment.**
+2. **The project `.env`:** a `.env` in the current directory (only that
+   directory; parent directories are not searched) or, when there is none,
+   the `.env` next to the executable. Only one of the two is read.
+3. **The global `.env`** in your user config directory, always read, last.
+
+Credentials meant for the whole machine can go in either of two files:
+
+| File | Location | Read when | Applies to |
+|---|---|---|---|
+| The `.env` next to the executable | The install folder: `%LOCALAPPDATA%\Programs\Semantius\.env` on Windows; `~/.local/bin/.env` or `/usr/local/bin/.env` on Linux/macOS | Only when the current directory has no `.env` | Everyone who runs that binary |
+| The global `.env` | `%APPDATA%\semantius\cli\.env` on Windows; `~/.config/semantius/cli/.env` on Linux/macOS | Always, filling whatever is still unset | Your user account |
+
+The installer creates neither file: create the one you want. Two more
+sources, for completeness. Bun itself loads `.env.local` and
+`.env.<NODE_ENV>` (`.env.production`, `.env.development` or `.env.test`) from
+the current directory before the CLI starts, and the CLI treats what they set
+as shell variables. And a `.env` beside the config file in use — one passed
+with `-c` / `SEMANTIUS_CONFIG_PATH`, or one found on its own
+(`./mcp_servers.json`, `~/.mcp_servers.json`, `~/.config/mcp/mcp_servers.json`)
+— is read after the host and its credential have been chosen. It fills the
+variables that are still unset, such as a `${VAR}` the config file refers to,
+but never `SEMANTIUS_HOST`, `SEMANTIUS_ORG`, `SEMANTIUS_API_KEY` or
+`SEMANTIUS_JWT` (nor their `--env <prefix>` forms): set those in one of the
+three places above.
+
+#### Which host
+
+One host per invocation, first match wins: `--host`, then `--token`'s
+organization, then the current host set by `semantius use`, then
+`SEMANTIUS_HOST` / `SEMANTIUS_ORG` from the shell, the project `.env` and the
+global `.env`, in that order. The details are in
+[Hosts](#hosts-managed-cloud-and-self-hosted).
+
+#### Which credential
+
+First match wins:
+
+1. `--token` / `--token-file`: a JWT for this invocation only.
+2. **If the host came from `--host` or from the current host (`semantius use`),
+   only the browser session stored for that host is used.** An API key, JWT
+   or organization from the environment or any `.env` is then ignored —
+   silently, not an error — so it is never sent to a host it was not set up
+   for. If no session is stored, the command exits `5` saying so, with the
+   two ways out: on the current host, `semantius use <host>` to sign in or
+   `semantius use --clear` to use the key; with `--host`,
+   `semantius login --host <host>`, or drop `--host` and set `SEMANTIUS_HOST`
+   next to the key.
+3. `SEMANTIUS_JWT`: sent as-is, with no exchange and no cache.
+4. `SEMANTIUS_API_KEY`: exchanged for a short-lived token at the host's token
+   endpoint, and cached per host (see [Token cache](#token-cache)).
+5. The browser session stored for this host (see [Browser login](#browser-login)).
+
+Without any of them, commands that call the platform exit `5` with
+"Authentication required". `--auth jwt|apikey|oauth` picks one of 3–5
+explicitly; `--login` signs in first and then uses the session.
+
+To use an API key with a particular host, set `SEMANTIUS_HOST` next to it and
+have no current host (`semantius use --clear`), or keep several pairs side by
+side with `--env <prefix>` (`<PREFIX>_HOST`, `<PREFIX>_API_KEY`): the current
+host is stored per prefix.
+
+On `cube`, and with `--crud-mcp`, the CLI talks to the Semantius cloud MCP
+server, which takes credentials slightly differently: an API key or JWT that
+applies always wins there over the session (`--auth` and `--login` don't
+change that), and the API key is exchanged through the MCP server rather than
+the host's token endpoint.
+
+#### Credentials that name their organization
+
+An `org:` prefix on `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` makes it a **bound
+credential**: it names its organization, and with it the host
+`<org>.semantius.cloud`, the way `SEMANTIUS_ORG` would. A bound credential
+belongs to the place it is set in — the shell, the project `.env`, or the
+global `.env`:
+
+- A `SEMANTIUS_HOST` or a plain `SEMANTIUS_ORG` **in the same place** that
+  names a different host is an error (`HOST_CONFLICT`) naming both.
+- If something earlier — `--host`, `--token`, the current host, or an earlier
+  place — already decided the host, the bound credential is not used at all,
+  rather than sent to a host it was not issued for.
+
+A credential *without* the prefix belongs to no place: a plain
+`SEMANTIUS_API_KEY` in the global `.env` is also used for a `SEMANTIUS_HOST`
+set in a project `.env`.
+
+#### Delegated vs. dedicated access
+
+- **`semantius use` and `semantius login` delegate your account.** The CLI, and
+  any agent or script driving it, acts as you, with every permission your
+  roles give you. That lasts as long as the session can be renewed;
+  `semantius logout` ends it.
+- **An API key is a separate credential**, created, labelled and revoked on
+  its own at `https://<your-org>.semantius.app/settings`. A personal key
+  (prefix `uk-`) still acts as you. An admin can also create a key for another
+  user (prefix `sk-`), for example a dedicated service user with a narrower
+  role: an agent or CI job then gets only that user's permissions, and its
+  access can be revoked without touching your own sign-in.
+
+Use your own session for interactive work, and a dedicated user's key for
+unattended agents and CI. Keep keys out of version control: in the global
+`.env`, the `.env` next to the executable, or a CI secret — not in a project
+`.env` you commit.
+
+#### Examples
+
+| Setup | Host | Credential used |
+|---|---|---|
+| Project `.env`: `SEMANTIUS_HOST=x.example.com` and `SEMANTIUS_API_KEY=k` | `x.example.com` | The API key |
+| A `.env` with only `SEMANTIUS_API_KEY=acme:k` | `acme.semantius.cloud` | The API key |
+| `semantius use b.semantius.cloud` was run; project `.env` has `SEMANTIUS_API_KEY=k` | `b.semantius.cloud` | The session stored for it; the key is ignored |
+| Project `.env`: `SEMANTIUS_HOST=x.example.com`; global `.env`: `SEMANTIUS_API_KEY=k` | `x.example.com` | The API key from the global `.env` |
+| Shell: `SEMANTIUS_ORG=acme`; project `.env`: `SEMANTIUS_API_KEY=other:k` | `acme.semantius.cloud` | The session stored for it, if any; the key is bound to `other` and never reached |
+| `semantius --token acme:eyJ… whoami` | `acme.semantius.cloud` | That token |
 
 ### Environment Variables
 
@@ -386,14 +559,15 @@ configurations side by side in the same `.env`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SEMANTIUS_ORG` | Organization on the managed cloud; the host defaults to `https://<org>.semantius.cloud`. **Required** unless `SEMANTIUS_HOST`, `--host`, `--token`, a bound credential, or the current host (see [Hosts](#hosts-managed-cloud-and-self-hosted)) names the host (an `org:` prefix on the API key or JWT also supplies it) | (none) |
+| `SEMANTIUS_ORG` | Organization on the managed cloud; names the host `<org>.semantius.cloud`. Not needed when something else names the host: `SEMANTIUS_HOST`, `--host`, `--token`, the current host, or an `org:` prefix on the API key or JWT (see [Hosts](#hosts-managed-cloud-and-self-hosted)) | (none) |
 | `SEMANTIUS_HOST` | Hostname, same as `--host` (see [Hosts](#hosts-managed-cloud-and-self-hosted)) | `${SEMANTIUS_ORG}.semantius.cloud` |
-| `SEMANTIUS_API_KEY` | API key for Semantius (needed to call tools unless `SEMANTIUS_JWT` is set). Value may be `org:key` — the org prefix overrides `SEMANTIUS_ORG`. | (none) |
-| `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`; its org prefix overrides both `SEMANTIUS_ORG` and the API key's prefix. | (none) |
+| `SEMANTIUS_API_KEY` | API key (see [Credentials](#credentials-sources-and-evaluation-order)). Value may be `org:key`: the prefix names the host like `SEMANTIUS_ORG`, and a `SEMANTIUS_ORG` or `SEMANTIUS_HOST` in the same place that disagrees is a `HOST_CONFLICT` | (none) |
+| `SEMANTIUS_JWT` | Static JWT sent as `Authorization: Bearer` directly — skips the token exchange and the token cache entirely. Value may be `org:jwt`, bound the same way as the API key; it is tried before the API key | (none) |
+| `SEMANTIUS_LOGIN_FLOW` | `auto`, `browser` or `device`: same as `--login-flow`. Set it to `device` in the global `.env` (or the one next to the executable) of a machine nobody sits at | `auto` |
 | `SEMANTIUS_CRUD_MCP` | `1` = same as `--crud-mcp` | `false` |
 | `SEMANTIUS_STREAM` | `1` = `--stream` for every `call crud postgrestRequest` where it is valid (no `--single`/`--diag`/`--crud-mcp`); ignored for other calls | `false` |
 | `SEMANTIUS_SIDE_EFFECT_TIMEOUT` | On the managed cloud, creating/updating/deleting entities or fields asks the cloud MCP server to refresh the PostgREST schema cache; the CLI waits up to this many seconds for that before exiting | `10` |
-| `SEMANTIUS_CONFIG_PATH` | Path to config file | (none) |
+| `SEMANTIUS_CONFIG_PATH` | Path to config file, same as `-c` / `--config` | (none) |
 | `SEMANTIUS_DEBUG` | Enable debug output | `false` |
 | `SEMANTIUS_TIMEOUT` | Request timeout (seconds) | `1800` (30 min) |
 | `SEMANTIUS_CONCURRENCY` | Servers processed in parallel (not a limit on total) | `5` |
@@ -412,10 +586,11 @@ The CLI talks to one Semantius host per invocation, taken from the first of:
 
 1. `--host <hostname>` — this invocation only
 2. `--token` / `--token-file`'s own organization (see
-   [Set up credentials](#2-set-up-credentials)) — can't be combined with `--host`
+   [Credentials](#credentials-sources-and-evaluation-order)) — can't be combined with `--host`
 3. The **current host**, set by `semantius use <host>` — see below
 4. `SEMANTIUS_HOST`, else `SEMANTIUS_ORG` — checked in the shell environment,
-   then a project `.env`, then the global `.env` in the user config dir; host
+   then the project `.env`, then the global `.env` (see
+   [Where variables come from](#where-variables-come-from)); host
    is checked before org *within* each of those three, and the walk only
    moves on to the next one when neither is set there. An `"org:"`-prefixed
    `SEMANTIUS_API_KEY` / `SEMANTIUS_JWT` (a **bound credential**) supplies the
@@ -451,20 +626,28 @@ provider — comes from `https://<host>/.well-known/semantius.json`, which is re
 only when a login or a token refresh actually happens (see
 [Browser login](#browser-login)).
 
-With `--host`, or on the current host (see below), only credentials stored for
-that host (a browser session) are used — see [Set up credentials](#2-set-up-credentials).
-A bare `SEMANTIUS_API_KEY` / `SEMANTIUS_JWT` left over from a project `.env`
-is then simply ignored (not an error): it was set for whatever host was
-configured when it was written, not necessarily this one.
+With `--host`, or on the current host (see below), only the browser session
+stored for that host is used; an API key or JWT from the environment is
+ignored. See [Which credential](#which-credential).
 
 #### The current host, and `semantius hosts` / `semantius use`
 
 `semantius use <host>` makes `<host>` your **current host**: it applies in
 every directory, ahead of `SEMANTIUS_HOST` / `SEMANTIUS_ORG` — whether from
 your shell or a project's own `.env` — until you run `use` again or clear it.
-If there's no session stored for `<host>` yet, `use` signs you in with the
-browser first (the same flow as `semantius login --host <host>`), then
-records the session and makes the host current. `semantius login` on its own
+If there's no session stored for `<host>`, or the stored one can no longer
+be renewed, `use` signs you in first (the same flow as
+`semantius login --host <host>`), then records the session and makes the host
+current. A stored session is checked the way the next command would use it:
+one whose access token is still fresh costs no network, and one that is due
+is renewed once. If that renewal fails for a reason that says nothing about
+the session — the network, or a server error — `use` reports the error,
+exits `3` and leaves your current host as it was. So does any other network
+failure, timeout, 5xx or 429 while it resolves the host or signs you in; a
+host name that is wrong (invalid, or an organization the control plane does
+not know) exits `1`, and a sign-in that cannot happen here exits `5`.
+`login` and `logout` exit `3` the same way when the network or a server fails
+them. `semantius login` on its own
 never touches the current host; it only ever stores a session for whatever
 host it resolves to. `semantius use` is the one command that decides what
 your host is.
@@ -473,11 +656,12 @@ your host is.
 `use`, it is meant to be the answer to "which host?" until you explicitly
 change it — an explicit decision should not be silently overridden by
 whatever a project's `.env` happens to contain, especially since that `.env`
-was likely written before you ever ran `use`. If a specific project needs to
-keep talking to its own host regardless of your current one, give it its own
-`SEMANTIUS_HOST` in a `.env`, or point `--env <prefix>` at a separate pair of
-variables via `--host` — both still outrank the current host for that
-invocation. `semantius whoami`'s `host_source` row always tells you which one
+was likely written before you ever ran `use`. A project's `.env` therefore cannot
+change the host while a current host is set. To reach another host anyway,
+pass `--host` or `--token` for one invocation, or use a different
+`--env <prefix>`: the current host is stored per prefix, so a prefix with no
+current host of its own falls through to its `<PREFIX>_HOST` /
+`<PREFIX>_API_KEY` variables. `semantius whoami`'s `host_source` row always tells you which one
 actually won.
 
 ```bash
@@ -515,11 +699,16 @@ semantius logout                             # revokes and deletes the session
 where the provider publishes a revocation endpoint — some, including Microsoft
 Entra, publish none, and there the session is simply deleted.
 
-`login` opens your browser (OAuth 2.0 authorization code with PKCE), receives
-the response on `127.0.0.1`, and stores the session in your OS keyring
-(Keychain, Windows Credential Manager, libsecret) under the host's name. Where
-there is no keyring — a headless Linux box, for example — it falls back to a
-`0600` file in `<user config dir>/sessions/` and says so.
+`login` opens your browser (OAuth 2.0 authorization code with PKCE) and
+receives the response on `127.0.0.1`; on a machine nobody is sitting at, use
+the device flow instead (see
+[Signing in on a headless or always-on machine](#signing-in-on-a-headless-or-always-on-machine)).
+The session is stored as an encrypted `0600` file under
+`%LOCALAPPDATA%\semantius\cli\sessions\` on Windows and
+`~/.config/semantius/cli/sessions/` on Linux/macOS; your OS keyring (Keychain,
+Windows Credential Manager, libsecret) holds only the key that opens it. Where
+there is no keyring — a headless Linux box, for example — the file is written
+unencrypted, still `0600`, and the CLI says so.
 
 The login is verified against the host you named. The identity provider's
 metadata must be served over HTTPS (or loopback, for local development), and it
@@ -527,13 +716,20 @@ must send the browser to an authorization endpoint on the same origin as the
 issuer it declares; the issuer on the browser's response must then match that
 issuer exactly (RFC 9207). A mismatch fails the login and stores nothing.
 
-One session per host: `semantius login --host b.semantius.cloud` leaves the
-session for `a.semantius.cloud` untouched, and each command uses the session of
+One session per host and `--env` prefix: `semantius login --host b.semantius.cloud`
+leaves the session for `a.semantius.cloud` untouched, and each command uses the session of
 the host it talks to. The access token is refreshed automatically, about
-hourly, for as long as the login stays valid.
+hourly, for as long as the login stays valid. A refresh the token endpoint
+refuses — the session expired or was revoked — exits `5`: the session "could
+not be refreshed", and the message says to run `semantius login` again. A
+refresh it cannot serve right now — it does not answer, answers 5xx, 408 or
+429, or reports `server_error` / `temporarily_unavailable`, whatever the
+status — exits `3` with `SESSION_REFRESH_FAILED`: the session is kept, so
+try again rather than signing in.
 
 `--login` signs in first and then runs the command with that session, even when
-an API key or JWT is configured; it needs an interactive terminal. Besides
+an API key or JWT is configured (except on `cube` and with `--crud-mcp`, where
+an API key or JWT still wins); it needs an interactive terminal. Besides
 `login` and `use` (see [Hosts](#hosts-managed-cloud-and-self-hosted)), nothing
 else opens a browser on its own: without credentials a command exits `5`.
 
@@ -579,6 +775,39 @@ document — a timeout, a 5xx — is not that fallback: it fails the login namin
 the document, because guessing would mean signing in with the wrong client.
 
 Either way, an API key or a static JWT works without any of it.
+
+#### Signing in on a headless or always-on machine
+
+**If the person signing in is not at this machine's screen, use the device
+flow:**
+
+```bash
+semantius use <host> --login-flow device      # or: semantius login --login-flow device
+```
+
+That covers always-on agents, servers, containers, SSH sessions, remote VMs
+and CI-like runners. The CLI prints a URL and a short code (on stderr); open
+the URL on any device — your phone, your laptop — enter the code and sign in.
+It waits up to 10 minutes. To make it the default on such a machine, put
+`SEMANTIUS_LOGIN_FLOW=device` in its global `.env` or in the `.env` next to
+the executable.
+
+Automatic mode (`--login-flow auto`, the default) is not enough there:
+
+- On Windows and macOS it always opens a browser on the machine itself, even
+  when nobody is in front of it.
+- On Linux it picks the device flow only when there is no display *and* a
+  terminal to show the code on; under an agent or a service, whose output is
+  not a terminal, it refuses instead.
+- In CI it refuses outright; when the host offers the device grant, the
+  refusal names `--login-flow device`. A forced `device` (or `browser`)
+  skips that check.
+
+The host must offer the device grant: the managed cloud does, and a
+self-hosted instance does if its identity provider does — otherwise the CLI
+says so. When nobody will be around to sign in again once the session can no
+longer be renewed, use a dedicated user's API key instead (see
+[Delegated vs. dedicated access](#delegated-vs-dedicated-access)).
 
 ### Token cache
 
@@ -668,9 +897,9 @@ EOF
 
 ### Option 2: Agents Skill
 
-For Code Agents that support Agents Skills, like Gemini CLI, OpenCode or Claude Code, you can use the semantius skill. The Skill is available at [SKILL.md](./SKILL.md)
-
-Create `semantius/SKILL.md` in your skills directory.
+For coding agents that support Agent Skills, like Claude Code, Gemini CLI or
+OpenCode, install the Semantius skills from this repository's
+[`skills/`](skills/) folder: see [Quick Start, step 2](#2-install-the-agent-skills).
 
 ## Development
 
@@ -745,8 +974,11 @@ bun run dev call crud getCurrentUser '{}'
 echo '{}' | bun run dev call crud getCurrentUser
 ```
 
-Required env vars (`SEMANTIUS_API_KEY`, `SEMANTIUS_ORG`) are picked up from
-your shell or from a `.env` next to the binary / in the user config dir.
+Credentials and the host come from the same places as for the installed binary
+(see [Where variables come from](#where-variables-come-from)): your shell, a
+`.env` in the current directory, then the global `.env`. Under `bun run dev`
+the executable is `bun` itself, so "the `.env` next to the executable" means
+one next to the `bun` binary.
 Use `--env <prefix>` to test a different credential set (e.g.
 `--env STAGING` reads `STAGING_API_KEY` / `STAGING_ORG` / `STAGING_JWT`).
 

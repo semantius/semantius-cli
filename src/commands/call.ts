@@ -7,7 +7,7 @@
  * - Errors always go to stderr
  */
 
-import { isCredentialError } from '../auth/token.js';
+import { authLayerExitCode } from '../auth/token.js';
 import {
   type McpConnection,
   getConnection,
@@ -402,9 +402,10 @@ async function runCall(options: CallOptions): Promise<void> {
       );
       code = await streamPostgrestRequest(serverConfig, args);
     } catch (error) {
-      if (isCredentialError(error)) {
+      const own = authLayerExitCode(error);
+      if (own !== undefined) {
         console.error((error as Error).message);
-        return exit(ErrorCode.AUTH_ERROR);
+        return exit(own);
       }
       const message = (error as Error).message;
       console.error(formatCliError(serverConnectionError(serverName, message)));
@@ -423,9 +424,10 @@ async function runCall(options: CallOptions): Promise<void> {
   try {
     connection = await getConnection(serverName, serverConfig);
   } catch (error) {
-    if (isCredentialError(error)) {
+    const own = authLayerExitCode(error);
+    if (own !== undefined) {
       console.error((error as Error).message);
-      return exit(ErrorCode.AUTH_ERROR);
+      return exit(own);
     }
     const message = (error as Error).message;
     console.error(formatCliError(serverConnectionError(serverName, message)));

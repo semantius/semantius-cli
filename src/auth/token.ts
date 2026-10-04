@@ -52,17 +52,23 @@ export class NoCredentialsError extends Error {
 /**
  * No credential source at all, and no --auth forcing one: on a session-only
  * host (--host, or the current host — see isSessionOnlyHost) only a stored
- * session can help, so point at login; everywhere else the environment's
- * credential vars are still live, so mention them too.
+ * session can help, and the environment's key and JWT are ignored however
+ * they are set, so say so and name both ways out — sign in, or stop pinning
+ * the host. Everywhere else the environment's credential vars are still live,
+ * so mention them too.
  */
 function noCredentialsHint(host: string): string {
+  const key = prefixedEnvName('API_KEY');
   if (!isSessionOnlyHost()) {
-    return `Authentication required: no credentials for ${host}. Set ${prefixedEnvName('API_KEY')} or run "semantius login".`;
+    return `Authentication required: no credentials for ${host}. Set ${key} or run "semantius login".`;
   }
+  const hostVar = prefixedEnvName('HOST');
+  const ignored = `API keys and JWTs from the environment or a .env (${key}, ${prefixedEnvName('JWT')}) are ignored`;
   if (getHostSource() === 'current') {
-    return `Authentication required: no credentials stored for ${host} (the current host). Run "semantius login" (${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} apply only when they name a host of their own).`;
+    return `Authentication required: no credentials stored for ${host} (the current host). While a host is pinned with "semantius use", ${ignored}. Run "semantius use ${host}" to sign in, or "semantius use --clear" to use the key instead (with the host ${hostVar} or ${prefixedEnvName('ORG')} names).`;
   }
-  return `Authentication required: no credentials stored for ${host}. Run "semantius login --host ${host}" (with --host, ${prefixedEnvName('API_KEY')} and ${prefixedEnvName('JWT')} are not used).`;
+  // "semantius use --clear" would not help here: --host pins the host by itself.
+  return `Authentication required: no credentials stored for ${host}. While a host is pinned with --host, ${ignored}. Run "semantius login --host ${host}" to sign in, or drop --host and set ${hostVar}=${host} next to the key to use it instead.`;
 }
 
 /** What --auth <source> asked for and did not find. */
@@ -74,9 +80,10 @@ function forcedSourceHint(forced: CredentialSource, host: string): string {
 }
 
 /**
- * The stored session could not be turned into a token: the refresh token is
- * expired or was revoked. Exit 5 like any other credential problem; a retry
- * with the same session cannot help, only a new login.
+ * The stored session could not be turned into a token: the token endpoint
+ * refused the refresh token, which is expired or was revoked (see
+ * refreshWasRefused, src/auth/session.ts). Exit 5 like any other credential
+ * problem; a retry with the same session cannot help, only a new login.
  */
 export class SessionExpiredError extends Error {
   constructor(host: string, detail: string) {
@@ -108,6 +115,31 @@ export class ApiKeyRejectedError extends Error {
   }
 }
 
+/**
+ * The token endpoint could not serve a refresh right now: it could not be
+ * reached, or it answered with trouble of its own (a 5xx, 408 or 429, or an
+ * OAuth server_error / temporarily_unavailable) instead of refusing the
+ * refresh token. Nothing says the session is spent, so this is not a
+ * SessionExpiredError: it exits 3 like any other transient failure, and sends
+ * nobody to sign in again. The message keeps clear of the words
+ * isAuthErrorMessage() looks for, which would turn it into exit 5.
+ */
+export class SessionRefreshFailedError extends Error {
+  readonly exitCode = ErrorCode.NETWORK_ERROR;
+  constructor(host: string, detail: string) {
+    super(
+      formatCliError({
+        code: ErrorCode.NETWORK_ERROR,
+        type: 'SESSION_REFRESH_FAILED',
+        message: `the session stored for ${host} could not be refreshed right now (${detail})`,
+        suggestion:
+          'The token endpoint could not be reached or reported trouble of its own; it did not refuse the session. Try again shortly.',
+      }),
+    );
+    this.name = 'SessionRefreshFailedError';
+  }
+}
+
 /** Credential problems: reported as-is (no connection-failed wrapper), exit 5. */
 export function isCredentialError(error: unknown): boolean {
   return (
@@ -115,6 +147,22 @@ export function isCredentialError(error: unknown): boolean {
     error instanceof ApiKeyRejectedError ||
     error instanceof SessionExpiredError
   );
+}
+
+/**
+ * The exit code of an error the auth layer words completely itself, or
+ * undefined for any other error. Such an error is reported as-is, without the
+ * connection-failed wrapper: 5 for a credential problem (isCredentialError),
+ * 3 for a refresh the token endpoint could not serve right now. Decided by
+ * type, not by sniffing the message: the detail of a transient refresh failure
+ * is the server's own text, and may say anything.
+ */
+export function authLayerExitCode(error: unknown): ErrorCode | undefined {
+  if (isCredentialError(error)) return ErrorCode.AUTH_ERROR;
+  if (error instanceof SessionRefreshFailedError) {
+    return ErrorCode.NETWORK_ERROR;
+  }
+  return undefined;
 }
 
 export type CredentialSource = 'jwt' | 'apikey' | 'oauth';
@@ -171,13 +219,16 @@ export async function getAccessToken(
   }
 
   // Imported lazily: API-key and JWT invocations never load the OAuth client.
-  const { getSessionToken } = await import('./session.js');
+  const { getSessionToken, refreshWasRefused } = await import('./session.js');
   let token: string | null;
   try {
     token = await getSessionToken(host, opts);
   } catch (error) {
-    // cli-auth could not refresh: the session is spent, not merely stale.
-    if ((error as Error).name === 'CliAuthError') {
+    // Only a refresh token the endpoint turned down means the session is
+    // spent. A refresh it could not serve right now arrives already as
+    // SessionRefreshFailedError (exit 3, no new login), and passes through
+    // like everything else that was never about the session.
+    if (refreshWasRefused(error)) {
       throw new SessionExpiredError(host.host, (error as Error).message);
     }
     throw error;

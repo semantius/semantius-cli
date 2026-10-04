@@ -53,9 +53,10 @@ import {
   getTokenArg,
   getUserConfigDir,
   prefixedEnvName,
+  setDerivedEnv,
   suppressCredential,
 } from './config.js';
-import { ErrorCode, formatCliError } from './errors.js';
+import { ErrorCode, formatCliError, isTransientStatus } from './errors.js';
 import { getCurrentHost } from './hosts-index.js';
 
 export interface HostFacts {
@@ -162,11 +163,19 @@ const CLOUD_SUFFIX = '.semantius.cloud';
 const CONTROL_PLANE_URL = 'https://api.semantius.cloud';
 export const HOST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Failure to turn the configured host into HostFacts. */
+/**
+ * Failure to turn the configured host into HostFacts, or to discover what a
+ * login or a refresh needs from it. `transient` marks the failures a retry can
+ * get past — the server could not be reached (DNS, refused, reset, TLS, a
+ * timeout) or answered 5xx / 408 / 429 — as opposed to an answer that is
+ * simply wrong: an unknown organization, a malformed document.
+ */
 export class HostResolutionError extends Error {
-  constructor(detail: string) {
+  readonly transient: boolean;
+  constructor(detail: string, opts: { transient?: boolean } = {}) {
     super(`Error [HOST_RESOLUTION_FAILED]: ${detail}`);
     this.name = 'HostResolutionError';
+    this.transient = opts.transient ?? false;
   }
 }
 
@@ -340,9 +349,10 @@ function credentialAt(
  * user's own config; silently preferring the bare org would send the
  * credential to a host it was never issued for.
  */
-function orgAt(layer: EnvLayer): string | undefined {
+function orgAt(layer: EnvLayer): { org: string; varName: string } | undefined {
   const credential = credentialAt(layer);
-  const bareOrg = valueAt(prefixedEnvName('ORG'), layer);
+  const orgVar = prefixedEnvName('ORG');
+  const bareOrg = valueAt(orgVar, layer);
   if (
     credential &&
     bareOrg &&
@@ -351,12 +361,13 @@ function orgAt(layer: EnvLayer): string | undefined {
     throw hostConflictError(
       describeEnvVar(credential.varName),
       orgToHost(credential.org),
-      prefixedEnvName('ORG'),
-      describeEnvVar(prefixedEnvName('ORG')),
+      orgVar,
+      describeEnvVar(orgVar),
       orgToHost(bareOrg),
     );
   }
-  return credential?.org ?? bareOrg;
+  if (credential) return { org: credential.org, varName: credential.varName };
+  return bareOrg ? { org: bareOrg, varName: orgVar } : undefined;
 }
 
 /** An org, normalized into its cloud host the same way every other host value is (in particular, lowercased). */
@@ -450,10 +461,14 @@ function hostSourceForLayer(layer: EnvLayer): HostSource {
  * not consulted at all, and is actively suppressed from later credential
  * lookups too (suppressUnreachedCredentials), since those read one flat env
  * value with no notion of "rung".
+ *
+ * `decidedBy` names the env var whose value decided the host (rungs 4-6
+ * only), so propagateOrg can file the org it derives in that same rung.
  */
 export function resolveHostValue(): {
   host: string;
   source: HostSource;
+  decidedBy?: string;
 } | null {
   const flag = getHostFlag();
   if (flag) return { host: normalizeHost(flag), source: 'flag' };
@@ -472,18 +487,27 @@ export function resolveHostValue(): {
   for (let i = 0; i < ENV_LAYERS.length; i++) {
     const layer = ENV_LAYERS[i];
 
-    const hostVal = valueAt(prefixedEnvName('HOST'), layer);
+    const hostVar = prefixedEnvName('HOST');
+    const hostVal = valueAt(hostVar, layer);
     if (hostVal) {
       const resolved = normalizeHost(hostVal);
       checkSameLayerConflict(layer, resolved);
       suppressUnreachedCredentials(i);
-      return { host: resolved, source: hostSourceForLayer(layer) };
+      return {
+        host: resolved,
+        source: hostSourceForLayer(layer),
+        decidedBy: hostVar,
+      };
     }
 
     const org = orgAt(layer);
     if (org) {
       suppressUnreachedCredentials(i);
-      return { host: orgToHost(org), source: 'org' };
+      return {
+        host: orgToHost(org.org),
+        source: 'org',
+        decidedBy: org.varName,
+      };
     }
   }
 
@@ -524,11 +548,21 @@ export function getHostMode(): HostFacts['mode'] | null {
  * On a cloud host, make ${PREFIX}_ORG the host's org (the host wins over an
  * ORG from .env). getDefaultConfig() still interpolates ${PREFIX}_ORG into
  * the cube URL and the remote crud MCP URL.
+ *
+ * The org is filed in the same place as the variable that decided the host.
+ * Every later resolveHostValue() reads it, and as an unattributed — i.e.
+ * shell — value it would win the shell rung there, report source 'org', and
+ * suppress an org-bound credential from the .env that actually chose the
+ * host as "never reached".
  */
 export function propagateOrg(): void {
-  const host = getHost();
-  if (host && isCloudHost(host)) {
-    process.env[prefixedEnvName('ORG')] = orgFromHost(host);
+  const resolved = resolveHostValue();
+  if (resolved && isCloudHost(resolved.host)) {
+    setDerivedEnv(
+      prefixedEnvName('ORG'),
+      orgFromHost(resolved.host),
+      resolved.decidedBy,
+    );
   }
 }
 
@@ -642,6 +676,7 @@ async function fetchControlPlaneRecord(
   } catch (error) {
     throw new HostResolutionError(
       `could not reach the Semantius control plane (${url}): ${(error as Error).message}`,
+      { transient: true },
     );
   }
 
@@ -654,6 +689,7 @@ async function fetchControlPlaneRecord(
     const body = (await response.text().catch(() => '')).slice(0, 200);
     throw new HostResolutionError(
       `the Semantius control plane returned ${response.status} for ${url}${body ? `: ${body}` : ''}`,
+      { transient: isTransientStatus(response.status) },
     );
   }
 

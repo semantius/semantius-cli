@@ -3,7 +3,7 @@
  * either a connectivity check or basic identity info.
  */
 
-import { getUsedCredentialSource, isCredentialError } from '../auth/token.js';
+import { authLayerExitCode, getUsedCredentialSource } from '../auth/token.js';
 import { type McpConnection, getConnection, safeClose } from '../client.js';
 import {
   type McpServersConfig,
@@ -16,11 +16,17 @@ import {
   ErrorCode,
   formatCliError,
   isAuthErrorMessage,
+  isNetworkErrorMessage,
+  isTransientStatus,
   serverConnectionError,
   toolExecutionError,
 } from '../errors.js';
 import { getHost, getHostSource } from '../host.js';
 import { getCurrentHost } from '../hosts-index.js';
+import {
+  type HttpFailure,
+  recordFetchFailures,
+} from '../local-tools/crud/http-errors.js';
 import { getRecordedJwt } from '../logger.js';
 import { McpToolError } from '../output.js';
 
@@ -67,6 +73,46 @@ interface CurrentUser {
 }
 
 /**
+ * The exit code of a failed getCurrentUser call. A credential problem is 5; a
+ * request that never got a real answer — the network failed, or the server
+ * answered 5xx, 408 or 429 — is 3, the same as when that happens while
+ * connecting; anything else is the tool's own failure, 4.
+ *
+ * `failures` are the HTTP requests of the call that failed (see
+ * recordFetchFailures). The last one decides by its status, as `--stream`
+ * does, whatever the error text says: a PostgREST 503 explains itself in a
+ * JSON body that names no status. The text is what is left to go by when the
+ * requests ran elsewhere (a daemon) or failed without a recorded request.
+ */
+function callFailureExitCode(
+  text: string,
+  failures: HttpFailure[],
+  error?: unknown,
+): ErrorCode {
+  const own = authLayerExitCode(error);
+  if (own !== undefined) return own;
+  if (isAuthErrorMessage(text)) return ErrorCode.AUTH_ERROR;
+  const last = failures.at(-1);
+  if (last && (last.error !== undefined || isTransientStatus(last.status))) {
+    return ErrorCode.NETWORK_ERROR;
+  }
+  if (isNetworkFailure(text, error)) return ErrorCode.NETWORK_ERROR;
+  return ErrorCode.SERVER_ERROR;
+}
+
+/**
+ * The text check (isNetworkErrorMessage), plus what a thrown transport error
+ * carries in `code`: a system error code such as ECONNRESET, or the HTTP
+ * status the MCP SDK's StreamableHTTPError puts there on the --crud-mcp route.
+ */
+function isNetworkFailure(text: string, error?: unknown): boolean {
+  if (isNetworkErrorMessage(text)) return true;
+  const code = (error as { code?: unknown } | undefined)?.code;
+  if (typeof code === 'number') return isTransientStatus(code);
+  return typeof code === 'string' && isNetworkErrorMessage(code);
+}
+
+/**
  * Connect to crud, call getCurrentUser, and return the parsed user object.
  * Throws Error with a pre-formatted CLI message on failure.
  */
@@ -92,9 +138,10 @@ async function fetchCurrentUser(
   try {
     connection = await getConnection(SERVER, serverConfig);
   } catch (error) {
-    if (isCredentialError(error)) {
+    const own = authLayerExitCode(error);
+    if (own !== undefined) {
       const err = new Error((error as Error).message);
-      (err as Error & { exitCode?: number }).exitCode = ErrorCode.AUTH_ERROR;
+      (err as Error & { exitCode?: number }).exitCode = own;
       throw err;
     }
     const message = (error as Error).message;
@@ -110,18 +157,21 @@ async function fetchCurrentUser(
   }
 
   let result: unknown;
+  const failures: HttpFailure[] = [];
   try {
-    result = await connection.callTool(TOOL, {});
+    result = await recordFetchFailures(failures, () =>
+      connection.callTool(TOOL, {}),
+    );
   } catch (error) {
     const errMsg = (error as Error).message;
     const wrapped = new Error(
       formatCliError(toolExecutionError(TOOL, SERVER, errMsg)),
     );
-    (wrapped as Error & { exitCode?: number }).exitCode = isAuthErrorMessage(
+    (wrapped as Error & { exitCode?: number }).exitCode = callFailureExitCode(
       errMsg,
-    )
-      ? ErrorCode.AUTH_ERROR
-      : ErrorCode.SERVER_ERROR;
+      failures,
+      error,
+    );
     await safeClose(connection.close);
     throw wrapped;
   }
@@ -145,11 +195,10 @@ async function fetchCurrentUser(
     const wrapped = new Error(
       formatCliError(toolExecutionError(TOOL, SERVER, text || 'unknown error')),
     );
-    (wrapped as Error & { exitCode?: number }).exitCode = isAuthErrorMessage(
+    (wrapped as Error & { exitCode?: number }).exitCode = callFailureExitCode(
       text,
-    )
-      ? ErrorCode.AUTH_ERROR
-      : ErrorCode.SERVER_ERROR;
+      failures,
+    );
     throw wrapped;
   }
 

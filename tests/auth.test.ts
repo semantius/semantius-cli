@@ -37,6 +37,7 @@ import {
   hasStoredSessionFor,
   login,
   logout,
+  noInteractiveLogin,
 } from '../src/auth/session';
 import {
   type SecretsApi,
@@ -45,6 +46,9 @@ import {
 } from '../src/auth/storage';
 import {
   NoCredentialsError,
+  SessionExpiredError,
+  SessionRefreshFailedError,
+  authLayerExitCode,
   getAccessToken,
   getUsedCredentialSource,
 } from '../src/auth/token';
@@ -57,6 +61,7 @@ import {
   setEnvPrefix,
   setHostFlag,
 } from '../src/config';
+import { ErrorCode, isAuthErrorMessage } from '../src/errors';
 import {
   type HostFacts,
   SELF_HOSTED_CLIENT_ID,
@@ -65,6 +70,8 @@ import {
   readCachedPlatformConfig,
   resolveHost,
   setHostCacheDirForTests,
+  writeCachedOAuthMetadata,
+  writeCachedPlatformConfig,
 } from '../src/host';
 import {
   getCurrentHost,
@@ -120,6 +127,10 @@ interface ProviderConfig {
    * 'cross-origin' advertises one on another origin, which discovery refuses.
    */
   deviceGrant: boolean | 'cross-origin';
+  /** Answer every refresh_token grant with invalid_grant: a spent session. */
+  refuseRefresh: boolean;
+  /** When set, answers every refresh_token grant instead (refuseRefresh aside). */
+  refreshReply: (() => Response) | null;
 }
 
 /** A tenant-shaped OAuth provider: discovery, authorize, token, revoke. */
@@ -131,6 +142,8 @@ function startProvider(): ProviderState {
     platformDoc: null,
     entraCrossOrigin: false,
     deviceGrant: false,
+    refuseRefresh: false,
+    refreshReply: null,
   };
   const paths: string[] = [];
   const tokenGrants: string[] = [];
@@ -272,6 +285,12 @@ function startProvider(): ProviderState {
         const form = new URLSearchParams(await req.text());
         tokenGrants.push(form.get('grant_type') ?? '');
         resources.push(form.get('resource') ?? '');
+        if (cfg.refreshReply && form.get('grant_type') === 'refresh_token') {
+          return cfg.refreshReply();
+        }
+        if (cfg.refuseRefresh && form.get('grant_type') === 'refresh_token') {
+          return Response.json({ error: 'invalid_grant' }, { status: 400 });
+        }
         issued += 1;
         return Response.json({
           access_token: `access-${issued}`,
@@ -310,6 +329,8 @@ function startProvider(): ProviderState {
       cfg.platformDoc = null;
       cfg.entraCrossOrigin = false;
       cfg.deviceGrant = false;
+      cfg.refuseRefresh = false;
+      cfg.refreshReply = null;
       deviceRequests.length = 0;
       issued = 0;
       paths.length = 0;
@@ -363,6 +384,19 @@ async function copySessionTo(from: string, to: string): Promise<void> {
   const session = await storedSession(from);
   if (!session) throw new Error(`no session stored for ${from}`);
   await storeSession(to, session);
+}
+
+/**
+ * Leave the stored access tokens a minute of life: inside the 5-minute
+ * refresh margin, so the next read spends the refresh token. Not expired:
+ * the storage drops those on save.
+ */
+async function makeDueForRefresh(host: string): Promise<void> {
+  const session = (await storedSession(host)) as TokenSet;
+  for (const token of Object.values(session.tokens)) {
+    token.expires_at = Date.now() + 60_000;
+  }
+  await storeSession(host, session);
 }
 
 // ============================================================================
@@ -888,17 +922,58 @@ describe('oauth login', () => {
       expect(login(host)).rejects.toThrow(/different origin/);
     });
 
-    test('auto refuses in CI even when the grant is on offer', async () => {
+    test('auto refuses in CI even when the grant is on offer, and names the way past it', async () => {
       provider.cfg.deviceGrant = true;
       process.env.SEMANTIUS_LOGIN_FLOW = 'auto';
       const savedCi = process.env.CI;
       process.env.CI = 'true';
       try {
-        expect(login(host)).rejects.toThrow(/CI environment/);
+        const error = await login(host).catch((e: Error) => e);
+        expect((error as Error).message).toMatch(/CI environment/);
+        expect((error as Error).message).toContain(
+          'Or force the device code grant with "--login-flow device"',
+        );
       } finally {
         if (savedCi === undefined) delete process.env.CI;
         else process.env.CI = savedCi;
       }
+    });
+
+    test('in CI without the grant on offer, the refusal does not name it', async () => {
+      provider.cfg.deviceGrant = false;
+      process.env.SEMANTIUS_LOGIN_FLOW = 'auto';
+      const savedCi = process.env.CI;
+      process.env.CI = 'true';
+      try {
+        const error = await login(host).catch((e: Error) => e);
+        expect((error as Error).message).toMatch(/CI environment/);
+        expect((error as Error).message).not.toContain('--login-flow device');
+      } finally {
+        if (savedCi === undefined) delete process.env.CI;
+        else process.env.CI = savedCi;
+      }
+    });
+
+    // The refusal is built directly: automatic mode only reaches 'cannot-show'
+    // on Linux with no display, and hasLocalBrowser() is true on Windows and
+    // macOS. What matters is what the message offers the reader.
+    test('refused for want of a terminal: names --login-flow device as the way in', () => {
+      expect(noInteractiveLogin(host.host, 'cannot-show').message).toContain(
+        '--login-flow device',
+      );
+      // Not where the device grant is the very thing missing.
+      expect(noInteractiveLogin(host.host, 'no-endpoint').message).not.toContain(
+        '--login-flow device',
+      );
+      // In CI it depends on whether the host offers the grant at all.
+      expect(noInteractiveLogin(host.host, 'ci').message).not.toContain(
+        '--login-flow device',
+      );
+      expect(
+        noInteractiveLogin(host.host, 'ci', { deviceOffered: true }).message,
+      ).toContain(
+        'Or force the device code grant with "--login-flow device": it prints a URL and a code (on stderr) to enter on any other device, and waits up to 10 minutes.',
+      );
     });
   });
 
@@ -923,6 +998,115 @@ describe('oauth login', () => {
       // the token request only (not on the authorize URL), which is what binds
       // the audience — verified against a real tenant.
       expect(provider.resources).toEqual(['', 'tenant://t-1']);
+    });
+
+    // Regression: cli-auth used to run this refresh under its own lock, in a
+    // try/finally that returned the refresh promise unawaited, so a refused
+    // refresh rejected with nothing attached — Bun printed the raw CliAuthError
+    // and exited 1 even though the error also reached getAccessToken. bun test
+    // fails a test on such a rejection, so this one passing is the check.
+    //
+    // The token is made due for renewal rather than forced: forceRefresh
+    // expires it, the storage then drops it on save, and cli-auth takes its
+    // refresh-only path, which never had the problem.
+    test('a refused refresh is SessionExpiredError, with no stray rejection', async () => {
+      await login(host, { openUrl });
+      const storage = createSecretStorage(`SEMANTIUS:${host.host}`);
+      const session = (await storage.load()) as TokenSet;
+      for (const token of Object.values(session.tokens)) {
+        token.expires_at = Date.now() + 60_000; // inside the 5-minute margin
+      }
+      await storage.save(session);
+      provider.cfg.refuseRefresh = true;
+
+      await expect(getAccessToken(host)).rejects.toThrow(SessionExpiredError);
+      expect(provider.tokenGrants.at(-1)).toBe('refresh_token');
+    });
+
+    test('a refused refresh exits 5 and asks for a new login', async () => {
+      await login(host, { openUrl });
+      await makeDueForRefresh(host.host);
+      provider.cfg.refreshReply = () =>
+        Response.json({ error: 'invalid_grant' }, { status: 400 });
+
+      const error = await getAccessToken(host).catch((e: Error) => e);
+
+      expect(error).toBeInstanceOf(SessionExpiredError);
+      expect(authLayerExitCode(error)).toBe(ErrorCode.AUTH_ERROR);
+      expect((error as Error).message).toBe(
+        `Authentication required: the session stored for ${host.host} could not be refreshed (Token request failed: invalid_grant). Run "semantius login" again.`,
+      );
+    });
+
+    // A refresh the endpoint could not serve says nothing against the session:
+    // exit 3, the session kept, and no word about signing in again.
+    describe('a refresh the token endpoint cannot serve right now', () => {
+      const transient = (detail: string) =>
+        `Error [SESSION_REFRESH_FAILED]: the session stored for ${host.host} could not be refreshed right now (${detail})\n  Suggestion: The token endpoint could not be reached or reported trouble of its own; it did not refuse the session. Try again shortly.`;
+
+      async function expectTransient(detail: string): Promise<void> {
+        await login(host, { openUrl });
+        await makeDueForRefresh(host.host);
+
+        const error = await getAccessToken(host).catch((e: Error) => e);
+
+        expect(error).toBeInstanceOf(SessionRefreshFailedError);
+        expect(authLayerExitCode(error)).toBe(ErrorCode.NETWORK_ERROR);
+        expect((error as Error).message).toBe(transient(detail));
+        expect((error as Error).message).not.toContain('semantius login');
+        expect(isAuthErrorMessage((error as Error).message)).toBe(false);
+        expect(provider.tokenGrants.at(-1)).toBe('refresh_token');
+        expect(await hasStoredSession(host)).toBe(true);
+      }
+
+      test('a 503 whose body says invalid_grant: the status decides', async () => {
+        provider.cfg.refreshReply = () =>
+          Response.json({ error: 'invalid_grant' }, { status: 503 });
+        await expectTransient('Token request failed: invalid_grant');
+      });
+
+      test('a 429 with an OAuth error body', async () => {
+        provider.cfg.refreshReply = () =>
+          Response.json({ error: 'slow_down' }, { status: 429 });
+        await expectTransient('Token request failed: slow_down');
+      });
+
+      test('server_error, whatever the status', async () => {
+        provider.cfg.refreshReply = () =>
+          Response.json({ error: 'server_error' }, { status: 400 });
+        await expectTransient('Token request failed: server_error');
+      });
+
+      test('a bare 502 with no OAuth body', async () => {
+        provider.cfg.refreshReply = () =>
+          new Response('<html>Bad Gateway</html>', { status: 502 });
+        await expectTransient('Token request failed with status 502');
+      });
+
+      test('a token endpoint that cannot be reached', async () => {
+        await login(host, { openUrl });
+        await makeDueForRefresh(host.host);
+        // A host name of its own, whose cached endpoints send the refresh to a
+        // loopback port nothing listens on. The platform slot first: writing it
+        // after would drop the endpoints as found by another chain.
+        const probe: HostFacts = { ...host, host: 'unreachable-token.example' };
+        await copySessionTo(host.host, probe.host);
+        writeCachedPlatformConfig(probe.host, { absent: true });
+        const metadata = await getOAuthMetadata(host);
+        writeCachedOAuthMetadata(probe.host, {
+          ...metadata,
+          tokenEndpoint: 'http://127.0.0.1:1/token',
+        });
+
+        const error = await getAccessToken(probe).catch((e: Error) => e);
+
+        expect(error).toBeInstanceOf(SessionRefreshFailedError);
+        expect(authLayerExitCode(error)).toBe(ErrorCode.NETWORK_ERROR);
+        expect((error as Error).message).toContain(
+          `Error [SESSION_REFRESH_FAILED]: the session stored for ${probe.host} could not be refreshed right now (could not reach http://127.0.0.1:1/token: `,
+        );
+        expect(await hasStoredSession(probe)).toBe(true);
+      });
     });
 
     test('forceRefresh spends the refresh token', async () => {

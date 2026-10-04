@@ -44,6 +44,41 @@ export function isAuthErrorMessage(message: string | undefined): boolean {
 }
 
 /**
+ * HTTP statuses that are the server's trouble rather than the request's: any
+ * 5xx, 408 (request timeout) and 429 (rate limited). Asking again later can
+ * succeed, so a failure carrying one is NETWORK_ERROR, never the permanent
+ * AUTH_ERROR or a tool failure.
+ */
+export function isTransientStatus(status: number | undefined): boolean {
+  if (status === undefined) return false;
+  return (status >= 500 && status < 600) || status === 408 || status === 429;
+}
+
+const NETWORK_ERROR_PATTERNS = [
+  // describeFailure (src/local-tools/crud/http-errors.ts): a status with no
+  // PostgREST error body, and a request fetch itself could not make
+  /\(HTTP (5\d\d|408|429)\)/,
+  /\b(GET|POST|PUT|PATCH|DELETE|HEAD) \S+ failed: /,
+  // PostgREST's connection errors, which it answers with 503 / 504
+  /\(PGRST00[0-3]\)/,
+  /\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|EPIPE)\b/,
+  // fetch's own wording: Node, then Bun
+  /\bfetch failed\b|\bsocket hang up\b/i,
+  /\bunable to connect\b|\boperation timed out\b|\bconnection was closed unexpectedly\b/i,
+];
+
+/**
+ * Detect a request that never got a real answer — the connection failed, or
+ * the server answered 5xx / 408 / 429 — in an error message, so it exits as
+ * NETWORK_ERROR rather than as a tool failure. For when the message is all
+ * there is: a recorded HTTP status, where there is one, says it more surely.
+ */
+export function isNetworkErrorMessage(message: string | undefined): boolean {
+  if (!message) return false;
+  return NETWORK_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+/**
  * Structured error for CLI output
  */
 export interface CliError {

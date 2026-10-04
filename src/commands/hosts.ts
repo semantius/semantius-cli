@@ -3,7 +3,7 @@
  * every host this machine has logged in to (or been pointed at) alongside
  * the current one, and switch the current host explicitly. `use` is the one
  * command that changes it — logging in first, via the browser, when the
- * target host has no stored session yet.
+ * target host has no stored session yet, or one that can no longer be renewed.
  */
 
 import { readdir } from 'node:fs/promises';
@@ -11,7 +11,9 @@ import { join } from 'node:path';
 import {
   getSessionExpiryFor,
   hasStoredSessionFor,
+  isTransientFailure,
   login,
+  verifyStoredSession,
 } from '../auth/session.js';
 import {
   debug,
@@ -19,6 +21,7 @@ import {
   getLegacyUserSecretsDirs,
   getUserSecretsDir,
 } from '../config.js';
+import { ErrorCode } from '../errors.js';
 import {
   type HostSource,
   getHost,
@@ -214,17 +217,39 @@ export async function useCommand(opts: UseOptions): Promise<void> {
   }
 
   const host = normalizeHost(opts.host);
-
-  if (await hasStoredSessionFor(host)) {
-    if (!hasHost(host)) recordHost(host, factsFromHostName(host));
-  } else {
+  try {
     const facts = await resolveHostFacts(host);
-    await login(facts);
-    recordHost(
-      host,
-      { mode: facts.mode, org: facts.org },
-      { loggedInAt: new Date().toISOString() },
-    );
+
+    // A stored session has to work, not merely exist: a spent one would let
+    // "use" report success and the next command fail with exit 5. It is
+    // checked the way that command will check it, so a still-fresh access
+    // token costs no network; a failure that says nothing against the session
+    // (network, 5xx) is thrown from here and leaves the current host as it was.
+    const stored = await hasStoredSessionFor(host);
+    if (stored && (await verifyStoredSession(facts)) === 'usable') {
+      if (!hasHost(host)) recordHost(host, factsFromHostName(host));
+    } else {
+      if (stored) {
+        console.error(
+          `The session stored for ${host} can no longer be renewed; signing in again.`,
+        );
+      }
+      await login(facts);
+      recordHost(
+        host,
+        { mode: facts.mode, org: facts.org },
+        { loggedInAt: new Date().toISOString() },
+      );
+    }
+  } catch (error) {
+    // The network's or a server's trouble — not the host name's (1), not the
+    // session's (5): exit 3, so a script knows that trying again can work.
+    // Nothing above has touched the current host yet.
+    if (isTransientFailure(error)) {
+      (error as Error & { exitCode?: number }).exitCode =
+        ErrorCode.NETWORK_ERROR;
+    }
+    throw error;
   }
 
   const previous = setCurrentHost(host);
