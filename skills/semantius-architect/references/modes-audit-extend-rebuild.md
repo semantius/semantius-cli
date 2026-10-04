@@ -143,7 +143,7 @@ Trigger phrases the user is likely to use:
 
 Read the file in full. Extract:
 - The original `initial_request` (immutable, byte-for-byte preserve into the new file)
-- The domain category, vendor `naming_mode`, `tagline`, and the publish-only keys (`description`, `license`) when present — their presence means the prior file was publish-ready, so the Stage 13 publish question defaults to "publishing" with these values as the draft
+- The domain category, vendor `naming_mode`, `tagline`, `description`, and `license` (when present, they are the Stage 13 drafts)
 - The entity list with one-line purposes (from §2)
 - Business rules documented in §3 prose, computed/validation rule blocks, §7.1 decisions, and §7.2 future considerations
 - Curated metadata: `departments`, `industries`, `related_modules`

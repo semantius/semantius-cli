@@ -50,4 +50,6 @@ Present a short proposal to the user:
 >
 > Add or drop any?
 
+> **Yolo mode, after the go-ahead:** don't show the proposal and don't ask; accept it as drafted and log one line ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 4). A `to_state` missing from the source lifecycle is not asked about: take the most conservative assumption, drop that handoff, and log it (rule 7).
+
 After the user confirms, the §6.1–6.4 sub-sections are written in Stage 13. Any sub-section with no rows keeps its heading and carries the canonical `_(none: <short reason>)_` placeholder — never omit a sub-section, never leave a bare empty heading.

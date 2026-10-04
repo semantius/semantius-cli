@@ -300,7 +300,7 @@ When the records come from data (a file, a previous read, a loop), assemble the 
 // bun run add-fields.ts
 const rows = ["price", "cost", "margin"].map((name, i) => ({
   table_name: "products", field_name: name, title: name[0].toUpperCase() + name.slice(1),
-  format: "number", precision: 2, width: "default", input_type: "default", field_order: 30 + i * 10,
+  format: "number", precision: 2, width: "default", input_type: "default",   // no field_order: array order is display order
 }));
 const proc = Bun.spawn(["semantius", "call", "crud", "create_field"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
 proc.stdin.write(JSON.stringify({ data: rows }));   // ONE create_field call for all rows

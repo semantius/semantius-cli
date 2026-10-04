@@ -21,7 +21,7 @@ fi
 
 With the question ledger (SKILL.md → Task tracking), this lookup runs twice: when the stage's widgets are enumerated (a hit means no `Q:` task is created) and again for each still-pending `Q:` task right before it is batched (a hit completes the task with `Answer: policy` and the one-line narration below). The write-back below happens after the answer arrives and before the task is completed.
 
-On cache miss (or when the user picks an explicit cancel option), fire the widget. **If the user picked an answer (not cancel), write atomically back to the file BEFORE proceeding with the spec change.** Use the write form matching the row in `../../semantius-admin/references/customizations-protocol.md` 7.4 (scalar via `lineComment`, list via `[-1] lineComment`, nested object via `headComment`):
+On cache miss (or when the user picks an explicit cancel option), fire the widget, unless advanced mode is off and the sub-stage is one of the five skipped questions (its "Interaction level" block names the default): then apply that default, create no `Q:` task, and **write nothing** (a default is not the user's decision; interaction-level.md, section 3). In a yolo run after the go-ahead, every sub-stage is handled the same way: apply the pick its "Yolo mode, after the go-ahead" line names, log it ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 5), create no `Q:` task, and **write nothing**. **If the user picked an answer (not cancel), write atomically back to the file BEFORE proceeding with the spec change.** Use the write form matching the row in `../../semantius-admin/references/customizations-protocol.md` 7.4 (scalar via `lineComment`, list via `[-1] lineComment`, nested object via `headComment`):
 
 ```bash
 DATE=$(date +%Y-%m-%d)
@@ -31,7 +31,7 @@ PROV="decided ${DATE} during ${THIS_BLUEPRINT} deploy"
 yq -i "${DECISION_PATH} = \"${CHOICE_VALUE}\" | ${DECISION_PATH} lineComment = \"${PROV}\"" "$CUSTOMIZATIONS_FILE"
 ```
 
-When `$CUSTOMIZATIONS_FILE` is unset (a context that bypassed Preflight, which should not happen in normal use), fall back to firing every widget every time and skip the writes.
+When `$CUSTOMIZATIONS_FILE` is unset (a context that bypassed Preflight, which should not happen in normal use), fall back to advanced mode off (the skipped questions take their defaults, every other widget fires) and skip the writes.
 
 **Tool-call description discipline.** The Bash tool requires a `description` field that the harness renders as a header above the tool-call entry in chat ("Ran <description>"). Do NOT leak internal vocabulary there. The user sees this string even when the rest of the consultation is silent.
 

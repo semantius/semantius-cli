@@ -144,6 +144,8 @@ A `Q:` ledger task (SKILL.md → Task tracking; subject `Q: Basic or advanced ac
 - label `Basic access (read and edit)` — *"Anyone allowed in can read and edit records. No roles to manage, no approval steps, no per-stage gating. The records and their stages still exist; moving a record through its stages just isn't restricted. You can add advanced access control later."*
 - label `Advanced access control` — *"An admin tier, role-based permissions, approval gates on sensitive actions, and per-stage gating of record lifecycles. More to set up, fine-grained control over who can do what."*
 
+> **Yolo mode, after the go-ahead:** no `Q:` task and no question: take the Recommended option (the detection default above) and persist it to `modules.access_scope` as usual; log it with `log_pick modeler` ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 5); don't ask.
+
 ### Realizing `basic`
 
 If the resolved scope is `basic` **and the spec is already in the two-permission fallback shape** (frontmatter said `basic`, the analyst authored it that way), there is nothing to strip — deploy as written. The check: §8.1 carries only `<slug>:read` + `<slug>:manage`, no `workflow-gate` / `override` / `narrow` rows, §9.1 has only viewer + manager + the `manage → read` edge (plus any cross-module family edit grant: `<slug>:manage` including the edit permission of a based entity's base in another module, which is kept, not projected away), no §9 RACI/persona surface. When that holds, `basic` is a no-op beyond persisting the setting.

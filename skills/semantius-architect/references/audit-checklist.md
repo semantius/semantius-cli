@@ -12,7 +12,7 @@
 **Front-matter (YAML block)**
 - Required keys present: `artifact`, `version`, `blueprint_version`, `system_name`, `system_slug`, `tagline`, `naming_mode` (greenfield only), `module_kind`, `created_at`, `initial_request`
 - Conditional key: `persona` is present iff §9.1 carries a RACI realization (auto-populated from its actors, Stage 11 Step 7); when there is no RACI matrix the key is omitted and its absence is not a finding (🟡 only if present with no RACI rows, or absent with RACI rows)
-- Publish-only keys: `description` and `license` travel together — both present on a publish-ready blueprint, both absent on an internal-only one. Absence is not a finding; an empty stub (`description: ""`) or a lone one of the pair is 🟡
+- `description` and `license` present and non-empty. Missing or empty (older files may lack them) is 🟡; propose a `description` drafted from the §2 entity list and `license: MIT`
 - Optional keys: `icon_name`, `domain`, `departments`, `industries`, `related_modules` (advisory; omit when not applicable; do not flag absence)
 - `artifact` is `semantic-blueprint`
 - 🔴 `version` is present, a quoted string in the form `"MAJOR.MINOR"` (e.g. `"1.0"`, `"2.4"`). **Major comparison gates the audit:** same major as `CURRENT_VERSION` → audit normally; older major (or missing, treated as `0`) → refuse to audit and route to archived-knowledge mode (re-author at current major, or reference only — see "How files are routed by version" in the resident SKILL.md); newer major → error and stop.

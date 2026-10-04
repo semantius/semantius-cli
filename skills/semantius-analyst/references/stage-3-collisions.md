@@ -2,11 +2,15 @@
 
 *Reference for `semantius-analyst`. Each widget's "Policy path:" line depends on the protocol in [`customizations-consultation.md`](customizations-consultation.md); read it alongside.*
 
-> **Ledger stage.** Every widget in 3a-3e is a `Q:` task (SKILL.md → Task tracking; sequence in `../../semantius-admin/references/task-tracking.md`): after the policy consultation, enumerate every widget that must fire into `Q:` tasks (subject = `Q: ` + the widget's exact question text; description carries the widget's Policy path as `Recorded in:`), ask them in batches of up to four question objects per `AskUserQuestion` call, write each answer to `customizations.yaml` first, then complete its task. 3b.0 adoption widgets and any widget whose text says "fire a single AskUserQuestion" are still one question object each; they may share a call. The stage is complete only when `TaskList` shows no `Q:` task pending or in progress; that check is what makes the MUST-FIRE rule verifiable.
+> **Ledger stage.** Every widget in 3a-3e is a `Q:` task (except the first 3d question with advanced mode off, which its own "Interaction level" block resolves without a task) (SKILL.md → Task tracking; sequence in `../../semantius-admin/references/task-tracking.md`): after the policy consultation, enumerate every widget that must fire into `Q:` tasks (subject = `Q: ` + the widget's exact question text; description carries the widget's Policy path as `Recorded in:`), ask them in batches of up to four question objects per `AskUserQuestion` call, write each answer to `customizations.yaml` first, then complete its task. 3b.0 adoption widgets and any widget whose text says "fire a single AskUserQuestion" are still one question object each; they may share a call. The stage is complete only when `TaskList` shows no `Q:` task pending or in progress; that check is what makes the MUST-FIRE rule verifiable.
+>
+> **Yolo mode, after the go-ahead:** no `Q:` task and no widget in 3a-3e: each widget below resolves at the enumerate step, like a policy hit, by the pick its own yolo line names, and nothing is written to `customizations.yaml`. The stage is complete when every pick is logged. Log each pick; don't ask ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md)).
 
 ### 3a. Optional concepts
 
 **Policy path:** `.optionals_decided.<slug>` (per-slug verdict, `included` or `excluded`). Both directions are recorded; 2c.5 has already filtered the entity list to un-decided slugs only. This widget fires only when at least one un-decided optional remains.
+
+> **Yolo mode, after the go-ahead:** on a new build this widget does not fire (every entity the design drafted is required); if it does, select none, so the optional parts are left out; log it; don't ask.
 
 Blueprint §3 entries with `necessity = optional` are offered to the user as multiSelect `AskUserQuestion` choices, **one option per optional entity** (the single exception is K = 1 in the table below, which adds a `"None, skip it"` option):
 
@@ -72,6 +76,8 @@ For every 🛑 cross-module exact-name collision, the widget shape depends on th
   2. label: `"Cancel"`
      description: `"Stop without changes. <Plural Label> stays in `<X Display Name>`. If you actually want `<X Display Name>` to own <Plural Label>, edit this blueprint's §3 to set its role to `embedded_master` (or `consumer` if read-only) and re-run."`
 
+> **Yolo mode, after the go-ahead:** take "Yes, adopt" (the Recommended option: the table name is exactly the same); log it; don't ask.
+
 **On Yes:** stamp the incoming entity with `**Reconciliation:** promote-to-master <incoming.system_slug>.<entity>`. Add a `promotion_decisions` frontmatter entry for this entity (host_module = incoming `system_slug`, host_module_name = incoming `system_name`, manage_option = 1). The modeler executes the move via `update_entity` and applies the full blueprint design.
 
 **On Cancel:** halt the run cleanly. No spec written, no catalog changes.
@@ -96,6 +102,8 @@ For every 🛑 cross-module exact-name collision, the widget shape depends on th
      description: `"Sets up `<B.mastered_in>` now as an empty placeholder module owned by `<B.label>`, moves the existing <Plural Label> from `<Existing Module Display Name>` into it via \`update_entity\` (no data movement, just reassigning \`module_id\`), and wires both `<Existing Module Display Name>` and this module to read from there. When `<B.label>` is later deployed as its own blueprint, the analyst's spec scan will auto-detect this placeholder and offer to take ownership."`
   2. label: `"Keep our own separate <Plural Label> (rename)"`
      description: `"Create our own <Plural Label> in this module under a different name (e.g. `<this_module_short>_<entity>`). Records won't be combined with `<Existing Module Display Name>`'s. Pick this only if these are actually different concepts despite the matching name."`
+
+> **Yolo mode, after the go-ahead:** take option 1, "Create the shared <B.label> placeholder and put <Plural Label> there" (the Recommended option: the table name is exactly the same); log it; don't ask.
 
 **Internal mapping** (do NOT show to the user):
 - Option 1 → `promote-to-master <B.mastered_in>.<entity>` annotation + `promotion_decisions` frontmatter entry capturing the host module (slug = `<B.mastered_in>`, name = `<B.label>`, manage_option = 1 by default). Modeler creates the master shell module if it doesn't exist, then `update_entity` moves the existing entity into it. This module gets cross-module read inclusion.
@@ -126,6 +134,8 @@ No host-module or manager-scope follow-up — the host is determined by B's blue
   4. label: `"Stop, I want to think about it"`
      description: `"Abort this run. No changes are made."`
 
+> **Yolo mode, after the go-ahead:** take option 1, "Share one copy across both modules" (the Recommended option: the table name is exactly the same), then answer the two follow-ups below by their own yolo lines; log it; don't ask.
+
 **On picking option 1 (share)**, follow up with a host-module question:
 
 **Policy path:** `.collisions.<entity>.host_module`.
@@ -140,6 +150,8 @@ No host-module or manager-scope follow-up — the host is determined by B's blue
   - *Case D* (shared modules exist, no match): the existing shared modules by display name, **at most 3** (when more exist, list the 3 whose names are closest to the cluster hint or the entity, and end the question text with `" More shared modules exist; type the name of another if you want it."`), then `"Create a new shared module called <name>"`. That is 2 to 4 options.
   - **On `"Stop, I want to think about it"`** (Cases A to C): halt the run with no spec written, and do not leave a half-written policy: the `.collisions.<entity>` entry with `outcome: share` that 3b.2 option 1 would write at record time is written only together with its `host_module`, so a Stop here writes nothing for this entity and the next run asks again (the cancel rule in admin `references/customizations-protocol.md`, 7.6).
 
+> **Yolo mode, after the go-ahead:** take the option marked "(Recommended)" for the case (Case D has none: take the first module listed), never "Stop, I want to think about it"; log it; don't ask.
+
 Then a follow-up on who manages records:
 
 **Policy path:** `.shared_master_managers` (global default; one value applies to every shared-master decision in the org).
@@ -152,6 +164,8 @@ Then a follow-up on who manages records:
   2. `"New group plus current managers of both modules"` — description: `"Anyone who already manages either module also keeps edit rights on shared <Plural Label>."`
   3. `"New group plus current managers of <Existing Module Display Name> only"` — description: `"Only the module that already had <Plural Label> retains edit rights alongside the new group."`
   4. `"New group plus current managers of this module only"` — description: `"This module's managers keep edit rights alongside the new group."`
+
+> **Yolo mode, after the go-ahead:** take "A new dedicated manager group" (the Recommended option); log it; don't ask.
 
 **Internal mapping** (do NOT show to the user):
 - Option 1 → `promote-to-master <host>.<entity>` annotation + `promotion_decisions` frontmatter entry capturing host and manager-scope choice.
@@ -191,6 +205,8 @@ For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`, or a **
   4. (only with the 2e.1 flag and an eligible live base) label: `"Keep each one once"`
      description: `"A <This Singular> becomes something a <Existing Singular> can also be. The shared details (name, address, and so on) are entered once, in <Existing Plural Label>."`
 
+> **Yolo mode, after the go-ahead:** take option 3, "Different concept, keep both names", even when option 4 is offered: only an exact table-name match is mapped, and this module keeps the name shown at the go-ahead; log it; don't ask.
+
 **Internal mapping**:
 - Option 1 → `rename-incoming-from <existing_module>.<existing_entity> as <new_name>`.
 - Option 2 → `reuse-from <existing_module>.<existing_entity>`.
@@ -211,7 +227,10 @@ For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`, or a **
 
 **Fires only for `contributor` and `consumer` rows.** `embedded_master` rows with a missing owner are handled by 3b.0 / 3b.1 / Case 2 above — they always emit re-prefixed governance under the installing unit's slug; no widget fires for them.
 
-When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) points at a module that does NOT exist in the live catalog, group these by missing module and fire one `AskUserQuestion` per missing module.
+> **Interaction level** (the `.interaction_level` switch, read at Step 0). This block covers only the first 3d question below; the slug-collision follow-up further down names another module's table and is asked in standard and advanced mode. **Saved answer** (`.on_missing_owner`): use it. **Otherwise, advanced mode off:** apply option 1, "Set up <Plural Label> in this module for now" (`embed_locally`); create no `Q:` task, fire no widget, do not write `.on_missing_owner`, and name the choice in the 3g "Picked for you" line ("<Plural Label> set up in this module until <Missing Module Display Name> is added"). **Advanced mode on:** ask as below.
+> **Yolo mode, after the go-ahead:** a saved answer still wins; otherwise apply the same standard default, "Set up <Plural Label> in this module for now", with no "Picked for you" line; log it; don't ask.
+
+When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) points at a module that does NOT exist in the live catalog, group these by missing module and, with advanced mode on, fire one `AskUserQuestion` per missing module.
 
 **Design intent recap** (drives the option order and "(Recommended)" placement): for `contributor`/`consumer` rows the catalog owner is treated as optional infrastructure. A module is meant to be self-contained when its dependencies aren't deployed yet, and the analyst's own Stage 3b collision flow merges duplicates automatically when those dependencies arrive later. **Embedding locally is the friction-free default.**
 
@@ -230,7 +249,7 @@ When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) poin
 - Option 1 → `create-new` in this module's spec (this module is the entity's current owning module). Add a §7.2 🟡 note: *"<Plural Label> currently lives in this module. When <Missing Module Display Name> is added later, run the analyst on its blueprint and pick 'share via shared module' at the collision prompt to reassign — no data migration needed."*
 - Option 2 → `dropped (out of scope)` annotation.
 
-**Slug collision under option 1.** Entity slugs are globally unique. If the blueprint's bare `table_name` is already used by *another* module (e.g. blueprint wants `employees` but `northwind.employees` exists in the live catalog as a sales sample), option 1 can't create with the bare name. Fire a follow-up `AskUserQuestion`:
+**Slug collision under option 1.** Entity slugs are globally unique. If the blueprint's bare `table_name` is already used by *another* module (e.g. blueprint wants `employees` but `northwind.employees` exists in the live catalog as a sales sample), option 1 can't create with the bare name. Fire a follow-up `AskUserQuestion` (in standard and advanced mode):
 
 **Policy path:** `.slug_collision_naming` (global default; `context-prefix` / `module-prefix` / `reuse-existing`). Free-text "Other" answers are NOT cached (matches the not-written rules in admin `references/customizations-protocol.md`, 7.6).
 
@@ -243,6 +262,8 @@ When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) poin
   3. label: `"Use the existing <Owner Module Display Name> <Target Plural Label> after all"` — fall back to option 2 of Stage 3d, treat the existing entity as the link target.
 
   Exactly these 3 options; do not add an `"Other"` option (the tool adds its own free-text slot). When the user types a name into that slot, the analyst checks it doesn't collide before accepting.
+
+> **Yolo mode, after the go-ahead:** take option 1, "<expected_context>_<target>" (the Recommended option); log it; don't ask.
 
 Record the picked name on the new §3 entity in the spec and stamp `**Reconciliation:** create-new`. The §7.2 note from option 1 above gets the picked name substituted in (*"<Picked Plural Label> currently lives in this module..."*).
 
@@ -269,6 +290,8 @@ For every blueprint §5.3 / §6 row, the analyst resolves the target against the
   - then: `"Create our own here under a different name"`, description = `"Set up <suggested_local_name> as a new table in this module so we don't have to pick from the candidates above. The other tables stay where they are. When a catalog <Expected Context> module arrives later, you can merge."`
   - then: `"Skip this link for now"`, description = `"Don't connect anything. You can add the link later, when the right module is in place."`
 
+> **Yolo mode, after the go-ahead:** take the candidate whose table name is exactly the one the design links to; when none is, take "Create our own here under a different name"; log it; don't ask.
+
 **Wrong-context widget** (1 candidate, suspicious owning module):
 
 - **question**: `"<This Singular Label> should link to <Target Plural Label> when <trigger event in plain English>. Your semantic model has <Target Plural Label> in the <Owner Module Display Name> module (<one-word context, e.g. 'sales sample'>), not a <expected context> module. What should we do?"`
@@ -287,6 +310,8 @@ For every blueprint §5.3 / §6 row, the analyst resolves the target against the
 - **Default → option 1** ("skip"). Wrong-context matches usually shouldn't be silently wired; the user should make a deliberate choice when the catalog module arrives.
 - **Switch to option 3** ("create our own") only when the blueprint's `related_modules` lists the expected context module AND there is no plausible reason to use the suspicious candidate (i.e., they really are unrelated concepts).
 - **Never auto-recommend option 2** ("link to wrong-context") — that always needs a deliberate choice.
+
+> **Yolo mode, after the go-ahead:** take the option the "(Recommended)" placement rules just above pick (option 1 or 3, never option 2); log it; don't ask.
 
 **Internal mapping** (both widgets):
 

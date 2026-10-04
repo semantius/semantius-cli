@@ -8,6 +8,58 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## Unreleased: yolo mode (experimental) and question-flow fixes
+
+2026-09-30. Paired with the admin, architect, and modeler changes of the same name; rules in `../semantius-admin/references/yolo-mode.md`. Yolo mode is the third value of `.interaction_level`: for a new build, the architect asks one go-ahead, and after a yes the rest of the pipeline runs without questions.
+
+1. **Signals.** The analyst is in a yolo run only when the run context carries `Interaction level: yolo`, or the admin pipeline task's marker (`TaskGet`) says `yolo: go-ahead given` (`yolo: standard for this build` means standard). A saved `yolo` on its own, or a direct call, runs as standard. Checked at Step 0 and after a context reset. A new resident "Yolo mode (experimental)" section holds the signals, the turn rule, and the stops; the handoff header example gains the `Interaction level:` line.
+2. **A yolo line at every question point** (`> **Yolo mode, after the go-ahead:** ...`), naming the pick from yolo-mode.md 4.4:
+   - access control, the first 3d question, and N2: the standard default;
+   - 3b.0, 3b.1, 3b.2 and their follow-ups, the 3d name-clash follow-up, 3e wrong-context, 3f, and N7: the Recommended option; the 3f.6 multi-select batch selects none;
+   - 3c: "Different concept, keep both names";
+   - the 3g plan and the Stage 10 scan-table: accepted without being shown;
+   - 3a: does not fire on a new build (if it does, select none);
+   - 2g (an entity moved by hand): leave it where it is now and continue;
+   - 3f.4 cross-primitive format change: no blocker; keep the live format (yolo never removes or destructively changes anything deployed).
+
+   Picks are logged, create no `Q:` task, and are never written to `customizations.yaml`; a stage task completes when its draft is done and its picks are logged.
+3. **Only exact matches are mapped.** Yolo links to, shares, or reuses a live entity only when its table name is exactly the same. So 3c.1 / N8 Case A takes "Keep them separate" and Case B "Keep our own <Plural Label>", overriding the Recommended option; Case C and the several-bases pick list take "Keep them separate"; 3e with several candidates takes the exact table-name candidate, otherwise "Create our own here under a different name".
+4. **MUST-FIRE wording qualified in place.** The "the widget fires", "Fire the widget anyway", "MUST fire", and "always ask" sentences (SKILL.md, `stage-3-shared-base.md`, `stage-3f-drift.md` 3f.6) now say "in standard and advanced mode". The MUST-FIRE table gains a yolo row: the widget does not fire, and a logged pick satisfies the must-fire check. The "exactly three" wording in SKILL.md is gone; that sentence points to interaction-level.md section 3.
+5. **Fix: the one prompt after 3g is named** (`stage-3-confirm.md`). The sentence saying the stages after the 3g confirmation "run without further prompts" now names the exception, the Stage 10 scan-table confirmation (accepted without asking in yolo).
+6. **Fix: N2's Recommended option follows the standard default** (`stage-4-fields.md`). "Yes, a list of them (Recommended)" only when the request or the conversation asked for a list; otherwise "No, keep the fixed fields (Recommended)", listed first.
+7. Standard and advanced behavior is otherwise unchanged.
+
+**Major-vs-minor.** No bump: specs have the same shape; guidance only, `CURRENT_VERSION` unchanged.
+
+Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `stage-3-collisions.md`, `stage-3-confirm.md`, `stage-3-placement.md`, `stage-3-shared-base.md`, `stage-3f-drift.md`, `stage-4-fields.md`, `stage-10-rules.md`.
+
+## Unreleased: advanced mode switch
+
+2026-09-29. Paired with the architect's entry of the same name; rules in `../semantius-admin/references/interaction-level.md`. Advanced mode is a persisted on / off switch, `.interaction_level` in `customizations.yaml`; off by default, "advanced mode" turns it on, "standard mode" turns it off.
+
+1. **While it is off, exactly three questions are skipped**, none written to `customizations.yaml`:
+   - access control: an existing module keeps its own; a new module follows the instance (advanced access control when another module already uses it, else basic);
+   - the first 3d missing-owner question ("Set up in this module"; the name-clash follow-up is still asked);
+   - 4.N N2: the numbered fields stay as drafted ("No, keep the fixed fields"); a list of their own is created only when the request asked for one.
+2. **Unchanged in both modes**: every other question, including 3a, 3b.0-3b.2, 3c, 3c.1, 3e, 3f, 2g, 4.N N7, 4.N N8, the Stage 10 scan-table confirmation, and the 3g plan confirmation. The MUST-FIRE rule carries an on / off table of the widgets it covers.
+3. **Recap**: a "⚙️ Picked for you" line in the 3g plan summary for the access and missing-owner defaults (authoring rule 12).
+4. With advanced mode on, behavior is exactly as before.
+
+**Major-vs-minor.** No bump: specs written in either mode have the same shape and follow the same rules. Guidance only, no contract change, `CURRENT_VERSION` unchanged.
+
+Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `stage-3-collisions.md`, `stage-3-confirm.md`, `stage-4-fields.md`.
+
+## Unreleased: the label column is always text
+
+2026-09-29. A live deploy halted when a spec declared `issue_links.link_type` as both the `**Label column:**` and an `enum`. `create_entity` creates the label column as `text`, and as a core column (`ctype: label`) its format can never change: the deployer's `update_field` to `enum` was refused with `90219` ("Cannot change format of core system field"). The platform's `update_field` schema states it ("a core column … its format and default value cannot change"), and 40 of the 41 label columns on the test instance are `text` (the exception is the built-in `users.email`). Stage 4 said "must be a string field, never a FK", but the reason it gave covered only FKs, the platform reference never said what format the field gets, and no check caught it before deploy.
+
+1. **Stage 4** (`stage-4-fields.md`): the label column row is Format `string`, never `enum`, a FK or any other format; a type or category attribute stays an `enum` and is not the label column.
+2. **Pre-save gate**: new row "Label column is text".
+3. **`consistency-check.ts`** fails a spec whose label column row is not `string` / `text` (entities the spec creates; reused and dropped entities are skipped). It flags `semantius/specs/v0-it-ops-starter-semantic-spec.md` (a `multiline` label column on a junction); the round-trip eval stays green.
+4. **`use-semantius/references/data-modeling.md`** states the platform fact on the `label_column` entity property, on the auto-created field, and as the core-column exception to "format can change within its primitive".
+
+**Major-vs-minor.** MINOR: a spec that passes the new check deploys exactly as before; a spec it fails would have failed at deploy. **Version bump deferred to the maintainer.**
+
 ## 5.8: entity families (`is_a` / `has_a`), enum labels, keep each fact once
 
 2026-09-28. `CURRENT_VERSION` `5.7` → `5.8`, `EXPECTED_BLUEPRINT_VERSION` `"3.0"` → `"3.1"` (major 3 unchanged, so 3.0 blueprints are accepted). Paired with architect 5.4 and optimizer `SPEC_VERSION` 5.8. The platform added `is_a` / `has_a` key types (an entity based on another, sharing its key through `entities.id_refentity`) and `{"value", "label"}` enum entries.

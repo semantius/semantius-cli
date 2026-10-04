@@ -8,6 +8,19 @@ Entries below are newest first.
 
 ---
 
+## Unreleased: yolo mode (experimental)
+
+Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-09-30). No bump: the modeler reads the same spec and its output keeps its shape (the deploy, the verification report, the Closing Contract); only which questions are asked changes, and only in a yolo run. Canonical rules: `../semantius-admin/references/yolo-mode.md` (the modeler rows of its fixed-picks table, 4.4, are what this entry implements).
+
+1. **Interaction-level header.** The modeler never read the interaction level before. The admin now passes `Interaction level: standard|advanced|yolo` in the run context (admin Step 7.3); the SKILL.md preflight bullet lists it with the other header lines. A run is yolo when that line says `yolo` or the admin pipeline task's marker says `yolo: go-ahead given`; a direct call is never yolo. New resident "Yolo mode (experimental)" section in SKILL.md (five lines): when it applies, the turn rule (no `AskUserQuestion`, no message ending in a question, no plan summary until the Closing Contract), why (the go-ahead was the write confirmation for the whole build), what still stops (halts, refusals, catalog drift since the analyst ran, 🔴 blockers never waived, deploy errors), and the sample-data question still asked.
+2. **A yolo line at every gate.** Each question point carries a `> **Yolo mode, after the go-ahead:**` line naming its pick, logged with `log_pick modeler` to `.tmp_admin/<run_id>/auto-picks.md`: diagram vs. relationships (log it and keep going), §7.1 unresolved decisions (a stop), a required field on a table with records (added as optional, required enums with no default included), 2.5 access control (Recommended), 🛑 deltas (removing or retyping live data is skipped: yolo never removes anything; a tier flip and the `select_rule` pause proceed), ambiguous link target (exact-name candidate, else skip), field-name collision (Recommended), link proposals (apply all; "Review each one" never reached), "Proceed with execution?" (not asked, plan not rendered, one "Deploy plan applied as prepared" log line), 4e rule clash (keep the live rule), 4f row visibility rules (as the spec says, but a live rule is never removed), live field UI rules (keep), extra fields on Users (additive, as the spec says), Gate B (proceed), and conflict-resolution rows (keep live rules; every other ask takes its stage's pick). Loud halts are unchanged. In a yolo run no `Q:` tasks are created and a stage task completes when its work is done. "The only confirmation the modeler asks", the standalone-question list, "always pause", and "still pauses" are qualified in place to standard and advanced mode.
+3. **"Decided for you after your go-ahead".** In a yolo run the Stage 5 verification report ends with this section (yolo-mode.md section 6), built from the auto-picks log: "Changes to other modules" first (lines whose `touches:` names another module), then the rest, ending with *Say "change" and what you want different to revisit any of these.* It sits before the Closing Contract's `---`.
+4. **Unchanged:** the Closing Contract (status line, link, sample-data question) and the sample-data consent gate. The sample-data question is asked in every mode, yolo included, and waits; the go-ahead is never consent to sample data. Standard and advanced behavior is unchanged.
+
+Files: SKILL.md, `references/stage-1-parse.md`, `stage-2-reconcile.md`, `stage-3-plan.md`, `stage-4-execute.md`, `stage-5-verify.md`, `stage-6-sample-data.md`, `conflict-resolution.md`.
+
+---
+
 ## Analyst 5.8: entity families and enum labels; `EXPECTED_MAJOR = 5` unchanged
 
 2026-09-28. Paired with analyst 5.8 (minor; a 5.7 spec deploys unchanged). The platform added `is_a` / `has_a` key types (an entity based on another through `entities.id_refentity`, sharing its key) and `{"value", "label"}` enum entries.

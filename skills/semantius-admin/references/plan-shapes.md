@@ -4,7 +4,7 @@ Referenced by `semantius-admin/SKILL.md` Step 3 ("Presenting the plan") and Step
 
 Two core invariants govern every shape here (stated in full in SKILL.md, "Core invariants"; only reminders below):
 
-- **Single write gate:** after building a plan you run it; the admin fires no up-front "Proceed?" widget. The modeler shows its own summary and asks the only yes/no before each live-model write.
+- **Single write gate:** after building a plan you run it; the admin fires no up-front "Proceed?" widget. The modeler shows its own summary and asks the only yes/no before each live-model write (in a yolo run, the go-ahead in the design step is that yes/no; Pattern 4, yolo variant).
 - **The plan is the task list:** one task per pipeline step (`TaskCreate`, subjects from the Step 6.5 table), plus ONE lead-in sentence in chat. Never a numbered list in chat, never a code fence. Task mechanics live in [`task-tracking.md`](./task-tracking.md).
 
 The examples below show the tasks as bullet lists so you can read them; at runtime they are `TaskCreate` calls followed by `TaskUpdate ... addBlockedBy: [<previous task id>]` on every task after the first (the chain is the order), and only the "Chat:" line is emitted as prose.
@@ -71,9 +71,13 @@ Had the user picked "Edit the design first," a leading `Review and edit \`real-e
 
 The architect's interactive creation handles every design decision, so there is no separate customize step and no deploy question. A catalog clone uses the same three-task shape with the first subject reading `Clone the \`<source>\` design as a starting point (interactive).`
 
+**Pattern 4, yolo variant** (a new build while the level for the run is `yolo`; [`yolo-mode.md`](./yolo-mode.md)). The same three tasks, a different lead-in, because the single write gate moves: the user's go-ahead in the design step is the write confirmation for the whole build, and the apply step does not ask again.
+
+- Chat: *"Here is the plan. The design step asks you a few questions and shows you the design once. After your go-ahead, the matching and apply steps run without more questions and update your live model; everything decided for you is listed at the end."*
+
 **Changing scope or cancelling.** If the user wants to adjust the customize / review / deploy choices or stop after seeing the plan, they say so in chat. Re-resolve the flags (Step 6.4), set the obsolete tasks `deleted` and create the new ones, or stop cleanly with one line ("Cancelled. No changes made."). No widget is needed: nothing has run, and the modeler still refuses to write without its own yes/no, so an unintended write cannot slip through.
 
-**Rule of thumb:** confirmation protects the user from unintended writes, and that protection already lives at the modeler (it shows its plan and asks yes/no before every write). A second admin-level gate adds friction without adding protection, so the admin does not fire one.
+**Rule of thumb:** confirmation protects the user from unintended writes, and that protection already lives at the modeler (it shows its plan and asks yes/no before every write). A second admin-level gate adds friction without adding protection, so the admin does not fire one. In a yolo run that protection is the go-ahead: the user sees the design and says yes once, knowing the rest runs without questions.
 
 ---
 

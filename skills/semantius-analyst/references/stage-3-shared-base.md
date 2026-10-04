@@ -19,9 +19,13 @@ Some duplication only shows against the live catalog: the blueprint adds `vendor
 | Every other 2e.1 flag | The standalone 3c.1 widget below (Case A, B or C). |
 | A pair `.shared_bases` already holds (and the recorded base is still eligible) | None: apply the recorded outcome silently. |
 
-**MUST-FIRE:** always ask unless `.shared_bases` holds the pair. An obvious answer is not a reason to skip it.
+**MUST-FIRE:** in standard and advanced mode, always ask unless `.shared_bases` holds the pair. An obvious answer is not a reason to skip it.
+
+> **Yolo mode, after the go-ahead:** no `Q:` task and no widget. Only an exact table-name match is mapped, and these pairs never share a table name (same-name pairs are 3b), so every case below keeps this module's own copy, by the pick its own yolo line names; nothing is written to `.shared_bases`; log it; don't ask ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md)).
 
 **One incoming entity, several eligible live bases.** An entity can have only one base, so never ask pair by pair when two or more flagged live entities pass the eligibility test below. Ask **one** single-select question instead (a pick list per the AskUserQuestion mechanics): the 3 best eligible candidates as options, each `"Keep each one once, in <Other Plural Label> (<Module Display Name>)"`, plus `"Keep them separate"`; say in the question text that another can be typed in. Record the chosen pair as `role_of` (or `kind_of`) and every other flagged pair as `separate`. Candidates that fail the eligibility test get no option; they go into the §7.2 note only.
+
+> **Yolo mode, after the go-ahead:** take "Keep them separate"; log it; don't ask.
 
 ## Base eligibility test (inline; decides Case A vs C)
 
@@ -52,6 +56,8 @@ A live entity can be the base only when **all** hold:
   1. label `"Keep each one once (Recommended)"`, description `"A <Singular> becomes something a <Other Singular> can also be. Shared details (name, address, and so on) are entered once, in <Other Plural Label>."`
   2. label `"Keep them separate"`, description `"<Plural Label> keeps its own copy of these details, so the same company may be entered twice."`
 
+> **Yolo mode, after the go-ahead:** take "Keep them separate", not the Recommended option, because only an exact table-name match is mapped; log it; don't ask.
+
 **Case B: the design's own shared record exists live under another name** (the blueprint's family base, e.g. `parties`, matches a live `organizations` that passes the eligibility test).
 
 - **question**: `"This design keeps <things> once as <Plural Label>. Use the <Other Plural Label> in <Module Display Name> instead?"`
@@ -61,6 +67,8 @@ A live entity can be the base only when **all** hold:
   1. label `"Use the existing <Other Plural Label> (Recommended)"`, description `"Every <thing> is kept once, in <Other Plural Label>. Nothing new is created for it here."`
   2. label `"Keep our own <Plural Label>"`, description `"This module creates its own <Plural Label>, so a <thing> may be entered in both."`
 
+> **Yolo mode, after the go-ahead:** take "Keep our own <Plural Label>", not the Recommended option, because only an exact table-name match is mapped; log it; don't ask.
+
 **Case C: the live duplicate cannot join** (eligibility fails on a locked key: the live entity is `auto_increment`, `uuid`, `bigint` or `text`; or it is unmanaged).
 
 - **question**: `"<Plural Label> and the <Other Plural Label> in <Module Display Name> both hold <things>, but they can't be combined as set up. Keep them separate?"`
@@ -69,6 +77,8 @@ A live entity can be the base only when **all** hold:
 - **options**:
   1. label `"Keep them separate (Recommended)"`, description `"<Plural Label> keeps its own copy of the shared details. Combining them later means redoing both."`
   2. label `"Stop so the design is redone"`, description `"Nothing is saved now. Run the design step again so each <thing> is kept once."`
+
+> **Yolo mode, after the go-ahead:** take "Keep them separate", never "Stop so the design is redone"; log it; don't ask.
 
 ## Outcomes
 

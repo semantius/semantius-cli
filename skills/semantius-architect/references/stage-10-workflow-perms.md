@@ -84,6 +84,8 @@ After the table, present a compact proposal of just the permissions that fired:
 >
 > Show the full scan table too (one row per entity), so a reviewer can confirm each cell. Each permission proposed will be created as its own permission and included in `<slug>:admin`. Look right?
 
+> **Yolo mode, after the go-ahead:** don't show the proposal and don't ask; accept the permissions as scanned and log one line ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 4). With workflow gates but no admin-tier entity (below), take option 1.
+
 Loop on feedback until confirmed. The result feeds:
 
 - The matching §8.2 business rules (`lifecycle` / `owner_edit` / `narrow_write` source flags); the analyst converts each rule's intent to JsonLogic at spec time, referencing the permission codes this stage produces.

@@ -9,7 +9,8 @@ description: >-
   CRM/ITSM/HRIS/LMS/ERP/PIM/CMS/PM/field service/billing", "I need a helpdesk /
   CRM / HR system / applicant tracker / roadmap tool / ticketing system /
   inventory system", "a tool to track / plan / manage / organize / record /
-  capture X", "something to handle X". Never recommend off-the-shelf SaaS. Also
+  capture X", "something to handle X". Never recommend buying off-the-shelf
+  SaaS instead of building (well-known products are only reference points). Also
   trigger to review, audit, check, update, customize, extend, rebuild, or
   reanalyze an existing `*-semantic-blueprint.md`, to clone a curated catalog
   blueprint and customize it, or to restructure a design so one real-world thing
@@ -139,7 +140,7 @@ Both surfaces follow the same ban list and the same "required" list below.
 
 The internal value (`naming_mode: template:salesforce`, role classifications, `classDef` strings, etc.) still gets stamped on the file by the write stage — only chat and prompt text are plain. Map a user's choice to the internal value *after* they pick, not in the option label.
 
-**Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine.
+**Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine. While advanced mode is off, the Stage 1 name and scope question and the Stage 13 catalog-text confirmation are not sent; every other question is (see "Advanced mode" below). In a yolo run nothing is sent after the go-ahead (see "Yolo mode" below).
 
 **AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
 
@@ -154,7 +155,7 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
 
 **Task tracking** (resident summary; the rules are the canonical text in [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md)). The architect uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`); the task list is rendered UI, not chat, so it does not count against narration restraint.
 
-- **Stage tasks.** At Step 0, once the mode is known (from the header or from detection): `TaskList`, then `TaskCreate` the `Design ›` tasks for that mode from the table below (subjects verbatim, `activeForm` = subject, all `pending`); in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's user confirmation landed (Mode A stages end with the user confirming); a halt leaves the task `in_progress` with `halted: <reason>`. Never a task for preflight, file reads, or the pre-save checks.
+- **Stage tasks.** At Step 0, once the mode is known (from the header or from detection): `TaskList`, then `TaskCreate` the `Design ›` tasks for that mode from the table below (subjects verbatim, `activeForm` = subject, all `pending`); in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's user confirmation landed (Mode A stages end with the user confirming; while advanced mode is off, `Design › Write the design file` completes when the file is saved and the consistency check exits 0; in a yolo run, a stage task completes when its draft is done and its picks are logged); a halt leaves the task `in_progress` with `halted: <reason>`. The subjects below are the same at both levels. Never a task for preflight, file reads, or the pre-save checks.
 
   | Mode | Task subjects, in order |
   |---|---|
@@ -166,22 +167,28 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   | Rebuild (Mode D) | `Design › Rebuild the design` |
 
 - **Ledger stage: Stage 2 only.** The naming-style question is a `Q:` task (subject = `Q: How should we name things in this <domain> module?`, `Recorded in: .naming.mode`, gated by `TaskUpdate` on the first stage task with `addBlockedBy: [<the Q: task id>]`), created after the policy consultation (a hit creates no task) and asked per the ledger sequence; being the only Stage 2 question, it is one round of B / A / R. Every other architect question is standalone (no `Q:` task):
-  - the Stage 1 and Stage 3 conversational confirmations;
+  - the Stage 1 and Stage 3 conversational confirmations (the Stage 1 name and scope question only while advanced mode is on);
   - the Stage 3 "Also track" multiSelect;
   - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);
+  - the Stage 1 discovery interview (standard mode, when no well-known product fits; yolo, only what the request leaves open);
+  - the yolo go-ahead (yolo runs only);
+  - the Stage 6 related-modules confirmation;
+  - the Stage 7 handoffs confirmation;
+  - the Stage 9 classification confirmation;
+  - the Stage 10 workflow-permissions confirmation;
   - the Catalog-Clone "what to change" question;
   - the C3 "does this look right?" gate and the C5 "more changes?" question;
   - the Mode D no-collapsing gates;
-  - the tagline confirmation.
+  - the tagline and description confirmation (only while advanced mode is on).
 
-  Stage 6 still asks nothing.
+  The Stage 6 related-modules gate is standalone (no `Q:` task). Stages 5, 8 and 11 ask nothing.
 
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a result. Hard rules:
 
 - **Do not announce what you're about to do** before doing it. No *"Let me peek at the existing blueprint to verify..."* — just peek. No *"Let me check the conventions..."* — just check. The peek/check itself produces a tool-call line in the transcript; that is enough.
 - **Do not narrate self-corrections.** When you spot a mistake mid-flight and fix it, fix it silently. The previous tool call already shows in the transcript; emitting *"That was the wrong edit. Spelling out properly."* on top adds zero information.
 - **Do not enumerate verification results on success.** "Pre-save verification" runs silently; the only user-facing output is the success or failure of the save itself.
-- **Do not list counts and section breakdowns after writing.** The post-write message is one sentence: *"Wrote `<path>`. Tell me when you want to deploy it."* The user knows from the conversation what was built; the file's own contents are the source of truth.
+- **Do not list counts and section breakdowns after writing.** The post-write message is one sentence: *"Wrote `<path>`. Tell me when you want to deploy it."* (while advanced mode is off, the close-out template under Pre-save verification that adds one clause about the catalog text). The user knows from the conversation what was built; the file's own contents are the source of truth.
 - **Do not announce the next skill in the pipeline as boilerplate.** A one-clause hint at the end of the close-out line is fine; a separate paragraph titled "Next step:" is not. Trust the user (or the admin orchestrator) to know what comes next.
 
 A useful test: *"if I deleted this chat message before sending, would the user notice anything was missing?"* If the answer is "no, the work still got done", delete the message.
@@ -260,11 +267,14 @@ After preflight, narrate one short line on first invocation: *"Using customizati
 
 ## Step 0: Determine the mode
 
+**Yolo hand-off (check this first).** When there is no `Run context:` block, the request is a new build (Create-Greenfield by the detection below), and `.interaction_level` in `$CUSTOMIZATIONS_FILE` is `yolo` (or this same request says "yolo mode"): before creating any task, load `semantius-admin` with the Skill tool, passing the user's request verbatim, and follow it instead. It runs the build end to end and re-enters this skill with a run context. A yolo build needs the admin because the analyst and modeler must run straight after the design, without the user starting them.
+
 **Header override (admin-orchestrated runs).** When this architect is invoked by `semantius-admin`, the input carries a handoff header with an explicit mode line:
 
 ```
 Run context: run_id=run-...
 Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
+Interaction level: standard
 Architect mode: customize
 Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md
 ```
@@ -291,7 +301,7 @@ The header's `Input artifact:` line tells you which file to load. Read it before
 | **Audit** | User has an existing `*-semantic-blueprint.md` and wants it checked for quality, completeness, or correctness. |
 | **Extend** | User has an existing blueprint and wants to add entities, edges, lifecycle states, or permissions. |
 | **Customize** | User says "customize" / "tweak" / "adapt" / "tailor" without saying what to change. Load → show §1 summary + §3 catalog table → ask what to change → route into Extend or targeted edits. **Customize is an interactive LOOP, not a one-shot:** apply changes one at a time (confirming before each write per Step C3), then return to the user and ask whether they want another change or are done (Step C5). Keep looping until the user explicitly says they are finished. **Do NOT hand control back to the caller, and do NOT let the deploy pipeline advance, until the user has confirmed they are done customizing** — a single change is never assumed to be the whole pass. Do not run a full audit up front; do not guess changes. |
-| **Rebuild** | User wants holistic reanalysis of a drifted blueprint. Triggers: "rebuild", "reanalyze", "re-author", "rethink", "overhaul", "modernize". Mode D puts every prior decision back on the table while preserving `initial_request` and curated metadata. |
+| **Rebuild** | User wants holistic reanalysis of a drifted blueprint. Triggers: "rebuild", "reanalyze", "re-author", "rethink", "overhaul", "modernize". Mode D puts every prior decision back on the table while preserving `initial_request` and curated metadata. Always runs as if advanced mode were on. |
 
 If the user uploaded or referenced a `*-semantic-blueprint.md` file, you're in Audit, Extend, Customize, or Rebuild. If there's no existing file but the user references a catalog source ("clone the candidate-crm blueprint", "start from the ITSM model"), you're in Create-Catalog-Clone. Otherwise Create-Greenfield.
 
@@ -303,12 +313,36 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 
 > **🛑 Fetching remote models, use `curl`, not WebFetch.** If the file is at an `http(s)` URL, fetch the raw bytes via Bash (`curl -s <url>`) and read the full output. **Never use WebFetch for a semantic model.** WebFetch runs the content through an HTML→markdown summarization pass that silently strips YAML front-matter and can alter structural details. Auditing the WebFetch output will produce false blocker findings (most commonly "front-matter missing" when it is actually present) and erode user trust. This rule applies in every mode.
 
+---
+
+## Advanced mode (persisted on / off switch)
+
+*Resident summary; the canonical rules are in [`../semantius-admin/references/interaction-level.md`](../semantius-admin/references/interaction-level.md).*
+
+**Read the switch at Step 0** (and again after a context reset): the run context's `Interaction level:` line when present, otherwise `.interaction_level` in `$CUSTOMIZATIONS_FILE`. `advanced` = on; `standard`, absent, or a saved `yolo` without the run-context line = off (standard). **Turning it on or off:** when the user says "advanced mode", "standard mode", or "yolo mode" (and you were not handed the run by the admin, which already did this), write `.interaction_level` (`advanced` / `standard` / `yolo`) with the usual provenance comment and narrate the one line from interaction-level.md section 2, then continue with the rest of the request. A bare "advanced", "yolo", "advanced access control", "quick", "simple", "just do it", or "don't ask me" changes nothing. When called directly and the switch is on, narrate once: *"Running in advanced mode."* **Mode D (Rebuild) always runs as if advanced mode were on.**
+
+**While advanced mode is off, these architect questions are skipped** and answered with the literal default below (the canonical list: interaction-level.md, section 3). Each has an "Interaction level" block in its stage file. The default is never written to `$CUSTOMIZATIONS_FILE`.
+
+| Question skipped while advanced mode is off | Default |
+|---|---|
+| Stage 1 system name and scope (`references/stage-1-capture.md`) | Take them from the request; state what you picked in the Stage 3 "Picked for you" line. An unclear category is still settled in Stage 1 (in standard mode by the discovery interview's "Closest to" question). |
+| Stage 13 `tagline` / `description` / `module_kind` confirmation (`references/stage-13-write.md`) | Write your drafts and the derived `module_kind` without a confirmation; the close-out line says so. |
+
+**Every other architect question is asked in standard and advanced mode, unchanged:** naming style, the entity list, "Also track", the family question, related modules, handoffs, classification, workflow gates, Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Standard mode also brings the Stage 1 guidance: the aside naming well-known products and best-practice points, or the discovery interview when none fits; advanced mode gives neither (`references/stage-1-capture.md`).
+
+**Switching during a run** writes the switch and applies from the next question on: turned on before Stage 13, the catalog text is confirmed; a name or scope the user wants changed is simply changed.
+
+---
+
+## Yolo mode (experimental)
+
+A run is a yolo run when the run context says `Interaction level: yolo` (the admin sets it only for a new build) or the admin pipeline task's marker (`TaskGet`) says `yolo: awaiting go-ahead` or `yolo: go-ahead given`; read [`../semantius-admin/references/yolo-mode.md`](../semantius-admin/references/yolo-mode.md) at Step 0 and after a context reset. **Before the go-ahead:** baseline, short interview, and naming (Stages 1-3), then the go-ahead at the end of Stage 3. **After the go-ahead** (the admin pipeline task's marker says `yolo: go-ahead given`): no `AskUserQuestion`, no message ending in a question, no rendered proposals; each gate's "Yolo mode" line names its pick, which you log with `log_pick` (yolo-mode.md, section 5). Why: the user approved the whole build at once, and every further stop breaks that promise; the "Decided for you" list at the end is their review.
 
 ---
 
 ## Mode A: Create — stage pipeline
 
-Follow these stages in order. Do not skip ahead: each stage produces input the next one relies on, and each stage ends with the user confirming before you move on. Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
+Follow these stages in order. Do not skip ahead: each stage produces input the next one relies on, and each stage that asks something ends with the user confirming before you move on (Stages 5, 8 and 11 ask nothing; while advanced mode is off, the Stage 1 name and scope and the Stage 13 catalog text are not asked, see "Advanced mode" above; in a yolo run nothing is asked after the go-ahead, see "Yolo mode" above). Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
 
 The Task column is the exact subject of the stage task (Task tracking, above); stages sharing a subject are one task.
 
@@ -323,7 +357,7 @@ The Task column is the exact subject of the stage task (Task tracking, above); s
 | 8 + 9. Rules & classification | Business-rule intent; `entity_type` ladder + derived write tier; master-cluster hints | (same task) | [`references/stage-8-9-rules-classification.md`](references/stage-8-9-rules-classification.md) |
 | 10. Workflow perms | W1 / W2 / W6 workflow-gate scan (architect scope) | (same task) | [`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md) |
 | 11. Governance | Persona discovery; Processes catalog; RACI realization; §9 emission | (same task) | [`references/stage-11-governance.md`](references/stage-11-governance.md) |
-| 13. Write | Finalize catalog surface (`tagline`, `module_kind`; `description` / `license` only when publishing); template; frontmatter; keep-with-placeholder rule; then the resident Pre-save verification below | `Design › Write the design file` | [`references/stage-13-write.md`](references/stage-13-write.md) |
+| 13. Write | Finalize catalog surface (`tagline` + `description` drafted, and confirmed together while advanced mode is on; `module_kind`; `license` defaulted); template; frontmatter; keep-with-placeholder rule; then the resident Pre-save verification below | `Design › Write the design file` | [`references/stage-13-write.md`](references/stage-13-write.md) |
 
 **Field-level stages live in the analyst, not here.** Stages 4 (fields), 9b (cross-tier FK reconciliation), and 12 / 12.5 (select-rule + view/edit consistency) are not architect stages: the blueprint stops at entity level (only §3 catalog, §5 edges, §7 lifecycle, §8 permissions). The analyst runs those after this skill writes the blueprint, so run `semantius-analyst` next to elicit field-level detail.
 
@@ -368,7 +402,7 @@ Before writing, run these checks **silently** — do NOT narrate them in chat. T
 | Every canonical top-level / numbered section is present (no omitted canonical section, no bare empty heading); each empty one carries the canonical `_(none: <short reason>)_` placeholder, NOT an old-form free-text stub (`_(no cross-scope edges declared in greenfield mode...)_`, `_(no cross-domain context...)_`, `_(no industry-scoped aliases...)_`, similar) | halt; name the missing canonical section or the old-form stub, and tell the user to keep the heading with a `_(none: <short reason>)_` placeholder |
 | No raw HTML anywhere in the file body (`<details>`, `<summary>`, `</details>`, or any other `<tag>`). A collapsible inherited from a catalog source must be flattened to a plain markdown table — the tags stripped, the table kept | halt; name the offending lines |
 | Greenfield-mode files (`naming_mode` present) carry `departments` / `industries` frontmatter ONLY when populated; otherwise omit. `related_modules` is now allowed in greenfield as an advisory list | halt; remove the offending stubs |
-| `description` / `license` are publish-only and travel together: both present when the Stage 13 publish question was answered "publishing", both absent otherwise. An empty stub (`description: ""`) or a lone one of the pair is a failure | halt; name the stray, empty, or missing key |
+| `description` and `license` are present and non-empty (no `description: ""` stub) | halt; name the missing or empty key |
 | Catalog-clone-mode files (`naming_mode` absent) carry no `naming_mode` key | halt; remove the offending key |
 
 **Mechanical consistency gate (mandatory — this is enforcement, not eyeballing).** The cross-section rows above (Mermaid ⟺ §3, §2 ⟺ §3, Mermaid ⟺ §5, and the §7 / §6.4 / §8.2 resolution) are NOT verified by re-reading the file. After writing the candidate file, run the bundled deterministic checker shipped alongside this skill and require a clean exit:
@@ -380,9 +414,15 @@ bun "<skill-folder>/references/consistency-check.ts" "<path-to-the-written-bluep
 
 It parses the file, treats §3 as the entity registry, and byte-compares every other place each entity's identifier / display name / edge appears. It is **content-agnostic** — it never judges language, casing, or word choice, only that every occurrence agrees (reverse a label in *every* section and it passes; change it in *one* and it fails). Exit 0 = consistent; non-zero prints the exact entity, the differing values, and the disagreeing sections. **If it exits non-zero the save is not complete:** fix every reported line and re-run until exit 0, then emit the success line. The same script validates specs (`artifact: semantic-spec`); the analyst runs it at its own pre-save. Do not hand-wave this — blueprints shipped inconsistent precisely because the check was "done carefully" by reading instead of run.
 
-**On success: write the file, then say one line in plain English, no more.** Template:
+**On success: write the file, then say one line in plain English, no more.** Template while advanced mode is on:
 
 > *Wrote `<path>`. Tell me when you want to deploy it.*
+
+Template while advanced mode is off (Create and Clone; the catalog-text clause is the only addition):
+
+> *Wrote `<path>`, with a catalog tagline and description written without asking (ask me to change them anytime). Tell me when you want to deploy it.*
+
+In a yolo run the line has no "Tell me when…": *Wrote `<path>`.* Then set the task `completed` and let the admin move straight on to the next step.
 
 That is the entire post-save message. No counts, no breakdown of entities / lifecycles / permissions / edges, no narration of which sections are sparse, no "next step: hand off to semantius-analyst" boilerplate. The user knows from the design conversation what was built; the closing line just confirms the file landed.
 
@@ -393,6 +433,8 @@ If the user explicitly asks for a summary ("tell me what's in the file" / "summa
 > *Can't save yet — the Candidate lifecycle has a hired state that needs an explicit permission, but the permissions list doesn't include one for it. Want me to add a hire-candidate permission and proceed?*
 
 The internal check name (`unbound lifecycle gate`) does not appear in the user-facing message.
+
+In a yolo run after the go-ahead, a failure that comes with a fix like this one is not asked: apply the fix, log it, and re-run the checks. A failure with no fix you can apply halts as above.
 
 ---
 
@@ -415,7 +457,7 @@ This exclusion matters. Other skills will reuse the semantic model to generate t
 
 Treat this as a real analyst engagement, not a form-filling exercise. Concretely:
 
-- Make assumptions explicit. When you default to including something (e.g., "I'm giving leads a lifecycle because most CRMs track one"), say so in a short aside so the user can push back.
+- Make assumptions explicit. When you default to including something (e.g., "I'm giving leads a lifecycle because most CRMs track one"), say so in a short aside so the user can push back. Citing how a well-known product models the concept is a good reason to give ("Salesforce keeps Leads apart from Contacts until they qualify"); it is a reference point, never a suggestion to buy it.
 - Prefer named examples to abstract descriptions. "An `opportunity` has a `workflow_state` like `prospecting → qualification → proposal → closed_won`" beats "The opportunity tracks its status."
 - Use the user's vocabulary when they've given you specifics. If they say "job" instead of "role", use "job", unless that collides with a vendor template (e.g., Workday uses both `Job` and `Position` distinctly, in that case clarify).
 - Keep each confirmation gate to one clear question. Don't ambush the user with seven questions at once.
@@ -446,6 +488,8 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 
 - [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) — the shared writing conventions (Conventions 1-8). This skill keeps its own fuller copy resident, including the architect-only Conventions 9-10 and the Pre-emit / Narration restraint phrased for blueprint authoring.
 - [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) — environment preflight (shared by all four skills).
+- [`../semantius-admin/references/interaction-level.md`](../semantius-admin/references/interaction-level.md): the standard / advanced / yolo switch: turning it on and off, the questions skipped in standard mode (shared with the analyst and the admin).
+- [`../semantius-admin/references/yolo-mode.md`](../semantius-admin/references/yolo-mode.md): yolo mode (experimental): the go-ahead, the pick procedure after it, the auto-picks log.
 - [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) — Semantius platform reference (entity naming rules, built-in tables, field format rules, relationship rules). Load it to reason about platform constraints during blueprint design.
 - [`../use-semantius/references/entity-families.md`](../use-semantius/references/entity-families.md) — platform facts for `is_a` / `has_a` families (what they allow, limits, vocabulary).
 - [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md) — JsonLogic rule reference: entity-level (`computed_fields`, `validation_rules`) and field-level (`input_type_rule`) rules, extension operators, cross-entity lookups. Mostly analyst territory; load only when reasoning about rule feasibility.
@@ -453,4 +497,4 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - [`../semantius-analyst/SKILL.md`](../semantius-analyst/SKILL.md) — downstream skill that reconciles the blueprint against live Semantius and produces a `*-semantic-spec.md`. Invoke after the blueprint is written.
 - [`../semantius-modeler/SKILL.md`](../semantius-modeler/SKILL.md) — deploys the spec to live Semantius. The architect doesn't invoke this directly; it's the third link in the chain.
 
-The catalog of common systems, vendors, and entity naming conventions lives in your own training knowledge, not in a reference file. That's deliberate: a fixed catalog would go stale, miss vendors, and imply a whitelist. Trust what you know about the product the user named; if you're genuinely unsure (an unfamiliar regional vendor, a very new product), ask the user for two or three example entity names from their system rather than guessing.
+The catalog of common systems, vendors, and entity naming conventions lives in your own training knowledge, not in a reference file. That's deliberate: a fixed catalog would go stale, miss vendors, and imply a whitelist. Trust what you know about the product the user named; if you're genuinely unsure (an unfamiliar regional vendor, a very new product), ask the user for two or three example entity names from their system rather than guessing. In standard mode and yolo, "unsure" has one objective bar: the product fails the four-object test (you can't name at least four of its headline objects, spelled its way; `references/stage-1-capture.md`). In a yolo run, don't ask: use modern names and call the design "inspired by" that product at most.

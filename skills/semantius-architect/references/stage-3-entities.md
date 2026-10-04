@@ -8,7 +8,7 @@ With the naming convention locked in, draft the entities from your own knowledge
 - If agent-optimized, start from first principles: what happens in this system? who acts? what do they act on? what gets recorded? Name each entity with a self-describing singular noun.
 - In either case, weave in any extra entities the user flagged in their Stage 1 requirements, and drop entities that clearly don't apply.
 
-> **🛑 Template mode: name the vendor object each entity maps to.** When `naming_mode` is `template:<vendor>`, every proposed entity **must** explicitly cite the vendor object it mirrors, in a fourth column "Vendor object". This forces you to check your own confidence. If you can't name a specific vendor object with high confidence, you don't actually know the vendor's schema well enough to claim template-fidelity, say so in one sentence and offer the user either (a) switch to agent-optimized, (b) let them paste the vendor's object list, or (c) proceed but mark the entity as "inspired-by, not canonical".
+> **🛑 Template mode: name the vendor object each entity maps to.** When `naming_mode` is `template:<vendor>`, every proposed entity **must** explicitly cite the vendor object it mirrors, in a fourth column "Vendor object". This forces you to check your own confidence. If you can't name a specific vendor object with high confidence, you don't actually know the vendor's schema well enough to claim template-fidelity, say so in one sentence and offer the user either (a) switch to agent-optimized, (b) let them paste the vendor's object list, or (c) proceed but mark the entity as "inspired-by, not canonical". In a yolo run, take (c) for that entity without asking; the go-ahead table shows it.
 >
 > **Watch for domain ambiguity traps.** Some concepts are modeled very differently across vendors and editions:
 > - **"Lead"**, Salesforce has a dedicated `Lead` object that converts to Contact+Account+Opportunity. HubSpot (since 2023) has a dedicated `Lead` object (FQN `LEAD`, 0-136) separate from `Contact`; older HubSpot accounts treated a lead as a `Contact` with `lifecycle_stage=lead`. Pipedrive has `Lead` separate from `Person`. Zendesk Sell has `Lead` separate from `Contact`.
@@ -26,7 +26,11 @@ With the naming convention locked in, draft the entities from your own knowledge
 
 Present the list as a table with **Table name**, **Singular label**, **Purpose (one line)**, and, in template mode only, a **Vendor object** column showing the exact vendor object name (e.g., `HubSpot Lead (0-136)`, `Salesforce Contact`, `Zendesk Ticket`).
 
-Then ask the user a single open question: *"Does this entity list look right, or would you like to add, remove, rename, or merge any?"* Loop on their feedback until they confirm. **When the user renames an entity that carries an inherited `catalog code` (catalog-clone or prior version), apply the silo-rename rule under `catalog code` in §3: pin the catalog code to the pre-rename concept and keep `role` / `mastered in`; change only `data_object` and labels — unless the user says it is a genuinely new concept.** Keep the list tight, 6–15 entities is the sweet spot for most mid-sized systems; if you feel the urge to go over 20, that's a signal you're over-modeling.
+**With advanced mode off, put exactly one line before the table** stating the name and scope Stage 1 took from the request, in plain words: *"**Picked for you:** a helpdesk called Service Desk, for a small support team."* Leave out any part the user stated themselves (a name they gave); drop the line when nothing is left. The user can correct it in the same reply as the entity list. With advanced mode on there is no such line.
+
+> **Yolo mode** (a yolo run, before the go-ahead; `../../semantius-admin/references/yolo-mode.md`, section 3). Draft the list from the baseline's object model (or from first principles with no baseline), trimmed to the interview answers and including the must-haves the user picked. Do not present the list, add no "Picked for you" line, do not ask the question below, and do not fire "Also track" (Stage 1's must-haves replaced it). Any family question takes its Recommended option. **End this stage with the go-ahead** (`yolo-mode.md`, section 3): the one summary with the entity table, then *"Build and deploy <System Name> now?"*. Stage 5 starts only after a "Yes".
+
+Then ask the user a single open question (in standard and advanced mode): *"Does this entity list look right, or would you like to add, remove, rename, or merge any?"* Loop on their feedback until they confirm. **When the user renames an entity that carries an inherited `catalog code` (catalog-clone or prior version), apply the silo-rename rule under `catalog code` in §3: pin the catalog code to the pre-rename concept and keep `role` / `mastered in`; change only `data_object` and labels — unless the user says it is a genuinely new concept.** Keep the list tight, 6–15 entities is the sweet spot for most mid-sized systems; if you feel the urge to go over 20, that's a signal you're over-modeling.
 
 #### `necessity` rule — greenfield blueprints carry no optionals
 
@@ -45,7 +49,7 @@ This is the opposite of catalog blueprints, which are intentionally generic ("an
 
 **Proactively scope adjacent concepts during the entity-proposal loop.** Instead of marking borderline entities as `optional` for the analyst to ask about later, ask about them here. Pattern:
 
-After presenting the core entity list, identify 3-6 *commonly-related but not always wanted* concepts for this domain.
+After presenting the core entity list, identify 3-6 *commonly-related but not always wanted* concepts for this domain. (Standard and advanced mode; a yolo run asked Stage 1's must-haves question instead and skips this.)
 
 **Customizations consultation first.** For every candidate concept, check `.optionals_decided.<slug>` in `$CUSTOMIZATIONS_FILE` before deciding whether to include it in the multiSelect:
 

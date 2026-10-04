@@ -179,6 +179,26 @@ When the model is on the two-permission fallback (no admin-tier entities), the s
 
 **Read-visibility callout (mandatory when any `select_rule` was created or modified).** Any Stage 4f write that created, changed, or removed an entity's `select_rule` deserves its own one-line callout in the verification summary, separate from the bulk counts: *"⚠️ Applied `select_rule` on `<table_name>`. Callers will now see only rows where `<short-description-of-rule>`. Confirm rollout is the intent."* This mirrors how `edit_permission` tier flips get their own callout (a real RBAC change); read-visibility changes have the same "user noticing 'why can't I see X anymore'" failure mode and benefit from being named in the summary the user reads.
 
+### "Decided for you after your go-ahead" (yolo runs only)
+
+> **Yolo mode, after the go-ahead:** end the verification report with this section ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 6), placed after everything else in the report and before the Closing Contract's `---`; don't ask.
+
+Build it from `.tmp_admin/<run_id>/auto-picks.md` (the `run_id` is in the `Run context:` line), the log every skill in this run appended to with `log_pick`. Read it silently. Each log line (`<skill> | <decision> | <pick> | <basis> | touches: <module>`) becomes one bullet in plain words, the decision and what was picked; never show the skill name, the basis, or raw identifiers (the Writing Conventions ban list applies):
+
+```
+**Decided for you after your go-ahead**
+
+Changes to other modules:
+- <decision and pick, one line per log line whose touches: names another module>
+
+In this module:
+- <every other log line, grouped by skill (design, matching, deploy) in log order>
+
+Say "change" and what you want different to revisit any of these.
+```
+
+"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a standard or advanced run. The Closing Contract that follows is unchanged: the `---`, then the status line, the link, and the sample-data question.
+
 ## Stage 5b: Stamp the deploy version into the spec
 
 **Runs only on a clean, fully-completed deploy** (Stage 4 finished without halting; the Stage 5 report shows 0 blockers). Skip entirely on a halted / partial deploy.

@@ -60,7 +60,7 @@ Applies **only inside a skill's declared ledger stages** (each SKILL.md lists th
 
 **The gate.** Every ledger stage lists `TaskList (no Q: task pending or in_progress)` among its mandatory commands, immediately before its next mechanical step (rendering a plan, a dry run, the first write). An open `Q:` task means back to **B**. Because every `Q:` task blocks its stage task, the same fact is visible in the list (`blockedBy` on the stage task is non-empty) and the harness will not let the stage task complete early. This check is what makes "did I ask everything?" mechanical instead of remembered. A new `Q:` task created at **R** is added to the gate the same way: `TaskUpdate` the stage task with `addBlockedBy: [<the new Q: id(s)>]`.
 
-**Cost.** One ledger round is three responses (B, A, R) and the R response is also the next B, so a stage with 9 open questions costs E + 3 rounds. That is the price of never losing an answer; do not shortcut it by asking questions that have no task or by answering on the user's behalf.
+**Cost.** One ledger round is three responses (B, A, R) and the R response is also the next B, so a stage with 9 open questions costs E + 3 rounds. That is the price of never losing an answer; do not shortcut it by asking questions that have no task or by answering on the user's behalf. (Two exceptions, both resolved at **E** like a policy hit, never a task, never written: the five questions skipped in standard mode take their literal default ([`interaction-level.md`](./interaction-level.md), section 3); and in a yolo run after the user's go-ahead, every question takes its pick and is logged ([`yolo-mode.md`](./yolo-mode.md), section 4). In a yolo run a stage task completes when its draft is done and its picks are logged.)
 
 ## 4. Wording
 
@@ -71,4 +71,4 @@ Applies **only inside a skill's declared ledger stages** (each SKILL.md lists th
 
 ## 5. What tasks do not replace
 
-The modeler's pre-execute yes/no, the modeler's sample-data consent question, the importer's single pre-write gate, every MUST-FIRE widget in the analyst, and the chat final reports (admin final report and close-out, modeler verification report and Closing Contract, importer final report). Tasks track those; they do not stand in for them. Creating tasks is never a pause and never a "Proceed?" prompt: create them, then continue in the same response.
+The modeler's pre-execute yes/no, the modeler's sample-data consent question, the importer's single pre-write gate, every MUST-FIRE widget in the analyst (in standard and advanced mode; a yolo run after the go-ahead picks instead, [`yolo-mode.md`](./yolo-mode.md)), and the chat final reports (admin final report and close-out, modeler verification report and Closing Contract, importer final report). Tasks track those; they do not stand in for them. Creating tasks is never a pause and never a "Proceed?" prompt: create them, then continue in the same response.

@@ -21,6 +21,8 @@ _Read this when the workflow reaches Stage 6. The stage map is in SKILL.md._
 
 After verification, ask the sample-data question on its own (this is a gate, not a footer; see the consent gate above):
 
+> **Yolo mode, after the go-ahead:** asked in every mode, yolo included ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 4.4): it is the one question a yolo run asks, at the end, and it waits for the answer; the consent rules above are unchanged, and the go-ahead is never consent to sample data.
+
 > The `<System Name>` model is live in Semantius ✅
 >
 > [Open `<System Name>` in Semantius →](<ui_baseurl>/<module_slug>)

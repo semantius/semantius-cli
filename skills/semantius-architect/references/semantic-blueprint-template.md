@@ -14,11 +14,11 @@ Keep the section order and the table columns identical, downstream skills parse 
 ---
 artifact: semantic-blueprint
 blueprint_version: "3.1"
-license: {{license slug, e.g. MIT — publish-only: omit the key entirely on internal-only blueprints}}
+license: {{license slug, e.g. MIT}}
 system_name: {{System display name shown to the user AND used as the module name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
 icon_name: {{Module icon as an icon-set handle (not a URL), e.g. briefcase, users, ticket}}
 tagline: {{One-line marketing-voice line for catalog / card surfaces, ALSO used as the module record's short description (modules.description) shown beside the name in the selector. Elevator pitch — keep it concise enough for the chip.}}
-description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine. Publish-only: omit the key entirely on internal-only blueprints.}}
+description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine.}}
 system_slug: {{system_slug_snake_case}}
 domain_modules:
   - {{system_slug}}

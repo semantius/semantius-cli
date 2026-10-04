@@ -69,6 +69,8 @@ Common `operational_*` shapes (the records that capture *work happening*): `cand
 >
 > Catalog entities are writeable by `<slug>:admin`; workflow / record / junction by `<slug>:manage`. The hierarchy chain (`admin → manage → read`) means anyone with `admin` can also do `manage`-level work. Look right?
 
+> **Yolo mode, after the go-ahead:** don't show the table and don't ask; accept the classification (and any master-cluster hints) as drafted and log one line ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 4).
+
 Loop on user feedback until they confirm. The classification feeds the §3 `entity_type` column and the derived `write tier` column (both written in Stage 13) and the §8.1 permission enumeration.
 
 **Master-concept cluster hints.** During the same Stage 9 walk, also identify entities that are classic **master concepts** — entities that other domain modules across the catalog are likely to reference as shared data rather than redeclaring locally. Emit a `**Shared master cluster:** <cluster>` annotation in §3 for each one. The hint travels inside the self-contained model and shapes the deployer's default suggestions at the master-promotion prompt, without binding the tenant to any specific taxonomy.

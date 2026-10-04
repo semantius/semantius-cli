@@ -505,7 +505,8 @@ type SpecEntity = {
   keyType: string | null;      // `**Key type:**` (null = line absent = auto_increment)
   keyPrefix: string | null;    // `**Key prefix:**`
   basedOn: string;             // `**Based on:**` (backticks stripped; "" = absent)
-  lines: Set<string>;          // which `**Key:**` lines the block carries (e.g. "Label column")
+  labelColumn: string;         // `**Label column:**` (backticks stripped; "" = absent)
+  lines: Set<string>;        // which `**Key:**` lines the block carries (e.g. "Label column")
   reconciliation: string;      // `**Reconciliation:**` ("" = absent = create-new)
   fields: SpecField[];
 };
@@ -520,7 +521,7 @@ function parseSpecEntities(lines: string[]): Map<string, SpecEntity> {
     if (inFence) continue;
     const h = l.match(/^###\s+3\.\d+\s+`([^`]+)`/);
     if (h) {
-      cur = { keyType: null, keyPrefix: null, basedOn: "", lines: new Set(), reconciliation: "", fields: [] };
+      cur = { keyType: null, keyPrefix: null, basedOn: "", labelColumn: "", lines: new Set(), reconciliation: "", fields: [] };
       out.set(h[1].trim(), cur);
       continue;
     }
@@ -532,6 +533,7 @@ function parseSpecEntities(lines: string[]): Map<string, SpecEntity> {
       if (key === "Key type") cur.keyType = value;
       else if (key === "Key prefix") cur.keyPrefix = value;
       else if (key === "Based on") cur.basedOn = value.replace(/`/g, "").trim();
+      else if (key === "Label column") cur.labelColumn = value.replace(/`/g, "").trim();
       else if (key === "Reconciliation") cur.reconciliation = value;
       continue;
     }
@@ -753,6 +755,18 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
   // `<table>_ext` is the platform's storage table of a based entity, so no entity may end in `_ext`.
   for (const id of allIds) {
     if (/_ext$/.test(id)) issues.push({ check: "data_object name", detail: `entity \`${id}\` ends in \`_ext\`, which the platform reserves for the storage table of an is_a / has_a entity` });
+  }
+
+  // The label column is created by create_entity as single-line text and its format is locked
+  // (a core column, platform 90219), so the row it names can only be `string` (or `text`).
+  for (const [id, e] of ents) {
+    if (BUILTINS.has(id) || /^(reuse-from|dropped)\b/.test(e.reconciliation)) continue;
+    const named = new Set([e.labelColumn, ...e.fields.filter((f) => /`label_column`/.test(f.notes)).map((f) => f.name)]);
+    for (const f of e.fields) {
+      if (named.has(f.name) && f.format !== "string" && f.format !== "text") {
+        issues.push({ check: "label column format", detail: `§3 \`${id}\`.\`${f.name}\` is the label column but has format \`${f.format}\`; the platform creates the label column as text and never lets its format change, so it must be \`string\` (keep \`${f.name}\` as it is and pick another text field, or on a junction drop the \`**Label column:**\` line)` });
+      }
+    }
   }
 
   // Enumerations: §5 bullet grammar; the Notes `enum_values:` equal the §5 values; `default:` is a value.

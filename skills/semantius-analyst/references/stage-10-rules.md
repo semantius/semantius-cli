@@ -82,3 +82,5 @@ For every entity, mechanically walk these families and propose rules:
 | F15 — Cross-entity invariant | a rule that spans two entities | `set_record` + cross-row check |
 
 After running all 15 families, present a scan-table to the user for confirmation. Drop the rules the user rejects.
+
+> **Yolo mode, after the go-ahead:** don't present the scan-table; accept the rules as scanned and log them in one line; don't ask ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md)).

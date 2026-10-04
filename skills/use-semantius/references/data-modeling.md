@@ -198,7 +198,7 @@ Platform meta-schema. **Never declare in a domain model.** The deployer manages 
 | `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. |
 | `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
 | `plural_label` | e.g. "Products" |
-| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`: set it on every entity that has a natural local label; omit it for a junction table, whose `_label` the platform composes from the parent legs (see "Junction tables" below). Never set it on an `is_a` / `has_a` entity: it comes from the base (`90242`). |
+| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`: set it on every entity that has a natural local label; omit it for a junction table, whose `_label` the platform composes from the parent legs (see "Junction tables" below). Never set it on an `is_a` / `has_a` entity: it comes from the base (`90242`). **Always single-line text:** `create_entity` creates this field as `text`, and as a core column its format can never change afterwards (`90219`), so a label column is never an `enum`, number, date, boolean or FK. When the only identifying attribute is a type or category, pick another text field, or on a junction omit `label_column`. |
 | `module_id` | Required on `create_entity` — must be a valid (non-null) integer module id; `null` is rejected. Find with `read_module`. On `update_entity` it stays optional, but a provided value must still be a non-null integer. |
 | `view_permission` | Required, name string (e.g. `"catalog:read"`) |
 | `edit_permission` | Required, name string (e.g. `"catalog:manage"`) |
@@ -219,7 +219,7 @@ When `create_entity` is called, the system automatically creates:
 |-------|---------|-------|
 | `id` | `id` | Primary key (`is_pk: true`), typed by the entity's `id_type`. **Never** create it with `create_field` |
 | `label` | `label` | Display field reading computed value from `label_column` |
-| `<label_column>` | `label` | The actual named field (e.g. `product_name`) with title from `singular_label` |
+| `<label_column>` | `label` | The actual named field (e.g. `product_name`), created as `text` with title from `singular_label`. Its format and default are locked (`90219`); it may be renamed |
 | `created_at` |, | Timestamp, auto-maintained |
 | `updated_at` |, | Timestamp, auto-maintained |
 | `_label` | `_label` | **Composed label** — the record's full human-readable label, folded from its parent chain (spine → … → local `label`). Read-only, read-time; **not** in the `fields` catalog. |
@@ -285,7 +285,7 @@ or removing a rule is medium-risk.
 
 ### Field Format Quick Reference
 
-Choose `format` carefully. Format **can** be changed after creation, but **only within the same Postgres primitive type**. Same-primitive transitions are allowed (`text → multiline → html`, all `TEXT`); cross-primitive transitions are rejected by the platform (`text → date`, `integer → number`, `date → boolean`). The primitive groupings are visible in the format-to-primitive table later in this reference (under `default_value`). Still pick the format deliberately on the first pass: a later change re-renders the form (input shape) and may require republishing UI surfaces, even though the column data survives.
+Choose `format` carefully. Format **can** be changed after creation, but **only within the same Postgres primitive type**. Same-primitive transitions are allowed (`text → multiline → html`, all `TEXT`); cross-primitive transitions are rejected by the platform (`text → date`, `integer → number`, `date → boolean`). The primitive groupings are visible in the format-to-primitive table later in this reference (under `default_value`). **Core columns are the exception:** a field with a `ctype` (the key, the label column, `created_at` / `updated_at`) never changes format or default, not even within its primitive (`90219` "Cannot change format of core system field"). So a label column can never become an `enum`, even though both are `TEXT`. Still pick the format deliberately on the first pass: a later change re-renders the form (input shape) and may require republishing UI surfaces, even though the column data survives.
 
 | Category | `format` values |
 |----------|----------------|
@@ -380,8 +380,7 @@ semantius call crud create_field '{
     "enum_values": ["active", "inactive"],
     "default_value": "active",
     "input_type": "required",
-    "width": "default",
-    "field_order": 5
+    "width": "default"
   }
 }'
 ```
@@ -436,7 +435,6 @@ semantius call crud create_field '{
       "format": "text",
       "width": "default",
       "input_type": "default",
-      "field_order": 30,
       "searchable": true
     },
     {
@@ -446,8 +444,7 @@ semantius call crud create_field '{
       "format": "number",
       "precision": 2,
       "width": "default",
-      "input_type": "default",
-      "field_order": 40
+      "input_type": "default"
     },
     {
       "table_name": "products",
@@ -457,12 +454,13 @@ semantius call crud create_field '{
       "enum_values": ["draft", "active", "discontinued"],
       "default_value": "draft",
       "width": "default",
-      "input_type": "required",
-      "field_order": 50
+      "input_type": "required"
     }
   ]
 }'
 ```
+
+No `field_order`: the platform places each new field after the entity's existing fields, in array order, so list the items in the order they should display.
 
 Three separate `create_field` calls for the three fields would be three round trips with no atomicity — the failure the batching rule (Golden Rule 7) names. Duplicate check first, in one read: `read_field '{"filters": "table_name=eq.products&field_name=in.(description,price,workflow_state)"}'`.
 
@@ -477,7 +475,7 @@ Three separate `create_field` calls for the three fields would be three round tr
 | `format` | string | Changeable only within the same underlying database base type (e.g., one string format can swap to another string format). Cannot cross base-type families (string, number, date, boolean, reference). See format table above. |
 | `width` | string | `default` (default), `s`, `m`, `w` |
 | `input_type` | string | `default`, `required`, `readonly`, `disabled`, `hidden` |
-| `field_order` | integer | Controls display order in the UI |
+| `field_order` | integer | Display position in the UI. **Omit it on create**: the platform gives each new field the next position after the entity's existing fields, in array order. Set it only to put a field at a specific position (on create, or later with `update_field`), and read the entity's live `field_order` values first: the auto-created fields already hold positions (the label field sits at 20), and a tie is not an error, the UI just renders the tied fields in an unpredictable order. Choose a value strictly between the two live neighbours the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 990000 to put it last. Values from 990000 up are reserved for system columns; every other field stays below 990000. |
 | `searchable` | boolean | Adds this field to the entity's full-text search index |
 | `unique_value` | boolean | Enforces uniqueness at database level |
 | `enum_values` | array | Required when `format: "enum"`: the allowed entries, each a value or a `{"value", "label"}` pair. Records and `default_value` hold the value, never the label; never an object map. See "Enum values and labels" above. |

@@ -8,6 +8,62 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: standard-mode guidance, yolo mode (experimental), confirmation list fixed
+
+2026-09-30. The interaction level switch now has three values: `standard` (default, guidance), `advanced` (control), `yolo` (autonomy, experimental). Rules: `../semantius-admin/references/interaction-level.md` and `../semantius-admin/references/yolo-mode.md` (new).
+
+1. **Standard mode brings domain knowledge up front (Stage 1).**
+   - The known-product check uses an objective bar, the four-object test: a product counts as known only when its four or more headline objects can be named in its own spelling.
+   - When a product is known, a short aside names the products the design draws on (the modeling pattern each is known for) and 2 to 4 best-practice points, with no question.
+   - When none is known, a 1 to 4 question discovery interview runs, using fixed templates ("Closest to", "Who will use it?", "What does this replace?"), and replaces the one category question.
+   - Advanced mode keeps the one category question and gives no aside.
+2. **Products are reference points, never a recommendation to buy.** The Stage 1 guard and the skill description say so. Stage 2's vendor list reuses Stage 1's four-object result, and a product the user said this replaces ranks first.
+3. **Yolo mode, new builds only.** Before the go-ahead:
+   - Stage 1 picks a baseline product and asks 0 to 4 interview questions, including "Must-haves", which replaces "Also track" and is saved to `.optionals_decided`.
+   - Stage 2 uses the baseline's names with no widget and nothing saved.
+   - Stage 3 drafts from the baseline without presenting the list.
+   - At the end of Stage 3, one go-ahead summary and question is asked; the answer is recorded as the `yolo:` marker in the admin pipeline tasks' descriptions, which every skill reads.
+4. **Yolo mode after the go-ahead.**
+   - Every gate (Stages 6, 7, 9, 10, 13) carries a one-line yolo rule that accepts the draft or takes the recommended option, and logs it. The family question (before the go-ahead) takes its Recommended option.
+   - A pre-save failure that has a proposed fix gets the fix applied.
+   - The close-out is only "Wrote `<path>`.", without "Tell me when…"; the admin moves straight on.
+   - A direct call on a new idea with the switch on `yolo` hands the run to the admin first.
+5. **The confirmation list is corrected.** Stages 5, 8 and 11 ask nothing, and the Stage 6, 7, 9 and 10 confirmations are listed as the standalone questions they are. This replaces "Stage 6 still asks nothing" and "each stage ends with the user confirming".
+
+**Major-vs-minor.** No bump: the blueprint has the same shape and follows the same content rules; template naming already existed. Guidance only, `CURRENT_VERSION` unchanged.
+
+Files:
+- SKILL.md, `stage-1-capture.md`, `stage-2-naming.md`, `stage-3-entities.md`, `stage-6-related-modules.md`, `stage-7-handoffs.md`, `stage-8-9-rules-classification.md`, `stage-10-workflow-perms.md`, `stage-13-write.md`, `normalization.md`.
+- Shared: `../semantius-admin/references/yolo-mode.md` (new) and `interaction-level.md`.
+
+## Unreleased: advanced mode switch
+
+2026-09-29. Advanced mode is a persisted on / off switch, `.interaction_level` in `customizations.yaml` (`advanced` = on; `standard` or absent = off). Saying "advanced mode" turns it on, "standard mode" turns it off; it stays until changed. Rules: `../semantius-admin/references/interaction-level.md`.
+
+1. **While it is off, exactly two questions are skipped**: the Stage 1 system name and scope (taken from the request, shown in a "Picked for you" line before the Stage 3 entity table), and the Stage 13 tagline / description / `module_kind` confirmation (the drafts are written; the close-out line says so). Every other question is asked in both modes, unchanged. With it on, behavior is exactly as before.
+2. **The defaults are never written to `customizations.yaml`.**
+3. **Mode D (Rebuild) always runs as if advanced mode were on.**
+
+**Major-vs-minor.** No bump: the output has the same shape and follows the same content rules ("Do not bump" list, SKILL.md "Skill version"). Guidance only, no contract change, `CURRENT_VERSION` unchanged.
+
+Files: SKILL.md, `stage-1-capture.md`, `stage-3-entities.md`, `stage-13-write.md`; also `../semantius-admin/references/interaction-level.md` (new), `../semantius-admin/SKILL.md`, `../semantius-admin/references/customizations-protocol.md`, `../semantius-admin/references/task-tracking.md`, and `../../commands/build.md`.
+
+## Unreleased: `consistency-check.ts` checks the spec label column format
+
+2026-09-29. Spec mode only; blueprints are unaffected. The checker now records each §3 `**Label column:**` value and fails when that row (or the row marked `` `label_column` ``) has a Format other than `string` / `text`, on entities the spec creates. The platform creates the label column as text and never lets its format change (`90219`). Details in `../semantius-analyst/CHANGELOG.md` ("the label column is always text"). No version bump.
+
+## Unreleased: publish question removed; `description` / `license` required again
+
+2026-09-29. The Stage 13 publish question (catalog vs internal-only) is removed. It gated two keys that are never deployed (`license` is carry-only; the module record's short description comes from `tagline`), so it cost every run a question and bought nothing. The move of catalog-surface copy from Stage 1 to Stage 13 stays.
+
+1. **Stage 13** drafts `description` from the final entity list and shows it with the `tagline` draft, one confirmation for both; `license` defaults to `MIT` without asking. Catalog-Clone inherits both, redrafting `description` only when the entity set changed.
+2. **Pre-save gate** and **audit**: the "travel together" pair rule is replaced by "both present and non-empty" (🟡 in audit, since files from the previous rule may lack them). **Mode D** carries existing values as drafts.
+3. **Downstream unchanged**: the analyst and modeler already treat both keys as optional.
+
+**Major-vs-minor.** MINOR: two keys become required again on newly written files; older files without them still parse. **Version bump deferred to the maintainer.**
+
+Files: SKILL.md, `stage-1-capture.md`, `stage-13-write.md`, `semantic-blueprint-template.md`, `audit-checklist.md`, `modes-audit-extend-rebuild.md`; also `../semantius-analyst/references/semantic-spec-template.md` and `../../docs/architecture.md` (wording).
+
 ## `5.4` (MINOR): keep each fact once; entity families (`is_a` / `has_a`)
 
 `CURRENT_VERSION` `5.3` → `5.4` (2026-09-28); `blueprint_version` `"3.0"` → `"3.1"`. Paired with analyst 5.8. The platform (semantius `fa0a92e`) added two key types that share another entity's key: `is_a` (a subtype, its kind fixed at creation, several levels deep) and `has_a` (an optional 0..1 extension of a `typeid` base, one level), both naming the base in `entities.id_refentity`. A design that stores one real-world thing in two entities (customers and vendors of one company) can now keep it once.

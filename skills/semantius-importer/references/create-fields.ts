@@ -9,9 +9,11 @@
  * the server sends `?columns=<union>` with `Prefer: missing=default`, so a
  * key omitted from an item takes the column default) and inserts the whole
  * batch in one request and one transaction — all-or-nothing per call.
- * Explicit `field_order` comes from the mapping (increments of 10 - the
- * platform preserves it, so the position inside the array carries no
- * meaning). This replaces the old one-call-per-field runner (pool of 5).
+ * No `field_order` by default: the platform appends each new field after the
+ * entity's existing ones in array order, and the array follows the mapping's
+ * column order, so the CSV order becomes the display order. A column carries
+ * `field_order` only when the user asked for a specific position; it is then
+ * sent verbatim. This replaces the old one-call-per-field runner (pool of 5).
  *
  * - Idempotent: live fields are read first; columns whose field_name already
  *   exists are skipped (safe re-run; read-before-create).

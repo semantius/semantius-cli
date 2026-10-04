@@ -115,6 +115,6 @@ if (M.on_exists !== undefined && M.on_exists !== "insert") {
 }
 const dupes = nonSkipNames.filter((n, i) => n && nonSkipNames.indexOf(n) !== i);
 if (dupes.length) console.log(`\n⚠ duplicate field names in mapping: ${[...new Set(dupes)].join(", ")}`);
-const badOrder = creates.filter((c) => typeof c.field_order !== "number" || c.field_order % 10 !== 0 || c.field_order < 30);
-if (badOrder.length) console.log(`\n⚠ field_order should start at 30 in increments of 10 (10 and 20 are used by auto-created fields); check: ${badOrder.map((c) => c.field_name).join(", ")}`);
+const pinned = creates.filter((c) => c.field_order !== undefined);
+if (pinned.length) console.log(`\n⚠ explicit field_order on ${pinned.map((c) => `${c.field_name} (${c.field_order})`).join(", ")}: keep it only if the user asked for that position and it does not tie with a live field (the label field sits at 20); otherwise remove it, the platform appends new fields in column order`);
 if (label.length > 1) console.log(`\n⚠ more than one column has disposition "label": ${label.map((c) => c.field_name).join(", ")}`);

@@ -2,6 +2,14 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Unreleased: `field_order` left to the platform
+
+2026-09-28. The platform appends each new field after the entity's existing ones in array order, so explicit `field_order` values are no longer written by default. Hand-picked values had caused a silent tie with the auto-created label field (20), which renders the tied fields in an unpredictable order without any error.
+
+- `mapping.json` `create` columns carry no `field_order`; the array follows the mapping's column order, so the CSV order is the display order. A column gets `field_order` only when the user asks for a specific position, after reading the entity's live values; `create-fields.ts` sends it verbatim.
+- `render-plan.ts` no longer warns on a missing `field_order`; it now lists any explicit one so the reviewer confirms it was requested and does not tie with a live field.
+- Same rule in `use-semantius` (Golden Rule 3, the data-modeling examples and property table, the cli-usage bulk example) and in the modeler's Stage 4d, whose "`field_order` is explicit anyway" was wrong: the modeler never sent it.
+
 ## Unreleased: description under the 1024-character limit
 
 2026-09-28. The description was 1191 characters; the mechanism detail (introspection util, field-by-field diff wording) was shortened, every trigger phrase and exclusion kept. Now 992.

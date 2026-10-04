@@ -110,7 +110,7 @@ The vocabulary is aligned, so most formats pass straight into `create_field`:
 
 **The introspection verdict is gold — default to it, and never override it silently.** Every `format` (and `precision`, `enum_values`, `input_type`, and the boolean pair) in the csvschema output is a deliberate decision produced by the detection rules of section 1, not an accident. Pass it through to `create_field` unchanged unless there is a genuine, domain-level reason to change it. If you are confident the verdict is wrong for the data (e.g. a heuristic `string` id column that is really a numeric measurement, or an enum that is really an integer), that override is a **user decision, not a mapping edit**: raise it in the mapping review as an `AskUserQuestion` that states the introspected format, the proposed override, and the reason, and defaults to the introspected format. Silently changing a column's format in the mapping is editorializing the source's declared type — the exact mistake this rule exists to prevent. A mapping that differs from the csvschema verdict without a recorded user decision is a defect.
 
-Additional `create_field` properties per column: `title` (Title Case of the field name unless the raw header is already a better human title), `width: "default"`, the util's `input_type` when present (section 6), and an explicit **`field_order` in increments of 10 starting at 30** (30, 40, 50, ... following the mapping's column order; 10 and 20 are already occupied by every entity's auto-created fields). The platform preserves explicit `field_order` values regardless of creation order, and the tens spacing leaves room to slot fields in later. Because order is explicit, the position of a field inside the create call carries no meaning, and field creation goes out as **one bulk `create_field` call** (an array of all the field objects) through the copied `create-fields.ts` runner (import-script-template.md) instead of one call per column.
+Additional `create_field` properties per column: `title` (Title Case of the field name unless the raw header is already a better human title), `width: "default"`, and the util's `input_type` when present (section 6). **No `field_order`**: the platform appends each new field after the entity's existing ones in array order, and the array follows the mapping's column order, so the CSV order becomes the display order. Add `field_order` to a column only when the user asks for a specific position, after reading the entity's live `field_order` values (the label field sits at 20; a tie renders in an unpredictable order without any error). Field creation goes out as **one bulk `create_field` call** (an array of all the field objects) through the copied `create-fields.ts` runner (import-script-template.md) instead of one call per column.
 
 Monetary columns (price, cost, amount, total): always `number` with `precision`, per `use-semantius` data-modeling rules.
 
@@ -249,7 +249,6 @@ The review loop's output and the **single runtime input** for every script in th
       "field_name": "external_id",
       "format": "integer",
       "title": "External ID",
-      "field_order": 30,
       "unique_value": true,
       "empty_value": 0,
       "disposition": "create"
@@ -268,7 +267,6 @@ The review loop's output and the **single runtime input** for every script in th
       "field_name": "is_active",
       "format": "boolean",
       "title": "Is Active",
-      "field_order": 40,
       "bool_pair": {"true": "Yes", "false": "No"},
       "empty_value": false,
       "disposition": "create"
@@ -304,7 +302,8 @@ Per column:
 | `format` | The format the import coerces into: the csvschema verdict, or the **live** field's format when the diff chose coerce-into-live (section 9). |
 | `empty_value` | The section 7 resolution, sent for empty cells. |
 | `bool_pair` | On `boolean` columns: the raw values (original casing) that map to `true`/`false`. |
-| `title`, `field_order`, `precision`, `enum_values`, `input_type`, `unique_value`, `searchable`, `default_value`, `reference_table`, `reference_delete_mode` | The full `create_field` payload data, carried per column so `create-fields.ts` can build the exact call (`field_order` in increments of 10 starting at 30 per section 2). Required on `create` columns; harmless elsewhere. |
+| `title`, `precision`, `enum_values`, `input_type`, `unique_value`, `searchable`, `default_value`, `reference_table`, `reference_delete_mode` | The full `create_field` payload data, carried per column so `create-fields.ts` can build the exact call. Required on `create` columns; harmless elsewhere. |
+| `field_order` | Absent by default (the platform appends new fields in column order, section 2). Only on a column the user asked to place at a specific position; sent verbatim. |
 
 ---
 

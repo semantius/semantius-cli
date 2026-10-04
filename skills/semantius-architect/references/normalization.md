@@ -95,6 +95,7 @@ Ask only when nothing in the request or the conversation settles it ("we track c
 - The family questions are standalone questions (not ledger tasks). They go **first** in the same `AskUserQuestion` call as Stage 3's "Also track" multiSelect, at most 4 question objects per call; overflow goes to the next call, after the answers arrive.
 - One question per family, never more.
 - **Rebuild** re-asks each family question, with the existing Key types choice listed first as the default (the Rebuild rule "the prior choice is the default").
+- **Yolo mode** (a yolo run): don't ask; take the "(Recommended)" answer and name the result in the go-ahead summary's entity table.
 
 **Q1 widget** (`has_a` or not), with the user's own nouns:
 

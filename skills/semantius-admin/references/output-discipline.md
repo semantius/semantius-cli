@@ -25,6 +25,7 @@ log_diag() { mkdir -p "$DIAG_DIR" 2>/dev/null; printf '%s %s\n' "$(date -u +%H:%
 | architect sub-skill | `.tmp_admin/<run_id>/diag-architect.log` |
 | analyst sub-skill | `.tmp_admin/<run_id>/diag-analyst.log` |
 | modeler sub-skill | `.tmp_admin/<run_id>/diag-modeler.log` |
+| every skill, yolo runs only | `.tmp_admin/<run_id>/auto-picks.md` (one line per question answered for the user after the go-ahead; the source of the "Decided for you" summary; [`yolo-mode.md`](./yolo-mode.md), section 5) |
 
 The admin owns `diag-admin.log`. Each sub-skill writes its own `diag-<role>.log` into the SAME folder, keyed by the shared run-id; the role lives in the filename so the logs never collide and a reader can tell at a glance which stage emitted what. (Sub-skills log per their own SKILLs; the admin sets the folder + naming convention here and holds the single run-id throughout the inline run so each stage joins it.)
 
@@ -32,6 +33,6 @@ Rules for the logs:
 
 - **Best-effort, never blocking.** A failed write is ignored; logging never halts the run or alters a decision.
 - **Gitignored and ephemeral.** The whole `.tmp_admin/` tree is in `.gitignore`. The user manages cleanup. Nothing here is committed.
-- **Diagnostics, NOT a decision log.** They record check results, timings, and internal transitions, distinct from the banned decision/audit log (see "Things the admin must NEVER do"). Standing decisions still live only in `customizations.yaml`; git remains the decision audit trail.
+- **Diagnostics, NOT a decision log.** They record check results, timings, and internal transitions, distinct from the banned decision/audit log (see "Things the admin must NEVER do"). Standing decisions still live only in `customizations.yaml`; git remains the decision audit trail. The yolo `auto-picks.md` is a per-run diagnostic, not a policy record.
 - **Never named in chat** unless a run fails and the user needs it for support. The final report (Step 6.8) prints the run-folder path once on a failed run; on a clean run, don't mention it at all.
 - **Task descriptions are not the log.** The harness task list ([`task-tracking.md`](./task-tracking.md)) holds working state the user may open (`TaskGet`): flag values, a one-line step summary, the verbatim failure message, ledger answers. Check results, timings, transitions, and command output stay here. When the harness has no task tools, the fallback checklist file `.tmp_admin/<run_id>/open-questions.md` sits in this folder under these same rules.
