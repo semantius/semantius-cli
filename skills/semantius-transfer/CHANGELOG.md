@@ -6,6 +6,12 @@ Entries below are newest first.
 
 ---
 
+## Unreleased: signs in to a named host on request
+
+2026-10-04. When `semantius --host <h> whoami` exits 5 in Preflight 3, the skill no longer only tells the user to run `semantius login --host <h>`: it asks (Sign in / Stop) and, on Sign in, runs `semantius login --host <h>` in the background and relays the sign-in link, with `--login-flow device` when the user is not at the machine. It still never runs `use` (which would switch the current host) or `logout`. The Writing conventions list that question beside the Stage 3 gate. The preflight's CLI version note is gone; the skill ships with the CLI it describes.
+
+---
+
 ## Unreleased: `id_refentity` is create-only
 
 2026-09-28. The resident rules name `id_refentity` (the base of an `is_a` / `has_a` entity) alongside `id_type`: set only when the import creates the entity; an existing entity keeps its own.

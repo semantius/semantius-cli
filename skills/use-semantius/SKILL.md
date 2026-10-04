@@ -112,30 +112,18 @@ Understanding which layer you're working with determines which tools to use:
 
 ## Environment Setup
 
-**First, verify semantius is installed.** `semantius --version` works on every platform; check that it is on PATH with the form for your shell:
+**1. Is semantius installed?** Run `semantius --version`. If the shell cannot find it (POSIX `command not found` / exit code 127, PowerShell `CommandNotFoundException`), it may be installed but not yet on this session's PATH. Look in `%LOCALAPPDATA%\Programs\Semantius\semantius.exe` (Windows) or `/usr/local/bin/semantius` and `~/.local/bin/semantius` (Linux / macOS). If it is there, call it by that full path wherever these skills write `semantius` (`references/cli-usage.md` § "Installing from an agent"). If it is in none of those places, STOP: run no semantius command, and tell the user it is not installed, with the install command for their shell from `references/cli-usage.md` § "Installation" and the guide at **https://www.semantius.com/docs/cli/use-semantius/**.
 
-- **Linux / macOS (bash/zsh):** `command -v semantius` — or just `semantius --version`
-- **Windows (PowerShell):** `Get-Command semantius -ErrorAction SilentlyContinue` — or just `semantius --version`
+**2. Is it connected?** Follow `references/cli-usage.md` § "Checking the connection". In short:
 
-If it is not found (POSIX `command not found` / exit code 127, or PowerShell `CommandNotFoundException` / non-zero exit), STOP immediately. Do NOT attempt to run any semantius commands. Instead, tell the user:
+- **Probe** (`semantius whoami`, or the `getCurrentUser` call you need anyway). Exit `0`: connected. When it matters which credential is in use, name the host, its `host_source` and the `auth_method`; a zero exit can still hide one of the two traps in § "Credential, first match wins".
+- **Exit `3`:** retry once, then show the error and stop.
+- **`MISSING_ENV_VAR` or exit `5`:** sign the user in with `semantius use <host>`, asking for the host unless `whoami` shows it as `current`. Exception: an error naming `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` in a deliberate key or token setup; show it and stop.
+- **Anything else:** show the error and stop.
 
-> "semantius is not installed. See **https://www.semantius.com/docs/cli/use-semantius/** for what it is and how to install it. Quick install:
-> - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh | bash`
-> - Windows (PowerShell): `irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 | iex`"
+**Signing the user in** (§ "Signing the user in"): `semantius use <host>` switches the host for every later command in every directory, so run it only for the host the user named to work against; `semantius login --host <host>` signs in without switching. Never run `logout`. Run the sign-in in the background and relay its URL to the user, and add `--login-flow device` whenever the user is not at this machine's screen.
 
-Do not proceed with any other tasks until the CLI is installed and `semantius --version` returns successfully. After a Windows install, the user may need to open a new terminal so the updated PATH is picked up.
-
-**Then verify the connection:**
-
-```bash
-semantius whoami
-```
-
-- **Succeeds:** note `host`, `host_source` and `auth_method`, and continue. A zero exit does not mean the user is set up as they think: `host_source` `current` means the host was pinned with `semantius use`; `env`, `dotenv:<path>` or `org` means it came from the environment or a `.env` (possibly a project default), so name the host and where it came from. If the user expects their browser session but `auth_method` is `apikey`, an API key in the environment is winning: the fix is `semantius use <host>` or `--auth oauth`, not another sign-in.
-- **Exits `1` with `MISSING_ENV_VAR`:** no host is configured. Ask which host; once the user names it, `semantius use <host>` signs them in and pins it.
-- **Exits `5`:** quote the error (it names the host) and STOP. The user runs `semantius use <host>` or `semantius login --host <host>` themselves, or, for automation, sets `SEMANTIUS_API_KEY` with `SEMANTIUS_ORG` / `SEMANTIUS_HOST`.
-
-Never run `login` or `logout`, and never run `use` unprompted: they change machine-global state and need a human. `whoami`, `ping` and `hosts` are safe read-only diagnostics. Commands, tiers, host and credential precedence: `references/cli-usage.md`.
+`whoami`, `ping` and `hosts` are safe read-only diagnostics. Commands, tiers, host and credential precedence: `references/cli-usage.md`.
 
 ---
 
@@ -151,7 +139,7 @@ semantius call <server> <tool> '{}'   # Call tool with inline JSON
 semantius call <server> <tool>        # Call tool — reads JSON from stdin
 ```
 
-**Windows (PowerShell): always pass inline JSON, or pipe empty input if the tool takes no arguments.** Omitting the JSON argument makes the CLI block reading stdin until EOF. In a persistent PowerShell session (state kept alive across calls, as an agent harness typically does) that stdin pipe is never closed, so the call hangs forever with no error and no timeout — it is not a network or auth issue, and retrying will not help. Always supply the JSON explicitly, even if empty:
+**Windows (PowerShell): always pass inline JSON, or pipe empty input if the tool takes no arguments.** Omitting the JSON argument makes the CLI block reading stdin until EOF. In a persistent PowerShell session (state kept alive across calls, as some agent harnesses do) that stdin pipe is never closed, so the call hangs forever with no error and no timeout — it is not a network or auth issue, and retrying will not help. Always supply the JSON explicitly, even if empty:
 
 ```powershell
 semantius call crud getCurrentUser '{}'     # inline JSON, never blocks
@@ -361,9 +349,7 @@ when the operation is supposed to change state.
 array `id` (or `table_name`), or a `postgrestRequest` with an array
 `body` always returns the array of affected records — one element
 per row that landed. The CLI **rejects `--single` on such a call
-before sending it** (exit `1`, `SINGLE_ARRAY_INPUT`); on older CLIs
-the server refuses the `application/vnd.pgrst.object+json` Accept
-header for a multi-row result. Never pass an explicit
+before sending it** (exit `1`, `SINGLE_ARRAY_INPUT`). Never pass an explicit
 `"accept": "application/vnd.pgrst.object+json"` with an array
 either. Assert a bulk write by its count (`jq 'length'` equals the
 number of rows sent) or by a follow-up `read_*` with an `in.(...)`

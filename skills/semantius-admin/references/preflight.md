@@ -26,15 +26,15 @@ The modeler never consults the customizations file (specs already carry every de
 ## Output discipline
 
 - **Orchestrated by admin:** produce **no chat output** for these checks; the admin owns all narration and keeps the machinery invisible.
-- **Standalone:** keep it quiet too. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a tool, or supplying their API key). A single brief line on the customizations file (check 4) is acceptable standalone. On all-pass with everything already installed and authenticated, say nothing.
+- **Standalone:** keep it quiet too. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). A single brief line on the customizations file (check 4) is acceptable standalone. On all-pass with everything already installed and authenticated, say nothing.
 
 ---
 
 ## Check 1: Stay in the repo root
 
-Never `cd`. The `semantius` CLI reads `.env` from the current working directory, so changing into a sibling project loads a different `.env` with different credentials pointing at a different instance, and every subsequent call lands on the wrong tenant. Run every `semantius` command from the session's repo root, full stop. If verifying something requires a different directory's config, ask the user to run it and paste the output.
+Never `cd`. The `semantius` CLI reads `./.env` from the current working directory (no parent search; only when there is none does it read the `.env` next to the executable), and Bun loads `.env.local` / `.env.<NODE_ENV>` from there too. So changing into a sibling project loads a different `.env` with different credentials pointing at a different instance, and every subsequent call lands on the wrong tenant. Run every `semantius` command from the session's repo root, full stop. If verifying something requires a different directory's config, ask the user to run it and paste the output. The global `.env` (`%APPDATA%\semantius\cli\.env` / `~/.config/semantius/cli/.env`) applies in every directory and fills whatever is still unset, so staying put does not escape it. Full order: use-semantius `references/cli-usage.md` § "Where `.env` files are read from".
 
-This covers scripts as much as bare commands. The Bun helpers these skills stage under `.tmp_deploy/`, `.tmp_import/`, and `.tmp_admin/` spawn `semantius call …` as child processes, and a child inherits the shell's cwd — so a script run from inside its scratch folder makes the CLI look for `.env` there, where none exists, and every call fails with an auth error that reads like a CLI bug (an install authenticated by a JWT or by injected environment variables hides the mistake; an API-key install does not). Run every such script **from the repo root by path** (`bun run .tmp_import/run-<ts>/import.ts …`, `bun run .tmp_deploy/deploy_<slug>.ts`); the scripts resolve their inputs and outputs relative to their own file, so the working directory never needs to change. When a scratch folder needs a dependency install, use `bun add --cwd <folder> <pkg>` instead of `cd`. Never copy or symlink `.env` into a scratch folder to make a `cd` "work": those folders are gitignored scratch and must not carry credentials.
+This covers scripts as much as bare commands. The Bun helpers these skills stage under `.tmp_deploy/`, `.tmp_import/`, and `.tmp_admin/` spawn `semantius call …` as child processes, and a child inherits the shell's cwd — so a script run from inside its scratch folder never reads the repo's `.env`. Its calls then either fail with an auth error that reads like a CLI bug, or, worse, succeed with whatever the global `.env` or the current host supplies. Run every such script **from the repo root by path** (`bun run .tmp_import/run-<ts>/import.ts …`, `bun run .tmp_deploy/deploy_<slug>.ts`); the scripts resolve their inputs and outputs relative to their own file, so the working directory never needs to change. When a scratch folder needs a dependency install, use `bun add --cwd <folder> <pkg>` instead of `cd`. Never copy or symlink `.env` into a scratch folder to make a `cd` "work": those folders are gitignored scratch and must not carry credentials.
 
 ---
 
@@ -46,7 +46,17 @@ Besides the `semantius` CLI, these skills need three general-purpose tools on PA
 - **jq** — parses `semantius` JSON output, both in this preflight (check 3 reads `org` and `ui_baseurl` with `jq`) and throughout the architect / analyst bash flows.
 - **yq** — Mike Farah's Go yq v4+, the engine behind the surgical `customizations.yaml` writes (admin Step 7 / `references/customizations-protocol.md`) that preserve hand-edits and provenance line-comments.
 
-Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if the tool is still not found (`command -v <tool>` on POSIX, `Get-Command <tool>` on Windows PowerShell) the PATH update has not reached this shell: ask the user to open a new terminal and re-run.
+Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if the tool is still not found (`command -v <tool>` on POSIX, `Get-Command <tool>` on Windows PowerShell), it is installed but not on the agent's PATH yet: a PATH change reaches only programs started afterwards. Do not stop. Look in the folder its installer uses:
+
+| Installer | Folder |
+|---|---|
+| Bun installer | `~/.bun/bin` (Windows: `%USERPROFILE%\.bun\bin`) |
+| winget | `%LOCALAPPDATA%\Microsoft\WinGet\Links` |
+| scoop | `%USERPROFILE%\scoop\shims` |
+| choco | `%ProgramData%\chocolatey\bin` |
+| brew, apt / dnf / apk, snap | `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/snap/bin` (normally on PATH already) |
+
+If it is there, call it by its full path for the rest of the run, and put that folder on PATH in the same command as any script that calls the tool by name (use-semantius `references/cli-usage.md` § "Installing from an agent" shows the form per shell). Tell the user once, in one line, how to get it on PATH for good: on Windows, restart VS Code or the agent app (a new terminal tab inside it is not enough); on Linux / macOS, open a new shell, or add the line the installer printed to the shell profile.
 
 For each missing tool, prefer the platform's package manager; fall back to the project's static release binary when no package manager is present. Detect the platform and use the matching cell:
 
@@ -63,7 +73,7 @@ Reference flow (per tool: check, then install via the matching cell, then re-che
 for tool in bun jq yq; do
   command -v "$tool" >/dev/null 2>&1 && continue
   # install via the platform cell above (package manager first, static binary fallback),
-  # then re-check: command -v "$tool"  (if still missing, open a new terminal so PATH refreshes)
+  # then re-check: command -v "$tool"  (if still missing, look in the installer's folder above and use the full path)
 done
 ```
 
@@ -72,7 +82,7 @@ done
 foreach ($tool in 'bun','jq','yq') {
   if (Get-Command $tool -ErrorAction SilentlyContinue) { continue }
   # install via the Windows cell above (winget/scoop/choco first, static-binary fallback),
-  # then re-check: Get-Command $tool  (if still missing, open a new terminal so PATH refreshes)
+  # then re-check: Get-Command $tool  (if still missing, look in the installer's folder above and use the full path)
 }
 ```
 
@@ -94,28 +104,13 @@ This is the front door for every Semantius call, so it self-heals a missing bina
 
 ### 3a. Is the CLI on PATH? Install it if not (no prompt)
 
-The `semantius` CLI ships as a **native installer, NOT an npm package**, so there is no base URL to ask for and no `npx` form. Detect the binary with the form matching your shell; if it is missing, run the matching install one-liner immediately (do not ask first), then have the user open a new terminal if PATH was just updated, and re-probe.
+The `semantius` CLI ships as a **native installer, NOT an npm package**, so there is no base URL to ask for and no `npx` form. Detect it with `command -v semantius` (bash/zsh, Git Bash) or `Get-Command semantius -ErrorAction SilentlyContinue` (PowerShell). If it is missing from PATH, look in its install locations first, since a binary installed earlier in this session is not on the agent's PATH yet. Only if it is not there either, run the installer for this shell immediately (do not ask first), then look again. Install commands, install locations, and how to call the binary by its full path for the rest of the run (Bun scripts included): use-semantius `references/cli-usage.md` § "Installation" and § "Installing from an agent".
 
-| | Detect on PATH | Install if missing |
-|---|---|---|
-| **Linux / macOS** (bash/zsh) | `command -v semantius` | `curl -fsSL https://raw.githubusercontent.com/semantius/semantius-cli/main/install.sh \| bash` |
-| **Windows** (PowerShell) | `Get-Command semantius -ErrorAction SilentlyContinue` | `irm https://raw.githubusercontent.com/semantius/semantius-cli/main/install.ps1 \| iex` |
-
-POSIX reference (use the `Get-Command` / `irm` cells above on Windows PowerShell):
-
-```bash
-if ! command -v semantius >/dev/null 2>&1; then
-  : # run the matching install one-liner from the table, then re-check
-fi
-```
-
-This is one of the places check 3 may speak to the user: say at most one plain line, e.g. *"Installing the Semantius CLI..."*, run it, and re-check.
+This is one of the places check 3 may speak to the user: at most one plain line, e.g. *"Installing the Semantius CLI..."*, and, when the binary is installed but not on PATH, one line on how to get it on PATH for good.
 
 **If auto-install is not possible** — the install command fails, or the client sandbox forbids running it — do NOT limp on. Direct the user to install it themselves and stop until they confirm:
 
 > "The Semantius CLI is required but I couldn't install it automatically. See **https://www.semantius.com/docs/cli/use-semantius/** for what it is and how to install it (Linux/macOS: `curl -fsSL …/install.sh | bash`; Windows PowerShell: `irm …/install.ps1 | iex`), then re-run."
-
-If detection still fails after a successful install, the PATH update has not reached this shell: ask the user to open a new terminal and re-run, then continue.
 
 ### 3b. Probe once; this folds the auth check and reads org + UI base
 
@@ -142,21 +137,18 @@ $ui_baseurl = $obj.ui_baseurl   # e.g. https://tests.semantius.app
 
 **Parse the full `getCurrentUser` response — never pipe it through `head` / `tail` / `cut` before `jq`.** The blocks above capture the whole output into a variable and read `semantius_org` and `ui_baseurl` with independent `jq` / `ConvertFrom-Json` reads; do not truncate the JSON, or you silently drop `ui_baseurl` (a single-line response means even `head -1` is not safe to assume). Keep the capture-then-parse shape.
 
-**A successful probe ends credential handling.** If `getCurrentUser` returns a user object with `semantius_org`, authentication is settled for the entire session — whatever mechanism supplied it (an API key in `.env`, a JWT-preauthenticated environment, ambient credentials injected by the harness). Do not inspect, create, or edit `.env`, do not ask for an API key, and do not revisit credentials later in the run. The credential steps below exist ONLY on the failure path, and only for genuine auth evidence.
+**A successful probe ends credential handling.** If `getCurrentUser` returns a user object with `semantius_org`, authentication is settled for the entire session, whatever supplied it (a sign-in, an API key, a JWT-preauthenticated environment, credentials injected by the harness). Do not inspect, create, or edit `.env`, and do not revisit credentials later in the run.
 
-If the probe fails (non-zero exit, or no `semantius_org` in the response), classify by the error and act. This mirrors the `use-it-ops-starter` bootstrap exit handling; never invent a connection or onboarding option beyond these:
+If the probe fails (non-zero exit, or no `semantius_org` in the response), follow use-semantius `references/cli-usage.md` § "Checking the connection", re-probe after each fix, and continue only once `getCurrentUser` returns a user object with `semantius_org`. In short:
 
-| Probe result | What you DO | What you SAY (shape) |
-|---|---|---|
-| `command not found` / `not recognized` / ENOENT (binary missing despite 3a) | The install in 3a did not take or PATH did not refresh. Re-run the install one-liner, then ask the user to restart the shell and re-run. | *"Installing the Semantius CLI..."* (then, if needed) *"Please restart your shell so the CLI is on PATH, then re-run."* |
-| Transient / network error (exit 3, timeout, connection refused, 5xx) | Re-probe **once**. If it fails again, surface the error verbatim and stop. A transient error is NOT an auth failure and never justifies touching `.env` or asking for a key. | *(show the exact error, then)* *"The Semantius API isn't reachable right now. Please check connectivity and re-run."* |
-| No host configured (exit 1, `MISSING_ENV_VAR`) | Ask which host to use. Once the user names it, run `semantius use <host>`: it signs them in (a browser opens on their machine, or, headless, it prints a code and URL to relay) and pins the host. Never pick a host yourself. | *"Which Semantius host should I connect to? (for example `acme.semantius.app`)"* |
-| **Explicit** auth failure (exit 5, `401`, `403`, expired or invalid token) | Only on this evidence: run `semantius whoami` and read `host` and `host_source`. **Host pinned** (`current`, `flag`): only a stored session counts there and an API key would be ignored, so ask the user to sign in themselves with `semantius login --host <host>` (add `--login-flow device` over SSH). **Host from the environment** (`env`, `dotenv:…`, `org`): recommend the same sign-in, or `semantius use <host>`; only if the user prefers a key (automation, CI), ask for it and write `SEMANTIUS_API_KEY=<key>` to the `.env` the CLI reads (repo root / cwd). Never run `login` or `logout` yourself, never ask for a base URL, never offer to provision anything. If the session was authenticated by something other than an API key (JWT preauth), surface the error instead of converting the session to key auth. | *"Semantius needs you to sign in to `<host>`. Please run `semantius login --host <host>` in your terminal, then tell me to continue."* (key path: *"Paste an API key from https://app.semantius.com/dashboard (Settings > API Keys) and I'll save it and continue."*) |
-| JWT-audience error (`required audience not found, received [...]`) | Surface the error verbatim and wait; do not retry in a loop. | *(show the exact error, then)* *"This looks like a server-side auth-scope issue. Could you check the API key's audience?"* |
+- **CLI not found** (`command not found` / `not recognized` / ENOENT): back to 3a.
+- **Exit `3`:** re-probe once. If it fails again, show the error verbatim and stop: *"The Semantius API isn't reachable right now. Please check connectivity and re-run."* It is not an auth failure; never touch credentials over it.
+- **`MISSING_ENV_VAR` or exit `5`:** sign the user in with `semantius use <host>` as cli-usage § "Signing the user in" describes: in the background, relaying the link, with `--login-flow device` when the user is not at this machine's screen. Ask for the host unless `whoami` shows it as `current`: *"Which Semantius host should I connect to? (for example `acme.semantius.app`)"*. Then: *"Open <url> to sign in"* (device grant: *"Open <url> and enter the code <code>"*). Exception: an error naming `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` in a deliberate key or token setup (CI, a JWT-preauthenticated agent): show it and stop.
+- **Anything else**, including "required audience not found" (a server-side configuration problem): show the error verbatim and stop.
 
-Re-probe after the install, after the user signs in, or after saving a key; only continue once `getCurrentUser` returns a user object with `semantius_org`. When a key is saved, write it to the resolved `.env` as `SEMANTIUS_API_KEY=<key>` (append or update the line; preserve any other keys already in the file), and remember the trap in the other direction: with no pinned host an API key outranks a stored session, so a key left in `.env` hides a later sign-in (`whoami` shows `auth_method: apikey`). All of this stays out of chat except the single install line, the host question, or the sign-in / API-key request above.
+Never run `logout`, never pick a host yourself, never ask for a base URL or an API key, never write a key to a `.env`, never offer to provision anything. A user who wants an API key sets it up themselves (cli-usage § "API keys"). All of this stays out of chat except the install line, the PATH line, the host question and the sign-in link.
 
-**When a key is used, read it from `.env`; never carry it forward inline.** The CLI reads `SEMANTIUS_API_KEY` from `.env` on every call, so once it is saved you never pass it again — do **not** hardcode it or re-emit it in an inline `export SEMANTIUS_API_KEY=...` in a later command. Two reasons this matters: (1) a key pasted into chat can carry invisible corruption — most commonly a literal `…` (U+2026 horizontal ellipsis) or `...` where a console truncated a long token for display, plus stray whitespace or smart quotes — and the `getCurrentUser` probe above is exactly what catches that *before* any real work; carrying the raw pasted string into export statements bypasses the file the probe validated and re-introduces the bad value. (2) The `.env` file is the single source of truth, so any later script that needs the key should let the CLI read it (or read it from the file with `$(grep '^SEMANTIUS_API_KEY=' .env | cut -d= -f2-)`), never re-type it. If a probe ever fails with an auth error *after* a successful one, suspect a stale inline copy, not the saved `.env`.
+**If the setup uses an API key, never carry it forward inline.** The CLI reads `SEMANTIUS_API_KEY` from the environment or a `.env` on every call, so never hardcode it or re-emit it in an inline `export SEMANTIUS_API_KEY=...` in a later command. A key pasted into chat can carry invisible corruption — most commonly a literal `…` (U+2026 horizontal ellipsis) or `...` where a console truncated a long token for display, plus stray whitespace or smart quotes — and an inline copy bypasses the value the probe validated. If a probe ever fails with an auth error *after* a successful one, suspect a stale inline copy first.
 
 ### 3c. Halt if `org` is `adenin`
 

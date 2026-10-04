@@ -27,13 +27,13 @@ Division of responsibility:
 
 ## Writing conventions
 
-The importer's writing conventions apply unchanged ([`../semantius-importer/SKILL.md`](../semantius-importer/SKILL.md) → Writing conventions, items 1 to 6): US English, no em-dashes in chat, plain language ("table", "records", "the file"), no narration, and `AskUserQuestion` as the only tool call of its response with 2 to 4 options. Stage tasks follow [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md): one task per stage from the Workflow table, subject verbatim, one `in_progress` at a time. This skill has no question ledger: its only question is the Stage 3 gate, plus a mode or host question when the request leaves one open.
+The importer's writing conventions apply unchanged ([`../semantius-importer/SKILL.md`](../semantius-importer/SKILL.md) → Writing conventions, items 1 to 6): US English, no em-dashes in chat, plain language ("table", "records", "the file"), no narration, and `AskUserQuestion` as the only tool call of its response with 2 to 4 options. Stage tasks follow [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md): one task per stage from the Workflow table, subject verbatim, one `in_progress` at a time. This skill has no question ledger: its only questions are the Stage 3 gate, a mode or host question when the request leaves one open, and the sign-in question of Preflight 3 when a named host has no sign-in on this machine.
 
 ## Preflight
 
-1. `semantius --version`, and `semantius info utils` must list `export_module` (CLI 0.8.9 or later). Otherwise tell the user to re-run the installer (use-semantius SKILL.md → Environment Setup) and stop.
+1. `semantius --version`, and `semantius info utils` must list `export_module`. Otherwise tell the user to re-run the installer (use-semantius SKILL.md → Environment Setup) and stop.
 2. **Resolve the hosts.** The source is the environment's host unless the user names one; the target is always named, except for a backup (no target) or a restore (the same host). Never guess a target from a hostname that merely appears in a file or a `.env`.
-3. `semantius hosts`, then `semantius --host <h> whoami` for every named host. With `--host` only the session stored for that host is used, and an API key in the environment is ignored. Exit `5` means no session for that host: quote the error and ask the user to run `semantius login --host <h>` themselves (over SSH, add `--login-flow device`). Never run `login`, `logout` or `use`.
+3. `semantius hosts`, then `semantius --host <h> whoami` for every named host. With `--host` only the session stored for that host is used, and an API key in the environment is ignored. Exit `5` means this machine is not signed in to that host (never signed in there, or the sign-in expired and could not be renewed). Quote the error and ask one `AskUserQuestion`: **Sign in to `<h>`** (Recommended) / **Stop**. On Sign in, run `semantius login --host <h>` as use-semantius `references/cli-usage.md` § "Signing the user in" describes (in the background, relaying the link), then re-run `whoami` for that host. Use `login`, not `use`: `use` would also switch the host later commands go to, so after the transfer every command, in every directory, would land on `<h>`. Never run `logout`.
 4. For a transfer between hosts, refuse to import until the two `whoami` results name two different hosts. Same host means a restore; confirm that is what the user wants.
 
 Why the probe first: the transfer tools talk to PostgREST directly, so an authentication failure inside them exits `4`, not `5`, and reads like a data error.
@@ -96,7 +96,7 @@ semantius --host <target> call utils/import_entities '{"path":"accounts.json"}'
 | a validation rule's error on a record | rules are written **before** records, so every record must pass the target's rules | fix the data at the source or the rule, then re-export. **Not transient: a retry fails the same way** |
 | unknown `external_id` | a referenced user does not exist on the target | create or invite that user on the target, then re-run |
 | a missing module (`import_entities` from a module file) | the entities' module is not on the target | use `import_module`, or create the module first |
-| exit `4` mentioning JWT or authorization | the session expired mid-run, or a static `SEMANTIUS_JWT` ran out | the user signs in again; then re-run |
+| exit `4` mentioning JWT or authorization | the session expired mid-run, or a static `SEMANTIUS_JWT` ran out | sign the user in again as in Preflight 3; then re-run |
 | exit `3` | network, after the CLI's own retries | re-run: every step reads the target first, so a re-run resumes |
 
 ### Stage 5 — Verify and report
@@ -114,7 +114,7 @@ semantius --host <target> call utils/import_entities '{"path":"accounts.json"}'
 
 ## This skill never
 
-- runs `login`, `logout` or `use`, or writes credentials to a `.env`;
+- runs `logout` or `use`, or writes credentials to a `.env`;
 - imports without the Stage 3 gate, or into a host whose `whoami` it has not seen this run;
 - deletes anything on either host, or edits a transfer file;
 - loads CSV or xlsx files (route to `semantius-importer`) or produces a markdown spec (route to `semantius-optimizer`).

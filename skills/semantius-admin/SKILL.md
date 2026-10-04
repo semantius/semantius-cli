@@ -92,13 +92,13 @@ The admin uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` 
 
 ## Preflight (runs before Step 0, every invocation)
 
-**Preflight produces no chat output** (see Output discipline above). Do not announce it; never write the words "preflight" or "silent" to the user. Sample `$RUN_ID` and set up `$DIAG_LOG` (`diag-admin.log`) first, then run the four shared preflight checks with NO chat narration, writing their results to the log. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a required tool, or supplying their API key). On all-pass with every tool already installed and the CLI authenticated, say nothing and let your first user-facing line be the download milestone (URL requests only), the first question, or the plan. The `$RUN_ID` sampled here is the one reused by Step 6.2 — never re-sample it.
+**Preflight produces no chat output** (see Output discipline above). Do not announce it; never write the words "preflight" or "silent" to the user. Sample `$RUN_ID` and set up `$DIAG_LOG` (`diag-admin.log`) first, then run the four shared preflight checks with NO chat narration, writing their results to the log. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a required tool, getting the CLI on PATH, naming the host, or opening the sign-in link). On all-pass with every tool already installed and the CLI authenticated, say nothing and let your first user-facing line be the download milestone (URL requests only), the first question, or the plan. The `$RUN_ID` sampled here is the one reused by Step 6.2 — never re-sample it.
 
 **Run the shared preflight: [`references/preflight.md`](./references/preflight.md).** The canonical checks live there as the single source of truth shared by the admin and all three sub-skills:
 
 1. **Stay in the repo root** (never `cd`; the CLI reads `.env` from cwd).
 2. **Install the supporting toolchain (Bun, jq, yq)** — auto-install any missing tool, package-manager-first with a static-binary fallback, on Windows / macOS / Linux, including the mikefarah-yq footgun guard.
-3. **Ensure the `semantius` CLI is installed and authenticated, then halt if the active org is `adenin`** — one `getCurrentUser` probe folds the install check, the auth check, and the org / `ui_baseurl` read; install the CLI if missing, ask for and save `SEMANTIUS_API_KEY` if auth fails.
+3. **Ensure the `semantius` CLI is installed and authenticated, then halt if the active org is `adenin`** — one `getCurrentUser` probe folds the install check, the auth check, and the org / `ui_baseurl` read; install the CLI if missing (or call it by full path when it is installed but not yet on PATH); with no host or a failed sign-in, sign the user in with `semantius use <host>` in the background, relaying the link.
 4. **Compute the customizations file path** (`CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"`).
 
 The admin runs all four as part of an orchestrated run; it then passes the resolved `org`, `ui_baseurl`, and `CUSTOMIZATIONS_FILE` to each sub-skill via the Step 7.3 `Run context:` block, so the sub-skills skip the checks rather than repeat them. Read the reference file for the full per-check procedure, install matrix, and exit-handling tables; do not duplicate that detail here.
@@ -363,7 +363,7 @@ Get started (5.5) stays resident below: it is a top-level request type (Step 0) 
 
 Flow:
 
-1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and settles the connection (asking which host when none is configured, and asking the user to sign in when there is no usable credential). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the user has not signed in yet), surface that and stop — there is nothing to get started against until the platform is reachable.
+1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and settles the connection (asking which host when none is configured, then starting the sign-in and giving the user the link to open). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the user has not signed in yet), surface that and stop — there is nothing to get started against until the platform is reachable.
 2. **Verify the connection by querying the database.** Confirm the catalog actually reads back, not just that the CLI authenticated:
 
    ```bash
@@ -378,7 +378,7 @@ Flow:
    - **Some modules already deployed:** *"You're connected to `<org>` with N data module(s) live: <plain-English names>. Every system in the catalog is a customizable blueprint you can tailor into a hyper-customized data platform — browse more at https://www.semantius.com/blueprints, and just ask me for a full status anytime."*
 5. **Offer the next step, don't force it.** One short line: ask me to deploy a catalog blueprint, build a new system from an idea, or show a full status. Then wait.
 
-Read-only against the catalog. The only writes are the tool installs, the host pin (`semantius use`, after the user names the host) and any `.env` key save done by the preflight, which the user authorized by asking to get started.
+Read-only against the catalog. The only writes are the tool installs and the sign-in with its host pin (`semantius use`, after the user names the host), which the user authorized by asking to get started.
 
 ---
 
