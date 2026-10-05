@@ -28,6 +28,7 @@ import {
   getPlatformConfig,
 } from '../src/auth/platform';
 import { buildScope, getOAuthMetadata } from '../src/auth/provider';
+import { setLoginReachTimingsForTests } from '../src/auth/reach';
 import {
   LoginUnavailableError,
   getSessionExpiry,
@@ -35,6 +36,7 @@ import {
   getSessionToken,
   hasStoredSession,
   hasStoredSessionFor,
+  isTransientFailure,
   login,
   logout,
   noInteractiveLogin,
@@ -102,6 +104,8 @@ interface ProviderState {
   /** Mutable knobs for the issuer cases; reset() restores the sound values. */
   cfg: ProviderConfig;
   reset: () => void;
+  /** Answer every held request now (cfg.hold, cfg.stallBody). */
+  release: () => void;
   stop: () => void;
 }
 
@@ -131,6 +135,18 @@ interface ProviderConfig {
   refuseRefresh: boolean;
   /** When set, answers every refresh_token grant instead (refuseRefresh aside). */
   refreshReply: (() => Response) | null;
+  /**
+   * Paths whose answer is held, as a sandbox holds a request until somebody
+   * approves it: for that many ms, or until release() for 'gate'. A held
+   * request also ends when the client gives up on it.
+   */
+  hold: Record<string, number | 'gate'>;
+  /** Paths answered with headers and half a body, the rest held until release(). */
+  stallBody: string[];
+  /** Paths answered 403, as a refusing proxy would. */
+  refuse: string[];
+  /** The `interval` of the device code answer, in seconds. */
+  deviceInterval: number;
 }
 
 /** A tenant-shaped OAuth provider: discovery, authorize, token, revoke. */
@@ -144,7 +160,24 @@ function startProvider(): ProviderState {
     deviceGrant: false,
     refuseRefresh: false,
     refreshReply: null,
+    hold: {},
+    stallBody: [],
+    refuse: [],
+    deviceInterval: 1,
   };
+  /** Every held answer, opened by release(). */
+  const gates = new Set<() => void>();
+  const held = (req: Request, hold: number | 'gate') =>
+    new Promise<void>((resolve) => {
+      const open = () => {
+        clearTimeout(timer);
+        gates.delete(open);
+        resolve();
+      };
+      const timer = hold === 'gate' ? undefined : setTimeout(open, hold);
+      gates.add(open);
+      req.signal.addEventListener('abort', open, { once: true });
+    });
   const paths: string[] = [];
   const tokenGrants: string[] = [];
   const deviceRequests: {
@@ -166,6 +199,31 @@ function startProvider(): ProviderState {
       const url = new URL(req.url);
       const { origin } = url;
       paths.push(url.pathname);
+
+      const hold = cfg.hold[url.pathname];
+      if (hold !== undefined) await held(req, hold);
+      if (cfg.refuse.includes(url.pathname)) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      if (cfg.stallBody.includes(url.pathname)) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"version":'));
+            const open = () => {
+              gates.delete(open);
+              try {
+                controller.close();
+              } catch {
+                // Already closed: the client gave up on the body.
+              }
+            };
+            gates.add(open);
+          },
+        });
+        return new Response(body, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
 
       if (url.pathname === '/.well-known/semantius.json') {
         const doc = cfg.platformDoc;
@@ -260,7 +318,7 @@ function startProvider(): ProviderState {
           verification_uri: `${origin}/device`,
           verification_uri_complete: `${origin}/device?user_code=WDJB-MJHT`,
           expires_in: 1800,
-          interval: 1,
+          interval: cfg.deviceInterval,
         });
       }
 
@@ -331,6 +389,10 @@ function startProvider(): ProviderState {
       cfg.deviceGrant = false;
       cfg.refuseRefresh = false;
       cfg.refreshReply = null;
+      cfg.hold = {};
+      cfg.stallBody = [];
+      cfg.refuse = [];
+      cfg.deviceInterval = 1;
       deviceRequests.length = 0;
       issued = 0;
       paths.length = 0;
@@ -340,6 +402,9 @@ function startProvider(): ProviderState {
       clientIds.length = 0;
       scopes.length = 0;
       revoked.length = 0;
+    },
+    release: () => {
+      for (const open of [...gates]) open();
     },
     stop: () => server.stop(true),
   };
@@ -407,6 +472,7 @@ const VARS = [
   'SEMANTIUS_API_KEY',
   'SEMANTIUS_JWT',
   'SEMANTIUS_LOGIN_FLOW',
+  'SEMANTIUS_CONNECT_TIMEOUT',
   'APPDATA',
   'LOCALAPPDATA',
   'HOME',
@@ -485,6 +551,8 @@ describe('oauth login', () => {
   });
 
   afterEach(async () => {
+    provider.release();
+    setLoginReachTimingsForTests();
     setSecretsForTests(undefined);
     setHostCacheDirForTests(undefined);
     setHostsIndexDirForTests(undefined);
@@ -973,6 +1041,189 @@ describe('oauth login', () => {
         noInteractiveLogin(host.host, 'ci', { deviceOffered: true }).message,
       ).toContain(
         'Or force the device code grant with "--login-flow device": it prints a URL and a code (on stderr) to enter on any other device, and waits up to 10 minutes.',
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------
+  describe('a login a sandbox may hold or refuse', () => {
+    // An agent's sandbox may hold each request until somebody approves its
+    // host, or refuse it. The login names each host before contacting it,
+    // nudges after a while, waits long enough for an approval, and when it
+    // gives up says that nothing was issued and which host to allow. Timings
+    // are milliseconds here; the assertions are on the order of lines, never
+    // on elapsed time, which Windows timers are too coarse for.
+    const hostname = () => provider.origin.replace('http://', '');
+
+    /** What the login printed for the person (on either stream), and how it ended. */
+    async function shown(
+      fn: () => Promise<unknown>,
+    ): Promise<{ lines: string[]; error?: Error }> {
+      const lines: string[] = [];
+      const { log, error: logError } = console;
+      const capture = (...args: unknown[]) => {
+        lines.push(args.join(' '));
+      };
+      console.log = capture;
+      console.error = capture;
+      try {
+        await fn();
+        return { lines };
+      } catch (error) {
+        return { lines, error: error as Error };
+      } finally {
+        console.log = log;
+        console.error = logError;
+      }
+    }
+
+    /** The index of the first line containing `text`; -1 when none does. */
+    const lineOf = (lines: string[], text: string) =>
+      lines.findIndex((line) => line.includes(text));
+
+    beforeEach(() => {
+      provider.cfg.deviceGrant = true;
+      process.env.SEMANTIUS_LOGIN_FLOW = 'device';
+    });
+
+    test('names the host once, then the code request, then shows the code', async () => {
+      const { lines, error } = await shown(() => login(host));
+
+      expect(error).toBeUndefined();
+      expect(lines.filter((line) => line.startsWith('Contacting '))).toEqual([
+        `Contacting ${hostname()}...`,
+      ]);
+      const request = lineOf(
+        lines,
+        `Requesting a sign-in code from ${hostname()}...`,
+      );
+      expect(lineOf(lines, 'Contacting ')).toBeLessThan(request);
+      expect(request).toBeLessThan(lineOf(lines, 'enter the code:  WDJB-MJHT'));
+    });
+
+    test('a held discovery request is nudged, and the login goes on once it is answered', async () => {
+      setLoginReachTimingsForTests({ nudgeMs: 20, limitMs: 5000 });
+      provider.cfg.hold = { '/.well-known/oauth-protected-resource': 200 };
+
+      const { lines, error } = await shown(() => login(host));
+
+      expect(error).toBeUndefined();
+      const nudge = lineOf(
+        lines,
+        `Still waiting for ${hostname()} (20 ms). If a sandbox or agent is asking you to allow network access to it, approve it now.`,
+      );
+      expect(nudge).toBeGreaterThan(lineOf(lines, 'Contacting '));
+      expect(nudge).toBeLessThan(lineOf(lines, 'Requesting a sign-in code'));
+      expect(await hasStoredSession(host)).toBe(true);
+    });
+
+    test('a discovery request that never answers fails naming the host to allow, and is transient', async () => {
+      setLoginReachTimingsForTests({ nudgeMs: 20, limitMs: 200 });
+      provider.cfg.hold = { '/.well-known/oauth-protected-resource': 'gate' };
+
+      const { error } = await shown(() => login(host));
+
+      expect(error?.message).toStartWith(
+        `Error [HOST_RESOLUTION_FAILED]: no answer from ${provider.origin}/.well-known/oauth-protected-resource within 200 ms`,
+      );
+      expect(error?.message).toContain(
+        'The sign-in had not started yet, so no code or sign-in link was shown.',
+      );
+      expect(error?.message).toContain(
+        `Allow HTTPS to ${hostname()}, or approve the pending request`,
+      );
+      expect(isTransientFailure(error)).toBe(true);
+      expect(provider.deviceRequests).toEqual([]);
+    });
+
+    test('a platform document stalled mid-body is a timeout, not a fallback to the legacy chain', async () => {
+      setLoginReachTimingsForTests({ limitMs: 200 });
+      provider.cfg.stallBody = ['/.well-known/semantius.json'];
+
+      const { error } = await shown(() => login(host));
+
+      expect(error?.message).toContain(
+        `no answer from ${provider.origin}/.well-known/semantius.json within 200 ms`,
+      );
+      expect(isTransientFailure(error)).toBe(true);
+      // The legacy chain never ran, and no "serves no document" was cached.
+      expect(provider.paths).not.toContain(
+        '/.well-known/oauth-protected-resource',
+      );
+      expect(readCachedPlatformConfig(host.host)).toBeFalsy();
+    });
+
+    test('a held code request says that no code was issued, never that it was not approved', async () => {
+      setLoginReachTimingsForTests({ limitMs: 300 });
+      provider.cfg.hold = { '/api/auth/device/code': 'gate' };
+
+      const { lines, error } = await shown(() => login(host));
+
+      expect(error?.message).toStartWith(
+        `no answer from ${provider.origin}/api/auth/device/code within 300 ms, so no sign-in code was issued.`,
+      );
+      expect(error?.message).toContain(`Allow HTTPS to ${hostname()}`);
+      expect(error?.message).not.toContain('was not approved');
+      expect(isTransientFailure(error)).toBe(true);
+      expect(
+        lineOf(lines, `Requesting a sign-in code from ${hostname()}...`),
+      ).toBeGreaterThanOrEqual(0);
+      expect(lineOf(lines, 'enter the code')).toBe(-1);
+    });
+
+    test('the approval window counts from when the code is shown', async () => {
+      // The code request and the approval each take less than the window,
+      // together more: a window started before the code request would expire.
+      setLoginReachTimingsForTests({ limitMs: 5000, approvalMs: 1000 });
+      provider.cfg.hold = { '/api/auth/device/code': 600, '/token': 600 };
+      provider.cfg.deviceInterval = 0;
+
+      const { error } = await shown(() => login(host));
+
+      expect(error).toBeUndefined();
+      expect(await hasStoredSession(host)).toBe(true);
+    });
+
+    test('a refused discovery request gets the hint that a sandbox may be behind it', async () => {
+      provider.cfg.refuse = ['/.well-known/oauth-protected-resource'];
+
+      const { error } = await shown(() => login(host));
+
+      expect(error?.message).toContain(
+        `${provider.origin}/.well-known/oauth-protected-resource returned 403`,
+      );
+      expect(error?.message).toContain(
+        `A sandbox or proxy may have refused it: if one gates network requests, allow HTTPS to ${hostname()}`,
+      );
+    });
+
+    test('a refused code request gets the same hint', async () => {
+      provider.cfg.refuse = ['/api/auth/device/code'];
+
+      const { error } = await shown(() => login(host));
+
+      expect(error?.message).toContain(
+        'Device authorization request failed with status 403',
+      );
+      expect(error?.message).toContain(
+        `A sandbox or proxy may have refused it: if one gates network requests, allow HTTPS to ${hostname()}`,
+      );
+    });
+
+    test('outside a login nothing is printed, and the failure still carries the hint', async () => {
+      process.env.SEMANTIUS_CONNECT_TIMEOUT = '1';
+      provider.cfg.hold = { '/.well-known/oauth-protected-resource': 'gate' };
+      // A host name no other test resolves, so no memoized discovery answers.
+      const outside: HostFacts = { ...host, host: 'outside-login.test' };
+
+      const { lines, error } = await shown(() => getOAuthMetadata(outside));
+
+      expect(lines).toEqual([]);
+      expect(error?.message).toStartWith(
+        `Error [HOST_RESOLUTION_FAILED]: could not reach ${provider.origin}/.well-known/oauth-protected-resource: The operation timed out.`,
+      );
+      expect(error?.message).toContain(
+        `This usually means outbound network access is blocked (a sandbox or agent that gates network requests, a proxy, a firewall), not that the host is down. Allow HTTPS to ${hostname()}`,
       );
     });
   });

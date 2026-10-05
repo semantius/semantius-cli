@@ -25,19 +25,21 @@
  * OAuth endpoints, sharing its 24 h TTL and --reset-cache.
  */
 
-import { debug, getConnectTimeoutMs } from '../config.js';
+import { debug } from '../config.js';
 import { isTransientStatus } from '../errors.js';
 import {
   type CachedPlatform,
   type HostFacts,
   HostResolutionError,
   type PlatformConfig,
+  fetchHostDocument,
   hostBaseUrl,
   isCloudHost,
   isLoopback,
   readCachedPlatformConfig,
   writeCachedPlatformConfig,
 } from '../host.js';
+import type { LoginReach } from './reach.js';
 import { LoginUnavailableError } from './session.js';
 
 export type { PlatformConfig } from '../host.js';
@@ -81,7 +83,7 @@ export function platformDocUrl(host: HostFacts): string | null {
  */
 export function getPlatformConfig(
   host: HostFacts,
-  opts: { refetch?: boolean } = {},
+  opts: { refetch?: boolean; reach?: LoginReach } = {},
 ): Promise<PlatformConfig | null> {
   const docUrl = platformDocUrl(host);
   if (!docUrl) return Promise.resolve(null);
@@ -95,7 +97,7 @@ export function getPlatformConfig(
     if (pending) return pending;
   }
 
-  const pending = resolvePlatformConfig(host, docUrl);
+  const pending = resolvePlatformConfig(host, docUrl, opts.reach);
   _pending.set(host.host, pending);
   pending.catch(() => _pending.delete(host.host));
   return pending;
@@ -114,8 +116,9 @@ export function configOrNull(cached: CachedPlatform): PlatformConfig | null {
 async function resolvePlatformConfig(
   host: HostFacts,
   docUrl: string,
+  reach: LoginReach | undefined,
 ): Promise<PlatformConfig | null> {
-  const result = await fetchDocument(docUrl);
+  const result = await fetchDocument(docUrl, reach);
   if (result.kind === 'absent') {
     debug(
       `No platform document at ${docUrl} (${result.why}); using the legacy discovery chain`,
@@ -139,21 +142,14 @@ type DocumentResult =
  * This cannot reuse provider.ts's fetchJson, which raises on both: here the
  * difference decides between a legitimate fallback and a hard error.
  */
-async function fetchDocument(url: string): Promise<DocumentResult> {
+async function fetchDocument(
+  url: string,
+  reach: LoginReach | undefined,
+): Promise<DocumentResult> {
   debug(`Platform discovery: GET ${url}`);
-  let response: Response;
-  try {
-    const timeoutMs = getConnectTimeoutMs();
-    response = await fetch(
-      url,
-      timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : undefined,
-    );
-  } catch (error) {
-    throw new HostResolutionError(
-      `could not reach ${url}: ${(error as Error).message}`,
-      { transient: true },
-    );
-  }
+  // The body is read inside the time limit, so the "not JSON" answers below
+  // are what the server sent, never a read cut short.
+  const response = await fetchHostDocument(url, { reach });
 
   if (response.status === 404) return { kind: 'absent', why: 'HTTP 404' };
   if (!response.ok) {

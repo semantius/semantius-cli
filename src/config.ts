@@ -936,6 +936,16 @@ export function getTimeoutMs(): number {
  * @env <PREFIX>_CONNECT_TIMEOUT - seconds (default: 60, use 0 to disable)
  */
 export function getConnectTimeoutMs(): number {
+  return getConnectTimeoutOverrideMs() ?? DEFAULT_CONNECT_TIMEOUT_MS;
+}
+
+/**
+ * <PREFIX>_CONNECT_TIMEOUT in milliseconds when it is set (0 = disabled), or
+ * undefined when it is not. getConnectTimeoutMs() cannot tell "unset" from
+ * "60": a login's requests wait longer than 60 s by default (see
+ * src/auth/reach.ts), and only an explicit setting overrides that.
+ */
+export function getConnectTimeoutOverrideMs(): number | undefined {
   const envTimeout = getPrefixedEnv('CONNECT_TIMEOUT');
   if (envTimeout) {
     const seconds = Number.parseInt(envTimeout, 10);
@@ -943,7 +953,7 @@ export function getConnectTimeoutMs(): number {
       return seconds * 1000;
     }
   }
-  return DEFAULT_CONNECT_TIMEOUT_MS;
+  return undefined;
 }
 
 /**

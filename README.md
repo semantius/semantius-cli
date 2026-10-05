@@ -72,7 +72,8 @@ semantius use https://<your-org>.semantius.app
 Use the address from step 3 as it is (a path after the host is not accepted).
 Unless a usable session for it is already stored, `use` opens your browser to
 sign in (it waits up to 5 minutes), then makes the instance your **current
-host** in every directory.
+host** in every directory. Before the browser opens, it waits up to 3 minutes
+for each request it makes to be answered.
 
 - **Not sitting at this machine?** On a server, in a container or an SSH
   session, on a remote VM, or for an always-on agent, add
@@ -121,10 +122,11 @@ Notes for an agent that follows the steps above for its user:
   browser tab opens on this machine as well. Whenever the user is not at this
   machine's screen — a cloud or always-on agent, a remote or SSH session, a
   container, headless Linux — add `--login-flow device` and give the user the
-  URL and code it prints; it waits up to 10 minutes. Don't run it in the
-  foreground: you can show the user nothing until it ends, and a tool timeout
-  can kill the sign-in. If a usable session is already stored, it finishes at
-  once, without a browser.
+  URL and code it prints; it waits up to 10 minutes from when the code is
+  shown, and before that up to 3 minutes for each request it makes. Don't run
+  it in the foreground: you can show the user nothing until it ends, and a
+  tool timeout can kill the sign-in. If a usable session is already stored,
+  it finishes at once, without a browser.
 - **Step 5.** `semantius whoami`.
 - **Fully non-interactive:** an API key, in the global `.env` or the `.env`
   next to the executable, and no `semantius use` (a current host makes the CLI
@@ -788,7 +790,9 @@ semantius use <host> --login-flow device      # or: semantius login --login-flow
 That covers always-on agents, servers, containers, SSH sessions, remote VMs
 and CI-like runners. The CLI prints a URL and a short code (on stderr); open
 the URL on any device — your phone, your laptop — enter the code and sign in.
-It waits up to 10 minutes. To make it the default on such a machine, put
+It waits up to 10 minutes from when the code is shown, and before that up to
+3 minutes for each request it makes (`SEMANTIUS_CONNECT_TIMEOUT` sets a
+different limit). To make it the default on such a machine, put
 `SEMANTIUS_LOGIN_FLOW=device` in its global `.env` or in the `.env` next to
 the executable.
 

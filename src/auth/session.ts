@@ -42,6 +42,15 @@ import {
 } from './platform.js';
 import { buildScope, getOAuthMetadata } from './provider.js';
 import {
+  LoginReach,
+  LoginReachError,
+  approvalMsForTests,
+  blockedHint,
+  describeDuration,
+  hostOf,
+  refusedHint,
+} from './reach.js';
+import {
   createSecretStorage,
   expireStoredAccessTokens,
   sessionName,
@@ -138,8 +147,12 @@ export class LoginFailedError extends Error {
  * failure can be told from one the server reported (see isTransientFailure).
  */
 class AuthServerUnreachableError extends Error {
-  constructor(url: string, cause: unknown) {
-    super(`could not reach ${url}: ${(cause as Error)?.message ?? cause}`);
+  /** `message`, when given, replaces the default text (see tokenLoggingFetch). */
+  constructor(url: string, cause: unknown, message?: string) {
+    super(
+      message ??
+        `could not reach ${url}: ${(cause as Error)?.message ?? cause}`,
+    );
     this.name = 'AuthServerUnreachableError';
   }
 }
@@ -634,24 +647,45 @@ function chooseGrant(metadata: OAuthMetadata): GrantChoice {
 }
 
 /**
+ * Print for the person signing in, on the stream a prompt goes to: stderr,
+ * unless only stdout is a terminal (promptStream).
+ */
+function showUser(text: string): void {
+  if (promptStream() === 'stdout') console.log(text);
+  else console.error(text);
+}
+
+/**
+ * The LoginReach for one login command, printing where the device code will.
+ * The login commands create it before resolving the host, so that the
+ * control-plane request is made through it too.
+ */
+export function newLoginReach(): LoginReach {
+  return new LoginReach(showUser);
+}
+
+/**
  * Run an interactive login for this host and store the resulting session.
  * `openUrl` exists so tests can drive the browser flow without a real browser;
- * the device flow needs no such stub, since it opens nothing.
+ * the device flow needs no such stub, since it opens nothing. `reach` is the
+ * login command's (newLoginReach); without one, the login makes its own.
  */
 export async function login(
   host: HostFacts,
-  opts: { openUrl?: (url: string) => void } = {},
+  opts: { openUrl?: (url: string) => void; reach?: LoginReach } = {},
 ): Promise<void> {
-  const facts = await requireLoginableHost(host);
+  const reach = opts.reach ?? newLoginReach();
+  const facts = await requireLoginableHost(host, reach);
   const storage = storageFor(facts.host);
   // Refetch both: a login is rare, and starting it from a cached client id or
   // issuer would fail the callback check below against configuration the host
   // may have changed. The platform document is resolved first — it decides
   // which discovery chain runs, and which client id the browser is sent with.
-  const platform = await getPlatformConfig(facts, { refetch: true });
+  const platform = await getPlatformConfig(facts, { refetch: true, reach });
   const metadata = await getOAuthMetadata(facts, {
     rediscover: true,
     platform,
+    reach,
   });
 
   // The grant is chosen here, after discovery, and not at the three entry
@@ -666,7 +700,7 @@ export async function login(
     });
   }
   if (choice.grant === 'device') {
-    return loginWithDeviceCode(facts, storage, { metadata, platform });
+    return loginWithDeviceCode(facts, storage, { metadata, platform }, reach);
   }
   return loginWithBrowser(facts, storage, { metadata, platform }, opts);
 }
@@ -766,13 +800,32 @@ async function loginWithDeviceCode(
   facts: HostFacts,
   storage: ReturnType<typeof storageFor>,
   resolved: { metadata: OAuthMetadata; platform: PlatformConfig | null },
+  reach: LoginReach,
 ): Promise<void> {
   const { metadata, platform } = resolved;
-  const auth = createDeviceAuth(facts, storage, resolved);
-  const write = (text: string) => {
-    if (promptStream() === 'stdout') console.log(text);
-    else console.error(text);
+  const auth = createDeviceAuth(facts, storage, resolved, reach);
+
+  // The server sets its own expiry (typically 30 minutes) and cli-auth polls
+  // until then with no abort signal, so a ceiling here is what stops a wedged
+  // run — notably one forced with --login-flow device in CI, where nobody will
+  // ever approve. Generous enough for a walk to another device, still finite.
+  // It is restarted when the code is shown: the window is the person's, and a
+  // code request a sandbox held for minutes must not eat into it. Before that
+  // it bounds the code request, which has no limit of its own when
+  // <PREFIX>_CONNECT_TIMEOUT is 0.
+  const approvalMs = approvalMsForTests() ?? DEVICE_LOGIN_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let expire: (error: Error) => void = () => {};
+  const timeout = new Promise<never>((_, reject) => {
+    expire = reject;
+  });
+  const startTimer = (detail: string) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => expire(new LoginFailedError(detail)), approvalMs);
   };
+  startTimer(
+    `no sign-in code was issued within ${describeDuration(approvalMs)}`,
+  );
 
   const flow = auth.login({
     onAuthorization: ({
@@ -780,44 +833,58 @@ async function loginWithDeviceCode(
       verificationUri,
       verificationUriComplete,
     }) => {
-      write(
+      startTimer(
+        `the code was not approved within ${describeDuration(approvalMs)}`,
+      );
+      showUser(
         `\nTo sign in to ${facts.host}, open this URL on any device:\n\n` +
           `  ${verificationUri}\n\n` +
           `and enter the code:  ${userCode}\n`,
       );
       if (verificationUriComplete) {
-        write(
+        showUser(
           `Or open this, which carries the code:\n  ${verificationUriComplete}\n`,
         );
       }
-      write('Waiting for approval...');
+      showUser('Waiting for approval...');
     },
-  });
-
-  // The server sets its own expiry (typically 30 minutes) and cli-auth polls
-  // until then with no abort signal, so a ceiling here is what stops a wedged
-  // run — notably one forced with --login-flow device in CI, where nobody will
-  // ever approve. Generous enough for a walk to another device, still finite.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () =>
-        reject(
-          new LoginFailedError(
-            `the code was not approved within ${DEVICE_LOGIN_TIMEOUT_MS / 60_000} minutes`,
-          ),
-        ),
-      DEVICE_LOGIN_TIMEOUT_MS,
-    );
   });
 
   try {
     await Promise.race([flow, timeout]);
+  } catch (error) {
+    throw withRefusalHint(error, metadata.deviceAuthorizationEndpoint);
   } finally {
     if (timer) clearTimeout(timer);
   }
 
   await labelStoredTokens(storage, resourceIndicator(facts, platform));
+}
+
+/**
+ * A device code request refused with a 403 / 407 and no OAuth error in the
+ * body (cli-auth's request.failed) — what a refusing proxy answers — gets the
+ * hint that a sandbox may be behind it. Anything else is returned unchanged.
+ */
+function withRefusalHint(
+  error: unknown,
+  endpoint: string | undefined,
+): unknown {
+  if (!isCliAuthError(error) || !endpoint) return error;
+  const { code, data } = error as Error & {
+    code?: string;
+    data?: { endpoint?: string; status?: number };
+  };
+  if (
+    code !== 'request.failed' ||
+    data?.endpoint !== 'device_authorization' ||
+    (data.status !== 403 && data.status !== 407)
+  ) {
+    return error;
+  }
+  return new Error(`${error.message}\n  ${refusedHint(hostOf(endpoint))}`, {
+    cause: error,
+  });
 }
 
 /**
@@ -1013,7 +1080,10 @@ export async function logout(host: HostFacts): Promise<boolean> {
  * document: on a self-hosted host it is vacuous, and the id it approved is
  * replaced by the document's own a moment later (see effectiveClientId).
  */
-async function requireLoginableHost(host: HostFacts): Promise<HostFacts> {
+async function requireLoginableHost(
+  host: HostFacts,
+  reach: LoginReach,
+): Promise<HostFacts> {
   if (host.clientId) return host;
 
   // Self-hosted client ids are fixed, so there is nothing to refetch: only a
@@ -1027,7 +1097,7 @@ async function requireLoginableHost(host: HostFacts): Promise<HostFacts> {
 
   debug('No client_id_cli on the cached record; refetching the control plane');
   deleteHostCache(host.host);
-  const fresh = await resolveHost();
+  const fresh = await resolveHost({ reach });
   if (fresh.clientId) return fresh;
 
   throw new LoginUnavailableError(
@@ -1116,8 +1186,13 @@ function sharedAuthConfig(
   resolved: ResolvedHost,
   resource: string | undefined,
   onTokenStatus?: (status: number) => void,
+  reach?: LoginReach,
 ) {
   const { metadata, platform } = resolved;
+  const device =
+    reach && metadata.deviceAuthorizationEndpoint
+      ? { endpoint: metadata.deviceAuthorizationEndpoint, reach }
+      : undefined;
   return {
     provider: {
       metadata: {
@@ -1135,7 +1210,7 @@ function sharedAuthConfig(
     scope: buildScope(metadata, platform),
     storage,
     tokenRefreshThreshold: TOKEN_REFRESH_THRESHOLD_S,
-    fetch: tokenLoggingFetch(metadata.tokenEndpoint, onTokenStatus),
+    fetch: tokenLoggingFetch(metadata.tokenEndpoint, onTokenStatus, device),
     ...(resource ? { resource } : {}),
   };
 }
@@ -1145,17 +1220,19 @@ function sharedAuthConfig(
  * loopback server and no callback, so none of the flow/callback options apply
  * — and neither does the RFC 9207 issuer check that rides on the callback,
  * which is why provider.ts binds the device endpoint to the issuer's origin
- * during discovery instead.
+ * during discovery instead. The code request goes through the login's
+ * `reach`; the polls that follow do not.
  */
 function createDeviceAuth(
   host: HostFacts,
   storage: ReturnType<typeof storageFor>,
   resolved: ResolvedHost,
+  reach: LoginReach,
 ): DeviceAuth {
   const resource = resourceIndicator(host, resolved.platform);
   return createCliAuth({
     strategy: 'device-code',
-    ...sharedAuthConfig(host, storage, resolved, resource),
+    ...sharedAuthConfig(host, storage, resolved, resource, undefined, reach),
   });
 }
 
@@ -1196,10 +1273,15 @@ function effectiveClientId(
  * which server a request that got no answer at all was for — every request
  * cli-auth makes, not only the token endpoint's, fails as
  * AuthServerUnreachableError then.
+ *
+ * `device`, during a device login, routes the device code request through the
+ * login's LoginReach: announced, nudged and limited, and when it fails, its
+ * error says that no sign-in code was issued.
  */
 function tokenLoggingFetch(
   tokenEndpoint: string,
   onTokenStatus?: (status: number) => void,
+  device?: { endpoint: string; reach: LoginReach },
 ): typeof fetch {
   return (async (
     input: Parameters<typeof fetch>[0],
@@ -1211,6 +1293,23 @@ function tokenLoggingFetch(
         : input instanceof URL
           ? input.toString()
           : input.url;
+    if (device && url === device.endpoint) {
+      try {
+        return await device.reach.fetch(url, init, {
+          announce: `Requesting a sign-in code from ${hostOf(url)}...`,
+        });
+      } catch (error) {
+        if (!(error instanceof LoginReachError)) throw error;
+        const first = error.timedOut
+          ? `${error.describe(url)}, so no sign-in code was issued.`
+          : `could not reach ${url}, so no sign-in code was issued: ${(error.cause as Error)?.message ?? error.cause}`;
+        throw new AuthServerUnreachableError(
+          url,
+          error,
+          `${first}\n  ${blockedHint(hostOf(url), error.timedOut)}`,
+        );
+      }
+    }
     if (url !== tokenEndpoint) {
       try {
         return await globalThis.fetch(input, init);

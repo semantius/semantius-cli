@@ -3,7 +3,12 @@
  * host the invocation resolves to (see host.ts's resolveHostValue).
  */
 
-import { isTransientFailure, login, logout } from '../auth/session.js';
+import {
+  isTransientFailure,
+  login,
+  logout,
+  newLoginReach,
+} from '../auth/session.js';
 import { stopAllDaemons } from '../daemon-client.js';
 import { ErrorCode } from '../errors.js';
 import { resolveHost } from '../host.js';
@@ -31,8 +36,11 @@ function markTransient(error: unknown): never {
 export async function loginCommand(
   opts: { openUrl?: (url: string) => void } = {},
 ): Promise<void> {
-  const host = await resolveHost().catch(markTransient);
-  await login(host, opts).catch(markTransient);
+  // One reach for the whole login, so the control-plane request is announced
+  // and given the login's limit too (see src/auth/reach.ts).
+  const reach = newLoginReach();
+  const host = await resolveHost({ reach }).catch(markTransient);
+  await login(host, { ...opts, reach }).catch(markTransient);
   recordHost(
     host.host,
     { mode: host.mode, org: host.org },

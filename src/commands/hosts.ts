@@ -13,6 +13,7 @@ import {
   hasStoredSessionFor,
   isTransientFailure,
   login,
+  newLoginReach,
   verifyStoredSession,
 } from '../auth/session.js';
 import {
@@ -217,8 +218,11 @@ export async function useCommand(opts: UseOptions): Promise<void> {
   }
 
   const host = normalizeHost(opts.host);
+  // Created before the host is resolved, so the control-plane request is
+  // announced and given a login's limit too (see src/auth/reach.ts).
+  const reach = newLoginReach();
   try {
-    const facts = await resolveHostFacts(host);
+    const facts = await resolveHostFacts(host, { reach });
 
     // A stored session has to work, not merely exist: a spent one would let
     // "use" report success and the next command fail with exit 5. It is
@@ -234,7 +238,7 @@ export async function useCommand(opts: UseOptions): Promise<void> {
           `The session stored for ${host} can no longer be renewed; signing in again.`,
         );
       }
-      await login(facts);
+      await login(facts, { reach });
       recordHost(
         host,
         { mode: facts.mode, org: facts.org },

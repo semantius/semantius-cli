@@ -40,6 +40,15 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
+  type LoginReach,
+  LoginReachError,
+  SIGN_IN_NOT_STARTED,
+  blockedHint,
+  bufferResponse,
+  hostOf,
+  refusedHint,
+} from './auth/reach.js';
+import {
   type CredentialOrgInfo,
   debug,
   describeEnvVar,
@@ -176,6 +185,60 @@ export class HostResolutionError extends Error {
     super(`Error [HOST_RESOLUTION_FAILED]: ${detail}`);
     this.name = 'HostResolutionError';
     this.transient = opts.transient ?? false;
+  }
+}
+
+/**
+ * GET a host's control-plane record or one of its discovery documents, the
+ * body read inside the same time limit (bufferResponse). Callers judge the
+ * status and parse the body; a request that got no answer is raised here, as
+ * a transient HostResolutionError naming the host to allow.
+ *
+ * Within a login, `reach` makes the request (announced, nudged, and given
+ * the login's longer limit), and a 403 / 407 — what a refusing proxy answers
+ * — is raised here too, with the hint that a sandbox may be behind it.
+ * Without one, the request has the connect timeout, as every other does.
+ *
+ * `what` names the server in messages: "<what> (<url>)" instead of the URL.
+ */
+export async function fetchHostDocument(
+  url: string,
+  opts: { reach?: LoginReach; what?: string } = {},
+): Promise<Response> {
+  const { reach, what } = opts;
+  const label = what ? `${what} (${url})` : url;
+  const host = hostOf(url);
+
+  if (reach) {
+    let response: Response;
+    try {
+      response = await reach.fetch(url);
+    } catch (error) {
+      if (!(error instanceof LoginReachError)) throw error;
+      throw new HostResolutionError(
+        `${error.describe(label)}\n  ${SIGN_IN_NOT_STARTED}\n  ${blockedHint(host, error.timedOut)}`,
+        { transient: true },
+      );
+    }
+    if (response.status === 403 || response.status === 407) {
+      throw new HostResolutionError(
+        `${label} returned ${response.status}\n  ${SIGN_IN_NOT_STARTED}\n  ${refusedHint(host)}`,
+      );
+    }
+    return response;
+  }
+
+  const timeoutMs = getConnectTimeoutMs();
+  const timeout = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+  try {
+    return await bufferResponse(
+      await fetch(url, timeout ? { signal: timeout } : undefined),
+    );
+  } catch (error) {
+    throw new HostResolutionError(
+      `could not reach ${label}: ${(error as Error).message}\n  ${blockedHint(host, timeout?.aborted === true)}`,
+      { transient: true },
+    );
   }
 }
 
@@ -577,9 +640,12 @@ const _resolved = new Map<string, Promise<HostFacts>>();
 /**
  * Resolve the configured host into the facts the local crud layer needs.
  * Cloud hosts consult the control plane (cached on disk); self-hosted hosts
- * derive everything from fixed paths.
+ * derive everything from fixed paths. A login passes its `reach`, through
+ * which the control-plane request is made (see fetchHostDocument).
  */
-export function resolveHost(): Promise<HostFacts> {
+export function resolveHost(
+  opts: { reach?: LoginReach } = {},
+): Promise<HostFacts> {
   let host: string | null;
   try {
     host = getHost();
@@ -593,7 +659,7 @@ export function resolveHost(): Promise<HostFacts> {
       ),
     );
   }
-  return resolveHostFacts(host);
+  return resolveHostFacts(host, opts);
 }
 
 /**
@@ -602,11 +668,14 @@ export function resolveHost(): Promise<HostFacts> {
  * resolve the host it is about to log in to, before it becomes the current
  * one (so getHost()/resolveHostValue() cannot see it yet).
  */
-export function resolveHostFacts(host: string): Promise<HostFacts> {
+export function resolveHostFacts(
+  host: string,
+  opts: { reach?: LoginReach } = {},
+): Promise<HostFacts> {
   let pending = _resolved.get(host);
   if (!pending) {
     pending = isCloudHost(host)
-      ? resolveCloudHost(host)
+      ? resolveCloudHost(host, opts.reach)
       : Promise.resolve(selfHostedFacts(host));
     _resolved.set(host, pending);
     const key = host;
@@ -631,10 +700,13 @@ function selfHostedFacts(host: string): HostFacts {
   };
 }
 
-async function resolveCloudHost(host: string): Promise<HostFacts> {
+async function resolveCloudHost(
+  host: string,
+  reach: LoginReach | undefined,
+): Promise<HostFacts> {
   const org = orgFromHost(host);
   const record =
-    readHostCache(host) ?? (await fetchControlPlaneRecord(host, org));
+    readHostCache(host) ?? (await fetchControlPlaneRecord(host, org, reach));
   return {
     mode: 'cloud',
     host,
@@ -662,23 +734,15 @@ interface ControlPlaneRecord {
 async function fetchControlPlaneRecord(
   host: string,
   org: string,
+  reach: LoginReach | undefined,
 ): Promise<ControlPlaneRecord> {
   const url = `${CONTROL_PLANE_URL}/organization/${encodeURIComponent(org)}`;
   debug(`Resolving organization "${org}" from the control plane: ${url}`);
 
-  let response: Response;
-  try {
-    const timeoutMs = getConnectTimeoutMs();
-    response = await fetch(
-      url,
-      timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : undefined,
-    );
-  } catch (error) {
-    throw new HostResolutionError(
-      `could not reach the Semantius control plane (${url}): ${(error as Error).message}`,
-      { transient: true },
-    );
-  }
+  const response = await fetchHostDocument(url, {
+    reach,
+    what: 'the Semantius control plane',
+  });
 
   if (!response.ok) {
     if (response.status === 404) {

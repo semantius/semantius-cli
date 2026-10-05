@@ -40,17 +40,19 @@
  * The matching check on the login callback (RFC 9207) lives in session.ts.
  */
 
-import { debug, getConnectTimeoutMs } from '../config.js';
+import { debug } from '../config.js';
 import { isTransientStatus } from '../errors.js';
 import {
   type HostFacts,
   HostResolutionError,
   type OAuthMetadata,
+  fetchHostDocument,
   isLoopback,
   readCachedOAuthMetadata,
   writeCachedOAuthMetadata,
 } from '../host.js';
 import type { PlatformConfig } from './platform.js';
+import type { LoginReach } from './reach.js';
 
 const BASE_SCOPES = ['openid', 'profile', 'email', 'offline_access'];
 
@@ -64,7 +66,11 @@ const _pending = new Map<string, Promise<OAuthMetadata>>();
  */
 export function getOAuthMetadata(
   host: HostFacts,
-  opts: { rediscover?: boolean; platform?: PlatformConfig | null } = {},
+  opts: {
+    rediscover?: boolean;
+    platform?: PlatformConfig | null;
+    reach?: LoginReach;
+  } = {},
 ): Promise<OAuthMetadata> {
   if (opts.rediscover) {
     // A login re-establishes trust in the host from scratch and must not build
@@ -81,7 +87,7 @@ export function getOAuthMetadata(
 
   let pending = _pending.get(host.host);
   if (!pending) {
-    pending = discover(host, opts.platform ?? null);
+    pending = discover(host, opts.platform ?? null, opts.reach);
     _pending.set(host.host, pending);
     pending.catch(() => _pending.delete(host.host));
   }
@@ -114,17 +120,21 @@ export function buildScope(
 function discover(
   host: HostFacts,
   platform: PlatformConfig | null,
+  reach: LoginReach | undefined,
 ): Promise<OAuthMetadata> {
-  return platform ? discoverFromPlatform(host, platform) : discoverLegacy(host);
+  return platform
+    ? discoverFromPlatform(host, platform, reach)
+    : discoverLegacy(host, reach);
 }
 
 /** One hop: the OIDC discovery document the platform document names. */
 async function discoverFromPlatform(
   host: HostFacts,
   platform: PlatformConfig,
+  reach: LoginReach | undefined,
 ): Promise<OAuthMetadata> {
   const url = platform.idpWellKnown;
-  const server = await fetchJson(url);
+  const server = await fetchJson(url, reach);
 
   const issuer = asString(server.issuer);
   const authorizationEndpoint = asString(server.authorization_endpoint);
@@ -175,8 +185,11 @@ async function discoverFromPlatform(
 }
 
 /** RFC 9728 → RFC 8414: the chain for a host that serves no platform document. */
-async function discoverLegacy(host: HostFacts): Promise<OAuthMetadata> {
-  const resource = await fetchJson(host.discoveryUrl);
+async function discoverLegacy(
+  host: HostFacts,
+  reach: LoginReach | undefined,
+): Promise<OAuthMetadata> {
+  const resource = await fetchJson(host.discoveryUrl, reach);
   const issuer = asStringArray(resource.authorization_servers)[0];
   if (!issuer) {
     throw new HostResolutionError(
@@ -188,7 +201,7 @@ async function discoverLegacy(host: HostFacts): Promise<OAuthMetadata> {
   requireSecure(issuer, 'issuer', host.discoveryUrl);
 
   const metadataUrl = authorizationServerMetadataUrl(issuer, host);
-  const server = await fetchJson(metadataUrl);
+  const server = await fetchJson(metadataUrl, reach);
 
   // RFC 8414 §3.3: the document must claim the issuer it was fetched for.
   // Without this a resource could point at a document that belongs to a
@@ -307,21 +320,12 @@ function authorizationServerMetadataUrl(
   return `${url.origin}/.well-known/oauth-authorization-server${path}`;
 }
 
-async function fetchJson(url: string): Promise<Record<string, unknown>> {
+async function fetchJson(
+  url: string,
+  reach: LoginReach | undefined,
+): Promise<Record<string, unknown>> {
   debug(`OAuth discovery: GET ${url}`);
-  let response: Response;
-  try {
-    const timeoutMs = getConnectTimeoutMs();
-    response = await fetch(
-      url,
-      timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : undefined,
-    );
-  } catch (error) {
-    throw new HostResolutionError(
-      `could not reach ${url}: ${(error as Error).message}`,
-      { transient: true },
-    );
-  }
+  const response = await fetchHostDocument(url, { reach });
   if (!response.ok) {
     throw new HostResolutionError(`${url} returned ${response.status}`, {
       transient: isTransientStatus(response.status),
