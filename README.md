@@ -43,17 +43,49 @@ Until your PATH has it, run the binary by the path on the installer's
 
 ### 2. Install the agent skills
 
+The Semantius skills (`use-semantius`, `semantius-architect`,
+`semantius-admin`, …) teach your coding agent to work with Semantius. They are
+installed from this repository's [`skills/`](skills/) folder by the
+[`skills`](https://github.com/vercel-labs/skills) installer, which needs
+**Node.js 22.20 or later, and git**. Use the command that fits how you install.
+
+**From your own terminal:**
+
 ```bash
 npx skills add semantius/semantius-cli -g
 ```
 
-This installs the Semantius skills (`use-semantius`, `semantius-architect`,
-`semantius-admin`, …) from this repository's [`skills/`](skills/) folder for
-your coding agents, for your user account. **Keep `-g`:** without it they land
-in `.claude/skills/` (or your agent's equivalent) of whatever directory you run
-it in. It asks which agents to install into only if it cannot detect one.
-Requires Node.js 22.20 or later, and git. Your agent may need a new session to
-pick the skills up.
+It installs into each coding agent it detects, and asks which agents to use
+only if it detects none.
+
+**Keep `-g`.** It installs the skills for your user account, so they work in
+every directory. Without it they land in `.claude/skills/` (or your agent's
+equivalent) of the directory you ran the command in, and only an agent started
+there finds them.
+
+**Through an AI agent (unattended):**
+
+```bash
+npx -y skills add semantius/semantius-cli -g --all
+```
+
+`--all` installs every skill into every agent the installer supports, so it
+never waits on a prompt. To install into one agent only, replace `--all` with
+`-a <agent> -y` (for example `-a claude-code -y`). The `-y` right after `npx`
+is npx's own: it skips npx's question before downloading the installer.
+
+**Meta's Muse:** global installation is not supported, so install for the
+root agent instead (no `-g`):
+
+```bash
+npx -y skills add semantius/semantius-cli --all --subagent root
+```
+
+**Without Node.js or git:** copy each folder under [`skills/`](skills/) into
+your agent's skills folder (`~/.claude/skills/` for Claude Code).
+
+After installing, start a new agent session: an agent that is already running
+may not pick the skills up.
 
 ### 3. Sign up or sign in
 
@@ -112,11 +144,10 @@ Notes for an agent that follows the steps above for its user:
   the installer's `Location:` line. Tell the user to restart the agent app
   (Windows) or to add the PATH line the installer printed (Linux/macOS);
   otherwise the skills will not find `semantius` in the next session.
-- **Step 2.** Inside Claude Code, `npx -y skills add semantius/semantius-cli -g`
-  runs without prompting. Elsewhere add `-a <agent> -y` (e.g.
-  `-a claude-code`). Without Node.js or git, copy each folder under
-  [`skills/`](skills/) into the agent's skills folder (`~/.claude/skills/` for
-  Claude Code).
+- **Step 2.** Use the unattended command,
+  `npx -y skills add semantius/semantius-cli -g --all`, or the Meta's Muse one
+  if that is your agent. Without Node.js or git, copy the folders as step 2
+  describes.
 - **Step 4.** Start `semantius use <address>` as a **background** command,
   read its output and give the user the sign-in URL; on Windows and macOS a
   browser tab opens on this machine as well. Whenever the user is not at this
