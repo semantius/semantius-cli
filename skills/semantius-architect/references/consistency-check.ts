@@ -495,6 +495,135 @@ function checkBlueprint(text: string, lines: string[]): Issue[] {
     }
   }
 
+  issues.push(...checkAccessScope(text, lines));
+
+  return issues;
+}
+
+const ACCESS_SCOPES = new Set(["custom", "basic", "advanced", "gated", "raci"]);
+
+/** Table rows of a block, each paired with its table's header (lower-cased, backticks stripped). */
+function rowsWithHeaders(block: string[]): { header: string[]; row: string[] }[] {
+  const out: { header: string[]; row: string[] }[] = [];
+  let header: string[] | null = null;
+  for (const line of block) {
+    if (!isTableRow(line)) { header = null; continue; }
+    if (isSeparatorRow(line)) continue;
+    const row = cells(line);
+    if (header === null) { header = row.map((c) => c.replace(/[`*]/g, "").trim().toLowerCase()); continue; }
+    out.push({ header, row });
+  }
+  return out;
+}
+
+/**
+ * Frontmatter `access_scope` (the access level the architect's permission step decides)
+ * against the body: the value is in the closed set; `gated` / `raci` need a process gate;
+ * `raci` needs the RACI realization table; `workflow-gate (lifecycle)` rows only under `raci`.
+ * A missing key is a warning (catalog sources never carry it).
+ */
+function checkAccessScope(text: string, lines: string[]): Issue[] {
+  const issues: Issue[] = [];
+  const scope = frontmatter(text).get("access_scope");
+  if (scope === null) {
+    issues.push({ check: "access_scope", detail: "frontmatter has no `access_scope`; run the architect's permission step", warn: true });
+    return issues;
+  }
+  if (!ACCESS_SCOPES.has(scope)) {
+    issues.push({ check: "access_scope", detail: `frontmatter \`access_scope: ${scope}\` must be one of custom | basic | advanced | gated | raci` });
+    return issues;
+  }
+  const at = (header: string[], row: string[], name: string) => {
+    const i = header.indexOf(name);
+    return i >= 0 ? (row[i] ?? "").replace(/`/g, "").trim() : "";
+  };
+  let stateGates = 0;
+  for (const { header, row } of rowsWithHeaders(topSection(lines, 7))) {
+    if (header.includes("requires_permission?") && at(header, row, "requires_permission?").includes("✓")) stateGates++;
+  }
+  const s8 = topSection(lines, 8);
+  let createRules = 0;
+  for (const { header, row } of rowsWithHeaders(subSection(s8, /^###\s+8\.2\b/))) {
+    if (header.includes("source flag") && at(header, row, "source flag") === "create") createRules++;
+  }
+  const lifecycleRows: string[] = [];
+  for (const { header, row } of rowsWithHeaders(subSection(s8, /^###\s+8\.1\b/))) {
+    if (header.includes("tier") && at(header, row, "tier").startsWith("workflow-gate (lifecycle)")) {
+      lifecycleRows.push(at(header, row, "permission"));
+    }
+  }
+  if ((scope === "gated" || scope === "raci") && stateGates + createRules + lifecycleRows.length === 0) {
+    // A warning only: a live module that lost its last gate keeps its level (it is never lowered).
+    issues.push({ check: "access_scope", detail: `\`access_scope: ${scope}\` has no process gate (a §7 row with requires_permission? ✓ or a §8.2 \`create\` rule); allowed only when the live module already has this access level`, warn: true });
+  }
+  if (scope === "raci") {
+    const start = lines.findIndex((l) => /^\*\*RACI realization:\*\*/.test(l.trim()));
+    const raciTable: string[] = [];
+    if (start >= 0) {
+      for (const l of lines.slice(start + 1)) {
+        if (isTableRow(l)) raciTable.push(l);
+        else if (raciTable.length || l.trim() !== "") break; // the table ended, or something else came first
+      }
+    }
+    const raciRows = rowsWithHeaders(raciTable);
+    if (raciRows.length === 0) {
+      issues.push({ check: "access_scope", detail: "`access_scope: raci` needs the §9.1 **RACI realization:** table (a confirmed RACI matrix), but it is missing or empty" });
+    } else {
+      // The RACI rule: every process has exactly one accountable row, and every process gate
+      // is in the `grant gates [...]` list of exactly one accountable row.
+      const accountable = new Map<string, number>();
+      const held = new Map<string, number>();
+      for (const { header, row } of raciRows) {
+        const proc = at(header, row, "process_key");
+        if (!accountable.has(proc)) accountable.set(proc, 0);
+        if (at(header, row, "raci") !== "accountable") continue;
+        accountable.set(proc, accountable.get(proc)! + 1);
+        const grants = at(header, row, "realization").match(/grant gates \[([^\]]*)\]/);
+        for (const code of grants ? grants[1].split(",").map((c) => c.trim()).filter(Boolean) : []) {
+          held.set(code, (held.get(code) ?? 0) + 1);
+        }
+      }
+      for (const [proc, n] of accountable) {
+        if (n !== 1) issues.push({ check: "access_scope", detail: `RACI rule: process \`${proc}\` has ${n} accountable rows; under raci every process has exactly one` });
+      }
+      for (const code of lifecycleRows) {
+        const n = held.get(code) ?? 0;
+        if (n !== 1) issues.push({ check: "access_scope", detail: `RACI rule: process gate \`${code}\` is in the \`grant gates [...]\` list of ${n} accountable rows; under raci exactly one accountable row holds it` });
+      }
+    }
+  } else if (lifecycleRows.length > 0) {
+    issues.push({ check: "access_scope", detail: `§8.1 carries \`workflow-gate (lifecycle)\` rows (${lifecycleRows.join(", ")}) but \`access_scope: ${scope}\` allows them only under raci` });
+  }
+  // §7 derived gate follows the access level: the gate's own §8.1 code under raci, `<slug>:admin` otherwise.
+  const slug = frontmatter(text).get("system_slug") ?? "";
+  for (const { header, row } of rowsWithHeaders(topSection(lines, 7))) {
+    if (!header.includes("requires_permission?") || !at(header, row, "requires_permission?").includes("✓")) continue;
+    const gate = at(header, row, "derived gate");
+    if (gate.startsWith("⚠")) continue;
+    const ok = scope === "raci" ? lifecycleRows.includes(gate) : gate === `${slug}:admin`;
+    if (!ok) issues.push({ check: "access_scope", detail: `§7 derived gate \`${gate}\` does not follow \`access_scope: ${scope}\` (expected ${scope === "raci" ? "a §8.1 workflow-gate (lifecycle) code" : `${slug}:admin`})` });
+  }
+  if (scope === "raci") {
+    // Under raci a process gate is never rolled up under admin: `-` in §8.1 and no §9.1 admin → gate row.
+    for (const { header, row } of rowsWithHeaders(subSection(s8, /^###\s+8\.1\b/))) {
+      if (at(header, row, "tier").startsWith("workflow-gate (lifecycle)") && at(header, row, "included in :admin?") !== "-") {
+        issues.push({ check: "access_scope", detail: `§8.1 \`${at(header, row, "permission")}\` is a process gate: under raci its \`included in :admin?\` is -` });
+      }
+    }
+    const h = lines.findIndex((l) => /^\*\*Permission hierarchy:\*\*/.test(l.trim()));
+    const hTable: string[] = [];
+    if (h >= 0) {
+      for (const l of lines.slice(h + 1)) {
+        if (isTableRow(l)) hTable.push(l);
+        else if (hTable.length || (l.trim() !== "" && !l.trim().startsWith("_"))) break;
+      }
+    }
+    for (const { header, row } of rowsWithHeaders(hTable)) {
+      if (at(header, row, "permission") === `${slug}:admin` && lifecycleRows.includes(at(header, row, "includes"))) {
+        issues.push({ check: "access_scope", detail: `§9.1 rolls \`${at(header, row, "includes")}\` up under \`${slug}:admin\`; under raci a process gate has no hierarchy row` });
+      }
+    }
+  }
   return issues;
 }
 

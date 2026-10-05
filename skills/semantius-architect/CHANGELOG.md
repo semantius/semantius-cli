@@ -8,6 +8,52 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## 5.5: the architect decides the access level (`access_scope`)
+
+2026-10-05. The module's access level is now decided once, in the architect, by a deterministic script, and stamped into the blueprint frontmatter. Before, the analyst decided "basic vs full" again from live state (asking in advanced mode), so the user was asked twice and, in standard mode, gates confirmed in Stage 10 could be silently dropped. The analyst and modeler now only carry the value out.
+
+1. **New frontmatter key `access_scope`** (directly after `module_kind`): `custom` | `basic` | `advanced` | `gated` | `raci`, matching the platform's `modules.access_scope` enum.
+   - `basic`: read + manage. `advanced`: read + manage + admin. Process gates are not enforced at either level.
+   - `gated`: read + manage + admin; entering a gated state (or a gated creation) requires `<slug>:admin` directly.
+   - `raci`: read + manage + admin plus one `workflow-gate (lifecycle)` permission per gate, held only by the business roles of the confirmed RACI matrix and not included in `<slug>:admin`.
+   - `custom`: the live module's permissions were set up by hand and are kept.
+2. **New Stage 10 permission step** with the script `references/decide-access-scope.ts`.
+   - Inputs: `--has-reference-data-entities`, `--has-process-gate` (or `--blueprint`), `--mode`, and an optional `--requested-level`.
+   - The script itself reads whether another module uses `raci` and this module's current access level (two read-only `read_module` calls, the architect's one live read).
+   - It asks only in advanced mode, plus the keep-or-replace question for a hand-made (`custom`) module in every mode. An existing module is never lowered. A yolo run never picks `raci`.
+3. **The blueprint body follows the access level.**
+   - Under `raci`, §7 `derived gate` carries the gate's own code with a §8.1 `workflow-gate (lifecycle)` row (`included in :admin?` = `-`).
+   - Under every other level, the derived gate is `<slug>:admin` and §8.1 has no gate rows.
+   - §9.1 never rolls a process gate up under `<slug>:admin`.
+4. **Restricted creation (W6)** is recorded as a §8.2 rule with the new source flag `create`.
+5. **RACI matrix under `raci`.** Stage 11 drafts it when missing (one process per gate, an accountable persona per gate). The user always confirms it, in standard and advanced mode, also when it is inherited from a catalog blueprint. A yolo run reaches it only for a live `raci` module and accepts the matrix. Under every other level it is never drafted, and kept as documentation when inherited.
+   - **The RACI rule** (pre-save, audit, `consistency-check.ts`): every gate belongs to exactly one process, every process has exactly one accountable row, and that row holds its process's gates (`grant gates [...]`). The accountable (A) realization is now `grant gates [...]` instead of `approval gate`, so the approver holds the permission.
+6. **Removed:**
+   - the Stage 10 "gates but no admin tier" option 1 / option 2 question;
+   - the purely-operational and purely-reference special cases in Stage 9;
+   - the Extend "upgrade to the three-permission baseline" rules.
+
+   The access level decides the permission count.
+7. **Customize / Extend** on a blueprint without `access_scope` run the permission step first, with `--blueprint`, and write the result without a confirmation. Every later write re-runs it on the draft (with the `--has-*` flags), reusing the stamped answer when the gates and reference data entities did not change. A body that already exists is converted to the access level (recipe in Stage 10). Rebuild runs it after its Stage 10 gate in advanced mode. Clone runs it before Stage 13.
+   - **Yolo:** the keep-or-replace question for a hand-made module pauses the run, is asked, and the run continues.
+   - A live `gated` / `raci` module that lost its last gate keeps its level (a warning, not an error).
+8. **Checks.**
+   - Pre-save and the audit checklist gain the `access_scope` rows.
+   - `consistency-check.ts` checks, in blueprint mode:
+     - the value set;
+     - a gate for `gated` / `raci`;
+     - the RACI realization table for `raci`;
+     - no `workflow-gate (lifecycle)` rows outside `raci`;
+     - the §7 `derived gate` per level;
+     - no process gate rolled up under admin under `raci`;
+     - the RACI rule.
+
+   A missing key is a warning.
+
+**Minor bump** (5.4 → 5.5): a new frontmatter key with defined values and new authoring rules for §7 / §8.1 / §9.1. Older files remain readable; a blueprint without the key is routed through Customize, whose first step stamps it.
+
+---
+
 ## Unreleased: standard-mode guidance, yolo mode (experimental), confirmation list fixed
 
 2026-09-30. The interaction level switch now has three values: `standard` (default, guidance), `advanced` (control), `yolo` (autonomy, experimental). Rules: `../semantius-admin/references/interaction-level.md` and `../semantius-admin/references/yolo-mode.md` (new).

@@ -17,9 +17,9 @@ Do **not** write the spec at the workspace root. The committed-artifact conventi
 
 The frontmatter key set, order, and per-key rules are **canonical in `./semantic-spec-template.md`** (the skeleton's frontmatter block plus the "Frontmatter keys" guidance); do not maintain a second copy here. Stage 11 specifics on top of that:
 
-- `version: "5.8"` (this skill's `CURRENT_VERSION`), `blueprint_version` carried from the blueprint.
-- `access_scope` is the value the analyst resolved after Stage 2 (`basic` | `full`); OMIT only on a non-interactive run that couldn't resolve it.
-- `persona` is emitted ONLY under `access_scope: full` when §9 carries a RACI matrix; it is ABSENT under `basic`.
+- `version: "5.9"` (this skill's `CURRENT_VERSION`), `blueprint_version` carried from the blueprint.
+- `access_scope` is the blueprint's value, carried verbatim (`custom` | `basic` | `advanced` | `gated` | `raci`; the architect decided it). Always present.
+- `persona` is emitted ONLY under `access_scope: raci` when §9 carries a RACI matrix; it is ABSENT under every other access level.
 - `module_kind` is carried verbatim when the blueprint has it; otherwise the key is omitted (never `null`).
 - `reconciled_at` is today; `reconciled_against_catalog_snapshot` is the ISO 8601 timestamp of the catalog read in Stage 2; `source_blueprint` is the relative path to the blueprint `.md`.
 - Deploy-provenance keys (`deployed_version`, `deployed_version_date`, `deployed_related_versions`) are MODELER-owned (Stage 5b): carry them forward VERBATIM from the spec being edited, never compute them; omit all three on a fresh reconcile (delta 11 below).

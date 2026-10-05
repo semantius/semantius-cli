@@ -8,11 +8,11 @@ Use the template at `semantic-blueprint-template.md` for the exact section order
 
 **Finalize the catalog surface (before writing).** Stage 1 deliberately captured only `system_name` and a rough scope line; the catalog-surface frontmatter is settled here, now that the entity list it describes exists:
 
-> **Interaction level** (the `.interaction_level` switch, read at Step 0). **Advanced mode off:** write your `tagline` and `description` drafts and the derived `module_kind` directly, with no confirmation message; the close-out line covers them. **Advanced mode on:** show the drafts and confirm as below. **Yolo mode, after the go-ahead:** as with advanced mode off, and the close-out line is only "Wrote `<path>`." (SKILL.md, Pre-save verification).
+> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). **Expert flow off:** write your `tagline` and `description` drafts and the derived `module_kind` directly, with no confirmation message; the close-out line covers them. **Expert flow on:** show the drafts and confirm as below. **Fast flow, after the go-ahead:** as with expert flow off, and the close-out line is only "Wrote `<path>`." (SKILL.md, Pre-save verification).
 
-- **`tagline`** (required) — propose a draft from the Stage 1 scope line, tightened against the final entity list; with advanced mode on, the user confirms or edits. One marketing-voice line for the catalog card AND the module record's short description (`modules.description`, shown beside the name in the selector) — keep it readable in the selector chip. Example from `hiring-starter`: *"Everything a small team needs to hire, in one lightweight package."*
-- **`description`** (required) — draft it yourself, don't ask for it: 1–3 paragraphs of buyer-facing prose for the catalog page, enumerating the final entity list (e.g. *"covering the core hiring path (postings, candidates, applications, interviews, and offers)"*). With advanced mode on, show it in the same message as the `tagline` draft so one confirmation covers both. Catalog-Clone: inherit the source's `description`, redrafting it only when the customize conversation changed the entity set it enumerates.
-- **`module_kind`** (required) — propose a derived default from the §3 role composition instead of cold-asking: mostly `master` rows → `master`, mostly `embedded_master` rows → `starter`, otherwise `domain`. With advanced mode on, the user confirms. Still an informational label, NOT a behavior switch — the analyst and deployer treat it as metadata only; the behavioral rule that handles "starter" shapes is the entity-owning-module rule (see Writing Convention 10), and it fires the same way for every blueprint shape regardless of `module_kind`.
+- **`tagline`** (required) — propose a draft from the Stage 1 scope line, tightened against the final entity list; with expert flow on, the user confirms or edits. One marketing-voice line for the catalog card AND the module record's short description (`modules.description`, shown beside the name in the selector) — keep it readable in the selector chip. Example from `hiring-starter`: *"Everything a small team needs to hire, in one lightweight package."*
+- **`description`** (required) — draft it yourself, don't ask for it: 1–3 paragraphs of buyer-facing prose for the catalog page, enumerating the final entity list (e.g. *"covering the core hiring path (postings, candidates, applications, interviews, and offers)"*). With expert flow on, show it in the same message as the `tagline` draft so one confirmation covers both. Catalog-Clone: inherit the source's `description`, redrafting it only when the customize conversation changed the entity set it enumerates.
+- **`module_kind`** (required) — propose a derived default from the §3 role composition instead of cold-asking: mostly `master` rows → `master`, mostly `embedded_master` rows → `starter`, otherwise `domain`. With expert flow on, the user confirms. Still an informational label, NOT a behavior switch — the analyst and deployer treat it as metadata only; the behavioral rule that handles "starter" shapes is the entity-owning-module rule (see Writing Convention 10), and it fires the same way for every blueprint shape regardless of `module_kind`.
 - **`license`** (required) — `MIT` unless the org has a standing rule; never ask. Catalog-Clone inherits the source's value.
 
 **Two source modes, one artifact type.** Both greenfield and catalog-clone files carry `artifact: semantic-blueprint`. The discriminator is `naming_mode`:
@@ -28,7 +28,7 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 
 - `artifact: semantic-blueprint` (fixed)
 - `blueprint_version: "3.1"`
-- `version: "<CURRENT_VERSION>"` (currently `"5.4"`)
+- `version: "<CURRENT_VERSION>"` (currently `"5.5"`)
 - `system_name`, `system_slug`, `icon_name` (icon-set handle, not a URL)
 - `tagline` (one-line marketing-voice line; also feeds `modules.description`)
 - `description` (longer marketing-voice prose for the catalog page; YAML literal block fine)
@@ -37,6 +37,7 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 - `domain_code` (uppercase TLA, e.g. `ATS`, `HCM`, `CRM`)
 - `persona` (auto-populated from §9.1 RACI actors)
 - `module_kind` (informational label: `domain` / `master` / `starter` / etc.)
+- `access_scope` (directly after `module_kind`): the access level the Stage 10 permission step decided (`custom` / `basic` / `advanced` / `gated` / `raci`; stage-10-workflow-perms.md)
 - `created_at` (today, `YYYY-MM-DD`)
 - `initial_request` (verbatim Stage 1 opening, YAML literal block, immutable)
 

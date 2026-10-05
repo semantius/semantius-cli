@@ -7,7 +7,7 @@
     "icon_name": "wrench",
     "module_type": "domain",
     "settings": { "module_kind": "domain", "naming_mode": "agent-optimized" },
-    "access_scope": "full",
+    "access_scope": "raci",
     "domain_code": "DEMOPRO",
     "logo_color": "#2563eb",
     "home_page": "",

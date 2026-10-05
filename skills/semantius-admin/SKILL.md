@@ -8,8 +8,8 @@ description: >-
   system and deploy it", "set up a CRM end-to-end", "clone the candidate-crm
   blueprint and deploy", "what's deployed in our instance?", "status of
   semantius", "audit this file" (naming no specific skill), "get started",
-  "I'm new here, set this up", "turn on yolo mode", "advanced mode",
-  "standard mode", or anything needing workspace artifacts
+  "I'm new here, set this up", "turn on fast flow", "expert flow",
+  "plan flow", or anything needing workspace artifacts
   inspected and routed to the right sub-skill. Also trigger on a deploy
   request with multiple URLs, paths, or a glob. Do NOT trigger when the user
   invokes one sub-skill directly (not "audit this spec with
@@ -33,7 +33,7 @@ Every output this skill produces (chat, and the artifacts it writes) follows the
 
 A handful of rules govern this skill end-to-end. They are stated ONCE here; the sections below refer back with a short reminder ("single write gate", "copy, never move", "the plan is the task list") instead of re-explaining them.
 
-- **Single write gate / informational plans.** The modeler's own pre-execute yes/no is the ONLY confirmation before a live-model write (in a yolo run, the user's go-ahead in the design step takes its place, once for the whole build; [`references/yolo-mode.md`](./references/yolo-mode.md)). The admin never fires an up-front "Proceed?" gate; every plan it builds is informational (build the task list, then run). Creating tasks is never a pause. This suppresses the deploy *confirmation* only, never the scope *questions* (next rule).
+- **Single write gate / informational plans.** The modeler's own pre-execute yes/no is the ONLY confirmation before a live-model write (in a fast run, the user's go-ahead in the design step takes its place, once for the whole build; [`references/fast-flow.md`](./references/fast-flow.md)). The admin never fires an up-front "Proceed?" gate; every plan it builds is informational (build the task list, then run). Creating tasks is never a pause. This suppresses the deploy *confirmation* only, never the scope *questions* (next rule).
 - **Copy, never move.** A pre-existing artifact (especially one at the repo root) is COPIED up front into the convention folder (`semantius/blueprints/` or `semantius/specs/`); that copy becomes the working path and every edit targets it; the root original is read once and never moved, renamed, overwritten, edited, or deleted. The only files the admin relocates are ones it downloaded this run (`.tmp_admin/` into the convention folder). The Step 1.1 "Slug present in BOTH" compare-and-choose procedure and its widget are separate logic, not a restatement of this rule. Staging and copying are internal mechanics: never a task, never narrated.
 - **Scope flags before the plan.** `customize` (blueprint), `review` (spec), and `deploy` (both) are resolved (inferred from intent, then asked only where ambiguous, Step 6.4) BEFORE the pipeline tasks are created. The flag questions are question-ledger tasks (`Q:`), and the pipeline tasks may be created only once `TaskList` shows no `Q:` task pending or in progress; that check is the gate. A bare "deploy this" still fires the customize question. Greenfield builds and catalog clones short-circuit: no scope questions, because the architect's Create pass IS the design and `deploy` is implied.
 - **Internal mechanics never reach chat.** Preflight, the org probe, file staging, `curl` / `jq` / `yq` plumbing, stage transitions, run-ids, and skill-internal vocabulary go to the per-run diagnostic log, never to chat and never into a task subject. Task descriptions may hold working state (a one-line step summary, the flag values, the verbatim failure message); diagnostic detail stays in the log. The "surface / never-surface" lists, the narration-restraint rules, and the banned-vocabulary list in Output discipline below are the resident expression of this.
@@ -76,7 +76,7 @@ Bash `description` fields obey the same rule (they render as "Ran <description>"
 
 ### Per-run diagnostic log
 
-Internal mechanics go to a per-run diagnostic log, never to chat. The admin samples the run-id ONCE at the top of Preflight (`RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"`) and never re-samples it; every stage writes `.tmp_admin/<run_id>/diag-<role>.log` into that one folder (`diag-admin.log`, `diag-architect.log`, ...). The logs are best-effort (a failed write never blocks the run), diagnostics only (NOT a decision log — that is `customizations.yaml` plus git; a yolo run's `auto-picks.md` is a per-run diagnostic, not a policy record, `references/yolo-mode.md`), and never named in chat except the run-folder path on a failed run (Step 6.8). Full mechanics — the `log_diag` helper, the per-role file-naming table, and the log rules — are in [`references/output-discipline.md`](./references/output-discipline.md).
+Internal mechanics go to a per-run diagnostic log, never to chat. The admin samples the run-id ONCE at the top of Preflight (`RUN_ID="run-$(date -u +%Y%m%d-%H%M%S)"`) and never re-samples it; every stage writes `.tmp_admin/<run_id>/diag-<role>.log` into that one folder (`diag-admin.log`, `diag-architect.log`, ...). The logs are best-effort (a failed write never blocks the run), diagnostics only (NOT a decision log — that is `customizations.yaml` plus git; a fast run's `auto-picks.md` is a per-run diagnostic, not a policy record, `references/fast-flow.md`), and never named in chat except the run-folder path on a failed run (Step 6.8). Full mechanics — the `log_diag` helper, the per-role file-naming table, and the log rules — are in [`references/output-discipline.md`](./references/output-discipline.md).
 
 ---
 
@@ -263,7 +263,7 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 
 | Request type | Workspace state | Plan |
 |---|---|---|
-| End-to-end build | Empty workspace | `architect (Create-Greenfield)` → analyst → modeler. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask): the architect's interactive Create pass IS the design, and `deploy` is implied by the build request. The created blueprint becomes Step 6's item; the modeler's own pre-write yes/no is the single gate (in a yolo run, the go-ahead in the design step). See "Greenfield and clone builds skip scope flags" below and Pattern 4. |
+| End-to-end build | Empty workspace | `architect (Create-Greenfield)` → analyst → modeler. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask): the architect's interactive Create pass IS the design, and `deploy` is implied by the build request. The created blueprint becomes Step 6's item; the modeler's own pre-write yes/no is the single gate (in a fast run, the go-ahead in the design step). See "Greenfield and clone builds skip scope flags" below and Pattern 4. |
 | End-to-end build | Blueprint present, no spec | **First run Step 1.3 match check.** If the blueprint matches the request, the user's choice at 1.3 routes the run (deploy / audit / start-over). If 1.3 found no match (the workspace blueprint is unrelated), hand off to Step 6 with the workspace blueprint as the only item ONLY when the user's request is explicitly about that blueprint; otherwise treat as Empty workspace. **Never silently use a workspace blueprint the user didn't reference.** |
 | End-to-end build | Spec present | **First run Step 1.3 match check.** If the spec matches the request, the user's choice at 1.3 routes the run (deploy / audit / start-over). If 1.3 found no match (unrelated spec), treat as Empty workspace and run greenfield architect. **Never silently use a workspace spec the user didn't reference.** |
 | Clone-and-deploy | Empty workspace | `architect (Create-Catalog-Clone)` → analyst → modeler. Like greenfield, the architect creates the artifact, so **no scope-flag questions fire**; `deploy` is implied. The cloned blueprint becomes Step 6's item. |
@@ -285,19 +285,19 @@ Scope flags are resolved before the pipeline tasks are created (scope flags befo
 
 Use the inference-then-ask procedure in Step 6.4 (intent table 6.4.1, exact wording 6.4, procedure 6.4.2); do not re-derive it here. These are scope questions, not the deploy confirmation, so the single-write-gate rule never suppresses them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize question. The flag questions run through the question ledger (Task tracking above): `TaskList` must show no open `Q:` task before any pipeline task exists.
 
-### Interaction level switch (no question)
+### Interaction flow switch (no question)
 
-The interaction level is a persisted switch, `.interaction_level` in `$CUSTOMIZATIONS_FILE`: `standard` (default), `advanced`, or `yolo` (rules: [`references/interaction-level.md`](./references/interaction-level.md)). Handle it here, before any sub-skill starts:
+The interaction flow is a persisted switch, `.interaction_flow` in `$CUSTOMIZATIONS_FILE`: `plan` (default), `expert`, or `fast` (rules: [`references/interaction-flow.md`](./references/interaction-flow.md)). Handle it here, before any sub-skill starts:
 
-1. If the request says "advanced mode", "standard mode", or "yolo mode", write `.interaction_level` (`advanced` / `standard` / `yolo`) with the usual provenance comment (`references/customizations-protocol.md` 7.5, step 4a) and narrate the one line from interaction-level.md section 2.
-2. Otherwise, if `.interaction_level` is `advanced`, narrate once: *"Running in advanced mode."*
-3. **Decide the level for this run** and pass it to every sub-skill as `Interaction level:` (Step 7.3): `yolo` only for a new build (`Architect mode: create`) while the switch is `yolo`; `standard` for any other run that starts from an existing design while the switch is `yolo` (Rebuild excepted: it always runs as advanced, so pass `advanced` and narrate nothing), narrating once *"Yolo mode covers new builds only; this run uses standard mode."*; otherwise the switch value.
+1. If the request says "expert flow", "plan flow", or "fast flow", write `.interaction_flow` (`expert` / `plan` / `fast`) with the usual provenance comment (`references/customizations-protocol.md` 7.5, step 4a) and narrate the one line from interaction-flow.md section 2.
+2. Otherwise, if `.interaction_flow` is `expert`, narrate once: *"Running in expert flow."*
+3. **Decide the flow for this run** and pass it to every sub-skill as `Interaction flow:` (Step 7.3): `fast` only for a new build (`Architect mode: create`) while the switch is `fast`; `plan` for any other run that starts from an existing design while the switch is `fast` (Rebuild excepted: it always runs in expert flow, so pass `expert` and narrate nothing), narrating once *"Fast flow covers new builds only; this run uses plan flow."*; otherwise the switch value.
 
 It is not a scope flag: no `Q:` task, no widget.
 
-### Yolo mode (experimental)
+### Fast flow (experimental)
 
-In a yolo run, read [`references/yolo-mode.md`](./references/yolo-mode.md) now and again after a context reset. The design step ends with one go-ahead question; after a yes, no sub-skill asks anything until the modeler's closing sample-data question, because the user approved the whole build at once, every further stop breaks that promise, and the closing summary is their review. When the user answers the go-ahead, write the marker into your pipeline tasks' descriptions (`yolo: go-ahead given` / `yolo: standard for this build`; `references/yolo-mode.md`, section 3). Before entering the analyst, and again before the modeler, read the marker in your pipeline task's description (`TaskGet`): `yolo: go-ahead given` means pass `Interaction level: yolo`; `yolo: standard for this build` (the user chose "Ask me as usual") means pass `standard`.
+In a fast run, read [`references/fast-flow.md`](./references/fast-flow.md) now and again after a context reset. The design step ends with one go-ahead question; after a yes, no sub-skill asks anything until the modeler's closing sample-data question, because the user approved the whole build at once, every further stop breaks that promise, and the closing summary is their review. When the user answers the go-ahead, write the marker into your pipeline tasks' descriptions (`fast: go-ahead given` / `fast: plan flow for this build`; `references/fast-flow.md`, section 3). Before entering the analyst, and again before the modeler, read the marker in your pipeline task's description (`TaskGet`): `fast: go-ahead given` means pass `Interaction flow: fast`; `fast: plan flow for this build` (the user chose "Ask me as usual") means pass `plan`.
 
 ### Presenting the plan
 
@@ -324,11 +324,11 @@ For each step in the plan, run the corresponding sub-skill **inline in the main 
 For each step:
 
 1. **Pre-flight**: confirm the input artifact exists at the expected path. `TaskList`, then set the step's pipeline task `in_progress`.
-2. **Invoke inline**: establish the run context (Step 7.3) in the conversation, then enter the sub-skill in this same context and follow its `SKILL.md`. Let its `AskUserQuestion` prompts surface to the user; answer nothing on the user's behalf (in a yolo run after the go-ahead, the sub-skill itself picks each answer by its own rules and logs it; the admin still decides nothing). The sub-skill creates and drives its own stage tasks; the admin does not touch them. The sub-skill produces its output artifact.
+2. **Invoke inline**: establish the run context (Step 7.3) in the conversation, then enter the sub-skill in this same context and follow its `SKILL.md`. Let its `AskUserQuestion` prompts surface to the user; answer nothing on the user's behalf (in a fast run after the go-ahead, the sub-skill itself picks each answer by its own rules and logs it; the admin still decides nothing). The sub-skill creates and drives its own stage tasks; the admin does not touch them. The sub-skill produces its output artifact.
 3. **Verify**: confirm the expected output artifact appeared in the workspace at the expected path.
 4. **Record**: `TaskList`, then set the pipeline task `completed` with a one-line summary (output path, key metrics) in its description. Nothing in chat; the final report (Step 6.8) or the close-out (Step 8, for audit runs that bypass Step 6) is where the summary reaches the user.
 
-If any sub-skill halts, surfaces an error, or asks the user a question the admin can't answer on its behalf, **stop the pipeline at that point** and surface the sub-skill's last message verbatim. The admin does not try to recover or guess. (In a yolo run after the go-ahead the sub-skills ask nothing, so only a halt or an error stops the pipeline.)
+If any sub-skill halts, surfaces an error, or asks the user a question the admin can't answer on its behalf, **stop the pipeline at that point** and surface the sub-skill's last message verbatim. The admin does not try to recover or guess. (In a fast run after the go-ahead the sub-skills ask nothing, so only a halt or an error stops the pipeline.)
 
 ### Common sub-skill triggers (so the admin invokes them correctly)
 
@@ -416,7 +416,7 @@ RUN_DIR=".tmp_admin/$RUN_ID"
 mkdir -p "$RUN_DIR/incoming"
 ```
 
-`.tmp_admin/` is already in `.gitignore`. The folder stays on disk after the run completes; the next run gets its own folder. The user manages cleanup. The run folder holds incoming downloads (`incoming/`) and the per-agent diagnostic logs (`diag-<agent>.log`, per the Output discipline section), plus, in a yolo run, `auto-picks.md` (the per-run list of what was picked for the user; [`references/yolo-mode.md`](./references/yolo-mode.md), section 5). No decision log: persisted decisions live in `$CUSTOMIZATIONS_FILE` (per-org, committed) per Step 7.
+`.tmp_admin/` is already in `.gitignore`. The folder stays on disk after the run completes; the next run gets its own folder. The user manages cleanup. The run folder holds incoming downloads (`incoming/`) and the per-agent diagnostic logs (`diag-<agent>.log`, per the Output discipline section), plus, in a fast run, `auto-picks.md` (the per-run list of what was picked for the user; [`references/fast-flow.md`](./references/fast-flow.md), section 5). No decision log: persisted decisions live in `$CUSTOMIZATIONS_FILE` (per-org, committed) per Step 7.
 
 ### 6.3 Inspect each artifact
 
@@ -463,7 +463,9 @@ Up to three flags apply per item. Which two are in play depends on the artifact 
 - option 1 (default): label `Apply to your live model (Recommended)`, description *"Run the full pipeline and write the result to your live model. The apply step shows a summary and asks before writing."*
 - option 2: label `Dry run (build only)`, description *"Build the spec but do not touch your live model. You get the spec file to inspect; nothing is written."*
 
-Blueprint inputs resolve `customize` + `deploy`; spec inputs resolve `review` + `deploy`. Never both `customize` and `review` on the same item. (Access control — basic vs full RBAC — is **not** an admin scope flag: the analyst owns that decision and asks during its own run, because it is platform-aware and the architect is not. The admin neither detects RBAC state nor asks about it.)
+Blueprint inputs resolve `customize` + `deploy`; spec inputs resolve `review` + `deploy`. Never both `customize` and `review` on the same item. (The access level (`access_scope`) is **not** an admin scope flag: the architect decides the access level in its permission step. The admin neither detects it nor asks about it.)
+
+**A blueprint without an access level always goes through Customize.** Before resolving `customize` for a blueprint item, read the working copy's frontmatter: `yq --front-matter=extract '.access_scope' <working copy>`. When it is empty (`null`), set `customize = yes` without asking (the `customize` question above is skipped for that item, also after "deploy as is" or "just deploy"): architect Customize's first step decides the access level and stamps it before the analyst runs. Resolve `deploy` as usual.
 
 **Inference happens BEFORE asking.** Scan the user's request for intent verbs and pre-fill the flags. Only fire `AskUserQuestion` for flags that remain genuinely ambiguous. The rule of thumb: only explicit opt-out phrases ("deploy as is", "just deploy", "deploy unchanged") let us skip the edit-first ask; bare deploy verbs always ASK.
 
@@ -499,6 +501,7 @@ The classification is lenient on `deploy` (favor inferring) and strict on `custo
 #### 6.4.2 Procedure
 
 0. **Greenfield / clone short-circuit.** If the item is a blueprint this run's architect created (greenfield build or catalog clone), STOP: scope flags are N/A, `deploy` is implied, route it straight to analyst → modeler. Do not run the steps below for it.
+0a. **Blueprint without an access level.** For a blueprint item run `yq --front-matter=extract '.access_scope' <working copy>`; `null` → `customize = yes` (forced: no `Q:` task and no question, also after "deploy as is" or "just deploy"), then resolve only `deploy` below.
 1. Read the user's full request text (the message that triggered the run).
 2. For each item, pick the half of the table (blueprint or spec) matching the artifact, then walk it top-to-bottom; first match wins.
 3. For every flag that remains `?` after inference, ask it through the question ledger (`references/task-tracking.md`, Pattern B): one `Q:` task per flag whose subject is `Q: ` + that flag's exact 6.4 question wording, then batches of up to four question objects per `AskUserQuestion` call, each question carrying its 6.4 header, both options with their impact-explicit descriptions, and the default option marked Recommended. One question object per flag, never two flags merged into one question. The answer is recorded on the item (in the pipeline task's description once it exists) and the `Q:` task set `completed`. `TaskList` clean of `Q:` tasks is the precondition for 6.6.
@@ -520,6 +523,7 @@ For each item, derive its pipeline by artifact type and the **already-resolved**
 | `semantic-blueprint` | `customize=no` | `no` | analyst Reconcile |
 | `semantic-blueprint` | `customize=yes` | `yes` | architect Customize → analyst Reconcile → modeler |
 | `semantic-blueprint` | `customize=yes` | `no` | architect Customize → analyst Reconcile |
+| `semantic-blueprint` without `access_scope` | `customize=yes` (forced, never asked; 6.4) | `yes` / `no` | as the two `customize=yes` rows above |
 | `semantic-spec` | `review=no` | `yes` | modeler |
 | `semantic-spec` | `review=no` | `no` | refuse this item (nothing to do — narrate one line and skip) |
 | `semantic-spec` | `review=yes` | `yes` | analyst Review → modeler |
@@ -542,15 +546,15 @@ For multi-item runs, create item one's tasks, then item two's, and so on, and ch
 
 Worked examples for every flag combination (multi-item analyst → modeler, dry-run, customize, direct spec deploy, review-then-deploy) are in [`references/plan-shapes.md`](./references/plan-shapes.md). The modeler shows its own summary and asks a final yes/no before writing each item.
 
-**Lead-in sentence rule:** the one chat sentence that accompanies the tasks tells the user which step asks questions and what gets written, naming steps by what they do (never by number). If any task is a modeler apply: *"Here is the plan. The matching step asks you a few merge / reuse questions and writes nothing; the apply step updates your live model after it shows you what changes and you say yes."* If no apply task exists: *"Here is the plan. The matching step asks you a few merge / reuse questions; nothing is applied to your semantic model, and the spec is written to `semantius/specs/`."* Drop the matching clause when no analyst step exists; add *"The editing step is interactive and ends when you say you are done."* when an architect step exists. A yolo new build uses the yolo lead-in instead (`references/plan-shapes.md`, Pattern 4, yolo variant).
+**Lead-in sentence rule:** the one chat sentence that accompanies the tasks tells the user which step asks questions and what gets written, naming steps by what they do (never by number). If any task is a modeler apply: *"Here is the plan. The matching step asks you a few merge / reuse questions and writes nothing; the apply step updates your live model after it shows you what changes and you say yes."* If no apply task exists: *"Here is the plan. The matching step asks you a few merge / reuse questions; nothing is applied to your semantic model, and the spec is written to `semantius/specs/`."* Drop the matching clause when no analyst step exists; add *"The editing step is interactive and ends when you say you are done."* when an architect step exists. A fast-flow new build uses the fast-flow lead-in instead (`references/plan-shapes.md`, Pattern 4, fast-flow variant).
 
 **Spec + `deploy=no` + `review=no` is refused.** If an item resolves to that combination, narrate one line — *"`<slug>` is a spec with deploy=no and review=no; nothing would happen. Skipping."* — and drop the item from the run before creating any task.
 
 ### 6.6 Present the plan and run
 
-Precondition: `TaskList` shows no `Q:` task pending or in progress (every scope flag answered). Then create the pipeline tasks per 6.5 and chain them (`TaskCreate` all, then `TaskUpdate ... addBlockedBy` on each after the first, in the same response), emit the lead-in sentence, and run (single write gate: no up-front confirmation widget, one item or many). In a yolo run each pipeline task's description starts with the marker `yolo: awaiting go-ahead` (`references/yolo-mode.md`, section 2).
+Precondition: `TaskList` shows no `Q:` task pending or in progress (every scope flag answered). Then create the pipeline tasks per 6.5 and chain them (`TaskCreate` all, then `TaskUpdate ... addBlockedBy` on each after the first, in the same response), emit the lead-in sentence, and run (single write gate: no up-front confirmation widget, one item or many). In a fast run each pipeline task's description starts with the marker `fast: awaiting go-ahead` (`references/fast-flow.md`, section 2).
 
-- **Run includes writes** (`deploy=yes` for any item): each item's modeler step shows its own plan summary and asks a final yes/no before it writes — one modeler confirmation per deploying item, fired when that item's spec is ready. In a yolo run the go-ahead in the design step is that confirmation, and the modeler does not ask again.
+- **Run includes writes** (`deploy=yes` for any item): each item's modeler step shows its own plan summary and asks a final yes/no before it writes — one modeler confirmation per deploying item, fired when that item's spec is ready. In a fast run the go-ahead in the design step is that confirmation, and the modeler does not ask again.
 - **Read-only run** (`deploy=no`): create the tasks, emit the lead-in, run.
 - **Changing scope or cancelling:** if the user asks to change scope or stop after seeing the plan, re-resolve the flags (6.4), set the obsolete tasks `deleted` and create the new ones, or stop cleanly. No widget needed; nothing has run yet and the modeler still gates every write.
 
@@ -566,7 +570,7 @@ For each item:
 
 1. `TaskList`, then set the item's first pipeline task `in_progress`. No chat line: the task status is the trace. Do not double-narrate what the sub-skill itself will narrate, and do not add a transition sentence between sub-skills (no *"Now applying it to your live model..."*, no pre-explaining the deploy step), see "Pipeline hand-offs are not narrated" in Output discipline.
 2. Establish the run context per Step 7.3's schema (stated in the conversation, not prepended to an Agent-tool call):
-   - Always: `Run context:`, `Customizations file:`, `Interaction level:` (the level for this run, Step 3 "Interaction level switch"; before the analyst and the modeler of a yolo run, re-read the pipeline task marker first).
+   - Always: `Run context:`, `Customizations file:`, `Interaction flow:` (the flow for this run, Step 3 "Interaction flow switch"; before the analyst and the modeler of a fast run, re-read the pipeline task marker first).
    - Architect invocation: add `Architect mode:` (one of `create | catalog-clone | audit | extend | customize | rebuild`) and `Input artifact:` — this MUST be the **convention-folder working copy** (`semantius/blueprints/<file>`) resolved in Step 6.1, never the repo-root path. The architect edits the artifact it is handed in place, so handing it the root path is what causes the root file to be mutated; hand it the copy. Derive mode from the resolved flags (table in Step 7.3).
    - Analyst invocation: add `Analyst mode:` (`reconcile` for normal deploys; `audit` / `extend` / `rebuild` for other routes) and `Input artifact:` (the convention-folder working copy, never the root).
    - Modeler invocation: add `Input artifact:` (spec path) and `Deploy flag:` (`yes`/`no` per the resolved deploy choice).
@@ -596,7 +600,7 @@ After the last item (or on halt). Render as markdown prose, never code-fenced. I
 >
 > Files written to `semantius/specs/`. Customizations saved to `semantius/<org>/customizations.yaml` (7 new entries). Re-running is safe: items already applied won't be duplicated, and the run picks up where it stopped once you've resolved the failure. Diagnostic detail is in `.tmp_admin/<run_id>/` (one `diag-<agent>.log` per agent) if you need it for support.
 
-A halted yolo run adds one line after the halt: *"Before it stopped, I decided N things for you; they're listed in the run folder."* (N = the lines in `auto-picks.md`; [`references/yolo-mode.md`](./references/yolo-mode.md), section 6.)
+A halted fast run adds one line after the halt: *"Before it stopped, I decided N things for you; they're listed in the run folder."* (N = the lines in `auto-picks.md`; [`references/fast-flow.md`](./references/fast-flow.md), section 6.)
 
 **Every ✓ item carries a clickable browser link**, the same call-to-action the modeler's Closing Contract mandates (see [`semantius-modeler` → "Closing Contract: clean and sticky"](../semantius-modeler/SKILL.md)): `[Open <System Name> in Semantius →](<ui_baseurl>/<module_slug>)`. `ui_baseurl` was read once in Preflight from `getCurrentUser` (e.g. `https://tests.semantius.app`); the link text is the human **System Name** (read in Step 6.3), the URL path is the lowercase `module_slug`. Lead each line with the bold System Name, never the bare slug. **Never substitute a developer slash command for this link** in an end-user close-out: a slash command assumes a live Claude Code session with the plugin installed under an exact name (which a standalone install does not have), and it shows a drift report rather than the user's data. Slash commands are developer/admin affordances, not the deploy call-to-action.
 
@@ -612,7 +616,7 @@ The authoritative reference for how the admin and sub-skills share standing poli
 
 The architect and analyst never ask the same question twice. Every Stage 3 / authoring-stage answer is written to `semantius/<org>/customizations.yaml` as standing policy *before* the spec or catalog change proceeds. Re-runs of the same blueprint, sibling blueprints that reference the same entity, and brand-new blueprints that share a concept all auto-resolve from this single file.
 
-There is no "just this run" alternative, no follow-up "remember it?" widget, no opt-out. Decisions are policy unconditionally. (A default applied to a question skipped in standard mode, or a pick made in a yolo run after the go-ahead, is not a decision: nothing is written; see `references/customizations-protocol.md` 7.6.) The customer's escape hatch is git: revert the line in `customizations.yaml`, re-deploy. Git is the audit log; the file itself carries provenance via trailing comments (`# decided <YYYY-MM-DD> during <blueprint_slug> deploy`).
+There is no "just this run" alternative, no follow-up "remember it?" widget, no opt-out. Decisions are policy unconditionally. (A default applied to a question skipped in plan flow, or a pick made in a fast run after the go-ahead, is not a decision: nothing is written; see `references/customizations-protocol.md` 7.6.) The customer's escape hatch is git: revert the line in `customizations.yaml`, re-deploy. Git is the audit log; the file itself carries provenance via trailing comments (`# decided <YYYY-MM-DD> during <blueprint_slug> deploy`).
 
 The only widgets that never write are explicit-cancel options ("Stop, I want to think about it"). On cancel, nothing changes in the file.
 
@@ -635,7 +639,7 @@ The `run_id` is also how each sub-skill finds its diagnostic-log folder: it writ
 ```
 Run context: run_id=run-20260527-143012
 Customizations file: /abs/path/to/semantius/<org>/customizations.yaml
-Interaction level: standard                                     (every sub-skill; one of: standard | advanced | yolo; the level for THIS run, Step 3)
+Interaction flow: plan                                          (every sub-skill; one of: plan | expert | fast; the flow for THIS run, Step 3)
 Architect mode: customize                                       (architect only; one of: create | catalog-clone | audit | extend | customize | rebuild)
 Analyst mode: reconcile                                         (analyst only; one of: reconcile | audit | extend | rebuild)
 Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md   (when an existing file is being operated on)
@@ -649,9 +653,9 @@ Deploy flag: yes                                                (modeler only wh
 
 | Sub-skill | Required header lines | Notes |
 |---|---|---|
-| `semantius-architect` | `Run context`, `Customizations file`, `Interaction level`, `Architect mode`, `Input artifact` (if file exists) | The `Architect mode` line is the canonical mode signal — see Step 0 of architect SKILL.md. Without this line, the architect falls back to natural-language detection (and may misclassify). |
-| `semantius-analyst` | `Run context`, `Customizations file`, `Interaction level`, `Analyst mode`, `Input artifact` | Same logic: explicit mode beats inference. |
-| `semantius-modeler` | `Run context`, `Interaction level`, `Input artifact` (the spec path), `Deploy flag` | The modeler does not consult policy (specs already carry every decision). `Interaction level: yolo` is how it knows the go-ahead already confirmed the write. |
+| `semantius-architect` | `Run context`, `Customizations file`, `Interaction flow`, `Architect mode`, `Input artifact` (if file exists) | The `Architect mode` line is the canonical mode signal — see Step 0 of architect SKILL.md. Without this line, the architect falls back to natural-language detection (and may misclassify). |
+| `semantius-analyst` | `Run context`, `Customizations file`, `Interaction flow`, `Analyst mode`, `Input artifact` | Same logic: explicit mode beats inference. |
+| `semantius-modeler` | `Run context`, `Interaction flow`, `Input artifact` (the spec path), `Deploy flag` | The modeler does not consult policy (specs already carry every decision). `Interaction flow: fast` is how it knows the go-ahead already confirmed the write. |
 
 **Mapping resolved flags to sub-skill modes — blueprint inputs:**
 
@@ -661,6 +665,7 @@ Deploy flag: yes                                                (modeler only wh
 | `no` | `no` | (skip architect) | `reconcile` | no |
 | `yes` | `yes` | `customize` | `reconcile` | yes |
 | `yes` | `no` | `customize` | `reconcile` | no |
+| `yes` (forced: the blueprint has no `access_scope`) | `yes` / `no` | `customize` (its first step decides the access level) | `reconcile` | per `deploy` |
 
 **Mapping resolved flags to sub-skill modes — spec inputs:**
 
@@ -724,7 +729,7 @@ When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess
 - **Auto-recover from a sub-skill failure.** Surface the failure; let the user choose the next step.
 - **Modify built-in tables silently.** Additive fields are allowed; replacement is not.
 - **Write an `org:` field inside `customizations.yaml`.** The folder name is the org; a duplicate field would drift, the folder path cannot.
-- **Create a `history.jsonl` (or any decision log file).** Git on `customizations.yaml` is the audit trail. Provenance comments inside the file carry per-entry dates. (The per-run `$DIAG_LOG` is NOT a decision log — it's gitignored, ephemeral diagnostics, never a source of truth. Allowed. The task list and the no-task-tool fallback checklist file are the same class: they track open questions and progress; answers live only in `customizations.yaml` and the artifacts. Allowed. The yolo `auto-picks.md` in the run folder is allowed: a per-run diagnostic, not a policy record; [`references/yolo-mode.md`](./references/yolo-mode.md), section 5.)
+- **Create a `history.jsonl` (or any decision log file).** Git on `customizations.yaml` is the audit trail. Provenance comments inside the file carry per-entry dates. (The per-run `$DIAG_LOG` is NOT a decision log — it's gitignored, ephemeral diagnostics, never a source of truth. Allowed. The task list and the no-task-tool fallback checklist file are the same class: they track open questions and progress; answers live only in `customizations.yaml` and the artifacts. Allowed. The fast-flow `auto-picks.md` in the run folder is allowed: a per-run diagnostic, not a policy record; [`references/fast-flow.md`](./references/fast-flow.md), section 5.)
 - **Surface internal mechanics in chat.** Preflight guards, org probes, CLI/`yq` plumbing, stage transitions, and skill-internal vocabulary go to `$DIAG_LOG`, never to the user. See the Output discipline section.
 
 ---
@@ -739,7 +744,7 @@ This skill's own references (load on demand):
 - `./references/output-discipline.md` — per-run diagnostic-log mechanics
 - `./references/admin-operations.md` — Step 5 admin-op procedures (status / list / health; backup points to `semantius-transfer`)
 - `./references/plan-shapes.md` — plan-line authoring rules, the four plan patterns, and worked examples
-- `./references/yolo-mode.md`: yolo mode (experimental): the go-ahead, the pick procedure, the auto-picks log, the "Decided for you" summary (canonical copy)
+- `./references/fast-flow.md`: fast flow (experimental): the go-ahead, the pick procedure, the auto-picks log, the "Decided for you" summary (canonical copy)
 - `../../docs/architecture.md` — full architecture spec, failure modes, debugging invariants
 
 Sibling skills:

@@ -1,6 +1,6 @@
 ---
 artifact: semantic-spec
-version: "5.8"
+version: "5.9"
 system_name: Partners
 tagline: "Partners and their timeline"
 icon_name: handshake

@@ -6,9 +6,11 @@ Read: `../../use-semantius/references/jsonlogic.md` — the `computed_fields` / 
 
 ## Stage 10: Computed fields and validation rules
 
-> **`access_scope = basic` note.** Emit computed fields and validation rules as usual **except** any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission`): under `basic` the gating permission does not exist, so drop that rule. Pure data-integrity rules (date ordering, required-when, range checks — no permission reference) are kept; they are not access control. (See the "What basic authors" access-control contract in SKILL.md.)
+> **Access-level note.** Under `access_scope` `basic` and `custom`, emit computed fields and validation rules as usual **except** any rule whose JsonLogic gates on a permission (`require_permission` / `has_permission`): the gating permission does not exist there, so drop that rule. Pure data-integrity rules (date ordering, required-when, range checks — no permission reference) are kept; they are not access control. Process gates (§7 gated states and §8.2 `create` rules) follow the access level: under `gated` the rule requires `<slug>:admin`; under `raci` it requires the gate's own permission; under `basic`, `advanced` and `custom` no gate rule is emitted. (See the "What each access level authors" contract in SKILL.md.)
 
 Convert blueprint §8.2 business rules to JsonLogic, plus add field-level computed fields and validation rules discovered during Stage 4.
+
+**A §8.2 rule with source flag `create`** (a restricted creation) becomes a `validation_rules` entry on that entity that applies on insert (`$old` is `null` only on INSERT): `{"if": [{"==": [{"var": "$old"}, null]}, {"require_permission": "<code>"}, true]}`, where `<code>` is `<slug>:admin` under `access_scope: gated` and the gate's own permission (its §8.1 `workflow-gate (lifecycle)` row) under `raci`. Under `basic`, `advanced` and `custom` it is dropped.
 
 ### Computed fields
 
@@ -72,7 +74,7 @@ For every entity, mechanically walk these families and propose rules:
 | F5 — Reference integrity | FK + condition that the target exists in a state | `set_record` lookup + state check |
 | F6 — Submit lock | `is_submitted` boolean | `if (old.is_submitted, require_permission(:bypass_submit_lock), true)` |
 | F7 — Owner edit | `owner_id` FK to users | `if (value_changed("x"), $user_id == owner_id OR require_permission(:edit_all), true)` |
-| F8 — Approval gate | enum transition to `approved` | `if (workflow_state == "approved" AND old.workflow_state != "approved", require_permission(:approve), true)` |
+| F8 — Approval gate | enum transition to `approved` | `if (workflow_state == "approved" AND old.workflow_state != "approved", require_permission(<the §7 derived gate>), true)` (`<slug>:admin` under `gated`, the gate's own code under `raci`) |
 | F9 — Terminal lock | enum terminal state | `if (old.workflow_state in terminal_states, false (no writes), true)` |
 | F10 — Self-reference guard | self-FK | `id != parent_id` (no self-loops) |
 | F11 — Period boundary | `*_period` field | check inside `start_*` / `end_*` |
@@ -83,4 +85,4 @@ For every entity, mechanically walk these families and propose rules:
 
 After running all 15 families, present a scan-table to the user for confirmation. Drop the rules the user rejects.
 
-> **Yolo mode, after the go-ahead:** don't present the scan-table; accept the rules as scanned and log them in one line; don't ask ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md)).
+> **Fast flow, after the go-ahead:** don't present the scan-table; accept the rules as scanned and log them in one line; don't ask ([fast-flow.md](../../semantius-admin/references/fast-flow.md)).

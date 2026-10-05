@@ -52,4 +52,4 @@ Walk every §3 row in the incoming blueprint and classify based on `role` + `mas
 
 **Stage 2g drift correction** (narrower scope than before). The Stage 2 spec scan resolves the catalog-owner-arrival case cleanly via 3b.0. Stage 2g now only fires for **catalog ↔ spec disagreement that the rest of Stage 3 can't resolve** — specifically, when the live catalog has an entity in a different module than the spec for THAT module says it should be in (i.e., somebody manually moved the entity via `update_entity` after the last analyst run, breaking the spec's authority). This is rare; when it fires, the prompt is the existing 2-option widget (move back to where the spec says, or cancel).
 
-> **Yolo mode, after the go-ahead:** don't move it back and don't cancel: leave the entity where it is now and continue ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 4.4); log it; don't ask.
+> **Fast flow, after the go-ahead:** don't move it back and don't cancel: leave the entity where it is now and continue ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4.4); log it; don't ask.

@@ -8,6 +8,29 @@ Entries below are newest first.
 
 ---
 
+## Unreleased: the access level is deployed as written; Stage 2.5 never asks
+
+2026-10-05. Paired with architect 5.5 and analyst 5.9. The architect now decides `access_scope` and the analyst carries it into the spec, so Stage 2.5 no longer resolved it, detected defaults, asked, or projected a full spec down to basic.
+
+1. **`access_scope` is required** and takes the platform's new values `custom` | `basic` | `advanced` | `gated` | `raci` (Stage 1). Missing → 🛑 *"This spec has no access level. Re-run the design step on its blueprint."*; any other value (including the old `full`) → 🛑.
+2. **Stage 2.5 "Access level"** deploys the spec's `access_scope` as written (also a value lower than the live one; nothing is deleted), per a per-level table (canonical in `stage-2-reconcile.md`, duplicated at the top of `stage-4-execute.md`):
+   - `custom`: no permission, role, module-reference or `access_scope` write; entities get the module's current view / manage permissions.
+   - `basic`: read + manage.
+   - `advanced` / `gated` / `raci`: read + manage + admin.
+
+   4k runs only under `raci`; 4l / 4m run from `advanced` up.
+3. **Removed:** the 2.5 detection, the `Q: Basic or advanced access control?` ledger question, and the two-permission projection.
+4. **Plan and summary** name the access level in plain words (`🔐 Access level: …`).
+5. **`scaffold-lib.ts`:**
+   - `Scope` is the five values.
+   - `custom` makes `scaffoldModule` write only the module's name, description and empty provenance keys (no access level, permission or role) and return the module's current references; a hand-made module with no manage permission deploys its entities without an edit permission.
+   - Admin is built from `advanced` up.
+   - `verifyScaffold` skips the scaffold checks under `custom`.
+
+`EXPECTED_MAJOR` unchanged.
+
+---
+
 ## Unreleased: yolo mode (experimental)
 
 Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-09-30). No bump: the modeler reads the same spec and its output keeps its shape (the deploy, the verification report, the Closing Contract); only which questions are asked changes, and only in a yolo run. Canonical rules: `../semantius-admin/references/yolo-mode.md` (the modeler rows of its fixed-picks table, 4.4, are what this entry implements).

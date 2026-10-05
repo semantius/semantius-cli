@@ -20,7 +20,7 @@
  * attributable.
  */
 
-const SPEC_VERSION = "5.8";
+const SPEC_VERSION = "5.9";
 
 /** Semantius platform built-ins — reused by the deployer, not owned by any module. */
 const BUILTINS = new Set([
@@ -231,7 +231,7 @@ function frontmatter(mod: any, ownedTables: string[], relatedVersions: Record<st
   // Category-B authoring-only keys deliberately omitted: description block,
   // blueprint_version, license, created_at, reconciled_*, source_blueprint,
   // related_modules, related_domains, departments, initial_request, persona,
-  // catalog_module_code, raci_mode/raci_mode_source (basic scope).
+  // catalog_module_code, raci_mode/raci_mode_source (any access_scope other than raci).
   return lines.join("\n");
 }
 
@@ -677,17 +677,20 @@ function governance(
   // NOT domain_code — the two coincide only when domain_code == upper(slug).
   const upper = String(mod.module_slug).toUpperCase();
   // §8.2 / §9.2 / the RACI surfaces are Category B: live state does not carry them in
-  // a recoverable shape. Under `basic` the placeholder reason is definitional; under
-  // `full` it is honest about the extractor's limit. The RACI realization / RACI mode /
-  // RACI plan lines are NEVER emitted (not even as placeholders): consistency-check.ts
-  // keys its raci_mode provenance gate on the literal `**RACI realization:**`.
-  const basic = mod.access_scope === "basic";
+  // a recoverable shape. Where the access_scope rules a surface out (permission-gated
+  // rules and functional ownership under `basic` / `custom`; the Processes catalog under
+  // every scope but `raci`) the placeholder reason is definitional; otherwise it is honest
+  // about the extractor's limit. The RACI realization / RACI mode / RACI plan lines are
+  // NEVER emitted (not even as placeholders): consistency-check.ts keys its raci_mode
+  // provenance gate on the literal `**RACI realization:**`.
+  const scope = String(mod.access_scope);
+  const noPermissionRules = scope === "basic" || scope === "custom";
   const out: string[] = [];
   out.push("## 8.2 Business rules");
   out.push("");
   out.push(
-    basic
-      ? "_(none: access_scope is basic, so no permission-gated business rules are authored)_"
+    noPermissionRules
+      ? `_(none: access_scope is ${scope}, so no permission-gated business rules are authored)_`
       : "_(none: not extracted from live state by semantius-optimizer; author by hand)_",
   );
   out.push("");
@@ -744,13 +747,13 @@ function governance(
   // modeler writes in living-RACI mode). Emit the §9 catalog in the analyst template's
   // exact format (semantic-spec-template.md §9.1 Processes) when rows exist; keep the
   // `_(none: ...)_` placeholder when there are none.
-  emitProcesses(out, processes, basic);
+  emitProcesses(out, processes, scope);
   out.push("");
   out.push("### 9.2 Functional ownership and default grants");
   out.push("");
   out.push(
-    basic
-      ? "_(none: access_scope is basic, no functional-ownership rows are authored)_"
+    noPermissionRules
+      ? `_(none: access_scope is ${scope}, no functional-ownership rows are authored)_`
       : "_(none: not extracted from live state by semantius-optimizer; author by hand)_",
   );
   return out.join("\n");
@@ -763,11 +766,11 @@ function governance(
  *  When there are no processes, the inline `**Processes:** _(none: ...)_` form (single
  *  line, no table). The template's caption parenthetical is authoring commentary and is
  *  never emitted. */
-function emitProcesses(out: string[], processes: any[], basic: boolean): void {
+function emitProcesses(out: string[], processes: any[], scope: string): void {
   if (!processes.length) {
     out.push(
-      basic
-        ? "**Processes:** _(none: access_scope is basic, no Processes catalog is authored)_"
+      scope !== "raci"
+        ? `**Processes:** _(none: access_scope is ${scope}, no Processes catalog is authored)_`
         : "**Processes:** _(none: not extracted from live state by semantius-optimizer; author by hand)_",
     );
     return;

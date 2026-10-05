@@ -4,7 +4,7 @@
 
 Computed fields, validation rules, and the 15-family scan walk moved to the analyst skill. The blueprint stops at entity level: §8 declares permissions and business rules at the intent level only (`rule_name + data_object + source_flag + intent`). The analyst converts each blueprint §8.2 rule into JsonLogic and runs the full scan walk in its Stage 10.
 
-**Approvals are not a §8.2 source flag.** An approval is a gated lifecycle transition: a §7 `requires_permission? = ✓` row into the approved state, with the matching `<system_slug>:approve_<noun>` `workflow-gate (lifecycle)` row in §8.1 — plus the §9 RACI Accountable actor when there's a named approver. Genuine multi-party approval (a count of distinct approvers) is a field-level rule the analyst authors; the blueprint just declares the gated transition.
+**Approvals are not a §8.2 source flag.** An approval is a gated lifecycle transition: a §7 `requires_permission? = ✓` row into the approved state; under the `raci` access level it also gets the matching `<system_slug>:approve_<noun>` `workflow-gate (lifecycle)` row in §8.1 and the §9 RACI Accountable actor (see the body table in stage-10-workflow-perms.md). Genuine multi-party approval (a count of distinct approvers) is a field-level rule the analyst authors; the blueprint just declares the gated transition.
 
 ### Stage 9 — Classify each entity's `entity_type`, then derive its write tier (D9)
 
@@ -69,7 +69,7 @@ Common `operational_*` shapes (the records that capture *work happening*): `cand
 >
 > Catalog entities are writeable by `<slug>:admin`; workflow / record / junction by `<slug>:manage`. The hierarchy chain (`admin → manage → read`) means anyone with `admin` can also do `manage`-level work. Look right?
 
-> **Yolo mode, after the go-ahead:** don't show the table and don't ask; accept the classification (and any master-cluster hints) as drafted and log one line ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 4).
+> **Fast flow, after the go-ahead:** don't show the table and don't ask; accept the classification (and any master-cluster hints) as drafted and log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4).
 
 Loop on user feedback until they confirm. The classification feeds the §3 `entity_type` column and the derived `write tier` column (both written in Stage 13) and the §8.1 permission enumeration.
 
@@ -98,6 +98,4 @@ The hint never overrides the user — the deployer surfaces it as a recommendati
 
 **Narrow-tier override.** The narrow tier is a Stage 10 (W4n) decision layered on top of the Stage 9 class, not an `entity_type` value. An entity whose primary writers are external participants (e.g. `interview_feedback` writers get `ats:interview` rather than `ats:manage`) keeps its derived §3 `write tier` (`:manage`, from `operational_workflow` / `operational_record`); Stage 10 then declares the narrow tier as a `narrow`-tier row in §8.1 plus a `narrow_write` rule in §8.2 (narrow is never a §3 `write tier` value and never an `entity_type` value). `catalog` entities are never narrow-tier-overridden (the two sit at opposite ends of the authority axis).
 
-**Special case: purely operational model.** If the walk finds zero `catalog` entities (no reference/config tables — the model is all `operational_*` records, workflows, and junctions), drop to **two baseline permissions** (`<slug>:read` and `<slug>:manage`) and document the reason in §8.1 (the two-permission fallback). Don't fabricate a config entity just to justify a third permission. Most non-trivial modules will have at least one `catalog` entity; a purely operational module is a real shape (a simple `notes` or `comments` module, for instance) and the two-permission fallback is correct for it.
-
-**Special case: purely reference model.** If the walk finds *only* `catalog` entities and no `operational_*` ones (a pure lookup module: `countries`, `currencies`, `locales`), keep the `entity_type` as `catalog` for each (the class is honest), but drop to two permissions (`<slug>:read` and `<slug>:manage`) and **set every `write tier` to `:manage`** rather than the `:admin` the class would normally derive. The admin tier is meaningless when there is no operational layer below it to distinguish from, so this is the one place the derived tier is deliberately flattened (note it in §8.1). The lookup module is "configuration" in spirit, but the inner split doesn't exist.
+How many permissions the module gets is decided by the access level (stage-10-workflow-perms.md, permission step), not here.

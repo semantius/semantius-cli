@@ -11,6 +11,7 @@ After all creates are done, emit a **structured verification report** with expli
 ### Per-area checks
 
 1. **Module scaffold integrity (every module touched).** **This area is mechanized by [`scaffold-lib.ts`](./scaffold-lib.ts) `verifyScaffold(cfg)`** — the deploy script calls it as its last step *inside* `runDeploy`, so it throws and halts on any drift instead of relying on the agent to perform the checks by hand (this is the Stage 5 step that got skipped — "I only did a manual spot-check" — in past deploys, shipping broken scaffolds under a success message). Fold its returned findings into the report below. The checks it runs, for reference: load the module by `module_slug=eq.<slug>`, then assert every reference column on the module row against its expected natural key. The three permission references store the `permission_name` itself, so compare them directly; the three role references are numeric FKs, so **dereference each and assert the natural key matches the expected value** (reading a numeric FK alone is not enough; a non-null FK can still point at the wrong row).
+   - Under `access_scope: custom` the scaffold checks in this area are skipped (the modeler wrote no permission, role or module reference); only the provenance round-trip below runs.
    - `module.view_permission` equals `<slug>:read`.
    - `module.manage_permission` equals `<slug>:manage`.
    - `module.admin_permission` is null (basic) OR equals `<slug>:admin`.
@@ -25,9 +26,9 @@ After all creates are done, emit a **structured verification report** with expli
      - `module.settings.module_kind` == front-matter `module_kind` **when** the front-matter carried a non-empty, non-null value (not required otherwise — the key is optional and informational; a spec without it must not produce a `settings.module_kind` stamp, and its absence live is not a finding).
      - `module.settings.naming_mode` == front-matter `naming_mode`.
      - `module.settings.catalog_snapshot` == front-matter `reconciled_against_catalog_snapshot` (note the key rename: front-matter `reconciled_against_catalog_snapshot` lands in `settings.catalog_snapshot`).
-     - `module.access_scope` == the Stage 2.5 resolved scope (top-level column).
+     - `module.access_scope` == the spec's `access_scope` (top-level column). Skipped under `custom`, where the modeler never writes it.
      - `module.settings.promotion_decisions` is present and matches **when** the front-matter carried it (not required otherwise).
-     - An empty/missing `catalog_module_code`, any missing top-level provenance column (`domain_code` / `access_scope` / `icon_name`), or any missing `settings.*` key the front-matter declared, is a 🛑 — the module deployed but its lineage did not, which silently breaks the analyst's re-reconcile, behavior discovery, and the `use-*` discovery skills (all of which read these values to group the catalog and detect drift). Stage 4a stamps every key on **both** the create and the update-reconcile path, so a Stage 5 hit means the stamp did not land — re-issue `create_module` / `update_module` with the full provenance payload (4a checklist) and halt if it still will not take, rather than reporting the deploy as clean.
+     - An empty/missing `catalog_module_code`, any missing top-level provenance column (`domain_code` / `access_scope` (not checked under `custom`) / `icon_name`), or any missing `settings.*` key the front-matter declared, is a 🛑 — the module deployed but its lineage did not, which silently breaks the analyst's re-reconcile, behavior discovery, and the `use-*` discovery skills (all of which read these values to group the catalog and detect drift). Stage 4a stamps every key on **both** the create and the update-reconcile path, so a Stage 5 hit means the stamp did not land — re-issue `create_module` / `update_module` with the full provenance payload (4a checklist) and halt if it still will not take, rather than reporting the deploy as clean.
 
 2. **Master promotion (per promoted entity).**
    - Entity's `module_id` matches the master module's id.
@@ -173,15 +174,15 @@ Each block is rendered only when it has non-zero content. Personas, functional o
 
 **Compact summary line** (still emitted, for backwards-compatibility with existing logs): *"✅ Done. Created 1 module, 3 permissions, 2 hierarchy rows, 5 entities (2 admin-tier, 3 operational), 47 fields. Reused built-ins: users. Additive fields on built-ins: 2. Applied 2 `select_rule`(s) and 7 `input_type_rule`(s)."*
 
-When the model is on the two-permission fallback (no admin-tier entities), the summary reads "2 permissions, 1 hierarchy row, N entities (all operational)". The admin-tier breakdown is omitted when there are no admin-tier entities. The read-side-rule counts are omitted when both totals are zero (the common case for models that don't use the read-side surfaces).
+Under `access_scope: basic` (no admin level), the summary reads "2 permissions, 1 hierarchy row, N entities (all operational)". The admin-tier breakdown is omitted when there are no admin-tier entities. The read-side-rule counts are omitted when both totals are zero (the common case for models that don't use the read-side surfaces).
 
-**Access-control callout (mandatory).** The verification summary names the resolved Stage 2.5 scope on its own line: *"🔐 Access control: Basic (read + edit). Deployed `<slug>:read` + `<slug>:manage`, viewer + manager roles."* or *"🔐 Access control: Full RBAC."* When `basic` was a **projection** of a full-shaped spec, also state what was suppressed and (on a re-deploy that flipped an existing full module to basic) which already-live higher-governance objects are now quiet orphans: *"Skipped N permissions, M roles, K lifecycle gates, P persona grants. L pre-existing gate(s)/role(s) left in place (not deleted; re-deploy under full access to re-activate)."* This is the read-side analog of the access-control choice surfacing in the plan: the user sees, after the fact, exactly which governance the basic choice excluded.
+**Access-level callout (mandatory).** The verification summary names the spec's access level on its own line, in the same plain words as the Stage 3 plan line: *"🔐 Access level: <plain words>."* (`basic` "view and edit"; `advanced` "view, edit and admin"; `gated` "the admin takes the restricted steps"; `raci` "business roles take the restricted steps"; `custom` "permissions set up by hand, left as they are").
 
 **Read-visibility callout (mandatory when any `select_rule` was created or modified).** Any Stage 4f write that created, changed, or removed an entity's `select_rule` deserves its own one-line callout in the verification summary, separate from the bulk counts: *"⚠️ Applied `select_rule` on `<table_name>`. Callers will now see only rows where `<short-description-of-rule>`. Confirm rollout is the intent."* This mirrors how `edit_permission` tier flips get their own callout (a real RBAC change); read-visibility changes have the same "user noticing 'why can't I see X anymore'" failure mode and benefit from being named in the summary the user reads.
 
-### "Decided for you after your go-ahead" (yolo runs only)
+### "Decided for you after your go-ahead" (fast runs only)
 
-> **Yolo mode, after the go-ahead:** end the verification report with this section ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 6), placed after everything else in the report and before the Closing Contract's `---`; don't ask.
+> **Fast flow, after the go-ahead:** end the verification report with this section ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 6), placed after everything else in the report and before the Closing Contract's `---`; don't ask.
 
 Build it from `.tmp_admin/<run_id>/auto-picks.md` (the `run_id` is in the `Run context:` line), the log every skill in this run appended to with `log_pick`. Read it silently. Each log line (`<skill> | <decision> | <pick> | <basis> | touches: <module>`) becomes one bullet in plain words, the decision and what was picked; never show the skill name, the basis, or raw identifiers (the Writing Conventions ban list applies):
 
@@ -197,7 +198,7 @@ In this module:
 Say "change" and what you want different to revisit any of these.
 ```
 
-"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a standard or advanced run. The Closing Contract that follows is unchanged: the `---`, then the status line, the link, and the sample-data question.
+"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a plan-flow or expert-flow run. The Closing Contract that follows is unchanged: the `---`, then the status line, the link, and the sample-data question.
 
 ## Stage 5b: Stamp the deploy version into the spec
 

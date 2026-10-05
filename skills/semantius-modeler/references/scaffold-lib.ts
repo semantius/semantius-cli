@@ -36,8 +36,8 @@
  * Never a loop of single-record creates. Re-running is a pure no-op.
  *
  * It makes NO plan decisions. It takes the already-resolved §8.1 baseline
- * permission descriptions, §9.1 baseline role slugs, and the Stage-2.5 scope as
- * arguments. Everything decision-bearing stays in the bespoke script via the
+ * permission descriptions, §9.1 baseline role slugs, and the spec's access level
+ * (`access_scope`) as arguments. Everything decision-bearing stays in the bespoke script via the
  * deploy-lib primitives: non-baseline §8.1 permissions (workflow gates),
  * non-baseline §9.1 hierarchy edges, persona / RACI roles, the `logo_color`
  * cosmetic fallback, entities, and fields. `scaffoldModule` covers ONLY the
@@ -163,7 +163,8 @@ export async function preflightSchemas(map: Record<string, string[]>): Promise<v
 // ───────────────────────────────── module scaffold ───────────────────────────
 
 export type Origin = "model" | "model_master";
-export type Scope = "basic" | "full";
+/** The spec's `access_scope` (modeler Stage 2.5). */
+export type Scope = "custom" | "basic" | "advanced" | "gated" | "raci";
 
 export interface ModulePayload {
   module_slug: string;
@@ -280,6 +281,7 @@ async function ensureRolePermissions(
 async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
   const live = await read1("read_module", `module_slug=eq.${m.module_slug}`);
   if (!live) {
+    if (scope === "custom") throw new Error(`scaffold: access_scope custom but module ${m.module_slug} does not exist`);
     await write("create_module", {
       data: {
         module_name: m.module_name,
@@ -305,7 +307,7 @@ async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
   const data: Record<string, unknown> = {
     module_name: m.module_name,
     description: m.description,
-    access_scope: scope,                                   // always (the one provenance exception)
+    ...(scope === "custom" ? {} : { access_scope: scope }),  // always, except under custom (the one provenance exception)
     settings: { ...(live.settings ?? {}), ...(m.settings ?? {}) },  // merge, never replace
   };
   if (isEmpty(live.catalog_module_code)) data.catalog_module_code = m.catalog_module_code;  // write-once
@@ -321,22 +323,52 @@ async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
 }
 
 /**
+ * `access_scope: custom` (modeler Stage 2.5): the module's permissions were set up by
+ * hand and are left as they are. No permission / role write: read the existing module and
+ * return its current references, so the caller can give new entities the module's own view /
+ * manage permissions. The module must already exist (a custom module is always live).
+ * A reference the hand-made module leaves empty comes back as `undefined`.
+ */
+async function readCustomModule(slug: string): Promise<ScaffoldResult> {
+  const mod = await read1("read_module", `module_slug=eq.${slug}`);
+  if (!mod) throw new Error(`scaffold: access_scope custom but module ${slug} does not exist`);
+  const opt = (v: unknown) => (isEmpty(v) ? undefined : v);
+  return {
+    moduleId: mod.id,
+    permissionNames: {
+      read: opt(mod.view_permission) as string,
+      manage: opt(mod.manage_permission) as string,
+      ...(isEmpty(mod.admin_permission) ? {} : { admin: mod.admin_permission as string }),
+    },
+    roleIds: {
+      viewer: opt(mod.default_viewer_role_id) as number,
+      manager: opt(mod.default_manager_role_id) as number,
+      ...(isEmpty(mod.default_admin_role_id) ? {} : { admin: mod.default_admin_role_id as number }),
+    },
+  };
+}
+
+/**
  * Build the full BASELINE module scaffold idempotently and wire the six
  * module-record FK columns. Self-verifies the field names of every tool it uses
  * against the live schema first (so a stale field name fails loud before any
  * write). Returns the resolved module / permission / role ids for the caller's
  * downstream entity creates.
  *
- * `scope` drives the admin tier: under "basic" the admin permission, admin role,
- * the `admin→manage` edge, and the module's admin FK columns are all skipped
- * (left null), matching the modeler Stage 2.5 basic projection — even when `cfg`
- * supplies admin descriptions / role. Under "full", admin is built only when
- * `cfg.permissions.admin` AND `cfg.roles.admin` are both present.
+ * `scope` (the spec's access level) drives the admin tier: under "basic" the admin
+ * permission, admin role, the `admin→manage` edge, and the module's admin FK columns
+ * are all skipped (left null) — even when `cfg` supplies admin descriptions / role.
+ * Under "advanced" / "gated" / "raci", admin is built only when
+ * `cfg.permissions.admin` AND `cfg.roles.admin` are both present. Under "custom"
+ * only the module's name, description and empty provenance keys are written: the
+ * module's permissions were set up by hand, so no permission, role, hierarchy, module
+ * reference or `access_scope` is written; the module must exist and its current
+ * references are returned as they are (modeler Stage 2.5).
  */
 export async function scaffoldModule(cfg: ScaffoldConfig): Promise<ScaffoldResult> {
   const origin: Origin = cfg.origin ?? "model";
   const slug = cfg.module.module_slug;
-  const hasAdmin = cfg.scope === "full" && !!cfg.permissions.admin && !!cfg.roles.admin;
+  const hasAdmin = cfg.scope !== "basic" && cfg.scope !== "custom" && !!cfg.permissions.admin && !!cfg.roles.admin;
 
   // Preflight: fail loud on any stale field name BEFORE the first write.
   await preflightSchemas({
@@ -354,6 +386,7 @@ export async function scaffoldModule(cfg: ScaffoldConfig): Promise<ScaffoldResul
   // 1-2. Module (+ provenance), then the baseline permissions as ONE set (one in.() read, one
   //      create_permission call for the missing rows, one re-read, one name-array converge).
   const moduleId = await ensureModule(cfg.module, cfg.scope);
+  if (cfg.scope === "custom") return readCustomModule(slug);   // provenance only; no permission / role / access_scope write
   const readName = `${slug}:read`;
   const manageName = `${slug}:manage`;
   const adminName = hasAdmin ? `${slug}:admin` : undefined;
@@ -447,7 +480,7 @@ export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
   const fail = (check: string, detail: string) => f.push({ severity: "fail", check, detail });
 
   const slug = cfg.module.module_slug;
-  const hasAdmin = cfg.scope === "full" && !!cfg.permissions.admin && !!cfg.roles.admin;
+  const hasAdmin = cfg.scope !== "basic" && cfg.scope !== "custom" && !!cfg.permissions.admin && !!cfg.roles.admin;
 
   const mod = await read1("read_module", `module_slug=eq.${slug}`);
   if (!mod) {
@@ -457,10 +490,16 @@ export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
   }
   ok("module exists", `${slug} (id ${mod.id})`);
 
-  if (mod.access_scope !== cfg.scope) fail("module.access_scope", `expected ${cfg.scope}, live ${mod.access_scope}`);
-  else ok("module.access_scope", cfg.scope);
   if (isEmpty(mod.catalog_module_code)) fail("module.catalog_module_code", "empty — lineage stamp did not land");
   else ok("module.catalog_module_code", String(mod.catalog_module_code));
+  // Under "custom" the modeler wrote no permission, role, module reference or access_scope:
+  // the scaffold checks below do not apply.
+  if (cfg.scope === "custom") {
+    throwIfFailed(f);
+    return f;
+  }
+  if (mod.access_scope !== cfg.scope) fail("module.access_scope", `expected ${cfg.scope}, live ${mod.access_scope}`);
+  else ok("module.access_scope", cfg.scope);
   if (mod.view_permission !== `${slug}:read`) fail("module.view_permission", `expected ${slug}:read, live ${mod.view_permission}`);
   else ok("module.view_permission", `${slug}:read`);
 

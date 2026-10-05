@@ -20,7 +20,7 @@ semantius call crud read_module --single '{"filters": "module_slug=eq.<system_sl
 - **Exit 1 (missing)**: plan a `create_module` with `module_name = <system_name>`, `module_slug = <system_slug>`, `description = <tagline>`, `icon_name = <icon_name>`, `domain_code = <domain_code>`, `module_type = "domain"`.
 - **Exit 2 (duplicate)**: hard catalog bug — surface and stop.
 
-> **Module schema note.** Modules carry `module_name` (display, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `description` (≤40-char selector chip, sourced from frontmatter `tagline`), `icon_name`, the top-level columns `domain_code` and `access_scope`, `module_type` (`"domain"` default), and the platform-maintained `version` (monotonic integer, bumped on any schema change to the module's owned entities / fields / enum values / permissions) + `version_date`. The §1 Overview prose does NOT go on the module record.
+> **Module schema note.** Modules carry `module_name` (display, e.g. `CRM`), `module_slug` (URL handle, e.g. `crm`), `description` (≤40-char selector chip, sourced from frontmatter `tagline`), `icon_name`, the top-level columns `domain_code` and `access_scope` (`custom` / `basic` / `advanced` / `gated` / `raci`), `module_type` (`"domain"` default), and the platform-maintained `version` (monotonic integer, bumped on any schema change to the module's owned entities / fields / enum values / permissions) + `version_date`. The §1 Overview prose does NOT go on the module record.
 
 ### 2a.1. Version-match gate: has prod drifted since the last deploy?
 
@@ -184,7 +184,7 @@ For every row in blueprint §5.3a (outbound from this scope's masters / contribu
 
 For blueprint §6.2 (outbound) handoff rows with `event_category = lifecycle` (and §6.3 inbound rows whose `payload` names an entity this blueprint owns), validate that `to_state` exists in the `payload` entity's §7 lifecycle table (which becomes that entity's `workflow_state` enum values in the spec). Mismatch → 🛑 (the architect should have caught it via pre-save verification; if it reached the analyst the blueprint is corrupt). Inbound payloads normally belong to the source module and are not checked.
 
-Every blueprint §6.2 / §6.3 handoff row is carried verbatim into the spec's §6 `### Outbound handoffs` / `### Inbound handoffs` sub-sections (nine blueprint columns; under both access scopes; an empty sub-section keeps its heading with `_(none: …)_`). For rows whose source entity is `embedded_master` and whose catalog owner module is absent in the live catalog: this is a **boundary-crossing handoff** (per Writing Convention 10 on the architect); the source module is set to the entity's current owning module, and the deployer's Stage 4m wires the handoff from that module when the platform exposes a trigger registry.
+Every blueprint §6.2 / §6.3 handoff row is carried verbatim into the spec's §6 `### Outbound handoffs` / `### Inbound handoffs` sub-sections (nine blueprint columns; at every access level; an empty sub-section keeps its heading with `_(none: …)_`). For rows whose source entity is `embedded_master` and whose catalog owner module is absent in the live catalog: this is a **boundary-crossing handoff** (per Writing Convention 10 on the architect); the source module is set to the entity's current owning module, and the deployer's Stage 4m wires the handoff from that module when the platform exposes a trigger registry.
 
 Build a `link_proposals` list for Stage 3.
 

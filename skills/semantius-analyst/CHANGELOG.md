@@ -8,6 +8,31 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## 5.9: the access level comes from the blueprint; the analyst never asks
+
+2026-10-05. Paired with architect 5.5 and the modeler change of the same date. The architect now decides the module's access level (`access_scope`) with a deterministic script and stamps it into the blueprint. The analyst no longer resolved it from live state or asked the basic-vs-advanced question, which had asked the user twice and could silently drop gates confirmed in the architect.
+
+1. **`access_scope` is read from the blueprint** and carried verbatim into the spec: `custom` | `basic` | `advanced` | `gated` | `raci` (the platform's `modules.access_scope` values).
+   - A blueprint without it stops at Stage 1 and is routed to architect Customize.
+2. **Removed:**
+   - the access question, its detection, and `references/access-control-scope.md`;
+   - the analyst's `.access_scopes` saved answer;
+   - the access clause of the 3g "Picked for you" line.
+3. **"What each access level authors"** replaces the basic-only contract:
+   - `custom`: no permission or role work.
+   - `basic`: read + manage.
+   - `advanced` / `gated`: read + manage + admin plus field-level permissions; under `gated`, gated states and §8.2 `create` rules require `<slug>:admin`.
+   - `raci`: per-gate permissions held only by the business roles, not included in `<slug>:admin`, plus RACI realization.
+
+   Field-level permissions (Stages 5, 7, 10) run from `advanced` up. Stage 9.5 Step 0 (RACI mode, derivation unchanged) runs only under `raci`. Functional ownership and handoffs run from `advanced` up.
+4. **§8.2 `create` rules** (restricted creation) become insert-time `validation_rules` (Stage 10); `create` is a parsed source flag.
+   - **The RACI rule:** under `raci`, every process has exactly one accountable row, and each gate is granted from the accountable row's `grant gates [...]` list (Stage 9.5).
+5. **Pre-save:** one coherence row per access level; `persona` only under `raci`.
+
+**Minor bump** (5.8 → 5.9): `access_scope` takes new values and is now always present. Older specs carrying `basic` still deploy; the modeler rejects any other legacy value.
+
+---
+
 ## Unreleased: yolo mode (experimental) and question-flow fixes
 
 2026-09-30. Paired with the admin, architect, and modeler changes of the same name; rules in `../semantius-admin/references/yolo-mode.md`. Yolo mode is the third value of `.interaction_level`: for a new build, the architect asks one go-ahead, and after a yes the rest of the pipeline runs without questions.

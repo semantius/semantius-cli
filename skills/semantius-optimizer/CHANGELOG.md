@@ -8,6 +8,21 @@ Entries below are newest first. `SPEC_VERSION` tracks the analyst's `CURRENT_VER
 
 ---
 
+## 5.9: `access_scope` takes the five platform values
+
+2026-10-05. Lockstep with analyst 5.9.
+
+1. `SPEC_VERSION` `"5.8"` → `"5.9"`.
+2. The live `modules.access_scope` (`custom` | `basic` | `advanced` | `gated` | `raci`) is still copied verbatim into the spec frontmatter.
+3. The `_(none: …)_` reasons are definitional:
+   - for §8.2 and §9.2, under `basic` and `custom`;
+   - for the Processes catalog, under every value but `raci`.
+
+   Otherwise they say "not extracted". Output for a `basic` module is byte-identical apart from the version line.
+4. The round-trip fixture `fixture-full.json` now carries `access_scope: raci` (it has gate permissions and processes); the goldens were regenerated.
+
+---
+
 ## Description under the 1024-character limit (`SPEC_VERSION` unchanged)
 
 2026-09-28. The description was 1156 characters; the read list and mechanism detail were condensed, every trigger phrase and exclusion kept. Now 995.

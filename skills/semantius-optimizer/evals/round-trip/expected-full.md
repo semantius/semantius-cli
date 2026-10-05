@@ -1,13 +1,13 @@
 ---
 artifact: semantic-spec
-version: "5.8"
+version: "5.9"
 system_name: Demo Ops Pro
 tagline: "Demo operations tracker (governed)"
 icon_name: wrench
 system_slug: demo-ops-pro
 module_type: domain
 module_kind: domain
-access_scope: full
+access_scope: raci
 domain_code: DEMOPRO
 naming_mode: agent-optimized
 logo_color: #2563eb

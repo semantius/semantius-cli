@@ -81,7 +81,7 @@ Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, 
 
 - **`icon_name`** — the module's UI icon (an icon-set handle, not a URL; distinct from the entity-level `icon_url` and the module `logo_url`).
 - **`domain_code`** — short uppercase business-domain code the module belongs to (`ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`.
-- **`access_scope`** — enum `basic` | `full`, default `basic`. `basic` for simple read/edit; `full` when the module needs role tiers, approvals, and lifecycle gating.
+- **`access_scope`** — the permission structure of the module (its access level, decided by `semantius-architect`). `enum_values`: `custom` ("Custom permission structure"), `basic` ("Two permissions: view and edit"), `advanced` ("Three permissions: view, edit and admin."), `gated` ("Three permissions: view, edit and admin and process gates"), `raci` ("Three permissions: view, edit and admin and enforced process gates."); default `custom`.
 
 Permission naming convention: **always `<module_slug>:<action>`** (e.g., `crm:read`, `crm:manage`). The permission prefix is the slug, not the display name, `crm:read`, never `CRM:read`.
 

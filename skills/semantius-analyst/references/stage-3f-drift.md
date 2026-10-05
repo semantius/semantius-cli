@@ -4,7 +4,7 @@
 
 > **Ledger stage.** Every 3f widget (one per drifted property, per entity) is a `Q:` task (SKILL.md → Task tracking; template `Q: <Plural Label>: keep the live <property>, or apply the design's?`, or the widget's own question text where this file specifies one). Enumerate all of them when 3f starts, ask in batches of up to four per `AskUserQuestion` call, record each answer at its Policy path before completing the task, and return to 3g only when `TaskList` shows no `Q:` task pending or in progress. Informational widgets (3f.4 same-primitive) are still tasks; a blocker surfaced as a §7.1 entry with no widget is not.
 >
-> **Yolo mode, after the go-ahead:** no `Q:` task and no widget: each drift question below takes the pick its own yolo line names, never "Cancel", and nothing is written to `customizations.yaml`; 3f is done when every pick is logged. A 🔴 blocker still stops the save. Log each pick; don't ask ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md)).
+> **Fast flow, after the go-ahead:** no `Q:` task and no widget: each drift question below takes the pick its own fast-flow line names, never "Cancel", and nothing is written to `customizations.yaml`; 3f is done when every pick is logged. A 🔴 blocker still stops the save. Log each pick; don't ask ([fast-flow.md](../../semantius-admin/references/fast-flow.md)).
 
 ### 3f. Adopted-entity drift resolution (run from the 3g confirmation step, before field drafting)
 
@@ -46,7 +46,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
   4. label: `"Cancel"`
      description: `"Stop without writing the spec. Fix the blueprint to match the live name, then re-run."`
 
-> **Yolo mode, after the go-ahead:** take the option marked "(Recommended)" (the lifecycle state field exception below decides which one that is); log it; don't ask.
+> **Fast flow, after the go-ahead:** take the option marked "(Recommended)" (the lifecycle state field exception below decides which one that is); log it; don't ask.
 
 **Internal mapping:**
 - Option 1 → in the spec being drafted, rename `<spec_field>` → `<live_field>` on the entity's Fields table; cascade the rename through all JsonLogic on the entity (see "JsonLogic cascade" below) AND on every OTHER entity whose JsonLogic references `<entity>.<spec_field>` (cross-entity lookups). Record an `**Additive fields**` annotation if the spec doesn't already redeclare `<live_field>`.
@@ -77,7 +77,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
   4. label: `"Cancel"`
      description: `"Stop without writing the spec."`
 
-> **Yolo mode, after the go-ahead:** take "Keep live values + add new spec values" (the Recommended option); log it; don't ask.
+> **Fast flow, after the go-ahead:** take "Keep live values + add new spec values" (the Recommended option); log it; don't ask.
 
 **Internal mapping:**
 - Option 1 → spec carries the union enum (`live_vals + new_spec_vals`); cascade default to live default if it's in the union; otherwise pick the recommended new default and document via §7.2.
@@ -104,7 +104,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
   4. label: `"Cancel"`
      description: `"Stop without writing the spec."`
 
-> **Yolo mode, after the go-ahead:** take "Keep live <live_perm>" (the Recommended option); log it; don't ask.
+> **Fast flow, after the go-ahead:** take "Keep live <live_perm>" (the Recommended option); log it; don't ask.
 
 **Internal mapping:**
 - Option 1 → spec aligns to `<live_perm>`; cascade through any §3 / §7 / §8 references.
@@ -121,7 +121,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
 - **Same-primitive format variation** (text ↔ string ↔ multiline ↔ html, integer ↔ int32 ↔ int64): the platform usually accepts these via `update_field`. The widget is informational — recommends aligning to spec (live can be updated) with a "keep live" escape hatch.
 - **Cross-primitive format change** (text → integer, text → date, integer → number, etc.): this is a 🔴 hard blocker and there is nothing to choose, so **no widget fires**. Write a 🔴 §7.1 blocker into the spec and name it in the 3g plan summary's blockers line (stage-3-confirm.md, authoring rule 10) so the user sees it before the file is written.
 
-  > **Yolo mode, after the go-ahead:** no blocker: keep the live format and align the spec to it, because yolo never removes or destructively changes anything deployed; log it; don't ask.
+  > **Fast flow, after the go-ahead:** no blocker: keep the live format and align the spec to it, because fast flow never removes or destructively changes anything deployed; log it; don't ask.
 
 For same-primitive variation:
 
@@ -130,7 +130,7 @@ For same-primitive variation:
   1. `"Apply the spec's `<spec_format>` (Recommended)"` — `update_field` to switch format.
   2. `"Keep live `<live_format>`"` — spec aligns to live.
 
-> **Yolo mode, after the go-ahead:** take "Apply the spec's <spec_format>" (the Recommended option); log it; don't ask.
+> **Fast flow, after the go-ahead:** take "Apply the spec's <spec_format>" (the Recommended option); log it; don't ask.
 
 For cross-primitive change: no widget; the 🔴 §7.1 blocker in the spec plus the plan summary's blockers line are the whole surfacing. The user must fix the blueprint or plan a migration manually before re-running.
 
@@ -193,9 +193,9 @@ For every renamed `<old_token>`, grep the entire assembled spec text for `"<old_
 
 **Policy path:** `.drift.property.<entity>.<field|entity>.<property>`.
 
-**This is the catch-all that guarantees EVERY property is validated, not just the specialized five.** Fires when any captured property outside 3f.1–3f.4 differs between live and intended. Covers, at minimum: `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `id_type`, `id_prefix`, `id_refentity`, enum labels (values matching, labels differing), `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` — entity- or field-level as applicable. Grade each divergence by risk, then resolve; **nothing is auto-applied silently — every drifted property is shown and decided, in standard and advanced mode.**
+**This is the catch-all that guarantees EVERY property is validated, not just the specialized five.** Fires when any captured property outside 3f.1–3f.4 differs between live and intended. Covers, at minimum: `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `id_type`, `id_prefix`, `id_refentity`, enum labels (values matching, labels differing), `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` — entity- or field-level as applicable. Grade each divergence by risk, then resolve; **nothing is auto-applied silently — every drifted property is shown and decided, in plan and expert flow.**
 
-> **Yolo mode, after the go-ahead:** every single keep-live / apply-design question below (one cosmetic property, a value change, the record ids) takes the option marked "(Recommended)"; the multi-select cosmetic batch selects none, so every property in it takes the live value; log it; don't ask.
+> **Fast flow, after the go-ahead:** every single keep-live / apply-design question below (one cosmetic property, a value change, the record ids) takes the option marked "(Recommended)"; the multi-select cosmetic batch selects none, so every property in it takes the live value; log it; don't ask.
 
 - **Cosmetic / zero-data-risk** (`description`, `title`, `width`, `searchable`, `order_column`, `id_column`, `label_column`, `icon_url`, `edit_mode`, `cube_mode`, `unique_value` true→false, `precision`/`scale` INCREASE, `default_value` on a field with **no** live records): batch these per entity into consolidated multiSelect review questions so the user isn't clicking through dozens of single-property widgets, while still seeing the full set. **Shape** (SKILL.md → AskUserQuestion mechanics: 2 to 4 options per question object, never 1, never 5; the tool has no pre-checked option, so the safe default must be what an *unselected* row does). Count the entity's cosmetic divergences (K):
   - **K = 1**: no consolidated widget; one keep-live / apply-spec question for that property: `"Keep the live <L> (Recommended)"` / `"Apply the design's <S>"` / `"Cancel"` (3 options), subject per the per-property `Q:` template (`Q: <Plural Label>: keep the live <property>, or apply the design's?`).
@@ -228,7 +228,7 @@ A rule present on ONLY one side (live carries one the spec dropped, or the spec 
   3. label: `"Keep both"` — only offered for `computed_fields` / `validation_rules` when the two entries have distinct `name`s; both survive (a kept validation rule takes the next free class-99 `code`).
   4. label: `"Cancel"`.
 
-> **Yolo mode, after the go-ahead:** take "Keep the live rule (update the spec)" (the Recommended option); log it; don't ask.
+> **Fast flow, after the go-ahead:** take "Keep the live rule (update the spec)" (the Recommended option); log it; don't ask.
 
 **Internal mapping:** option 1 → spec rule = live; option 2 → spec rule kept, modeler applies; option 3 → union (distinct keys only); option 4 → halt. If keeping either side indirectly references a field or permission that a 3f.1 / 3f.3 decision renamed, run the 3f.5 JsonLogic cascade afterward.
 

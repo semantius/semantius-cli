@@ -10,7 +10,6 @@ Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZAT
 
 | Source | Decision | yq path | Shape |
 |---|---|---|---|
-| Analyst (access-control scope) | Basic vs full RBAC, per module | `.access_scopes.<slug>` | scalar (`basic` \| `full`) |
 | Architect authoring | Vendor-template choice | `.naming.mode` | scalar |
 | Architect authoring | Slug-collision strategy | `.naming.on_slug_collision` | scalar |
 | Architect authoring | Module display-name override | `.module_display_names.<slug>` | scalar |
@@ -32,8 +31,8 @@ Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZAT
 | Analyst Stage 3f.2 | Enum drift | `.drift.enum.<entity>.<field>` | scalar |
 | Analyst Stage 3f.3 | Permission drift | `.drift.permission.<entity>.edit_permission` | scalar |
 | Analyst Stage 3f.4 | Format drift | `.drift.format.<entity>.<field>` | scalar |
-| Admin / architect / analyst, when the user says "advanced mode", "standard mode", or "yolo mode" | Interaction level switch | `.interaction_level` | scalar (`standard` \| `advanced` \| `yolo`; absent = `standard`); org-wide; never written by a widget or by a default ([`interaction-level.md`](./interaction-level.md), section 2) |
-| Modeler pre-execute | y/n consent | not cached | n/a (asks per item; in a yolo run the go-ahead covers it) |
+| Admin / architect / analyst, when the user says "expert flow", "plan flow", or "fast flow" | Interaction flow switch | `.interaction_flow` | scalar (`plan` \| `expert` \| `fast`; absent = `plan`); org-wide; never written by a widget or by a default ([`interaction-flow.md`](./interaction-flow.md), section 2) |
+| Modeler pre-execute | y/n consent | not cached | n/a (asks per item; in a fast run the go-ahead covers it) |
 
 When extending: prefer fewer, broader keys. The whole point is to deduplicate; over-specific keys defeat that. The cross-scope link path (`.links.<blueprint>.<field>`) is the deliberate exception — link targets often don't generalize across blueprints, so they're keyed by blueprint+field naturally.
 
@@ -57,11 +56,11 @@ if [ -f "$CUSTOMIZATIONS_FILE" ]; then
   fi
 fi
 
-# 2. Cache miss → in standard mode (or yolo), on one of the five skipped questions
-#    (its stage file's "Interaction level" block names the default): CHOICE_VALUE=
+# 2. Cache miss → in plan flow (or fast flow), on one of the five skipped questions
+#    (its stage file's "Interaction flow" block names the default): CHOICE_VALUE=
 #    <that default>, create no Q: task, and RETURN WITHOUT WRITING (7.6).
-#    In a yolo run after the go-ahead, on any other question: CHOICE_VALUE=
-#    <the pick from yolo-mode.md, section 4>, log it, create no Q: task, and
+#    In a fast run after the go-ahead, on any other question: CHOICE_VALUE=
+#    <the pick from fast-flow.md, section 4>, log it, create no Q: task, and
 #    RETURN WITHOUT WRITING (7.6).
 #    Otherwise fire AskUserQuestion as today. Receive $CHOICE_VALUE.
 #    If the user picked an explicit cancel option, return without writing.
@@ -107,8 +106,8 @@ Not a paragraph. Not a section header. One line. The user sees that policy resol
 
 ## 7.6 What is NOT written to the file
 
-- **Modeler's pre-execute `y/n`.** The modeler asks before writing in standard and advanced mode. Policy does not change this. In a yolo run the user's go-ahead is that confirmation, given once for the whole build ([`yolo-mode.md`](./yolo-mode.md)).
+- **Modeler's pre-execute `y/n`.** The modeler asks before writing in plan and expert flow. Policy does not change this. In a fast run the user's go-ahead is that confirmation, given once for the whole build ([`fast-flow.md`](./fast-flow.md)).
 - **Free-text "Other" answers** that the user typed in. The slug-collision-naming widget (3d sub) lists no "Other" option (the tool adds its own free-text slot); a name typed into that slot is used for the current decision but is NOT written to `.slug_collision_naming` — the next collision should re-ask. The user's typed value is a one-off, not a standing rule.
 - **Explicit-cancel selections.** Master-vs-master option 4 ("Stop, I want to think about it") and any other cancel-style choice halts the run without writing.
 - **Decisions inside the modeler.** The modeler consumes specs only; the spec already carries every decision by the time the modeler runs.
-- **Defaults applied in standard mode, and yolo picks.** When one of the five skipped questions takes its literal default ([`interaction-level.md`](./interaction-level.md), section 3), or a yolo run picks an answer after the go-ahead ([`yolo-mode.md`](./yolo-mode.md), section 4), nothing is written: the user never made that decision, so it must not become standing policy. With advanced mode on, the question is asked, and an answer already in the file is never overwritten by a default.
+- **Defaults applied in plan flow, and fast-flow picks.** When one of the five skipped questions takes its literal default ([`interaction-flow.md`](./interaction-flow.md), section 3), or a fast run picks an answer after the go-ahead ([`fast-flow.md`](./fast-flow.md), section 4), nothing is written: the user never made that decision, so it must not become standing policy. With expert flow on, the question is asked, and an answer already in the file is never overwritten by a default.

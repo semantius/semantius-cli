@@ -4,9 +4,9 @@
 
 ## Stage 5: Workflow-permission scan (W3/W4/W4n/W5)
 
-> **`access_scope = basic` short-circuit.** When the resolved scope is `basic`, this stage emits **nothing** — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`. Skip straight to Stage 6. (See the "What basic authors" access-control contract in SKILL.md.)
+> **Access-level short-circuit.** Under `access_scope` `basic` and `custom`, this stage emits **nothing** — no `workflow-gate` / `narrow` / `override` rows, no gating `validation_rules`. Skip straight to Stage 6. Under `advanced`, `gated` and `raci` it runs as documented. (See the "What each access level authors" contract in SKILL.md.)
 
-The architect already handled W1/W2/W6 (lifecycle-terminal gates) at blueprint time — they appear in §7 `requires_permission?` rows and as `workflow-gate (lifecycle)` permissions in §8.1. This stage adds the field-driven workflow permissions:
+The architect already handled W1/W2/W6 (lifecycle-terminal gates) at blueprint time — they appear in §7 `requires_permission?` rows and, under `raci` only, as `workflow-gate (lifecycle)` permissions in §8.1. This stage adds the field-driven workflow permissions:
 
 **W3 — Submit-then-lock.** When an entity has an `is_submitted` boolean or a `submitted_at` timestamp and writes after submission are restricted, propose a `<slug>:bypass_submit_lock` workflow permission. Encode as a `validation_rules` entry on the entity: `{"code": "99NNN", "name": "no_writes_after_submit", "message": "...", "jsonlogic": {"if": [{"==": [{"var": "$old.is_submitted"}, true]}, {"require_permission": "<slug>:bypass_submit_lock"}, true]}}`.
 

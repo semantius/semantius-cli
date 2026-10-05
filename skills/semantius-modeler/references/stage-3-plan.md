@@ -46,7 +46,7 @@ Plus: 3 additive fields on built-in `users` (pending confirmation)
   💤 Skipped (target not in catalog): `subscriptions → cost_allocation_rules`
 ```
 
-The read-side and UI-rule sub-sections only appear when the model declares them (most models omit them; the sub-sections are omitted from the plan too — don't render empty bullets). The `select_rule` row carries the `⚠️` marker because applying it changes who can see which rows (medium-risk visibility shift); the deployer pauses for explicit confirmation on every `select_rule` create / modify / remove (in standard and advanced mode), same posture as a tier flip on `edit_permission`.
+The read-side and UI-rule sub-sections only appear when the model declares them (most models omit them; the sub-sections are omitted from the plan too — don't render empty bullets). The `select_rule` row carries the `⚠️` marker because applying it changes who can see which rows (medium-risk visibility shift); the deployer pauses for explicit confirmation on every `select_rule` create / modify / remove (in plan and expert flow), same posture as a tier flip on `edit_permission`.
 
 If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12), will update module metadata from the new model and diff entities to apply only changes`. Render the field-level deltas inline under each ♻️ entity so the user sees exactly what's about to change, not just a vague "will diff" promise:
 
@@ -64,9 +64,9 @@ If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12)
   ✨ budget_lines: will create + 8 fields
 ```
 
-Use `~` for drifted properties (with `old → new`), `+` for additions, and surface `🛑` separately for anything that blocks the fast-path (enum removals, cross-primitive format changes, field deletions, tier flips). The 🛑 deltas route through the normal Stage 3 ambiguity dialog; the `~` and `+` deltas are informational and apply automatically once the plan is approved (or under the clean re-run fast-path, immediately). The `⚠️ select_rule` line is **not** auto-applied even under the fast-path — read-visibility changes always pause for explicit user confirmation (standard and advanced mode; same rule as `edit_permission` tier flips).
+Use `~` for drifted properties (with `old → new`), `+` for additions, and surface `🛑` separately for anything that blocks the fast-path (enum removals, cross-primitive format changes, field deletions, tier flips). The 🛑 deltas route through the normal Stage 3 ambiguity dialog; the `~` and `+` deltas are informational and apply automatically once the plan is approved (or under the clean re-run fast-path, immediately). The `⚠️ select_rule` line is **not** auto-applied even under the fast-path — read-visibility changes always pause for explicit user confirmation (plan and expert flow; same rule as `edit_permission` tier flips).
 
-> **Yolo mode, after the go-ahead:** a 🛑 delta that removes or retypes live data (an enum value removal, a cross-primitive format change, a field deletion) is skipped: never remove anything, keep what is deployed, and continue; a permission-tier flip and the `select_rule` pause proceed as the spec says; log each one that proceeds with `log_pick modeler` ([yolo-mode.md](../../semantius-admin/references/yolo-mode.md), section 5); don't ask.
+> **Fast flow, after the go-ahead:** a 🛑 delta that removes or retypes live data (an enum value removal, a cross-primitive format change, a field deletion) is skipped: never remove anything, keep what is deployed, and continue; a permission-tier flip and the `select_rule` pause proceed as the spec says; log each one that proceeds with `log_pick modeler` ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 5); don't ask.
 
 ### Plan-summary lines for master-data flows
 
@@ -83,9 +83,8 @@ The Stage 3 plan emits these standardized line types when master-data operations
 | `🌱 Seeded <master>_manager with N members from <original>_manager` | Branch B promotion seeds the master's manager role from the original module's manager-role members. Snapshot-time copy; new `<original>_manager` members added later don't auto-inherit master stewardship. |
 | `💡 Cluster hint: <entity> → <cluster>` | An entity in this deploy carries an analyst-emitted `**Shared master cluster:**` annotation, and the hint is shaping a Stage 2d follow-up 1 default (existing-master match or new-module name suggestion). Informational; the user can override at the prompt. |
 | `🏷 module_kind = <kind>` | Informational label from frontmatter (`domain` / `master` / `starter` / etc.). No behavior switch. |
-| `🔐 Access control: Basic (read + edit)` | The Stage 2.5 resolved scope is `basic`. The plan shows the two-permission shape: `<slug>:read` + `<slug>:manage`, viewer + manager roles, no admin tier / gates / personas / RACI. When the spec was full-shaped and projected, add `(projected; N permissions, M roles, K lifecycle gates skipped)` so the user sees what was suppressed. |
-| `🔐 Access control: Full RBAC (<N> permissions, <M> roles, lifecycle gates)` | The Stage 2.5 resolved scope is `full`. The plan shows the complete governance surface (current behavior). |
-| `👥 Personas to provision: <list>` | Per-persona summary from §9 RACI + frontmatter `persona`. Stage 4k creates each named persona as a tenant role and grants its RACI permissions. Each line names the persona slug and the count of grants. **Omitted under `🔐 Access control: Basic`.** |
+| `🔐 Access level: <plain words>` | The spec's `access_scope`, named in plain words: `basic` "view and edit"; `advanced` "view, edit and admin"; `gated` "the admin takes the restricted steps"; `raci` "business roles take the restricted steps"; `custom` "permissions set up by hand, left as they are". |
+| `👥 Personas to provision: <list>` | Per-persona summary from §9 RACI + frontmatter `persona`. Stage 4k creates each named persona as a tenant role and grants its RACI permissions. Each line names the persona slug and the count of grants. **Shown only under `access_scope: raci`.** |
 | `🏢 Functional ownership: owner = <function>.<role>, contributor = <function>.<role>` | Summary from §9.2 functional ownership table. Stage 4l grants the named default-tier permission to the named default role for each row. |
 | `🔁 Re-prefix: <slug>:<verb> (catalog <module> not installed)` | The permission row in §8.1 carries a `re-prefixed-from <catalog-module>.<verb>` annotation AND the catalog module isn't installed. Stage 4a-scaffold mints the permission under the installing-unit slug; Stage 2i has queued it for future reconciliation. |
 | `🔁 Master-install reconciliation: rename <slug>:<verb> → <catalog-module>:<verb>; migrate <N> grants` | The catalog module IS installed AND a Branch-B promotion will move the entity. Stage 4n will mint the catalog-prefixed sibling permission, create sibling `role_permissions` rows for every grant on every accumulated non-catalog prefix, and re-emit matching `permission_hierarchy` edges. No deletes. |
@@ -120,11 +119,11 @@ Example master-data plan block (Branch B promotion + Branch A wire-up + cluster 
 
 **Resolve Ambiguous rows first.** Any rows marked 🟡 Ambiguous in Stage 2g (multiple plausible targets matched the `To` concept) gate which proposals are even askable. One `Q:` task per ambiguous row (`Q: Which table should <From Label> link to for "<To>"?`), batched up to four per call. Each question is `multiSelect: false` with **at most 3 candidate target tables** as options (label `"<Plural Label> in <Module Display Name>"`; when more than 3 matched, list the 3 whose owning module is closest to the model's expected context and end the question text with `" Type the name of another table if it isn't listed."`; the tool adds its own free-text slot, never list an "Other" option) plus a `"Skip this link"` option, so every question holds 2 to 4 options. After the user picks, the Ambiguous rows that resolved promote into the ✨ Proposed list and the rest drop out.
 
-> **Yolo mode, after the go-ahead:** no `Q:` task and no question: pick the candidate whose table name exactly matches the row's `To`, else "Skip this link"; log it with `log_pick modeler`; don't ask.
+> **Fast flow, after the go-ahead:** no `Q:` task and no question: pick the candidate whose table name exactly matches the row's `To`, else "Skip this link"; log it with `log_pick modeler`; don't ask.
 
 **Resolve Field-name collisions next.** Any row marked 🛑 Field-name collision in Stage 2g (the auto-generated `<target_singular>_id` already exists on `from_table`) is one `Q:` task each (`Q: <From Label> already has a field named <fk>. Use another name for the link, or skip it?`), batched with the ambiguous rows. `multiSelect: false`, exactly 2 options: `"Name the link linked_<target_singular>_id instead (Recommended)"` (the deployer derives the name, checks it is free on `from_table` against the field list Stage 2g already read, and appends `_2` if it is taken) and `"Skip this link"`; any other field name is typed into the tool's free-text slot (never list an "Other" option; a 1-option question is rejected by the tool) and gets the same free-name check, re-asked once if taken. Unresolved-source rows are also surfaced here for the user to fix the model via the analyst skill before this stage retries.
 
-> **Yolo mode, after the go-ahead:** no `Q:` task and no question: take the Recommended option (name the link `linked_<target_singular>_id`, with the same free-name check); log it with `log_pick modeler`; don't ask. An unresolved-source row is still a stop.
+> **Fast flow, after the go-ahead:** no `Q:` task and no question: take the Recommended option (name the link `linked_<target_singular>_id`, with the same free-name check); log it with `log_pick modeler`; don't ask. An unresolved-source row is still a stop.
 
 **Then approve the Proposed list.**
 
@@ -140,13 +139,13 @@ Example master-data plan block (Branch B promotion + Branch A wire-up + cluster 
     2. label `"Review each one"`, description `"Walk through each connection individually. Use when you're unsure about any of the targets, or when a connection touches a sensitive shared module."`
     3. label `"Skip them all"`, description `"Deploy the module without any of these connections. They'll come back next deploy unless you remove them from the design first."`
 
-> **Yolo mode, after the go-ahead:** 1 to 3 proposals or 4 or more, no printed list, no confirmation, no `Q:` task, and no question: apply all of them (they are exact matches already); log it with `log_pick modeler`; don't ask.
+> **Fast flow, after the go-ahead:** 1 to 3 proposals or 4 or more, no printed list, no confirmation, no `Q:` task, and no question: apply all of them (they are exact matches already); log it with `log_pick modeler`; don't ask.
 
 **On `Apply all`**, Stage 4h executes every Proposed row without further prompts.
 
 **On `Review each one`**, create one `Q:` task per proposal (`Q: Add the link from <From Label> to <To Label>? (<i> of <N>)`, yes / skip), asked in batches of up to four per call until the ledger is clean; then Stage 4h executes only the accepted ones.
 
-> **Yolo mode, after the go-ahead:** never reached, because a yolo run applies all the proposals.
+> **Fast flow, after the go-ahead:** never reached, because a fast run applies all the proposals.
 
 **On `Skip all`**, Stage 4h is a no-op. The dormant rows and the explicitly-skipped ones are noted in the verification summary so the user knows nothing was wired up.
 
@@ -156,13 +155,13 @@ This flow is **distinct from the 🛑 ambiguity protocol below for entity name c
 
 The modeler does NOT drive `AskUserQuestion` widgets for cross-module collisions, similar-name flags, master promotions, or merge / rename decisions. Every such decision is already encoded in the spec as a `**Reconciliation:**` annotation. If Stage 2 detected drift (an annotated `reuse-from` target is missing, a `rename-incoming-from` target name now exists, a `promote-to-master` host module is missing or wrong type), the modeler halts and routes the user back to the analyst — it does not try to re-decide.
 
-**The only confirmation the modeler asks** (in standard and advanced mode) is the final pre-execute yes/no after the plan summary:
+**The only confirmation the modeler asks** (in plan and expert flow) is the final pre-execute yes/no after the plan summary:
 
 > *"Plan shown above. Proceed with execution?"*
 
-> **Yolo mode, after the go-ahead:** don't render the plan; the go-ahead was this confirmation. Proceed to Stage 4 and log one line, "Deploy plan applied as prepared", with `log_pick modeler`; don't ask.
+> **Fast flow, after the go-ahead:** don't render the plan; the go-ahead was this confirmation. Proceed to Stage 4 and log one line, "Deploy plan applied as prepared", with `log_pick modeler`; don't ask.
 
-A `select_rule` create / modify or an `edit_permission` tier flip still pauses for explicit confirmation in standard and advanced mode (medium-risk: read-visibility or write-tier change; standalone questions, not ledger tasks, like the pre-execute yes/no, the 4e-merge conflict prompt, and the 4f live-present prompt in Stage 4). The **Stage 2.5 access-control prompt** is the one other permitted mid-flow prompt (a `Q:` ledger task), and it is bounded the same way: it fires **only** when the access-control choice is genuinely undecided (no `access_scope` in the spec frontmatter, no `access_scope` on the module). When the spec encodes the choice — the hybrid path — no prompt fires; the modeler obeys, exactly as it obeys a `**Reconciliation:**` annotation. The prompt is a deploy-time decision the spec deliberately left open (same category as the §6 cross-model-link prompt), not a re-litigation of a decision the spec already made. These are the only mid-flow prompts.
+A `select_rule` create / modify or an `edit_permission` tier flip still pauses for explicit confirmation in plan and expert flow (medium-risk: read-visibility or write-tier change; standalone questions, not ledger tasks, like the pre-execute yes/no, the 4e-merge conflict prompt, and the 4f live-present prompt in Stage 4). These are the only mid-flow prompts.
 
 ### Merge / rename rules (informational)
 
@@ -194,7 +193,7 @@ A base in another module adds `🔗 Writers of Customers also edit Business Part
 - Every `**Based on:**` base is live or created in this run **at an earlier level** (no cycle), and no based entity carries a label column, label parent or order column.
 - Every role member is a real user.
 - No circular permission hierarchy. (Load-bearing: today's design only adds rows shaped `<consumer>:read → <master>:read` and `<consumer>:manage → <master>:manage`, which can't cycle. But a future feature that adds inclusions in the other direction, e.g. `<master>:read → <consumer>:read`, could form a cycle. The check stays in place to catch that.)
-- Every default-role slot in every module's scaffold has a planned role.
+- Every default-role slot in every module's scaffold has a planned role (not checked under `access_scope: custom`, where the scaffold is skipped).
 - Every cross-module inclusion has both its including and included permission (by `permission_name`) planned or live.
 - Every merged JSON entry has a `source_module` value.
 
