@@ -105,7 +105,7 @@ export const instructions = `   ---
       - \`module_name\` (lowercase, snake_case identifier, e.g., \`crm\`, \`inventory\`)
       - \`description\`
       - Optional: \`module_slug\` — the module's identifier in UI links (\`{ui_baseurl}/{module_slug}/...\`). Leave unset: it is derived from \`module_name\`.
-      - Optional: \`access_scope\` — \`"basic"\` (default) for simple read/edit modules; \`"full"\` only when the module needs role tiers, approvals, and gating. Leave unset for ordinary modules.
+      - Optional: \`access_scope\` — permission structure of the module: \`"custom"\` (default), \`"basic"\`, \`"advanced"\`, \`"gated"\` or \`"raci"\`. Leave unset for ordinary modules.
       - Optional: \`icon_name\` — name of the icon to show for the module in navigation; leave unset unless the user requests a specific icon.
 
    3. **Create baseline permissions** (always both):

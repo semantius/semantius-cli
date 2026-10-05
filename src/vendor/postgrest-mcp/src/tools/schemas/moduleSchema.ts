@@ -87,9 +87,9 @@ export const moduleSchema = z.looseObject({
       'Short uppercase code for the business domain this module belongs to (e.g. ATS, HCM, ITSM, CRM).'
     ),
   access_scope: z
-    .enum(['basic', 'full'])
+    .enum(['custom', 'basic', 'advanced', 'gated', 'raci'])
     .optional()
     .describe(
-      'Access tier: basic (simple read/edit) or full (role tiers, approvals and gating). Omitted, it is basic.'
+      'Permission structure of the module. Omitted, it is custom.'
     ),
 })
