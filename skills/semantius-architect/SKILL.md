@@ -194,7 +194,7 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
 - **Do not announce what you're about to do** before doing it. No *"Let me peek at the existing blueprint to verify..."* — just peek. No *"Let me check the conventions..."* — just check. The peek/check itself produces a tool-call line in the transcript; that is enough.
 - **Do not narrate self-corrections.** When you spot a mistake mid-flight and fix it, fix it silently. The previous tool call already shows in the transcript; emitting *"That was the wrong edit. Spelling out properly."* on top adds zero information.
 - **Do not enumerate verification results on success.** "Pre-save verification" runs silently; the only user-facing output is the success or failure of the save itself.
-- **Do not list counts and section breakdowns after writing.** The post-write message is one sentence: *"Wrote `<path>`. Tell me when you want to deploy it."* (while expert flow is off, the close-out template under Pre-save verification that adds one clause about the catalog text). The user knows from the conversation what was built; the file's own contents are the source of truth.
+- **Do not list counts and section breakdowns after writing.** The post-write message is one sentence: *"Wrote `<path>`. Tell me when you want to deploy it."* (while expert flow is off, the close-out template under Pre-save verification that adds one clause about the catalog text; in a fast run, no line). The user knows from the conversation what was built; the file's own contents are the source of truth.
 - **Do not announce the next skill in the pipeline as boilerplate.** A one-clause hint at the end of the close-out line is fine; a separate paragraph titled "Next step:" is not. Trust the user (or the admin orchestrator) to know what comes next.
 
 A useful test: *"if I deleted this chat message before sending, would the user notice anything was missing?"* If the answer is "no, the work still got done", delete the message.
@@ -434,7 +434,7 @@ Template while expert flow is off (Create and Clone; the catalog-text clause is 
 
 > *Wrote `<path>`, with a catalog tagline and description written without asking (ask me to change them anytime). Tell me when you want to deploy it.*
 
-In a fast run the line has no "Tell me when…": *Wrote `<path>`.* Then set the task `completed` and let the admin move straight on to the next step.
+In plan and expert flow the line is always sent, under the admin too: the file name is the user's record of what was produced, and it is the architect's own result line, not admin hand-off narration. In a fast run there is no close-out line: set the task `completed` and let the admin move straight on to the next step.
 
 That is the entire post-save message. No counts, no breakdown of entities / lifecycles / permissions / edges, no narration of which sections are sparse, no "next step: hand off to semantius-analyst" boilerplate. The user knows from the design conversation what was built; the closing line just confirms the file landed.
 

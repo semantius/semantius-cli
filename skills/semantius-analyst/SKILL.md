@@ -1,10 +1,10 @@
 ---
 name: semantius-analyst
 description: >-
-  Reconciles a `*-semantic-blueprint.md` (from `semantius-architect`) against
-  the live catalog into a `*-semantic-spec.md`. **Trigger when the user has a
-  blueprint to turn into or extend into a deployable spec**, or on "reconcile
-  this blueprint with semantius", "what in the catalog can this blueprint
+  Turns a `*-semantic-blueprint.md` (from `semantius-architect`) into a
+  deployable `*-semantic-spec.md`: the first half of a deploy, which
+  `semantius-modeler` finishes. **Trigger when the user has a blueprint to
+  turn into or extend into a deployable spec**, or on "what in the catalog can this blueprint
   reuse", "fold this blueprint into the live catalog", "make the blueprint
   match what we already have", or any ask comparing a blueprint to live state
   and filling in field-level detail. Gatekeeper of the unified catalog: the
@@ -416,7 +416,7 @@ After a successful spec write in Reconcile or Extend mode, narrate the close-out
 
 > *Wrote `semantius/specs/<slug>-semantic-spec.md`. Summary: <N> new, <N> adopted from <module display names>, <N> skipped, <N> reusing platform built-ins.*
 
-One line; no "next step" hint in admin-orchestrated mode (the admin narrates whether to run the modeler or stop, per the run's `deploy` flag, and uses this summary to compose its final report).
+One line; no "next step" hint in admin-orchestrated mode (the admin narrates whether to run the modeler or stop, per the run's `deploy` flag, and uses this summary to compose its final report). In plan and expert flow this line is always sent: the file name is the user's record of what was produced, and it is the analyst's own result line, not admin hand-off narration. In a fast run there is no close-out line: complete the task and let the admin move on.
 
 **Stand-alone** (no handoff header):
 

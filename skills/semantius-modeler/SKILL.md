@@ -2,8 +2,8 @@
 name: semantius-modeler
 description: >-
   Deploys a `*-semantic-spec.md` (from `semantius-analyst`) to a live
-  Semantius instance via the `semantius` CLI. Already reconciled: every entity
-  carries a `Reconciliation:` annotation (create-new, reuse-from,
+  Semantius instance via the `semantius` CLI. Every decision is already in the
+  spec: each entity carries its annotation (create-new, reuse-from,
   rename-incoming-from, promote-to-master, dropped), every cross-model link
   resolved, every collision decision baked in. A thin executor: parse spec,
   verify annotations hold against live, render plan, execute writes, verify,

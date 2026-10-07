@@ -81,12 +81,12 @@ The internal annotation value (`reuse-from <X>.<Y>`, `promote-to-master <host>.<
 - Never pad with a filler option, never merge two items into one option.
 - The tool has no pre-checked or default-selected option; "(Recommended)" on one label is the only default marker, so word a multiSelect so that selecting nothing is the safe outcome.
 
-**Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a reconciled spec. Hard rules:
+**Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a deployable spec. Hard rules:
 
 - **Do not announce what you're about to do** before doing it. No *"Let me load the use-semantius reference..."*, no *"Let me classify each entity..."*, no *"Let me check this against the live catalog..."*. Just do the work; the tool-call lines in the transcript are enough.
 - **Do not narrate self-corrections** mid-flight; fix them silently.
 - **The verification phase is one plain-language line, not a blow-by-blow.** The pre-save checks (the consistency gate, the banned-token / spelling / em-dash scans, the rule-block validation) are internal mechanics. Narrate the whole phase as **at most one** business-language status line (e.g. *"Double-checking the design holds together before saving..."*), then go quiet. Never a per-check trail, never an enumerated pass count on success (*"9 of 9 rule blocks valid, every entity and label agrees"* is banned, that is a result only a data modeler reads), and never the machinery by name (`consistency check`, `banned-token scan`, `rule blocks`, `prose conventions`, `argv`, the checker's filename). On a real failure, surface in plain language only what the user must decide or fix. (This one consolidated status line is the sole exception to the announce-before rule above; the per-step *"Let me check..."* announcements stay banned.)
-- **Do not list per-bucket counts and stage-by-stage progress** after each step. One concise plan summary at Stage 3 (the reconciliation decisions) and one close-out line after writing is plenty.
+- **Do not list per-bucket counts and stage-by-stage progress** after each step. One concise plan summary at Stage 3 (the decisions) and one close-out line after writing is plenty.
 - **Do not announce the next skill in the pipeline as boilerplate.** A one-clause hint at the close-out is fine; a separate "Next step:" paragraph is not.
 
 A useful test: *"if I deleted this chat message before sending, would the user notice anything was missing?"* If the answer is "no, the work still got done", delete the message.
