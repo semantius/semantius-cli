@@ -1,6 +1,6 @@
 {
   "name": "semantius-cli",
-  "version": "0.8.16",
+  "version": "0.8.17",
   "description": "A lightweight CLI for interacting with MCP (Model Context Protocol) servers",
   "type": "module",
   "main": "src/index.ts",
