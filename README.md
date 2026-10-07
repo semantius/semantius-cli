@@ -148,6 +148,10 @@ Notes for an agent that follows the steps above for its user:
   `npx -y skills add semantius/semantius-cli -g --all`, or the Meta's Muse one
   if that is your agent. Without Node.js or git, copy the folders as step 2
   describes.
+- **Step 3.** Whenever you ask the user for their instance address, give them
+  **https://app.semantius.com** in the same message: they sign up there, or
+  sign in to find the address on the dashboard's Get Started card. Never ask
+  for the address without the link, and never guess one.
 - **Step 4.** Start `semantius use <address>` as a **background** command,
   read its output and give the user the sign-in URL; on Windows and macOS a
   browser tab opens on this machine as well. Whenever the user is not at this

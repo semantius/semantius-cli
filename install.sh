@@ -220,5 +220,7 @@ else
 fi
 
 echo "Get started:"
-echo "  semantius --help"
+echo "  1. Sign up, or sign in, at https://app.semantius.com to get your instance address"
+echo "  2. semantius use https://<your-org>.semantius.app"
+echo "  More: semantius --help"
 echo ""

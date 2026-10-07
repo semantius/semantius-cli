@@ -118,5 +118,7 @@ if ($userPath -notlike "*$InstallDir*") {
 
 Write-Host ""
 Write-Host "Get started:"
-Write-Host "  semantius --help"
+Write-Host "  1. Sign up, or sign in, at https://app.semantius.com to get your instance address"
+Write-Host "  2. semantius use https://<your-org>.semantius.app"
+Write-Host "  More: semantius --help"
 Write-Host ""
