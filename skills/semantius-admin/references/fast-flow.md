@@ -34,14 +34,14 @@ Check both signals at Step 0 and again after a context reset. When neither is pr
 
 **Questions before the go-ahead still fire:** the admin's Step 0 clarifying question and the Step 1.3 match widget. If the user picks "Deploy the existing…", the run starts from a blueprint and therefore runs in plan flow.
 
-**Fast flow includes plan flow.** The five questions plan flow skips ([`interaction-flow.md`](./interaction-flow.md), section 3) take their plan-flow defaults in fast flow too.
+**Fast flow includes plan flow.** The six questions plan flow skips ([`interaction-flow.md`](./interaction-flow.md), section 3) take their plan-flow defaults in fast flow too.
 
 ## 3. Before the go-ahead (architect)
 
 The detail lives in the architect's stage files; this is the map.
 
-- **Baseline** (`stage-1-capture.md`). Pick 1 to 3 products whose data model fits the request and that pass the **four-object test**: you can name at least four of the product's headline objects, spelled the way the product spells them. A product that fails the test is not a baseline. With none, fall back to the discovery interview and modern names.
-- **Interview** (`stage-1-capture.md`, the interview templates). Zero to four questions, only about what the request leaves open; skip "Closest to" when the user named a product. The must-haves question replaces Stage 3's "Also track".
+- **Baseline** (`stage-1-capture.md`). Pick 3 to 4 products whose data model fits the request. With none, there is no baseline: modern names.
+- **Interview** (`stage-1-capture.md`, the interview templates). Zero to two questions: "Closest to" (skipped when the user named a product) and the must-haves question, which replaces Stage 3's "Also track". "Users" and "Replaces" are not asked.
 - **Naming** (`stage-2-naming.md`). A saved `.naming.mode` wins. Otherwise the baseline's own names (`template:<baseline>`), with no widget and nothing saved. No baseline: modern names, and the design is described as "inspired by <Product>" at most.
 - **Entities** (`stage-3-entities.md`). Drafted from the baseline's object model and trimmed to the interview answers; the family question takes its Recommended option; the entity-list question is not asked (the go-ahead covers it).
 - **The go-ahead** (below), at the end of Stage 3.
@@ -52,16 +52,15 @@ The detail lives in the architect's stage files; this is the map.
 
 **The summary**, one message, in plain language (Writing Convention 8):
 
-1. The name and one-line scope.
-2. The baseline: *"Based on how <Product> models this. Names follow <Product>; say "modern names" to switch."*
-3. The entity table (Plural Label, one-line purpose, and the Vendor object column when naming follows a product).
-4. The 2 to 4 best-practice points (Stage 1 aside).
-5. The exact matches, one line, left out when there are none: *"Organizations already exist in Sales; I'll use them."*
-6. What happens next: *"After your go-ahead I build and deploy without more questions. I only connect to records your instance already has when the name matches exactly, and that may share or reshape them; anything that only looks similar is kept separate. Everything I decide is listed at the end."*
+1. The baseline: *"Based on how <Product> models this. Names follow <Product>; say "modern names" to switch."*
+2. The entity table (Plural Label, one-line purpose, and the Vendor object column when naming follows a product).
+3. The 2 to 4 best-practice points (Stage 1 aside).
+4. The exact matches, one line, left out when there are none: *"Organizations already exist in Sales; I'll use them."*
+5. What happens next: *"After your go-ahead I build and deploy without more questions. I only connect to records your instance already has when the name matches exactly, and that may share or reshape them; anything that only looks similar is kept separate. Everything I decide is listed at the end."*
 
 **The question**, one `AskUserQuestion`, alone in its response:
 
-- question: `"Build and deploy <System Name> now?"`
+- question: `"Build and deploy it now?"`
 - header: `"Go-ahead"`
 - options:
   1. `"Yes, build and deploy it (Recommended)"`, description `"I finish the design, match it against your live model, and deploy it without more questions. You get the list of what I decided at the end."`

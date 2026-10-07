@@ -169,9 +169,36 @@ Note for each: owning module, singular/plural labels, description, label_column,
 
 For every row in blueprint §5.3a (outbound from this scope's masters / contributors) and every implied FK from §6.2 / §6.3 handoffs:
 
-- **Exact match** (one entity has `table_name == <target>`): mark ✨ **Proposed**. Auto-generate FK column name as `<target_singular>_id`. If that name already exists on `from_table`, mark 🛑 **Field-name collision**.
-- **No match**: mark 💤 **Dormant**. Skip in the plan; record in the verification summary.
-- **Multiple plausible matches** (exact + near-name candidates): mark 🟡 **Ambiguous**. Stage 3 asks the user.
+Find the candidates for each target in two passes:
+
+1. **Name pass** (over the 2c index): live entities whose `table_name == <target>` (exact), or whose name the 2e heuristic flags as near `<target>`.
+2. **Concept pass** (always runs, so a differently named table holding the same thing is found). The search matches exact word forms only (`wfts(simple)` does not stem and knows no language), so the script finds nothing you don't spell out. For each target, do all three steps:
+
+   a. **Collect the words.** All of:
+      - the target's own words (`service_vendors` → `vendor`);
+      - its synonyms: the blueprint's §4 aliases for it, plus common business synonyms (`vendor` ↔ `supplier`, `provider`; `customer` ↔ `client`, `account`; `employee` ↔ `staff`, `worker`, `personnel`; `product` ↔ `item`, `article`, `material`);
+      - the concrete nouns of the §6 row's own description (what the link is for).
+
+      Leave out generic words (`record`, `data`, `type`, `entry`, `details`): they match almost every entity.
+
+   b. **Expand every word from a.** Add its singular and plural. Then read the languages of the labels in the 2c index; for each language other than English that appears there, add the word's translation in that language, singular and plural (German labels → `lieferant`, `lieferanten`).
+
+   c. **Run the script once with the full list** from a and b:
+
+   ```bash
+   bun "<skill-folder>/references/find-entities.ts" --keywords vendor,vendors,supplier,suppliers,provider,providers --exclude <blueprint §3 table names, comma-separated>
+   ```
+
+   The script searches exactly those words in `entities.search_vector` with `wfts(simple)`, leaves out built-ins and the excluded tables, and returns the hits with each keyword's match location (`label`, `table_name`, `description`), label matches first. Exit 1 (a live read failed) stops the stage like any other failed catalog read.
+
+   `search_vector` covers the table name (split on `_`), labels and description, not field names, so hits include entities that only mention the term (a `work_orders` described as "the technician or vendor doing the work" matches `vendor`). Judge each hit: keep it as a candidate when it holds the same kind of record as the target (`suppliers`, or a `business_partners` described as "companies we buy from or sell to", is a candidate for `vendors`; `work_orders` and `vendor_scorecards` are not). Record the script's match location as the candidate's match reason; 3e marks a label or table-name match "(Recommended)". When unsure, keep it: a false positive costs the user one click, a miss leaves the link silently dormant.
+
+Then resolve:
+
+- **Exact match, nothing else** (one entity has `table_name == <target>` and no other candidate): mark ✨ **Proposed**. Auto-generate FK column name as `<target_singular>_id`. If that name already exists on `from_table`, mark 🛑 **Field-name collision**.
+- **Concept-only match** (no exact match, one or more name-pass or concept-pass candidates): mark 🟡 **Ambiguous**, with each candidate's match reason (`label: supplier`, `description: vendor`). Stage 3e asks the user; a candidate found under a different name is never wired silently.
+- **Multiple plausible matches** (exact + any other candidate): mark 🟡 **Ambiguous**. Stage 3 asks the user.
+- **No match** (both passes empty): mark 💤 **Dormant**. Skip in the plan; record in the verification summary.
 - **Unresolved source**: if `from_table` is neither in this blueprint's §3 nor in the catalog, mark 🛑 (route back to architect to fix the blueprint).
 
 **Presence-conditional resolution for §5.3b context edges:**

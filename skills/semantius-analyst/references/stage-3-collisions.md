@@ -271,18 +271,19 @@ Record the picked name on the new §3 entity in the spec and stamp `**Reconcilia
 
 **Policy path:** `.links.<blueprint_slug>.<field_name>` (keyed by blueprint+field because link targets often don't generalize across blueprints). If a future blueprint happens to declare an identical field-in-table combo, the path matches and auto-resolves; otherwise it prompts under its own key.
 
-For every blueprint §5.3 / §6 row, the analyst resolves the target against the live catalog. Four outcomes:
+For every blueprint §5.3 / §6 row, the analyst resolves the target against the live catalog, using the candidates from Stage 2g's name pass and concept pass. Five outcomes:
 
 | Outcome | Trigger | Prompt? |
 |---|---|---|
-| ✨ Clean match | Exactly one candidate AND its owning module is plausible for the expected role (e.g. matches the blueprint's `mastered_in`, or is a master module, or a similar-context domain) | No — wire silently |
-| 💤 No match | Zero candidates | No — mark `dormant`, log silently |
+| ✨ Clean match | Exactly one candidate, its `table_name` equals the target, AND its owning module is plausible for the expected role (e.g. matches the blueprint's `mastered_in`, or is a master module, or a similar-context domain) | No — wire silently |
+| 💤 No match | Zero candidates in both passes | No — mark `dormant`, log silently |
+| 🟡 Different-name match | No exact match; one or more candidates found by the near-name heuristic or the concept pass (`suppliers` for a `vendors` target) | Yes — multi-candidate widget |
 | 🟡 Multiple candidates | Two or more candidates fit | Yes — multi-candidate widget |
-| 🟡 Single candidate, suspicious context | One candidate exists BUT its owning module's context disagrees with the blueprint's expectation (blueprint says `mastered_in: hcm-core` workforce; live match is `northwind` sales sample) | Yes — wrong-context widget |
+| 🟡 Single candidate, suspicious context | One exact-name candidate exists BUT its owning module's context disagrees with the blueprint's expectation (blueprint says `mastered_in: hcm-core` workforce; live match is `northwind` sales sample) | Yes — wrong-context widget |
 
-**Multi-candidate widget** (≥2 candidates fit):
+**Multi-candidate widget** (≥2 candidates fit, or any candidate under a different name):
 
-- **question**: `"<This Singular Label> should link to a record in another module. Several candidates fit, which one?"` (when more than 2 candidates exist, append `" The 2 closest are listed; type the name of another if it isn't here."`)
+- **question**: `"<This Singular Label> should link to a record in another module. Several candidates fit, which one?"` (when more than 2 candidates exist, append `" The 2 closest are listed; type the name of another if it isn't here."`). With a single different-name candidate: `"<This Singular Label> should link to <target plural, in plain words>. Your workspace has <Candidate Plural Label> in <Module Display Name>, which looks like the same thing. Link to it?"`, with the candidate option first and marked "(Recommended)" when the concept pass matched its labels or code (not only its description).
 - **header**: `"Multiple matches"`
 - **multiSelect**: `false`
 - **options** (always 4 or fewer; the tool rejects a 5-option question):
@@ -290,7 +291,7 @@ For every blueprint §5.3 / §6 row, the analyst resolves the target against the
   - then: `"Create our own here under a different name"`, description = `"Set up <suggested_local_name> as a new table in this module so we don't have to pick from the candidates above. The other tables stay where they are. When a catalog <Expected Context> module arrives later, you can merge."`
   - then: `"Skip this link for now"`, description = `"Don't connect anything. You can add the link later, when the right module is in place."`
 
-> **Fast flow, after the go-ahead:** take the candidate whose table name is exactly the one the design links to; when none is, take "Create our own here under a different name"; log it; don't ask.
+> **Fast flow, after the go-ahead:** take the candidate whose table name is exactly the one the design links to; when none is and the candidates came from the name pass, take "Create our own here under a different name"; when every candidate came from the concept pass only, take "Skip this link for now" (the row stays `dormant`); log it; don't ask.
 
 **Wrong-context widget** (1 candidate, suspicious owning module):
 

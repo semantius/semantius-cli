@@ -118,7 +118,7 @@ Understanding which layer you're working with determines which tools to use:
 
 - **Probe** (`semantius whoami`, or the `getCurrentUser` call you need anyway). Exit `0`: connected. When it matters which credential is in use, name the host, its `host_source` and the `auth_method`; a zero exit can still hide one of the two traps in § "Credential, first match wins".
 - **Exit `3`:** retry once, then show the error and stop.
-- **`MISSING_ENV_VAR` or exit `5`:** sign the user in with `semantius use <host>`, asking for the host unless `whoami` shows it as `current`. Exception: an error naming `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` in a deliberate key or token setup; show it and stop.
+- **`MISSING_ENV_VAR` or exit `5`:** sign the user in with `semantius use <host>`, asking for the host unless `whoami` shows it as `current`. A user with no instance yet signs up at **https://app.semantius.com**, which gives them their host (`<org>.semantius.app`) and the steps to connect. Exception: an error naming `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` in a deliberate key or token setup; show it and stop.
 - **Anything else:** show the error and stop.
 
 **Signing the user in** (§ "Signing the user in"): `semantius use <host>` switches the host for every later command in every directory, so run it only for the host the user named to work against; `semantius login --host <host>` signs in without switching. Never run `logout`. Run the sign-in in the background and relay its URL to the user, and add `--login-flow device` whenever the user is not at this machine's screen.

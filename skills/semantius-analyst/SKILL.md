@@ -268,7 +268,7 @@ The Task column is the exact subject of the stage task (Task tracking, above); s
 | Stage | Purpose | When it runs | Access-level short-circuit | Task subject | Read first |
 |---|---|---|---|---|---|
 | 1. Parse | Parse the blueprint sections into an internal model | Start of every reconcile run | n/a | `Match › Settle reuse, naming, and optional parts` (Stages 1 and 2 are preparation under this task, not a task of their own) | `references/stage-1-parse.md` |
-| 2. Inspect | Read the live catalog; classify every blueprint entity | After parse | n/a | (same task) | `references/stage-2-inspect.md` |
+| 2. Inspect | Read the live catalog; classify every blueprint entity; find link targets by keyword (`find-entities.ts`) | After parse | n/a | (same task) | `references/stage-2-inspect.md` |
 | 3 placement | Role-driven deterministic placement of every entity | After inspect | n/a | (same task) | `references/stage-3-placement.md` |
 | 3a-3e collisions | Optional / collision / cross-link widgets (with the consultation protocol); **ledger** (the first 3d question defaulted while expert flow is off) | When a 🛑 or 🟡 fires | n/a | (same task) | `references/stage-3-collisions.md` + `references/customizations-consultation.md` |
 | 3c.1 shared base | Same real-world thing as a live entity: keep it once (`has_a` / `is_a` on the live base), reuse the live base, or keep separate; **ledger** | After 3c, before 3f / 3g, for every pair Stage 2e.1 flagged | n/a | (same task) | `references/stage-3-shared-base.md` |
@@ -446,6 +446,7 @@ Lead with the structured output (tables, JSON, plans). Prose between sections st
 
 - [`references/stage-1-parse.md`](references/stage-1-parse.md) - parse the blueprint
 - [`references/stage-2-inspect.md`](references/stage-2-inspect.md) - inspect the live catalog
+- [`references/find-entities.ts`](references/find-entities.ts) - the deterministic keyword search the 2g concept pass runs
 - [`references/stage-3-placement.md`](references/stage-3-placement.md) - role-driven placement
 - [`references/customizations-consultation.md`](references/customizations-consultation.md) - standing-policy consultation protocol
 - [`references/stage-3-collisions.md`](references/stage-3-collisions.md) - optional / collision / link widgets

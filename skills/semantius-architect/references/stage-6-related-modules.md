@@ -2,9 +2,9 @@
 
 ### Stage 6 — Related modules (neighborhood walk)
 
-> **Fast flow, after the go-ahead:** build the list exactly as below, but don't show it and don't ask; accept it as drafted and log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4). The gate rule that follows applies in plan and expert flow.
+> **Fast and plan flow:** build the list exactly as below, but don't show it and don't ask; accept it as drafted. In a fast run after the go-ahead, also log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4). The gate rule that follows applies in expert flow only. The list is advisory and only feeds Stage 7's link rows, which the analyst checks against the live catalog, so plan flow doesn't spend a question on it.
 
-> **🛑 This is a mandatory, standalone confirmation gate.** It fires every time (in plan and expert flow), in Create, Extend, and Rebuild. Skipping it or collapsing it into another turn's prose is an authoring bug, even when the conversation is mid-flow on an unrelated scope change. If you find yourself writing "Budgeting stays, CRM stays" as a one-liner, stop and surface the full Stage 6 proposal block instead.
+> **🛑 In expert flow this is a mandatory, standalone confirmation gate.** It fires every time, in Create, Extend, and Rebuild. Skipping it or collapsing it into another turn's prose is an authoring bug, even when the conversation is mid-flow on an unrelated scope change. If you find yourself writing "Budgeting stays, CRM stays" as a one-liner, stop and surface the full Stage 6 proposal block instead.
 
 `related_modules` is a discovery tag for humans browsing the catalog (no skill consumes it for logic), but its accuracy matters on two fronts: (a) an under-declared list quietly hides the model's neighborhood from anyone scanning the catalog and silently widens the data-silo problem the deployer is built to surface; and (b) **this list is the input that Stage 7 (cross-model link suggestions) walks** — a missing domain here means missing §6 rows there, so produce this list before reaching for §6. Build the list yourself from analyst knowledge (same posture as the entity list in Stage 3), then surface it as its own proposal block under a visibly labeled "Stage 6 — Related modules" (or just "Related modules") heading for prose review. Do **not** offload the discovery to the user via AskUserQuestion or by asking "what neighbors should this have?" — the analyst owns the proposal; the user reviews it.
 
@@ -49,4 +49,4 @@ Then surface the proposal:
 >
 > Add, drop, or rename any?
 
-Loop on user feedback until they confirm, the same way the entity list is confirmed in Stage 3 (in a fast run after the go-ahead: accepted as drafted, see the top of this stage). After confirmation, the list feeds Stage 7's per-domain walk and is written into the front-matter in Stage 13.
+Loop on user feedback until they confirm, the same way the entity list is confirmed in Stage 3 (in fast and plan flow: accepted as drafted without being shown, see the top of this stage). After confirmation, the list feeds Stage 7's per-domain walk and is written into the front-matter in Stage 13.

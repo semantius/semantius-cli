@@ -715,8 +715,16 @@ function missingHostWarning(): string {
    Set it in ${getUserConfigDir()}/.env or export it in your shell.
    Or run "semantius use <host>" to sign in (with the browser, if needed) and
    make it your current host for every directory.
+   ${SIGNUP_HINT}
    ${API_KEY_HINT}`;
 }
+
+/**
+ * Where a new user gets an instance: the sign-up page hands out the instance
+ * address and the steps to connect the CLI to it.
+ */
+const SIGNUP_HINT =
+  'No instance yet? Sign up at https://app.semantius.com to get yours (https://<your-org>.semantius.app) and the steps to connect.';
 
 /**
  * Where API keys are created: each instance's own settings page, which the
@@ -734,6 +742,11 @@ function printHelp(): void {
 
   console.log(`
 semantius v${VERSION} - CLI for the Semantius platform
+
+Get started:
+  Sign up, or sign in to your instance, at https://app.semantius.com. It gives you your
+  instance address (https://<your-org>.semantius.app) and the steps to connect, then:
+    semantius use <your-org>.semantius.app
 
 Usage:
   semantius [options]                              List all servers and tools
@@ -952,6 +965,7 @@ function checkRequiredEnvVars(): void {
         `Error [MISSING_ENV_VAR]: Required environment variable not set: ${v} (set ${orgVar} or --host, or run "semantius use <host>")`,
       );
     }
+    console.error(SIGNUP_HINT);
     console.error(API_KEY_HINT);
     process.exit(ErrorCode.CLIENT_ERROR);
   }

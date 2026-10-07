@@ -192,6 +192,9 @@ export async function hostsCommand(opts: HostsOptions): Promise<void> {
     console.log(
       'No hosts yet. Run "semantius use <host>" to sign in to one and make it current.',
     );
+    console.log(
+      'No instance yet? Sign up at https://app.semantius.com to get yours and the steps to connect.',
+    );
     return;
   }
 

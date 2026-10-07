@@ -185,6 +185,7 @@ describe('commands/hosts (in-process)', () => {
       const lines = await captureLog(() => hostsCommand({}));
       expect(lines).toEqual([
         'No hosts yet. Run "semantius use <host>" to sign in to one and make it current.',
+        'No instance yet? Sign up at https://app.semantius.com to get yours and the steps to connect.',
       ]);
     });
 

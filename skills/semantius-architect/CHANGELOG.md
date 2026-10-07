@@ -8,6 +8,22 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: Stage 1 guidance in expert flow; shorter fast-flow interview
+
+2026-10-06. Expert flow now does everything plan flow does in Stage 1, plus more, and fast flow asks less, so each flow adds to the one before it (fast → plan → expert). Rules: `references/stage-1-capture.md`, `../semantius-admin/references/interaction-flow.md`, `../semantius-admin/references/fast-flow.md`.
+
+1. **Expert flow gets the plan-flow Stage 1 guidance**: the guidance aside when a product fits, the discovery interview first when none fits. Before, expert flow gave neither.
+2. **Fast flow: the interview asks only "Closest to" and "Must-haves".** "Users" and "Replaces" are no longer asked; the request's answer is used, otherwise one small team and nothing replaced.
+3. **Expert flow: the four-object test runs before deciding whether a product fits**, and "Closest to" offers only products that passed it; when none passed, the question is left out.
+4. **Expert flow: new best-practice question.** One multi-select, "Which of these should the design follow?" (header "Practices"), one option per best-practice point; Stage 3 applies only the points picked. Plan flow skips it: the points are stated in the aside and all applied. It is listed in the skipped-question tables (SKILL.md, interaction-flow.md section 3).
+5. **An unclear category is settled by "Closest to" in every flow.** Expert flow's separate clarifying question is removed.
+6. **The Stage 3 "Picked for you" line (system name and scope) is removed.** Plan and fast flow take the name and scope from the request without showing them (the fast-flow go-ahead summary no longer lists them, and its question is "Build and deploy it now?"); expert flow still asks for them.
+7. **Stage 2:** a product named in "Replaces" ranks first in plan and expert flow.
+
+No version bump: the blueprint's content contract is unchanged.
+
+---
+
 ## 5.5: the architect decides the access level (`access_scope`)
 
 2026-10-05. The module's access level is now decided once, in the architect, by a deterministic script, and stamped into the blueprint frontmatter. Before, the analyst decided "basic vs full" again from live state (asking in advanced mode), so the user was asked twice and, in standard mode, gates confirmed in Stage 10 could be silently dropped. The analyst and modeler now only carry the value out.

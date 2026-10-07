@@ -58,6 +58,8 @@ The CLI needs a **host** and a **credential**.
 
 ### How a person connects: `semantius use`
 
+**Getting an instance:** a person signs up, or signs in to an instance they already have, at **https://app.semantius.com**. That page gives them their instance address (`https://<org>.semantius.app`) and the steps to connect the CLI. A user who doesn't know their host goes there first; never guess one.
+
 ```bash
 semantius use acme.semantius.cloud      # signs in unless a working session is stored, then pins the host
 semantius use semantius.example.com     # a self-hosted instance
@@ -78,7 +80,7 @@ The current host outranks `SEMANTIUS_HOST` / `SEMANTIUS_ORG` and every `.env`, a
 2. **Exit `3`** (network, timeout, 5xx, after the CLI's own retries): retry once, then show the error and stop. It is not an auth problem; never touch credentials over it.
 3. **Exit `1` with `MISSING_ENV_VAR`, or exit `5`:** run `semantius whoami`. It prints `host` and `host_source` before it contacts the host; with no host configured it prints only the `MISSING_ENV_VAR` error.
    - **A deliberate key or token:** if the error names `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` (for example `API_KEY_REJECTED`) and that setup is deliberate (CI, a pre-authenticated agent), show the error and stop: pinning a host would quietly switch it to a personal session. When unsure, ask the user whether to fix the key or sign in instead.
-   - **Otherwise sign the user in with `use`.** When `host_source` is `current`, use that host. Otherwise ask the user which host, offering the one `whoami` named. Never pick it yourself: `use` changes the host for every directory on the machine, and a host from a project `.env` is that project's default, not the user's choice for the machine. Run it as "Signing the user in" describes, then probe again.
+   - **Otherwise sign the user in with `use`.** When `host_source` is `current`, use that host. Otherwise ask the user which host, offering the one `whoami` named; a user with no instance yet signs up at https://app.semantius.com to get their host (`<org>.semantius.app`). Never pick it yourself: `use` changes the host for every directory on the machine, and a host from a project `.env` is that project's default, not the user's choice for the machine. Run it as "Signing the user in" describes, then probe again.
 4. **Anything else:** another exit `1` (such as `HOST_CONFLICT` or a config error), exit `4`, or "required audience not found" (the server rejecting the token's audience, a server-side configuration problem). Show the error verbatim and stop.
 
 ### Signing the user in

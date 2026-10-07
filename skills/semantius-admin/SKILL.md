@@ -359,11 +359,11 @@ Get started (5.5) stays resident below: it is a top-level request type (Step 0) 
 
 ### 5.5 Get started (onboarding)
 
-**Get started** — the front door for someone new to the platform. It makes sure the tooling is in place, verifies the connection by querying the live database, reports how much is already deployed, and points to the blueprint catalog so the user can stand up a data platform tailored to them. Safe to run anytime; triggered by "get started", "I'm new here, set this up", and the like (no external command required).
+**Get started** — the front door for someone new to the platform. It makes sure the tooling is in place, verifies the connection by querying the live database, reports how much is already deployed, and points to https://app.semantius.com (sign up, or access the dashboard) and the blueprint catalog so the user can stand up a data platform tailored to them. Safe to run anytime; triggered by "get started", "I'm new here, set this up", and the like (no external command required).
 
 Flow:
 
-1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and settles the connection (asking which host when none is configured, then starting the sign-in and giving the user the link to open). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the user has not signed in yet), surface that and stop — there is nothing to get started against until the platform is reachable.
+1. **Run the shared preflight** ([`references/preflight.md`](./references/preflight.md)). This is the install check: it installs the `semantius` CLI, Bun, jq, and yq if any are missing (Windows / macOS / Linux), and settles the connection (asking which host when none is configured, then starting the sign-in and giving the user the link to open). On success the active `org` and `ui_baseurl` are in hand. If a guard halts (org is `adenin`, a tool could not be installed, the user has not signed in yet), surface that and stop; a user who has no instance yet signs up at https://app.semantius.com, which gives them their instance address — there is nothing to get started against until the platform is reachable.
 2. **Verify the connection by querying the database.** Confirm the catalog actually reads back, not just that the CLI authenticated:
 
    ```bash
@@ -374,8 +374,8 @@ Flow:
    If either errors, surface the verbatim error and stop: the platform is reachable but the catalog is not queryable, which the user must resolve before anything else.
 3. **Count the deployed modules.** From the `read_module` result, count the custom data modules: those carry a non-empty `domain_code` column (the deploy pipeline's marker), distinct from platform built-ins. That count is the "your data platform so far" number.
 4. **Report, and point to the catalog.** Use human language, never raw slugs:
-   - **Nothing deployed yet (no custom modules):** *"You're connected to `<org>`, but no custom data modules are live yet. Semantius is built around customizable blueprints — pre-designed data models you tailor into a hyper-customized data platform. Browse them at https://www.semantius.com/blueprints, and I can deploy one for you."*
-   - **Some modules already deployed:** *"You're connected to `<org>` with N data module(s) live: <plain-English names>. Every system in the catalog is a customizable blueprint you can tailor into a hyper-customized data platform — browse more at https://www.semantius.com/blueprints, and just ask me for a full status anytime."*
+   - **Nothing deployed yet (no custom modules):** *"You're connected to `<org>`, but no custom data modules are live yet. Semantius is built around customizable blueprints — pre-designed data models you tailor into a hyper-customized data platform — and I can deploy one for you. Your dashboard is at https://app.semantius.com."*
+   - **Some modules already deployed:** *"You're connected to `<org>` with N data module(s) live: <plain-English names>. Every system in the catalog is a customizable blueprint you can tailor into a hyper-customized data platform. Your dashboard is at https://app.semantius.com, and just ask me for a full status anytime."*
 5. **Offer the next step, don't force it.** One short line: ask me to deploy a catalog blueprint, build a new system from an idea, or show a full status. Then wait.
 
 Read-only against the catalog. The only writes are the tool installs and the sign-in with its host pin (`semantius use`, after the user names the host), which the user authorized by asking to get started.

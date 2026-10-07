@@ -172,9 +172,10 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   - the Stage 1 and Stage 3 conversational confirmations (the Stage 1 name and scope question only while expert flow is on);
   - the Stage 3 "Also track" multiSelect;
   - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);
-  - the Stage 1 discovery interview (plan flow, when no well-known product fits; fast flow, only what the request leaves open);
+  - the Stage 1 discovery interview (plan and expert flow, when no well-known product fits; fast flow, "Closest to" and "Must-haves" only);
+  - the Stage 1 best-practice question (expert flow only);
   - the fast-flow go-ahead (fast runs only);
-  - the Stage 6 related-modules confirmation;
+  - the Stage 6 related-modules confirmation (only while expert flow is on);
   - the Stage 7 handoffs confirmation;
   - the Stage 9 classification confirmation;
   - the Stage 10 workflow-permissions confirmation;
@@ -186,7 +187,7 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   - the Mode D no-collapsing gates;
   - the tagline and description confirmation (only while expert flow is on).
 
-  The Stage 6 related-modules gate is standalone (no `Q:` task). Stages 5 and 8 ask nothing; Stage 11 asks only the RACI matrix confirmation (only for `raci`).
+  The Stage 6 related-modules gate is standalone (no `Q:` task) and fires only in expert flow; in plan and fast flow the list is built and accepted without being shown. Stages 5 and 8 ask nothing; Stage 11 asks only the RACI matrix confirmation (only for `raci`).
 
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a result. Hard rules:
 
@@ -330,11 +331,12 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 
 | Question skipped while expert flow is off | Default |
 |---|---|
-| Stage 1 system name and scope (`references/stage-1-capture.md`) | Take them from the request; state what you picked in the Stage 3 "Picked for you" line. An unclear category is still settled in Stage 1 (in plan flow by the discovery interview's "Closest to" question). |
+| Stage 1 best-practice question (`references/stage-1-capture.md`) | State the points in the guidance aside and apply all of them. |
+| Stage 1 system name and scope (`references/stage-1-capture.md`) | Take them from the request, without a question. An unclear category is still settled in Stage 1, by the discovery interview's "Closest to" question. |
 | Stage 13 `tagline` / `description` / `module_kind` confirmation (`references/stage-13-write.md`) | Write your drafts and the derived `module_kind` without a confirmation; the close-out line says so. |
 | Stage 10 access-level question (`references/stage-10-workflow-perms.md`, permission step) | The script's result. |
 
-**Every other architect question is asked in plan and expert flow, unchanged:** naming style, the entity list, "Also track", the family question, related modules, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Plan flow also brings the Stage 1 guidance: the aside naming well-known products and best-practice points, or the discovery interview when none fits; expert flow gives neither (`references/stage-1-capture.md`).
+**Every other architect question is asked in plan and expert flow, unchanged:** naming style, the entity list, "Also track", the family question, related modules, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test and asks which best-practice points the design follows (`references/stage-1-capture.md`).
 
 **Switching during a run** writes the switch and applies from the next question on: turned on before Stage 13, the catalog text is confirmed; a name or scope the user wants changed is simply changed.
 
