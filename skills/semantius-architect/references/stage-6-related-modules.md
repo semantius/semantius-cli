@@ -2,7 +2,7 @@
 
 ### Stage 6 — Related modules (neighborhood walk)
 
-> **Fast and plan flow:** build the list exactly as below, but don't show it and don't ask; accept it as drafted. In a fast run after the go-ahead, also log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4). The gate rule that follows applies in expert flow only. The list is advisory and only feeds Stage 7's link rows, which the analyst checks against the live catalog, so plan flow doesn't spend a question on it.
+> **Interaction flow:** in guided and fast flow, build the list exactly as below, but don't show it and don't ask; accept it as drafted. In a fast run after the go-ahead, also log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4). The gate rule that follows applies in expert flow only. The list is advisory and only feeds Stage 7's link rows, which the analyst checks against the live catalog, so guided flow doesn't spend a question on it.
 
 > **🛑 In expert flow this is a mandatory, standalone confirmation gate.** It fires every time, in Create, Extend, and Rebuild. Skipping it or collapsing it into another turn's prose is an authoring bug, even when the conversation is mid-flow on an unrelated scope change. If you find yourself writing "Budgeting stays, CRM stays" as a one-liner, stop and surface the full Stage 6 proposal block instead.
 
@@ -22,31 +22,31 @@
 
 **Look-ahead loop:** if while running Stage 7 you discover a sibling target whose owning domain isn't on this list, return here and add it before continuing — Stage 7's per-domain walk only fires for domains that appear here.
 
-**Mandatory output format for Stage 6.** Produce the `related_modules` list as a single block with each entry showing **(a)** which axis it came from (system-type, entity-shadow, deferred-scope, or multiple), **(b)** the concrete sibling entities the agent will pass to Stage 7. Format:
+**Mandatory output format for Stage 6.** Produce the `related_modules` list as a single block with each entry showing, in plain words, **(a)** why it is a neighbor (the kind of system, a thing this design also tracks, or scope left out of this design), **(b)** the related things there, which the agent passes to Stage 7. Format:
 
-> **Related modules.** Walking the system type and the §3 entities:
+> **Related modules.** Walking the kind of system and the things it tracks:
 >
-> - **`OKR`** — system-type neighbor of Product Roadmap (strategic alignment); also entity-shadow on `objectives`. Sibling entities: `key_results`, `check_ins`, `confidence_updates`.
-> - **`Identity & Access`** — system-type neighbor; entity-shadow on `users`. Sibling entities: `groups`, `team_memberships`, `sessions`.
-> - **`Release Management`** — system-type neighbor (delivery side); entity-shadow on `releases`. Sibling entities: `deployments`, `environments`, `release_trains`.
-> - **`Issue Tracking`** — system-type neighbor (engineering handoff); entity-shadow on `features`. Sibling entities: `issues`, `epics`, `sprints`.
-> - **`CRM`** — system-type neighbor (customer request capture); no internal shadow but the planned §6 link to `accounts` makes it a clear neighbor. Sibling entities: `accounts`, `contacts`, `opportunities`.
-> - **`Budgeting`** — system-type neighbor (features cost money in every org); also a deferred-scope target since cost tracking was scoped out. Sibling entities: `cost_centers`, `cost_allocations`, `budgets`.
+> - **OKR**: a neighbor of a product roadmap (strategic alignment); it also tracks objectives. Related things there: key results, check-ins, confidence updates.
+> - **Identity & Access**: a neighbor; it also manages users. Related things there: groups, team memberships, sessions.
+> - **Release Management**: a neighbor on the delivery side; it also tracks releases. Related things there: deployments, environments, release trains.
+> - **Issue Tracking**: a neighbor for the engineering handoff; it picks up features. Related things there: issues, epics, sprints.
+> - **CRM**: a neighbor for capturing customer requests; customers asking for features could link to its accounts. Related things there: accounts, contacts, opportunities.
+> - **Budgeting**: a neighbor, since features cost money; cost tracking was left out of this design. Related things there: cost centers, cost allocations, budgets.
 >
 > Add, drop, or rename any?
 
-The "Sibling entities" lists feed Stage 7 directly. Empty sibling-entity lists are visible misses; if a domain genuinely has no entities that would FK to/from this model's entities, say so explicitly ("no inbound or outbound FK candidates expected — overlap-only via X").
+The "Related things there" lists feed Stage 7 directly. Empty lists are visible misses; if a domain genuinely has no entities that would FK to/from this model's entities, say so explicitly ("no inbound or outbound FK candidates expected — overlap-only via X").
 
 Then surface the proposal:
 
-> **Related modules.** Walking the entities, I'd tag this model's neighborhood as:
+> **Related modules.** Looking at what this design tracks, these modules could sit next to it:
 >
-> - `OKR` — driven by `objectives` (a dedicated OKR system adds key results, check-ins, confidence updates)
-> - `Identity & Access` — driven by `users` (auth, group membership, lifecycle)
-> - `Release Management` — driven by `releases` (release trains, environments, deployment pipelines)
-> - `Issue Tracking` — driven by `features` once they hand off to engineering (sprints, sub-tasks, branches, PRs)
-> - `CRM` — driven by the planned §6 link to `accounts` (customers requesting features)
+> - OKR, because of objectives (a dedicated OKR system adds key results, check-ins, confidence updates)
+> - Identity & Access, because of users (sign-in, group membership)
+> - Release Management, because of releases (release trains, environments, deployments)
+> - Issue Tracking, because features could hand off to engineering (sprints, sub-tasks)
+> - CRM, because customers asking for features could link to its accounts
 >
-> Add, drop, or rename any?
+> Does this look right, or should I add, drop, or rename any?
 
-Loop on user feedback until they confirm, the same way the entity list is confirmed in Stage 3 (in fast and plan flow: accepted as drafted without being shown, see the top of this stage). After confirmation, the list feeds Stage 7's per-domain walk and is written into the front-matter in Stage 13.
+Loop on user feedback until they confirm, the same way the entity list is confirmed in Stage 3 (in fast and guided flow: accepted as drafted without being shown, see the top of this stage). After confirmation, the list feeds Stage 7's per-domain walk and is written into the front-matter in Stage 13 as module slugs: the catalog slug when known (`work-mgmt-goals-okr`), else the kebab-case domain name (`okr`, `identity-access`). The chat blocks above use display names.

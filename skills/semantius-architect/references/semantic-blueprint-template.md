@@ -14,12 +14,14 @@ Keep the section order and the table columns identical, downstream skills parse 
 ---
 artifact: semantic-blueprint
 blueprint_version: "3.1"
+version: "{{CURRENT_VERSION, e.g. 5.5}}"
+naming_mode: {{template:<vendor> | agent-optimized — greenfield only; omit in catalog-clone files}}
 license: {{license slug, e.g. MIT}}
 system_name: {{System display name shown to the user AND used as the module name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
 icon_name: {{Module icon as an icon-set handle (not a URL), e.g. briefcase, users, ticket}}
 tagline: {{One-line marketing-voice line for catalog / card surfaces, ALSO used as the module record's short description (modules.description) shown beside the name in the selector. Elevator pitch — keep it concise enough for the chip.}}
 description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine.}}
-system_slug: {{system_slug_snake_case}}
+system_slug: {{system_slug_kebab_case}}
 domain_modules:
   - {{system_slug}}
 domain_code: {{TLA code, e.g. ATS, HCM, ITSM, CRM}}
@@ -29,6 +31,8 @@ module_kind: {{starter | master | domain — informational label, NOT a behavior
 access_scope: {{custom | basic | advanced | gated | raci}}
 raci_mode: {{living | documentation — OPTIONAL hint, read by the analyst's existing RACI-mode derivation; only meaningful when access_scope: raci}}
 created_at: {{YYYY-MM-DD}}
+initial_request: |
+  {{verbatim Stage 1 opening request}}
 ---
 
 # {{System display name}}
@@ -50,26 +54,23 @@ created_at: {{YYYY-MM-DD}}
 
 ```mermaid
 flowchart LR
-  classDef master fill:#d4f4dd,stroke:#27ae60,color:#0b3d20;
-  classDef contributor fill:#cfe8ff,stroke:#1976d2,color:#0d3a66;
-  classDef consumer fill:#e8def8,stroke:#7b1fa2,color:#3a155d;
-  classDef platform_builtin fill:#e0e0e0,stroke:#424242,color:#1a1a1a;
+  classDef builtin fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#1a4d2e;
+  classDef master fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;
   {{table_name_1}}["{{Plural Label 1}}"]
   {{table_name_2}}["{{Plural Label 2}}"]
   users["Users"]
   {{table_name_1}} -->|"{{verb}}"| {{table_name_2}}
   users -->|"holds"| {{table_name_1}}
   class {{table_name_1}} master;
-  class {{table_name_2}} contributor;
-  class users platform_builtin;
+  class users builtin;
 ```
 
-**Role classes used by the diagram:**
+**Classes used by the diagram** (the same as Stage 5, `stage-5-mermaid.md`):
 
-- **`master`** (mint green) — entities owned by this module. Mastered here, possibly embedded by other modules.
-- **`contributor`** (light blue) — entities that participate in this module's workflows but are *mastered in another module*. They appear here because the module needs them; the analyst may reconcile them against the live catalog.
-- **`consumer`** (lavender) — entities this module *reads* but does not own.
-- **`platform_builtin`** (grey) — entities the platform ships (`users`, `roles`, `permissions`). Always reused; never created.
+- **`builtin`** — platform built-ins the module reuses (`users`, `roles`, `permissions`). Always reused; never created.
+- **`master`** — entities carrying a `**Shared master cluster:** <cluster>` annotation in §3: created here by default, and the deployer may offer to host them in a shared master module.
+
+All other entities render with default styling. Omit a `classDef` and its `class` lines when no entity qualifies.
 
 **Cardinality conventions:**
 
@@ -85,7 +86,7 @@ Junction tables get their own node with two `-->` edges in from the parents. Nev
 
 **Edge labels are managed metadata, not free guesses.** Every edge carries a verb drawn from §5 (the verb column). The diagram and §5 must agree byte-for-byte, so the §5 `verb` cell is plain text, never backticked (`logs`, not `` `logs` ``); only the `from` / `to` identifiers are backticked.
 
-**Platform built-ins in the diagram.** A built-in the module links to (`users`) may be drawn as a node (`users["Users"]`, `class users platform_builtin;`) without a §3 row; `consistency-check.ts` accepts built-in nodes and edges.
+**Platform built-ins in the diagram.** A built-in the module links to (`users`) is listed in §3 (`_(platform built-in)_` in `mastered in`) and drawn as a node (`users["Users"]`, `class users builtin;`); `consistency-check.ts` accepts built-in nodes and edges.
 
 **Family edges (blueprint_version 3.1).** Each §3 `**Key types:**` row with a `based on` draws one dotted edge **from the based entity to its base**, with a fixed verb: `"is a kind of"` for `is_a`, `"extends"` for `has_a`. They are not §5 rows; `consistency-check.ts` compares them with the Key types rows in both directions, and `consistency-check.ts --emit-mermaid <blueprint>` prints them. A relationship every kind shares is **one §5.1 row from the base**, never one row per kind. Worked fragment (companies kept once, activities on one timeline):
 
@@ -135,7 +136,7 @@ _**Audience and register:** the downstream skills, not a human reviewer. The arc
   - `contributor`: mastered elsewhere (per `mastered in`) but participates in this module's workflows. The analyst wires reuse-from at deploy time. Example: `skill_profiles` in `ats-candidate-crm` with `mastered in: lms-skills`.
   - `consumer`: read by this module; never written here. Example: `career_aspirations` (read-only reference from another module).
   - `derived`: carried only from the catalog, never authored here. The module republishes signals it computes from other modules' masters (People Analytics reading `employees`); `mastered in` is `-`. `consistency-check.ts` accepts exactly these five values.
-- **`mastered in`** — `-` when this module owns the entity (role = `master`). Otherwise, the snake_case slug of the catalog owner module (`ats-candidate-crm`, `lms-skills`, `talent-succession-career`). For `embedded_master`, this names the *future* owner.
+- **`mastered in`** — `-` when this module owns the entity (role = `master`). Otherwise, the kebab-case slug of the catalog owner module (`ats-candidate-crm`, `lms-skills`, `talent-succession-career`). For `embedded_master`, this names the *future* owner.
 - **`mastered label`** — `-` when `mastered in` is `-`. Otherwise, the human-readable display name of the **owning module** (`Candidate CRM`, `Skills and Learning Paths`, `Succession and Career Planning`). It names the owner module, NOT this entity (the entity's own labels are the `singular` / `plural` columns); the analyst uses it in user-facing prompts so users don't see raw slugs. For platform built-ins (`users`, `roles`), use `_(platform built-in)_` in both `mastered in` and `mastered label`.
 - **`necessity`** — `required` or `optional`. Optional entities are presented to the user during reconciliation; the user picks which to include. Common candidates for optional: `locations` (some orgs have one), `cost_centers` (some orgs don't track), `tags` (nice-to-have).
 - **(behavior flags removed)** — row-scope visibility, field locks, and approval requirements are **not** §3 columns. Approvals are gated lifecycle transitions (§7 `requires_permission?`; under `raci` also the matching §8.1 `workflow-gate`) and/or §9 RACI. Row-scope and field-lock rules are authored by the analyst as field-level JsonLogic (`select_rule` / `validation_rules`) during reconciliation; when a specific row-scope requirement is known up front and cannot be derived, state it in the **Additional Requirements Specification** section (e.g. *"`user_bookmarks` is private to its creator — scope on `created_by`"*).
@@ -152,7 +153,7 @@ _**Audience and register:** the downstream skills, not a human reviewer. The arc
 
 - **`data_object`** — a §3 row this module provisions (`master` / `embedded_master`); contributor, consumer, and built-in entities keep their owner's key and are never listed.
 - **`key type`** — bare value: `typeid` (prefixed, sortable ids such as `acct_01h455vb4pex5vsknk084sn02q`, the choice for ids users or other systems see: in links, emails, support conversations, integrations), `uuid` (globally unique, no prefix), `bigint` / `text` (the caller supplies the id on every insert; only for records mirrored from an external system whose ids must be kept), `is_a` (a kind of the `based on` entity, fixed at creation; its records share the base's key and appear in the base's list), `has_a` (something a `based on` record can also be; it shares that record's key). Internal tables keep the default. Never `computed` (system tables only). The key type is **locked once the entity is deployed**, so decide it here: changing it later means rebuilding the entity.
-- **`key prefix`** — bare value, required for `typeid` and `is_a` and `-` otherwise (`has_a` uses its base's prefix): lower-case letters and underscores, starting and ending with a letter, at most 63 characters (`^[a-z](?:[a-z_]{0,61}[a-z])?$`), short and recognizable (`acct`, `inv`, `tkt`), unique within the blueprint across `typeid` and `is_a` rows. The analyst also checks it against the live catalog. Maps to `entities.id_prefix`; the key type maps to `entities.id_type`.
+- **`key prefix`** — bare value, required for `typeid` and `is_a` and `-` otherwise (`has_a` uses its base's prefix): lower-case letters and underscores, starting and ending with a letter, at most 63 characters (`^[a-z](?:[a-z_]{0,61}[a-z])?$`); written without the separator (`feat`, not `feat_`), short and recognizable (`acct`, `inv`, `tkt`), unique within the blueprint across `typeid` and `is_a` rows. The analyst also checks it against the live catalog. Maps to `entities.id_prefix`; the key type maps to `entities.id_type`.
 - **`based on`** (blueprint_version 3.1) — required for `is_a` / `has_a`, `-` otherwise: the backticked §3 `data_object` of the base, never a platform built-in. When this module provisions the base, `has_a` needs a `typeid` base and `is_a` a `typeid` or `is_a` base; a `contributor` / `consumer` base has no row here (its owner decides its key) and the analyst checks it live. No cycles. Maps to `entities.id_refentity`. Each row draws one dotted §2 edge (see "Family edges" above). A §7 lifecycle sits on the base or on its kinds, never on both.
 
 Worked example (companies kept once, activities on one timeline):
@@ -447,7 +448,7 @@ _Market-level RACI: which business function OWNS / CONTRIBUTES-TO / CONSUMES thi
 - **§9 emission — two layers.** The §9.1 **baseline roles** and **permission hierarchy** are always emitted (derived from §8.1; process gates are never rolled up under `<slug>:admin`). The §9.1 **RACI realization** + **Processes wired** catalog and **§9.2 functional ownership** (the RACI trio) follow the access level: required under `raci` (drafted when missing and always confirmed by the user, Stage 11); under every other access level never drafted, and preserved unchanged when inherited from a catalog source. When RACI realization is present, its rows MUST mention every persona in the frontmatter `persona` list (and vice versa); when it is absent, omit the `persona` key.
 - **No fields. No JsonLogic. No DDL.** The blueprint is platform-agnostic and entity-level only. Field-level work happens in the analyst's spec.
 - **The one field-level exception, `## Additional Requirements Specification`.** An OPTIONAL, omit-when-unused free-prose section between §2 and §3 for a requirement the analyst must honor but cannot derive from the entity-level structure (a field a cost / rollup view depends on, a fixed unit or currency, a cross-module dedup rule). Compact technical register, backticked identifiers expected; Conventions 6 / 8 do not apply, Conventions 1 / 2 do. Author on greenfield only when genuinely needed; preserve and adjust on clone / customize / extend. Keep it narrow, it is not a backdoor for field tables.
-- **Greenfield vs catalog-clone.** Greenfield: §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the conversation surfaced no cross-scope edges / cross-domain context; the §9 RACI trio (RACI realization / Processes wired / functional ownership) is emitted only under the `raci` access level (an all-or-nothing trio inside §9, not a top-level-section omission — §9 and §9.1 stay present). Catalog-clone: §5.3, §6, the §9 optional layer, and `related_modules` are inherited from the source and preserved — trimmed/extended only as the customize conversation requires; any §5.3/§6 sub-block trimmed empty keeps its heading with the `_(none: …)_` placeholder.
+- **Greenfield vs catalog-clone.** Greenfield: §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the conversation surfaced no cross-scope edges / cross-domain context; §6 carries the handoff rows the user accepted in the Stage 7 confirmation, and rows never shown are not written; the §9 RACI trio (RACI realization / Processes wired / functional ownership) is emitted only under the `raci` access level (an all-or-nothing trio inside §9, not a top-level-section omission — §9 and §9.1 stay present). Catalog-clone: §5.3, §6, the §9 optional layer, and `related_modules` are inherited from the source and preserved — trimmed/extended only as the customize conversation requires; any §5.3/§6 sub-block trimmed empty keeps its heading with the `_(none: …)_` placeholder.
 - **Self-containment.** The blueprint must be readable without any external context. Embed concepts the module needs even when they overlap with another module, mark as `embedded_master` in §3 with `mastered in` pointing at the intended canonical-owner module (and `mastered label` carrying the owner's display name). The analyst resolves these at reconciliation time: when the catalog owner installs, the entity migrates automatically; until then, this module hosts it. A blueprint that fails self-containment (an entity needs another module to function) is a defect the architect FLAGS — never something to assemble around.
 - **Embedded-entity governance follows the entity, not the role.** An installing unit carrying an entity as `embedded_master` whose catalog owner is absent at deploy time emits that entity's FULL derived governance under the installing unit's slug: workflow gates (§8.1) re-prefixed, matching §8.2 rules re-prefixed, AND boundary-crossing handoffs in §6.2 / §6.3 (events the embedded entity publishes to / reacts from modules the unit doesn't "play"). Intra-set handoffs are hidden (when both source and target embedded entities live in the same installing unit, the handoff is internal). When the catalog owner later installs, the deployer reconciles every re-prefixed code onto the catalog prefix (sibling permissions + sibling role_permissions; no deletes). This convention is what lets bundles like `hiring-starter` round-trip cleanly.
 
@@ -460,7 +461,7 @@ _Market-level RACI: which business function OWNS / CONTRIBUTES-TO / CONSUMES thi
 - **`icon_name`** — the module's UI icon as an icon-set handle (not a URL), e.g. `briefcase`, `ticket`. Maps to `modules.icon_name`.
 - **`tagline`** — one-line marketing-voice line for catalog / card surfaces (the elevator pitch). Also used by the deployer as the module record's `description` column (`modules.description`), shown beside the name in the selector — so keep it concise enough for the chip. Distinct from §1 Overview (analyst-voice narrative).
 - **`description`** — longer marketing-voice prose for the catalog page. Multi-line YAML block (`|`) is fine. Reads to a buyer, not to the analyst. Distinct from §1 Overview which is analyst-voice; not provisioned today (follow-up when the platform exposes a `modules.long_description` column).
-- **`system_slug`** — lowercase snake_case identifier. Equals the module slug the deployer creates. **Never** appears as another name in §8.
+- **`system_slug`** — lowercase kebab-case identifier (`it-ops-starter`). Equals the module slug the deployer creates. The file name is exactly `<system_slug>-semantic-blueprint.md`. **Never** appears as another name in §8.
 - **`domain_modules`** — typically a single entry equal to `system_slug`. Multi-module blueprints (master modules hosting multiple shared masters) list each.
 - **`domain_code`** — uppercase TLA / short code (ATS, HCM, ITSM, CRM, LMS, PA, BEN-ADMIN). Used in §6 handoff tables for the domain column.
 - **`related_modules`** — **advisory integration hint**, not a deployment prerequisite. Every module deploys standalone (the `embedded_master` mechanism is the self-sufficiency lever, not a dependency). The list is a discovery tag for humans browsing the catalog: which modules sit nearby in data-coupling, handoff, or persona-reach terms. The analyst and deployer treat this list as informational and never auto-pull / auto-require any of the listed modules.
@@ -481,11 +482,11 @@ _Market-level RACI: which business function OWNS / CONTRIBUTES-TO / CONSUMES thi
 
 ### Mode handling
 
-- **Greenfield**: §5.3 and §6 (all four sub-sections) are **kept (headings present) with the canonical `_(none: <short reason>)_` placeholder** unless the user explicitly requested cross-scope edges or cross-domain handoffs. No bare empty headings, no free-text stubs — every canonical heading is present and either populated or placeholdered.
+- **Greenfield**: §5.3 and §6 (all four sub-sections) are **kept (headings present) with the canonical `_(none: <short reason>)_` placeholder** unless the user explicitly requested cross-scope edges or cross-domain handoffs; the §6 rows the user accepts in the Stage 7 confirmation count as requested. No bare empty headings, no free-text stubs — every canonical heading is present and either populated or placeholdered.
 - **Catalog-clone**: inherit §5.3 and §6 from the source blueprint. Let the user trim or extend during the customize conversation. After trim: any sub-section that ends up empty **keeps its heading and carries the `_(none: <short reason>)_` placeholder** — never omit the heading.
 - **Customize**: load the source blueprint, present its §1 + §3 table to the user, ask what to change; the rest of the file is preserved unless the change requires it. Apply the same keep-with-placeholder rule after any trim.
 - **`## Additional Requirements Specification` (all modes)**: OPTIONAL and omit-when-unused. Greenfield authors it only when a non-derivable requirement exists; catalog-clone and customize **preserve and adjust** it like any inherited section, never silently drop it. It is not a canonical section, so its absence is never a placeholder case and is never flagged.
 
 **Empty-section convention (the single rule).** Every canonical top-level / numbered section (and the §5.3 / §6 sub-blocks) is **always present**. When a section is intentionally empty, keep its heading and write the canonical placeholder **`_(none: <short reason>)_`** (lowercase `none`, a **colon** not an em-dash; bare `_(none)_` is allowed when a reason adds nothing) in place of its table or rows. **Omitting a canonical section is forbidden**, **bare empty headings are forbidden**, and **free-text stubs** like *"no cross-scope edges declared"*, *"no cross-domain context"*, or *"no industry-scoped aliases"* are forbidden. The architect's pre-save verification rejects a **missing** canonical section (and a non-canonical free-text stub), and **accepts** the `_(none: …)_` placeholder. The only omit-when-empty exceptions are the §3 per-entity sub-blocks (Computed fields / Validation rules / Input-type rules / Select rule), which are field-level and not authored at blueprint stage, and the §3 `**Key types:**` sub-block (present only when some entity uses a non-default key).
 
-**Mode detection by `naming_mode`:** Greenfield blueprints carry `naming_mode: template:<vendor>` or `naming_mode: agent-optimized` in the frontmatter. Catalog-clone blueprints don't carry `naming_mode` at all. This is the canonical signal — also drives the frontmatter rule that greenfield files don't carry `related_modules` / `departments` / `industries`, and catalog-clone files don't carry `naming_mode`.
+**Mode detection by `naming_mode`:** Greenfield blueprints carry `naming_mode: template:<vendor>` or `naming_mode: agent-optimized` in the frontmatter. Catalog-clone blueprints don't carry `naming_mode` at all. This is the canonical signal — also drives the frontmatter rule that greenfield files don't carry `departments` / `industries` (they always carry `related_modules`), and catalog-clone files don't carry `naming_mode`.

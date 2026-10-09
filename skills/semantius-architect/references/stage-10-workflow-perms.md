@@ -70,19 +70,24 @@ The point of mechanical rules is to defeat under-detection. Default behavior is 
 
 **Hold the bar high but not too high.** Only propose a workflow permission when the *transition is genuinely policy-different* from the rest of the entity's writes. If every user with `<slug>:manage` can perform every transition without business consequence, mark the cell `none — covered by edit_permission` and skip. The reasonable count of workflow permissions per non-trivial module is **2–6**; zero is a smell that the scan was perfunctory; ten is a smell that static gates were over-promoted.
 
-#### Present the scan table to the user
+#### Present the restricted steps to the user
 
-After the table, present a compact proposal of just the gates that fired:
+The scan table above stays your working table (mandatory, one row per entity); it is not shown. Required in guided and expert flow; it is its own turn, never combined with another stage's confirmation. Show the gates that fired as restricted steps in plain words (Convention 8), then one plain line for every other entity:
 
-> **Workflow-permission scan for `<slug>`, proposed gates:**
+> **Restricted steps.**
 >
-> | Gate | Lifecycle transition gated (§7) |
+> | Restricted step | Why it's restricted |
 > |---|---|
-> | `ats:approve_offer` | `job_offers` → `approved` |
-> | `ats:hire_candidate` | `candidates` → `hired` |
-> | `ats:publish_posting` | `job_postings` → `published` |
+> | Approving a job offer | it commits the company to a salary |
+> | Hiring a candidate | it starts an employment |
+> | Publishing a job posting | it makes the posting public |
 >
-> Show the full scan table too (one row per entity), so a reviewer can confirm each cell. These steps will be restricted. Who takes them is settled next. Look right?
+> - Interview notes: no restricted step, notes are routine.
+> - Candidate sources: no restricted step, it is a setup list.
+>
+> Does this look right?
+
+Before the permission step below has run, describe these only as restricted steps and never say who takes them: the access level is not decided yet. In expert flow, when the access-level question can follow, you may add "Who takes them is settled next."
 
 > **Fast flow, after the go-ahead:** don't show the proposal and don't ask; accept the gates as scanned and log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4). Then run the permission step below with `--flow fast` and take its result.
 
@@ -94,7 +99,7 @@ Loop on feedback until confirmed. Then run the permission step below. The confir
 
 ### Permission step: decide the access level
 
-> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). **Expert flow off:** pass `--flow plan`; the access-level question is never asked and the script's result stands (only the keep-or-replace question can still come up). **Expert flow on:** pass `--flow expert`; ask when the output carries `ask`. **Fast flow, after the go-ahead:** pass `--flow fast` and take the script's result; the keep-or-replace question is the one question asked anyway: it pauses the run, and with the answer the run continues. The answer is never written to `$CUSTOMIZATIONS_FILE`.
+> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). **Expert flow off:** pass `--flow guided`; the access-level question is never asked and the script's result stands (only the keep-or-replace question can still come up). Before the script has run, describe gates only as "restricted steps" and never say who takes them; in guided flow, don't name the result afterward either. **Expert flow on:** pass `--flow expert`; ask when the output carries `ask`. **Fast flow, after the go-ahead:** pass `--flow fast` and take the script's result; the keep-or-replace question is the one question asked anyway: it pauses the run, and with the answer the run continues. The answer is never written to `$CUSTOMIZATIONS_FILE`.
 
 Runs as the last step of Stage 10, after the user confirmed the gate scan. The other architect paths run it at the points named in [modes-audit-extend-rebuild.md](modes-audit-extend-rebuild.md) (Customize, Extend, Rebuild) and in SKILL.md (Catalog-Clone). A deterministic script decides the module's access level, the frontmatter `access_scope`; never decide it yourself.
 
@@ -112,11 +117,11 @@ Runs as the last step of Stage 10, after the user confirmed the gate scan. The o
 
 ```bash
 # <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
-bun "<skill-folder>/references/decide-access-scope.ts" --slug <system_slug> --flow <plan|expert|fast> \
+bun "<skill-folder>/references/decide-access-scope.ts" --slug <system_slug> --flow <guided|expert|fast> \
   --has-reference-data-entities <yes|no> --has-process-gate <yes|no> [--requested-level <basic|advanced|gated|raci>]
 ```
 
-- `--flow`: the run's interaction flow: `expert` when expert flow is on, `fast` in a fast run, otherwise `plan`. Rebuild (Mode D) always passes `expert`. It never carries the access level.
+- `--flow`: the run's interaction flow: `expert` when expert flow is on, `fast` in a fast run, otherwise `guided`. Rebuild (Mode D) always passes `expert`. It never carries the access level.
 - `--has-reference-data-entities yes`: the confirmed Stage 9 classification has at least one §3 entity with `entity_type = catalog` whose `role` is `master` or `embedded_master`, not a platform built-in (`users`, `roles`, `permissions`).
 - `--has-process-gate yes`: the confirmed scan has at least one gate (a §7 state with `requires_permission? = ✓`, a W6 `create` rule, or a §8.1 `workflow-gate (lifecycle)` row).
 - Only for the Customize / Extend first step on a blueprint whose frontmatter has no `access_scope` ([modes-audit-extend-rebuild.md](modes-audit-extend-rebuild.md) Step C1), pass `--blueprint <working copy>` instead of the two `--has-*` flags; the script reads both from the file. Every other run passes the two `--has-*` flags from the current draft, including edits not yet written to the file.
@@ -129,7 +134,7 @@ bun "<skill-folder>/references/decide-access-scope.ts" --slug <system_slug> --fl
 - `ask` set: ask the matching question below, then run the script again with the same flags plus `--keep-custom yes|no` (for `ask.kind = keep_or_replace`) or `--answer <option>` (for `ask.kind = level`). After `--keep-custom no` the script may return a `level` question; run it a third time with both flags.
 - Exit 1 (a live read failed: CLI not logged in, instance unreachable): stop and tell the user in one plain sentence that the access level could not be checked against their Semantius instance. The design so far is kept; run this step again once the instance is reachable. Never decide without the script.
 - Exit 2 (usage error): your call is wrong; fix the flags and run again.
-- `reason` and `facts` are for logs only. In a fast run log the pick with `log_pick architect` ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 5); under the admin, `reason` also goes to `$DIAG_LOG`. Never show `reason`, `facts`, or a raw value to the user, and in plan flow do not tell the user which access level was picked.
+- `reason` and `facts` are for logs only. In a fast run log the pick with `log_pick architect` ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 5); under the admin, `reason` also goes to `$DIAG_LOG`. Never show `reason`, `facts`, or a raw value to the user, and in guided flow do not tell the user which access level was picked.
 
 **The questions.** Standalone `AskUserQuestion` calls, not ledger `Q:` tasks; never put two of them in one call. `<System name>` is the module's display name.
 

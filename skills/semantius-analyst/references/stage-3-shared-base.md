@@ -19,7 +19,7 @@ Some duplication only shows against the live catalog: the blueprint adds `vendor
 | Every other 2e.1 flag | The standalone 3c.1 widget below (Case A, B or C). |
 | A pair `.shared_bases` already holds (and the recorded base is still eligible) | None: apply the recorded outcome silently. |
 
-**MUST-FIRE:** in plan and expert flow, always ask unless `.shared_bases` holds the pair. An obvious answer is not a reason to skip it.
+**MUST-FIRE:** in guided and expert flow, always ask unless `.shared_bases` holds the pair. An obvious answer is not a reason to skip it.
 
 > **Fast flow, after the go-ahead:** no `Q:` task and no widget. Only an exact table-name match is mapped, and these pairs never share a table name (same-name pairs are 3b), so every case below keeps this module's own copy, by the pick its own fast-flow line names; nothing is written to `.shared_bases`; log it; don't ask ([fast-flow.md](../../semantius-admin/references/fast-flow.md)).
 

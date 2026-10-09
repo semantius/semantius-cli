@@ -198,7 +198,7 @@ In this module:
 Say "change" and what you want different to revisit any of these.
 ```
 
-"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a plan-flow or expert-flow run. The Closing Contract that follows is unchanged: the `---`, then the status line, the link, and the sample-data question.
+"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a guided-flow or expert-flow run. The Closing Contract that follows is unchanged: the `---`, then the status line, the link, and the sample-data question.
 
 ## Stage 5b: Stamp the deploy version into the spec
 

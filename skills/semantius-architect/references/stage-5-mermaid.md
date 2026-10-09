@@ -2,7 +2,7 @@
 
 ### Stage 5: Build the Mermaid entity-relationship diagram
 
-The §2 Entity summary includes a Mermaid **flowchart** that visualises every entity and every relationship in the model. Before Stage 13, draft the diagram from the confirmed entity list and relationships:
+The §2 Entity summary includes a Mermaid **flowchart** that visualises every entity and every relationship in the model. Draft the relationships (the §5 edges) and the diagram from the confirmed entity list; the user confirms them, together with the lifecycles, at the end of this stage:
 
 - Use ```` ```mermaid\nflowchart LR ```` as the opening (top-down `flowchart TB` is fine if the graph is wider than tall, but `LR` is the default).
 - **Every** entity in the §2 summary table must appear as a node.
@@ -38,4 +38,14 @@ The §2 Entity summary includes a Mermaid **flowchart** that visualises every en
    - the edge label, if present, equals the §5 `verb` of that edge byte-for-byte (no hallucinated, paraphrased, or "improved" verbs)
    If any mismatch is found, fix the diagram (or fix the §5 `verb` if the §5 value is the wrong one) and run the check again. Do not show the user a diagram that fails this check.
 
-**Show the drafted diagram, do not gate on it.** The diagram is a *visualization* of §3 entities and §5 relationships, not a separate decision point. The user already approved every entity and relationship earlier in the conversation — there is nothing in the diagram for them to independently review. Render it inline so they can see it, but **do not ask "look right?" / "ok?" / "should I proceed?"** about the diagram itself. Move directly to Stage 6 after rendering. The build-then-verify procedure above is the agent's own check; it doesn't surface to the user unless it caught a real problem (which would be a §3 issue, not a diagram issue, and should be raised against §3). If the user changes entities or relationships *later* in any stage, regenerate the diagram silently — do not carry forward a stale one, and still no separate confirmation prompt.
+**Draft the lifecycles here.** For each entity that moves through steps, draft its lifecycle (the states, which one it starts in, which ones end it). Stages 7, 9 and 10 read it, and Stage 13 writes it to §7. An entity without steps (reference data, a plain record) gets none.
+
+**Show the relationships, the diagram and the lifecycles in one message, and confirm.** Required in guided and expert flow. It is its own turn; never combine it with another stage's confirmation. In plain language (Convention 8):
+
+- each relationship, one per line, saying whether it is required and what happens on delete (e.g. *"A product contains many components; deleting a product deletes its components."*);
+- the diagram, rendered inline;
+- each lifecycle as plain-word steps with one line on why (e.g. *"Release: planned, in progress, released, canceled. Releases follow a fixed path to shipping."*).
+
+End with *"Does this look right?"* and loop on the user's feedback until they confirm. The build-then-verify procedure above is your own check and is not shown. If the user changes entities or relationships later in any stage, regenerate the diagram; never carry forward a stale one.
+
+> **Fast flow, after the go-ahead:** don't show the message and don't ask; accept the relationships and lifecycles as drafted and log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4).

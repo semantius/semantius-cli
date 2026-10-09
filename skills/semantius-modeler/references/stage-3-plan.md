@@ -46,7 +46,7 @@ Plus: 3 additive fields on built-in `users` (pending confirmation)
   💤 Skipped (target not in catalog): `subscriptions → cost_allocation_rules`
 ```
 
-The read-side and UI-rule sub-sections only appear when the model declares them (most models omit them; the sub-sections are omitted from the plan too — don't render empty bullets). The `select_rule` row carries the `⚠️` marker because applying it changes who can see which rows (medium-risk visibility shift); the deployer pauses for explicit confirmation on every `select_rule` create / modify / remove (in plan and expert flow), same posture as a tier flip on `edit_permission`.
+The read-side and UI-rule sub-sections only appear when the model declares them (most models omit them; the sub-sections are omitted from the plan too — don't render empty bullets). The `select_rule` row carries the `⚠️` marker because applying it changes who can see which rows (medium-risk visibility shift); the deployer pauses for explicit confirmation on every `select_rule` create / modify / remove (in guided and expert flow), same posture as a tier flip on `edit_permission`.
 
 If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12), will update module metadata from the new model and diff entities to apply only changes`. Render the field-level deltas inline under each ♻️ entity so the user sees exactly what's about to change, not just a vague "will diff" promise:
 
@@ -64,7 +64,7 @@ If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12)
   ✨ budget_lines: will create + 8 fields
 ```
 
-Use `~` for drifted properties (with `old → new`), `+` for additions, and surface `🛑` separately for anything that blocks the fast-path (enum removals, cross-primitive format changes, field deletions, tier flips). The 🛑 deltas route through the normal Stage 3 ambiguity dialog; the `~` and `+` deltas are informational and apply automatically once the plan is approved (or under the clean re-run fast-path, immediately). The `⚠️ select_rule` line is **not** auto-applied even under the fast-path — read-visibility changes always pause for explicit user confirmation (plan and expert flow; same rule as `edit_permission` tier flips).
+Use `~` for drifted properties (with `old → new`), `+` for additions, and surface `🛑` separately for anything that blocks the fast-path (enum removals, cross-primitive format changes, field deletions, tier flips). The 🛑 deltas route through the normal Stage 3 ambiguity dialog; the `~` and `+` deltas are informational and apply automatically once the plan is approved (or under the clean re-run fast-path, immediately). The `⚠️ select_rule` line is **not** auto-applied even under the fast-path — read-visibility changes always pause for explicit user confirmation (guided and expert flow; same rule as `edit_permission` tier flips).
 
 > **Fast flow, after the go-ahead:** a 🛑 delta that removes or retypes live data (an enum value removal, a cross-primitive format change, a field deletion) is skipped: never remove anything, keep what is deployed, and continue; a permission-tier flip and the `select_rule` pause proceed as the spec says; log each one that proceeds with `log_pick modeler` ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 5); don't ask.
 
@@ -155,13 +155,13 @@ This flow is **distinct from the 🛑 ambiguity protocol below for entity name c
 
 The modeler does NOT drive `AskUserQuestion` widgets for cross-module collisions, similar-name flags, master promotions, or merge / rename decisions. Every such decision is already encoded in the spec as a `**Reconciliation:**` annotation. If Stage 2 detected drift (an annotated `reuse-from` target is missing, a `rename-incoming-from` target name now exists, a `promote-to-master` host module is missing or wrong type), the modeler halts and routes the user back to the analyst — it does not try to re-decide.
 
-**The only confirmation the modeler asks** (in plan and expert flow) is the final pre-execute yes/no after the plan summary:
+**The only confirmation the modeler asks** (in guided and expert flow) is the final pre-execute yes/no after the plan summary:
 
 > *"Plan shown above. Proceed with execution?"*
 
 > **Fast flow, after the go-ahead:** don't render the plan; the go-ahead was this confirmation. Proceed to Stage 4 and log one line, "Deploy plan applied as prepared", with `log_pick modeler`; don't ask.
 
-A `select_rule` create / modify or an `edit_permission` tier flip still pauses for explicit confirmation in plan and expert flow (medium-risk: read-visibility or write-tier change; standalone questions, not ledger tasks, like the pre-execute yes/no, the 4e-merge conflict prompt, and the 4f live-present prompt in Stage 4). These are the only mid-flow prompts.
+A `select_rule` create / modify or an `edit_permission` tier flip still pauses for explicit confirmation in guided and expert flow (medium-risk: read-visibility or write-tier change; standalone questions, not ledger tasks, like the pre-execute yes/no, the 4e-merge conflict prompt, and the 4f live-present prompt in Stage 4). These are the only mid-flow prompts.
 
 ### Merge / rename rules (informational)
 

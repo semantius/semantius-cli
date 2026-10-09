@@ -127,7 +127,7 @@ The environment checks are shared across all four Semantius skills and live in o
   ```
   Run context: run_id=run-...
   Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
-  Interaction flow: plan
+  Interaction flow: guided
   Analyst mode: reconcile
   Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md
   ```
@@ -205,7 +205,7 @@ Default to Reconcile unless the user references an existing spec. The rest of th
 
 *Resident summary; the canonical rules are in [`../semantius-admin/references/interaction-flow.md`](../semantius-admin/references/interaction-flow.md).*
 
-**Read the switch before Stage 1** (and again after a context reset): `.interaction_flow` in `$CUSTOMIZATIONS_FILE`. `expert` = on; `plan`, `fast`, or absent = off (a saved `fast` on its own is read as plan flow; whether this run is a fast run is decided per run, see "Fast flow" below). **Turning it on or off:** when the user says "expert flow", "plan flow", or "fast flow" (and you were not handed the run by the admin, which already did this), write `.interaction_flow` (`expert` / `plan` / `fast`) with the usual provenance comment and narrate the one line from interaction-flow.md section 2, then continue with the rest of the request. A bare "fast", "plan", "expert", "plan mode", "fast mode", "quick", "simple", "just do it", or "don't ask me" changes nothing. When called directly and the switch is on, narrate once: *"Running in expert flow."*
+**Read the switch before Stage 1** (and again after a context reset): `.interaction_flow` in `$CUSTOMIZATIONS_FILE`. `expert` = on; `guided`, `fast`, or absent = off (a saved `fast` on its own is read as guided flow; whether this run is a fast run is decided per run, see "Fast flow" below). **Turning it on or off:** when the user says "expert flow", "guided flow", or "fast flow" (and you were not handed the run by the admin, which already did this), write `.interaction_flow` (`expert` / `guided` / `fast`) with the usual provenance comment and narrate the one line from interaction-flow.md section 2, then continue with the rest of the request. A bare "fast", "guided", "expert", "guided mode", "fast mode", "quick", "simple", "just do it", or "don't ask me" changes nothing. When called directly and the switch is on, narrate once: *"Running in expert flow."*
 
 **While expert flow is off, the analyst questions listed in interaction-flow.md section 3 are skipped** and answered with the literal default below. Each has an "Interaction flow" block in its stage file. A saved answer in `$CUSTOMIZATIONS_FILE` still wins; the default itself is never written there.
 
@@ -214,7 +214,7 @@ Default to Reconcile unless the user references an existing spec. The rest of th
 | 3d missing owner, first question only (`references/stage-3-collisions.md`) | "Set up <Plural Label> in this module" (`embed_locally`). The name-clash follow-up is still asked. |
 | 4.N N2 (`references/stage-4-fields.md`) | "No, keep the fixed fields" (no new list), unless the request or the conversation asked for a list of them; then "Yes, a list of them". |
 
-**Every other question is asked in plan and expert flow, unchanged**, including 3a, 3b.0, 3b.1, 3b.2, 3c, 3c.1, 3e, 3f, 2g, 4.N N7, 4.N N8, the Stage 10 scan-table confirmation, the 3g plan confirmation, the blueprint pick, and Stage 8 blockers.
+**Every other question is asked in guided and expert flow, unchanged**, including 3a, 3b.0, 3b.1, 3b.2, 3c, 3c.1, 3e, 3f, 2g, 4.N N7, 4.N N8, the Stage 10 scan-table confirmation, the 3g plan confirmation, the blueprint pick, and Stage 8 blockers.
 
 **Recap.** The 3d default is named in one line of the 3g plan summary (`references/stage-3-confirm.md`, authoring rule 12). The N2 default is not named: keeping the drafted fields changes nothing.
 
@@ -224,7 +224,7 @@ Default to Reconcile unless the user references an existing spec. The rest of th
 
 ## Fast flow (experimental)
 
-- **When:** a run is a fast run for the analyst only when the run context carries `Interaction flow: fast`, or the admin pipeline task's marker (`TaskGet`) says `fast: go-ahead given` (`fast: plan flow for this build` means plan flow). A saved `fast` in `$CUSTOMIZATIONS_FILE` on its own counts as plan flow, and so does a direct call. Check at Step 0 and after a context reset; in a fast run, read [`../semantius-admin/references/fast-flow.md`](../semantius-admin/references/fast-flow.md) at Step 0 and again after a context reset.
+- **When:** a run is a fast run for the analyst only when the run context carries `Interaction flow: fast`, or the admin pipeline task's marker (`TaskGet`) says `fast: go-ahead given` (`fast: guided flow for this build` means guided flow). A saved `fast` in `$CUSTOMIZATIONS_FILE` on its own counts as guided flow, and so does a direct call. Check at Step 0 and after a context reset; in a fast run, read [`../semantius-admin/references/fast-flow.md`](../semantius-admin/references/fast-flow.md) at Step 0 and again after a context reset.
 - **The turn rule** (fast-flow.md 4.1): no `AskUserQuestion`, no message ending in a question, no rendered plan or proposal. Each question point takes the pick its "Fast flow, after the go-ahead" line names and logs one line (fast-flow.md section 5).
 - **Why:** the user already gave the go-ahead for the whole build, and every stop breaks that promise; the "Decided for you" list at the end is their review.
 
@@ -303,16 +303,16 @@ Before any field elicitation, surface every 🛑 ambiguity and every 🟡 option
 | **On** | 3a, 3b.0, 3b.1, 3b.2, 3c, 3c.1, 3d, 3e, 3f, and all of 4.N | none |
 | **Fast run, after the go-ahead** | none: the widget does not fire | every widget, by the pick its gate's "Fast flow, after the go-ahead" line names; the logged line satisfies the check that every must-fire question was resolved |
 
-Every widget in the MUST-FIRE column for the run's flow is a **mandatory user gate**, not an optional prompt. The Convention 8 narration-restraint culture does NOT override them — that culture is about not narrating *implementation work* in chat ("Let me load the file...", "Let me classify each entity..."). It is NOT about skipping decision widgets just because a "safe default is obvious." When this stage detects a condition that calls for a widget, the widget fires. Always, in plan and expert flow. No exceptions for "the answer is obvious," "the user will pick option 1 anyway," or "I can save the user a click." The user is the decision-maker; the analyst proposes, the user confirms.
+Every widget in the MUST-FIRE column for the run's flow is a **mandatory user gate**, not an optional prompt. The Convention 8 narration-restraint culture does NOT override them — that culture is about not narrating *implementation work* in chat ("Let me load the file...", "Let me classify each entity..."). It is NOT about skipping decision widgets just because a "safe default is obvious." When this stage detects a condition that calls for a widget, the widget fires. Always, in guided and expert flow. No exceptions for "the answer is obvious," "the user will pick option 1 anyway," or "I can save the user a click." The user is the decision-maker; the analyst proposes, the user confirms.
 
 In particular:
 
-- **3c.1 / 4.N (keep each fact once)**: always ask, in plan and expert flow, unless `.shared_bases` already holds the pair. Keeping a company twice or once is the user's call, even when one answer is obvious. (The one exception: 4.N N2 while expert flow is off, per the table above.)
-- **3b.0 (catalog-owner adoption)**: even though option 1 is the only sensible outcome, the widget MUST fire (in plan and expert flow) so the user explicitly consents to the ownership transfer. Adoption changes the catalog state in a way the user should knowingly approve.
-- **3f.1 / 3f.2 / 3f.3 / 3f.4 (drift widgets)**: even when option 1 ("keep live state, align spec to it") is the safe and obvious default, the widget MUST fire (in plan and expert flow) so the user knows drift was detected. (The one drift case with no widget is 3f.4's cross-primitive format change: nothing can be chosen there, so it becomes a blocker in the file and a line in the plan summary instead; the user still sees it.) Silently rewriting the spec to align to live state is a Convention 8 *violation* — the spec is the user's design, and changing field names / enum values / permission tiers behind their back is exactly the kind of "silent self-correction" Convention 8 forbids in its Narration restraint section ("Do not narrate self-corrections mid-flight; fix them silently" applies to *implementation* corrections, not *spec content* corrections).
+- **3c.1 / 4.N (keep each fact once)**: always ask, in guided and expert flow, unless `.shared_bases` already holds the pair. Keeping a company twice or once is the user's call, even when one answer is obvious. (The one exception: 4.N N2 while expert flow is off, per the table above.)
+- **3b.0 (catalog-owner adoption)**: even though option 1 is the only sensible outcome, the widget MUST fire (in guided and expert flow) so the user explicitly consents to the ownership transfer. Adoption changes the catalog state in a way the user should knowingly approve.
+- **3f.1 / 3f.2 / 3f.3 / 3f.4 (drift widgets)**: even when option 1 ("keep live state, align spec to it") is the safe and obvious default, the widget MUST fire (in guided and expert flow) so the user knows drift was detected. (The one drift case with no widget is 3f.4's cross-primitive format change: nothing can be chosen there, so it becomes a blocker in the file and a line in the plan summary instead; the user still sees it.) Silently rewriting the spec to align to live state is a Convention 8 *violation* — the spec is the user's design, and changing field names / enum values / permission tiers behind their back is exactly the kind of "silent self-correction" Convention 8 forbids in its Narration restraint section ("Do not narrate self-corrections mid-flight; fix them silently" applies to *implementation* corrections, not *spec content* corrections).
 - **Put the recommended option first, mark its label "(Recommended)", then fire the widget** — that's the correct pattern. (The tool has no pre-selected or pre-checked option; the label marker is the only way to point at the default.) The user picks it with one click per widget; they did not lose conversation context; they have explicit awareness of every adjustment to their design.
 
-If you find yourself reasoning *"the user is going to pick option 1, so I'll just do it and move on,"* about a widget in the MUST-FIRE column for this run's flow, that's the bug. Fire the widget anyway, in plan and expert flow. The mechanical form of this rule: every MUST-FIRE widget is a `Q:` task, and the stage does not end while any `Q:` task is pending or in progress; a decision that never became a task was skipped (in a fast run after the go-ahead, the logged pick stands in for the task).
+If you find yourself reasoning *"the user is going to pick option 1, so I'll just do it and move on,"* about a widget in the MUST-FIRE column for this run's flow, that's the bug. Fire the widget anyway, in guided and expert flow. The mechanical form of this rule: every MUST-FIRE widget is a `Q:` task, and the stage does not end while any `Q:` task is pending or in progress; a decision that never became a task was skipped (in a fast run after the go-ahead, the logged pick stands in for the task).
 
 ---
 
@@ -416,7 +416,7 @@ After a successful spec write in Reconcile or Extend mode, narrate the close-out
 
 > *Wrote `semantius/specs/<slug>-semantic-spec.md`. Summary: <N> new, <N> adopted from <module display names>, <N> skipped, <N> reusing platform built-ins.*
 
-One line; no "next step" hint in admin-orchestrated mode (the admin narrates whether to run the modeler or stop, per the run's `deploy` flag, and uses this summary to compose its final report). In plan and expert flow this line is always sent: the file name is the user's record of what was produced, and it is the analyst's own result line, not admin hand-off narration. In a fast run there is no close-out line: complete the task and let the admin move on.
+One line; no "next step" hint in admin-orchestrated mode (the admin narrates whether to run the modeler or stop, per the run's `deploy` flag, and uses this summary to compose its final report). In guided and expert flow this line is always sent: the file name is the user's record of what was produced, and it is the analyst's own result line, not admin hand-off narration. In a fast run there is no close-out line: complete the task and let the admin move on.
 
 **Stand-alone** (no handoff header):
 

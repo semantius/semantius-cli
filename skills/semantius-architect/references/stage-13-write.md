@@ -2,13 +2,15 @@
 
 ### Stage 13 — Write the semantic-blueprint file
 
+**Pre-write gate.** Before writing, check that every confirmation this flow asks (the standalone-question list in SKILL.md, minus the questions the Expert flow table skips) was shown and confirmed in this conversation, or came from a saved-choice hit. The Stage 1 guidance aside counts once shown. Each `Design ›` task description records "shown and confirmed"; a stage task is never completed without it. If something is missing, show it now and do not write.
+
 Use the template at `semantic-blueprint-template.md` for the exact section order, front-matter shape, and rendering conventions. The blueprint must be self-contained: a downstream agent should be able to read it without any prior conversation context.
 
 **Entity order (canonical).** Emit entities everywhere (the §2 table, §2 Mermaid nodes, and the §3 catalog) in the order defined by the template's §2 "Entity order (canonical)" note: `entity_type` tier, then `data_object` A->Z within each tier (`catalog` first, then operational / computed, then `junction`, then platform built-ins last). This is the order the analyst preserves in the spec and `semantius-optimizer` reproduces from live state.
 
 **Finalize the catalog surface (before writing).** Stage 1 deliberately captured only `system_name` and a rough scope line; the catalog-surface frontmatter is settled here, now that the entity list it describes exists:
 
-> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). **Expert flow off:** write your `tagline` and `description` drafts and the derived `module_kind` directly, with no confirmation message; the close-out line covers them. **Expert flow on:** show the drafts and confirm as below. **Fast flow, after the go-ahead:** as with expert flow off, and the close-out line is only "Wrote `<path>`." (SKILL.md, Pre-save verification).
+> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). **Expert flow off:** write your `tagline` and `description` drafts and the derived `module_kind` directly, with no confirmation message; the close-out line covers them. **Expert flow on:** show the drafts and confirm as below. **Fast flow, after the go-ahead:** as with expert flow off, and there is no close-out line (SKILL.md, Pre-save verification).
 
 - **`tagline`** (required) — propose a draft from the Stage 1 scope line, tightened against the final entity list; with expert flow on, the user confirms or edits. One marketing-voice line for the catalog card AND the module record's short description (`modules.description`, shown beside the name in the selector) — keep it readable in the selector chip. Example from `hiring-starter`: *"Everything a small team needs to hire, in one lightweight package."*
 - **`description`** (required) — draft it yourself, don't ask for it: 1–3 paragraphs of buyer-facing prose for the catalog page, enumerating the final entity list (e.g. *"covering the core hiring path (postings, candidates, applications, interviews, and offers)"*). With expert flow on, show it in the same message as the `tagline` draft so one confirmation covers both. Catalog-Clone: inherit the source's `description`, redrafting it only when the customize conversation changed the entity set it enumerates.
@@ -29,7 +31,7 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 - `artifact: semantic-blueprint` (fixed)
 - `blueprint_version: "3.1"`
 - `version: "<CURRENT_VERSION>"` (currently `"5.5"`)
-- `system_name`, `system_slug`, `icon_name` (icon-set handle, not a URL)
+- `system_name`, `system_slug` (lowercase kebab-case, e.g. `it-ops-starter`; the file name is exactly `<system_slug>-semantic-blueprint.md`), `icon_name` (icon-set handle, not a URL)
 - `tagline` (one-line marketing-voice line; also feeds `modules.description`)
 - `description` (longer marketing-voice prose for the catalog page; YAML literal block fine)
 - `license` (catalog metadata; e.g. `MIT`)
@@ -43,10 +45,10 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 
 **Mode-specific frontmatter:**
 
-- **Greenfield only**: `naming_mode` (`template:<vendor>` or `agent-optimized`). `related_modules` is now an advisory integration hint and CAN appear in greenfield files when the customer named related neighbors during Stage 6; `departments` / `industries` remain catalog-discovery tags omitted from greenfield.
+- **Greenfield only**: `naming_mode` (`template:<vendor>` or `agent-optimized`), and `related_modules` (always written; the advisory list built in Stage 6, as module slugs: the catalog slug when known, else the kebab-case domain name). `departments` / `industries` are catalog-discovery tags omitted from greenfield.
 - **Catalog-Clone only**: `related_modules` (inherited from source; advisory hint, never a prerequisite), `departments` and `industries` (when populated in source). **Do not emit `naming_mode`** — catalog blueprints don't carry it.
 
-**Keep-with-placeholder rule (both modes).** Every canonical top-level / numbered section is **always present**. When a section has no real content, **keep its heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (lowercase `none`, **colon not em-dash**; bare `_(none)_` allowed when a reason adds nothing). **Apply this rule uniformly**: omitting a canonical section, leaving a bare empty heading, or writing an old-form free-text stub (`_(no cross-scope edges declared in greenfield mode...)_`) is forbidden. The **only** omit-when-empty exception is the §3 per-entity sub-blocks (Computed fields / Validation rules / Input-type rules / Select rule), which are not numbered navigation anchors.
+**Keep-with-placeholder rule (both modes).** Every canonical top-level / numbered section is **always present** (the §9 RACI trio, including §9.2, follows the access level instead; see the template). When a section has no real content, **keep its heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (lowercase `none`, **colon not em-dash**; bare `_(none)_` allowed when a reason adds nothing). **Apply this rule uniformly**: omitting a canonical section, leaving a bare empty heading, or writing an old-form free-text stub (`_(no cross-scope edges declared in greenfield mode...)_`) is forbidden. The **only** omit-when-empty exception is the §3 per-entity sub-blocks (Computed fields / Validation rules / Input-type rules / Select rule), which are not numbered navigation anchors.
 
 Concrete table of empty-when-trimmed sections (always kept; placeholder when empty):
 
@@ -54,15 +56,15 @@ Concrete table of empty-when-trimmed sections (always kept; placeholder when emp
 |---|---|---|
 | §4 Aliases | Keep; `_(none: …)_` placeholder unless the user supplied vendor / industry aliases | Inherit; trim rows the user dropped; keep the heading with `_(none: …)_` if empty after trim |
 | §5.3 Cross-scope edges | Keep; `_(none: …)_` placeholder (no cross-scope edges to declare) | Inherit; trim; keep the heading with `_(none: …)_` if empty after trim |
-| §6.1 Master consumers | Keep; `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
-| §6.2 Outbound handoffs | Keep; `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
-| §6.3 Inbound handoffs | Keep; `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
-| §6.4 Master providers | Keep; `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.1 Master consumers | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.2 Outbound handoffs | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.3 Inbound handoffs | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.4 Master providers | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
 | §6 parent heading | Keep; the four sub-blocks each carry `_(none: …)_` when empty | Keep; sub-blocks carry `_(none: …)_` when empty |
 
 **Always-present sections** (structural anchors; require real content — empty is a 🔴 blocker, not a placeholder case): §1 Overview, §2 Entity summary + Mermaid, §3 Entities catalog, §5.1 Intra-scope edges, §7 Lifecycle states (per master), §8.1 Permissions. §5.2 Built-in edges and §8.2 Business rules are **also always present** but keep-with-placeholder: write `_(none: <short reason>)_` when §5.2 has no built-in `users` / `roles` edges or §8.2 has no flag-derived rules.
 
 **No old-form stub strings.** Phrases like `_(no cross-scope edges declared in greenfield mode...)_`, `_(no cross-domain context...)_`, `_(no industry-scoped aliases...)_` MUST NOT appear — they are replaced by the canonical `_(none: <short reason>)_` placeholder, never by an omitted heading. A missing canonical section and a bare empty heading are both hard violations the pre-save verification catches.
 
-**Discovery tag casing** (when emitted): `entities` is lowercase snake_case (matches Semantius `table_name`). `domain` / `related_modules` / `departments` / `industries` use Title-case / acronym form (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`).
+**Discovery tag casing** (when emitted): `entities` is lowercase snake_case (matches Semantius `table_name`). `related_modules` holds module slugs (lowercase kebab-case). `domain` / `departments` / `industries` use Title-case / acronym form (`Sales`, `IT`, `HR`, `Healthcare`, `SaaS`, `Financial Services`).
 

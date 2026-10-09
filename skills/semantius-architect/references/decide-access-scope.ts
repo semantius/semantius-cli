@@ -9,7 +9,7 @@
  * never passes live state in.
  *
  * Usage:
- *   bun decide-access-scope.ts --slug <system_slug> --flow plan|expert|fast
+ *   bun decide-access-scope.ts --slug <system_slug> --flow guided|expert|fast
  *       ( --has-reference-data-entities yes|no --has-process-gate yes|no  |  --blueprint <path> )
  *       [--requested-level basic|advanced|gated|raci] [--keep-custom yes|no]
  *       [--answer basic|advanced|gated|raci]
@@ -34,7 +34,7 @@ import { readFileSync } from "node:fs";
 const LEVELS = ["basic", "advanced", "gated", "raci"] as const;
 type Level = (typeof LEVELS)[number];
 type Scope = "custom" | Level;
-type Flow = "plan" | "expert" | "fast";
+type Flow = "guided" | "expert" | "fast";
 type Current = Scope | "none";
 
 type Facts = {
@@ -261,7 +261,7 @@ function decideNew(f: Facts): Decision {
         ? "The design has no process gates and has reference data entities, so it needs an admin level."
         : "The design has no process gates and no reference data entities." };
   }
-  if (f.flow === "plan") {
+  if (f.flow === "guided") {
     return f.live_raci
       ? { access_scope: "raci", ask: null, reason: "The design has process gates and another module already uses raci." }
       : { access_scope: "gated", ask: null, reason: "The design has process gates and no other module uses raci." };
@@ -341,8 +341,8 @@ async function main(): Promise<number> {
   const slug = args.get("--slug");
   if (!slug) throw new UsageError("--slug is required");
   const flow = args.get("--flow");
-  if (flow !== "plan" && flow !== "expert" && flow !== "fast") {
-    throw new UsageError(`--flow must be plan, expert or fast (got "${flow ?? ""}")`);
+  if (flow !== "guided" && flow !== "expert" && flow !== "fast") {
+    throw new UsageError(`--flow must be guided, expert or fast (got "${flow ?? ""}")`);
   }
 
   const blueprint = args.get("--blueprint");

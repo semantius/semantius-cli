@@ -9,7 +9,7 @@ With the naming convention locked in, draft the entities from your own knowledge
 - In either case, weave in any extra entities the user flagged in their Stage 1 requirements, and drop entities that clearly don't apply.
 - Apply the Stage 1 best-practice points; in expert flow, only the points the user picked (and any they typed).
 
-> **🛑 Template mode: name the vendor object each entity maps to.** When `naming_mode` is `template:<vendor>`, every proposed entity **must** explicitly cite the vendor object it mirrors, in a fourth column "Vendor object". This forces you to check your own confidence. If you can't name a specific vendor object with high confidence, you don't actually know the vendor's schema well enough to claim template-fidelity, say so in one sentence and offer the user either (a) switch to agent-optimized, (b) let them paste the vendor's object list, or (c) proceed but mark the entity as "inspired-by, not canonical". In a fast run, take (c) for that entity without asking; the go-ahead table shows it.
+> **🛑 Template mode: name the vendor object each entity maps to.** When `naming_mode` is `template:<vendor>`, every proposed entity **must** explicitly cite the vendor object it mirrors, in the **<Vendor> object** column of the chat table. That column is chat-only: in the file, write `<Vendor> object: <Name>` at the start of the §3 notes cell, and never add a column to §3. This forces you to check your own confidence. If you can't name a specific vendor object with high confidence, you don't actually know the vendor's schema well enough to claim template-fidelity, say so in one sentence and offer the user either (a) switch to agent-optimized, (b) let them paste the vendor's object list, or (c) proceed but mark the entity as "inspired-by, not canonical". In a fast run, take (c) for that entity without asking; the go-ahead table shows it.
 >
 > **Watch for domain ambiguity traps.** Some concepts are modeled very differently across vendors and editions:
 > - **"Lead"**, Salesforce has a dedicated `Lead` object that converts to Contact+Account+Opportunity. HubSpot (since 2023) has a dedicated `Lead` object (FQN `LEAD`, 0-136) separate from `Contact`; older HubSpot accounts treated a lead as a `Contact` with `lifecycle_stage=lead`. Pipedrive has `Lead` separate from `Person`. Zendesk Sell has `Lead` separate from `Contact`.
@@ -25,11 +25,11 @@ With the naming convention locked in, draft the entities from your own knowledge
 3. Note for the write: the `**Key types:**` rows (`typeid` base with a prefix, `based on` for each based entity), the dotted diagram edges, and the shared §5.1 edges drawn from the base.
 4. Prepare exactly one plain-words aside per family for the presentation, and the family question only when the deciding fact is unknown.
 
-Present the list as a table with **Table name**, **Singular label**, **Purpose (one line)**, and, in template mode only, a **Vendor object** column showing the exact vendor object name (e.g., `HubSpot Lead (0-136)`, `Salesforce Contact`, `Zendesk Ticket`).
+Present the list as a table in a chat message, never as widget options, in every flow except a fast run. Columns, in plain words: **Name**, **What it holds**, and, in template mode only, **<Vendor> object** showing the exact vendor object name (e.g., HubSpot Lead (0-136), Salesforce Contact, Zendesk Ticket). Mention the key choice in plain words in the same message. This confirmation is its own turn; never combine it with another stage's confirmation.
 
 > **Fast flow** (a fast run, before the go-ahead; `../../semantius-admin/references/fast-flow.md`, section 3). Draft the list from the baseline's object model (or from first principles with no baseline), trimmed to the interview answers and including the must-haves the user picked. Do not present the list, do not ask the question below, and do not fire "Also track" (Stage 1's must-haves replaced it). Any family question takes its Recommended option. **End this stage with the go-ahead** (`fast-flow.md`, section 3): the one summary with the entity table, then *"Build and deploy it now?"*. Stage 5 starts only after a "Yes".
 
-Then ask the user a single open question (in plan and expert flow): *"Does this entity list look right, or would you like to add, remove, rename, or merge any?"* Loop on their feedback until they confirm. **When the user renames an entity that carries an inherited `catalog code` (catalog-clone or prior version), apply the silo-rename rule under `catalog code` in §3: pin the catalog code to the pre-rename concept and keep `role` / `mastered in`; change only `data_object` and labels — unless the user says it is a genuinely new concept.** Keep the list tight, 6–15 entities is the sweet spot for most mid-sized systems; if you feel the urge to go over 20, that's a signal you're over-modeling.
+Then ask the user a single open question (in guided and expert flow), in prose, alone in its message: *"Does this entity list look right, or would you like to add, remove, rename, or merge any?"* Loop on their feedback until they confirm. **When the user renames an entity that carries an inherited `catalog code` (catalog-clone or prior version), apply the silo-rename rule under `catalog code` in §3: pin the catalog code to the pre-rename concept and keep `role` / `mastered in`; change only `data_object` and labels — unless the user says it is a genuinely new concept.** Keep the list tight, 6–15 entities is the sweet spot for most mid-sized systems; if you feel the urge to go over 20, that's a signal you're over-modeling.
 
 #### `necessity` rule — greenfield blueprints carry no optionals
 
@@ -48,7 +48,7 @@ This is the opposite of catalog blueprints, which are intentionally generic ("an
 
 **Proactively scope adjacent concepts during the entity-proposal loop.** Instead of marking borderline entities as `optional` for the analyst to ask about later, ask about them here. Pattern:
 
-After presenting the core entity list, identify 3-6 *commonly-related but not always wanted* concepts for this domain. (Plan and expert flow; a fast run asked Stage 1's must-haves question instead and skips this.)
+After the user has explicitly confirmed the core entity list, identify 3-6 *commonly-related but not always wanted* concepts for this domain. (Guided and expert flow; a fast run asked Stage 1's must-haves question instead and skips this.) An answer to "Also track" never counts as confirming the entity list.
 
 **Customizations consultation first.** For every candidate concept, check `.optionals_decided.<slug>` in `$CUSTOMIZATIONS_FILE` before deciding whether to include it in the multiSelect:
 
@@ -86,6 +86,8 @@ yq -i ".optionals_decided.${SLUG} = \"excluded\" | .optionals_decided.${SLUG} li
 ```
 
 Their answer is binding: selected concepts join the entity list as `required`; unselected concepts are not in the blueprint at all.
+
+**If the picks add entities** (the selected concepts, and any link entities they imply), show the updated entity table again and confirm it the same way before Stage 5.
 
 Example for a roadmap tool:
 - Core list confirmed: `features`, `ideas`, `releases`, `feedback`, `tags`
@@ -137,7 +139,7 @@ For §5.3a (this scope's masters point outbound at sibling targets), the `delete
 
 Every entity this module provisions (`master` / `embedded_master`) gets a primary-key type, decided here because it is **locked once the entity is deployed** (changing it means rebuilding the entity). The default, `auto_increment` (sequential numbers the database assigns), needs no row. Record a row in §3 `**Key types:**` only for a different choice:
 
-- **`typeid`** for records whose ids users or other systems see: named in links, emails, support conversations, or integrations (accounts, orders, invoices, tickets). Ids read like `acct_01h455vb4pex5vsknk084sn02q`: sortable, and the prefix says what the record is. Pick a short, recognizable prefix (`acct`, `inv`, `tkt`), lower-case letters and underscores, starting and ending with a letter, unique within the blueprint.
+- **`typeid`** for records whose ids users or other systems see: named in links, emails, support conversations, or integrations (accounts, orders, invoices, tickets). Ids read like `acct_01h455vb4pex5vsknk084sn02q`: sortable, and the prefix says what the record is. Pick a short, recognizable prefix (`acct`, `inv`, `tkt`), lower-case letters and underscores, starting and ending with a letter, unique within the blueprint. The prefix is written without the separator (`feat`, not `feat_`).
 - **`uuid`** when ids must be globally unique but no prefix is wanted.
 - **`bigint`** / **`text`** only when the records mirror an external system whose ids must be kept: the caller then supplies the id on every insert.
 - **`is_a`** / **`has_a`** only for the families [`normalization.md`](normalization.md) decided. The row's fourth column, `based on`, names the base (`-` for every other key type). A family base is `typeid` with a prefix; an `is_a` entity needs its own prefix; a `has_a` entity has none (`-`). Format and rules: the template's `**Key types:**` block.

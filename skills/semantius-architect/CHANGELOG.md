@@ -8,6 +8,26 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Unreleased: every confirmation its own turn; plain-language templates; "plan flow" renamed "guided flow"
+
+2026-10-09. From the Roadmap Planner postmortem: a plan-flow run collapsed seven confirmations into two widgets and never showed the relationships, diagram, classification or restricted steps. Causes: no rule against merging confirmations, chat templates written in identifiers the writing conventions ban, no step that presents relationships or lifecycles, and contradicting rules.
+
+1. **"Plan flow" is renamed "guided flow"** (`.interaction_flow: guided`, `Interaction flow: guided`, `--flow guided`, the task marker `fast: guided flow for this build`), in all four pipeline skills, the docs and `decide-access-scope.ts`. "Plan" was read as "one plan, one approval". Any saved value other than `expert` or `fast` reads as guided; "plan flow" is no longer a switch phrase.
+2. **Each confirmation is its own turn** (SKILL.md, under the stage pipeline). The only shared turns are the family question with "Also track", and the Stage 5 confirmation. The stage template's wording and headings are used; no "write it up?" question.
+3. **Pre-write gate** (stage-13-write.md) and task completion: every confirmation the flow asks was shown and confirmed; each `Design ›` task records "shown and confirmed".
+4. **Convention 8 decides how a required table is worded, never whether it is shown** (SKILL.md Pre-emit check, interaction-flow.md section 3).
+5. **Plain-language chat templates** for the entity table (Stage 3), related modules (Stage 6), handoffs (Stage 7), classification (Stage 9) and restricted steps (Stage 10). Links to other modules are worded as possibilities. The classification table names no role, and restricted steps never say who takes them before the access level is decided.
+6. **Stage 3:** the entity list is a table in chat, confirmed alone; "Also track" comes after that confirmation and never counts as it; the table is shown again when the picks add entities. The vendor object column is chat-only (the file notes it in the §3 notes cell). Vendor names that clash with a platform built-in get a self-describing name (stage-2-naming.md).
+7. **Stage 5 now asks:** relationships in plain words, the diagram and the lifecycles (drafted here) in one message, confirmed.
+8. **Stage 6 related modules** is in the skipped-question tables (guided flow builds the list without showing it).
+9. **Greenfield §6:** only the handoff rows the user accepted are written. **`related_modules`** is always written in greenfield, as module slugs.
+10. **`system_slug` is kebab-case**, and the file name is exactly `<system_slug>-semantic-blueprint.md`.
+11. **Smaller fixes:** `operational_workflow` needs at least one restricted step; key prefixes are written without the separator; the template diagram uses the Stage 5 `builtin` / `master` classes; built-ins are listed in §3; the template frontmatter carries `version`, `naming_mode` and `initial_request`; fixed skipped-question counts are replaced by a pointer to the table; the helper-briefing rule (Pre-save verification).
+
+No version bump (internal testing); the content contract changed (items 6, 9, 10, 11), so the next release bumps minor.
+
+---
+
 ## Unreleased: Stage 1 guidance in expert flow; shorter fast-flow interview
 
 2026-10-06. Expert flow now does everything plan flow does in Stage 1, plus more, and fast flow asks less, so each flow adds to the one before it (fast → plan → expert). Rules: `references/stage-1-capture.md`, `../semantius-admin/references/interaction-flow.md`, `../semantius-admin/references/fast-flow.md`.

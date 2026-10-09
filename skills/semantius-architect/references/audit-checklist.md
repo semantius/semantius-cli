@@ -23,7 +23,7 @@
 - 🔴 `version` is present, a quoted string in the form `"MAJOR.MINOR"` (e.g. `"1.0"`, `"2.4"`). **Major comparison gates the audit:** same major as `CURRENT_VERSION` → audit normally; older major (or missing, treated as `0`) → refuse to audit and route to archived-knowledge mode (re-author at current major, or reference only — see "How files are routed by version" in the resident SKILL.md); newer major → error and stop.
 - `naming_mode` is either `template:<vendor>` or `agent-optimized`
 - 🔴 `tagline` is present and non-empty — it feeds the module record's `description` (`modules.description`), which the UI module selector and landing page header rely on. Missing or empty is a Blocker; propose a tight buyer-facing one-liner. Keep it readable in the selector chip (a full-sentence narrative with commas/em-dashes belongs in `description` / §1 Overview, not the chip).
-- `system_slug` is snake_case
+- `system_slug` is lowercase kebab-case, and the file name is exactly `<system_slug>-semantic-blueprint.md`
 - 🟡 `system_slug` is **verbose** when a clean industry-standard acronym would do (e.g. `customer_data_platform` when `cdp` is the obvious form; `it_asset_management` when `itam` is; `it_service_management` when `itsm` is; `applicant_tracking_system` when `ats` is). The slug shows up in URLs, permissions, and discovery tags; short matters there, and the long form already lives on `system_name`. Flag as 🟡 Warning with a proposed acronym slug. **Suppress the warning if `initial_request` shows the user explicitly asked for the verbose form**; explicit user naming wins. Bare common-noun slugs that aren't acronym candidates (`helpdesk`, `roadmap`) are fine and should not be flagged. Multi-variant orgs that need to disambiguate (`acme_crm` next to a sibling `salesforce_clone`) are also fine.
 - `created_at` is a valid date
 - 🟡 `domain`, when present, is **Title-case / acronym form**. Common preferred values: `CRM`, `ITSM`, `HRIS`, `LMS`, `ERP`, `PIM`, `Project Management`, `Field Service`, `Subscription Billing`, `CMS`. Non-common Title-case values (e.g. `Talent Acquisition`, `EHR`, `Compliance`) are fine — the vocabulary is open. Two specific Warnings:
@@ -56,7 +56,7 @@ Both modes use `artifact: semantic-blueprint`. The expected sections differ.
 **Raw HTML is a 🔴 Blocker** — flag any `<details>` / `<summary>` / `</details>` or other HTML tag. The common case is a collapsible wrapping a long §5.3b context-edges table, inherited verbatim from a catalog source. The fix: strip the tags and keep the plain markdown table underneath; the deployer and the analyst parse markdown tables, not HTML.
 
 **Frontmatter cross-checks:**
-- 🟡 **Greenfield-mode file carrying `related_modules`, `departments`, or `industries`** — those are catalog-discovery tags that don't belong on a tailored deployment file. Propose removing.
+- 🟡 **Greenfield-mode file carrying `departments` or `industries`** — those are catalog-discovery tags that don't belong on a tailored deployment file. Propose removing.
 - 🟡 **Catalog-clone-mode file carrying `naming_mode`** — catalog blueprints don't carry it. Propose removing.
 
 **§3 catalog `necessity` column** _(blueprint-level scope check)_

@@ -8,33 +8,33 @@ Fast flow is the third value of the `.interaction_flow` switch ([`interaction-fl
 
 ## 2. When a run is a fast run
 
-**The switch.** The user turns it on by saying "fast flow" (`.interaction_flow: fast`); "plan flow" or "expert flow" replaces it. A bare "fast", "just do it", "don't ask me", "quick", or "simple" changes nothing. Switching to it narrates: *"Switched to fast flow (experimental)."*
+**The switch.** The user turns it on by saying "fast flow" (`.interaction_flow: fast`); "guided flow" or "expert flow" replaces it. A bare "fast", "just do it", "don't ask me", "quick", or "simple" changes nothing. Switching to it narrates: *"Switched to fast flow (experimental)."*
 
 **The scope.** The saved switch is the org's preference, not a per-run fact. The admin decides the flow for each run:
 
 | Run | Flow |
 |---|---|
 | New build from an idea (`Architect mode: create`), switch `fast` | `fast` |
-| Anything that starts from an existing design: clone, deploying a blueprint or spec, customize, extend, audit | `plan`; the admin narrates once: *"Fast flow covers new builds only; this run uses plan flow."* |
+| Anything that starts from an existing design: clone, deploying a blueprint or spec, customize, extend, audit | `guided`; the admin narrates once: *"Fast flow covers new builds only; this run uses guided flow."* |
 | Rebuild | `expert` (reopening every decision is its purpose) |
 
 **The two signals.** A sub-skill is in fast flow only when one of these says so; the saved switch on its own never makes a sub-skill skip a question.
 
 1. **The run context line** `Interaction flow: fast`, passed by the admin to every sub-skill (`semantius-admin/SKILL.md`, Step 7.3).
-2. **The task marker.** The admin writes the state into the description of its pipeline tasks (read it with `TaskGet`): `fast: awaiting go-ahead` when the run starts, `fast: go-ahead given` when the user says yes, `fast: plan flow for this build` when the user picks "Ask me as usual".
+2. **The task marker.** The admin writes the state into the description of its pipeline tasks (read it with `TaskGet`): `fast: awaiting go-ahead` when the run starts, `fast: go-ahead given` when the user says yes, `fast: guided flow for this build` when the user picks "Ask me as usual".
 
 | Skill | Fast flow before the go-ahead | Fast flow after the go-ahead |
 |---|---|---|
 | Architect | Signal 1, or the marker says `fast: awaiting go-ahead` | The marker says `fast: go-ahead given` |
 | Analyst, modeler | never (they run after it) | Signal 1, or the marker says `fast: go-ahead given` |
 
-Check both signals at Step 0 and again after a context reset. When neither is present, run in plan flow. **That is the safe direction:** a lost signal means the user is asked questions again, never that a question is answered for them by mistake.
+Check both signals at Step 0 and again after a context reset. When neither is present, run in guided flow. **That is the safe direction:** a lost signal means the user is asked questions again, never that a question is answered for them by mistake.
 
-**Direct calls.** The architect called directly on a new idea while the switch is `fast` hands the run to `semantius-admin` (load it with the Skill tool, passing the user's request) before it creates any task; the admin re-enters the architect with the run context. The analyst or modeler called directly runs in plan flow, whatever the switch says.
+**Direct calls.** The architect called directly on a new idea while the switch is `fast` hands the run to `semantius-admin` (load it with the Skill tool, passing the user's request) before it creates any task; the admin re-enters the architect with the run context. The analyst or modeler called directly runs in guided flow, whatever the switch says.
 
-**Questions before the go-ahead still fire:** the admin's Step 0 clarifying question and the Step 1.3 match widget. If the user picks "Deploy the existing…", the run starts from a blueprint and therefore runs in plan flow.
+**Questions before the go-ahead still fire:** the admin's Step 0 clarifying question and the Step 1.3 match widget. If the user picks "Deploy the existing…", the run starts from a blueprint and therefore runs in guided flow.
 
-**Fast flow includes plan flow.** The six questions plan flow skips ([`interaction-flow.md`](./interaction-flow.md), section 3) take their plan-flow defaults in fast flow too.
+**Fast flow includes guided flow.** The questions guided flow skips ([`interaction-flow.md`](./interaction-flow.md), section 3) take their guided-flow defaults in fast flow too.
 
 ## 3. Before the go-ahead (architect)
 
@@ -65,13 +65,13 @@ The detail lives in the architect's stage files; this is the map.
 - options:
   1. `"Yes, build and deploy it (Recommended)"`, description `"I finish the design and deploy it without more questions. You get the list of what I decided at the end."`
   2. `"Change something first"`, description `"Tell me what to change. I update the design and show it to you again."`
-  3. `"Ask me as usual for this build"`, description `"I ask each question as it comes up, like plan flow. Fast flow stays on for later builds."`
+  3. `"Ask me as usual for this build"`, description `"I ask each question as it comes up, like guided flow. Fast flow stays on for later builds."`
 
 **Recording the answer.** Before anything else, the admin updates the marker in its pipeline tasks' descriptions (`TaskList`, then `TaskUpdate` each):
 
 - **Yes:** `fast: go-ahead given`.
 - **Change something first:** stays `fast: awaiting go-ahead`; take the change in prose, update the draft, show the summary again, ask again.
-- **Ask me as usual:** `fast: plan flow for this build`, and the rest of this run is in plan flow (the admin passes `Interaction flow: plan` to the analyst and modeler). The switch stays `fast`.
+- **Ask me as usual:** `fast: guided flow for this build`, and the rest of this run is in guided flow (the admin passes `Interaction flow: guided` to the analyst and modeler). The switch stays `fast`.
 
 ## 4. After the go-ahead
 
@@ -82,11 +82,11 @@ After the go-ahead, only a stop condition (4.2) or the modeler's Closing Contrac
 - Never call `AskUserQuestion` (the one exception, the architect's keep-or-replace question, is in 4.2; the modeler's closing sample-data question is part of the Closing Contract).
 - Never end a message with a question, and never print a template that ends in one ("Look right?", "Add, drop, or rename any?", "Proceed with execution?"). A message that ends in a question ends the turn, which stops the run exactly as a widget would.
 - Don't render stage proposals, plan summaries, or "Picked for you" lines. Log one line per decision instead (section 5); the task list shows progress.
-- Don't name the files written. The architect and analyst send no "Wrote `<path>`" close-out, and the admin's close-out leaves out where the files are saved (plan and expert flow name them).
+- Don't name the files written. The architect and analyst send no "Wrote `<path>`" close-out, and the admin's close-out leaves out where the files are saved (guided and expert flow name them).
 
 ### 4.2 What still stops the run
 
-These behave exactly as in plan flow: a loud halt, no success footer.
+These behave exactly as in guided flow: a loud halt, no success footer.
 
 - Halts, errors, and refusals, including version gates and the analyst or modeler refusing an input.
 - Catalog drift found by the modeler since the analyst ran.
@@ -105,7 +105,7 @@ At every other question point, take the first rule that applies:
 | # | Situation | What fast flow does |
 |---|---|---|
 | 1 | A saved answer exists in `customizations.yaml` | Use it, as in every flow. |
-| 2 | One of plan flow's five skipped questions | Use its plan-flow default. |
+| 2 | One of the questions guided flow skips (interaction-flow.md, section 3) | Use its guided-flow default. |
 | 3 | A question about linking to, sharing, or reusing a deployed entity whose table name is **not** an exact match (section 3) | Take the option that keeps this module's own copy and changes nothing outside it, even when mapping is recommended. |
 | 4 | The question has a "(Recommended)" option | Take it, even when it changes another module. After rule 3 this only happens for exact matches. |
 | 5 | No option is recommended | Take the option that changes nothing outside this module. |
@@ -125,14 +125,14 @@ The concrete pick at the main known gates, from rules 1 to 9. Every gate's own f
 | Architect | Stage 10 permission step: live module set up by hand (`custom`) | Pause and ask keep or replace; with the answer the run continues. |
 | Architect | Stage 11 RACI matrix confirmation (only when the live module already uses `raci`) | Accept the matrix without asking. |
 | Architect | "Unsure of the vendor object" offer (`stage-3-entities.md`) | Option (c): mark the entity "inspired-by, not canonical". |
-| Architect | Stage 13 catalog text | The plan-flow default (drafts written). |
+| Architect | Stage 13 catalog text | The guided-flow default (drafts written). |
 | Architect | Pre-save failure with a proposed fix | Apply the fix. |
 | Analyst | 3b, same table name in another module (3b.0, 3b.1, 3b.2 and its follow-ups) | The Recommended option: these are exact matches. Where to host, Case D (no Recommended option): the first module listed. |
 | Analyst | 3c similar name | Option 3, "Different concept, keep both names": this module keeps the name shown at the go-ahead. |
 | Analyst | 3c.1 / N8 Case A | "Keep them separate" (rule 3 overrides the Recommended option). |
 | Analyst | 3c.1 / N8 Case B | "Keep our own <Plural Label>" (rule 3 overrides the Recommended option). |
 | Analyst | 3c.1 / N8 Case C, and one entity with several candidate bases | "Keep them separate". |
-| Analyst | 3d missing owner module | The plan-flow default, "Set up <Plural Label> in this module for now"; the name-clash follow-up takes its Recommended option. |
+| Analyst | 3d missing owner module | The guided-flow default, "Set up <Plural Label> in this module for now"; the name-clash follow-up takes its Recommended option. |
 | Analyst | 3e several candidate link targets | The candidate whose table name matches exactly; if none does, "Create our own here under a different name". |
 | Analyst | 3e single candidate in an unexpected module | The Recommended option. |
 | Analyst | Entity moved by hand since the last run (`stage-3-placement.md`, 2g drift) | Neither option: leave the entity where it is now and continue. |
@@ -152,7 +152,7 @@ The concrete pick at the main known gates, from rules 1 to 9. Every gate's own f
 
 ### 4.5 What fast flow never saves, and how its tasks complete
 
-- **Nothing auto-picked is written to `customizations.yaml`.** It is a default, not the user's decision, so it must not become standing policy (the same rule as plan flow's defaults). Answers the user actually gave before the go-ahead (the must-haves) are saved as usual.
+- **Nothing auto-picked is written to `customizations.yaml`.** It is a default, not the user's decision, so it must not become standing policy (the same rule as guided flow's defaults). Answers the user actually gave before the go-ahead (the must-haves) are saved as usual.
 - **Auto-picks never become `Q:` tasks.** They are resolved at the enumerate step like a policy hit (`task-tracking.md`, section 3). The log line (section 5) stands in for the task; where a skill checks that every must-fire question has a completed `Q:` task, a log line for that decision satisfies the check.
 - **Stage tasks complete when their draft is done and their picks are logged**, not when a user confirmation lands.
 
@@ -190,4 +190,4 @@ On a halt, the admin's failure report (Step 6.8) adds one line after the halt me
 
 ## 7. Resuming after a context reset
 
-`TaskList` first, as always, then `TaskGet` the admin pipeline task to read the marker. `fast: go-ahead given`: re-read this file and continue from the current stage without asking anything, and never ask the go-ahead again. `fast: awaiting go-ahead`: show the go-ahead summary again and ask it. `fast: plan flow for this build`, or no marker: the run is in plan flow.
+`TaskList` first, as always, then `TaskGet` the admin pipeline task to read the marker. `fast: go-ahead given`: re-read this file and continue from the current stage without asking anything, and never ask the go-ahead again. `fast: awaiting go-ahead`: show the go-ahead summary again and ask it. `fast: guided flow for this build`, or no marker: the run is in guided flow.

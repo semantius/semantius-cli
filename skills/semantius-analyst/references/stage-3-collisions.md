@@ -227,8 +227,8 @@ For every 🛑 Similar-name flag, fire a three-option `AskUserQuestion`, or a **
 
 **Fires only for `contributor` and `consumer` rows.** `embedded_master` rows with a missing owner are handled by 3b.0 / 3b.1 / Case 2 above — they always emit re-prefixed governance under the installing unit's slug; no widget fires for them.
 
-> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). This block covers only the first 3d question below; the slug-collision follow-up further down names another module's table and is asked in plan and expert flow. **Saved answer** (`.on_missing_owner`): use it. **Otherwise, expert flow off:** apply option 1, "Set up <Plural Label> in this module for now" (`embed_locally`); create no `Q:` task, fire no widget, do not write `.on_missing_owner`, and name the choice in the 3g "Picked for you" line ("<Plural Label> set up in this module until <Missing Module Display Name> is added"). **Expert flow on:** ask as below.
-> **Fast flow, after the go-ahead:** a saved answer still wins; otherwise apply the same plan-flow default, "Set up <Plural Label> in this module for now", with no "Picked for you" line; log it; don't ask.
+> **Interaction flow** (the `.interaction_flow` switch, read at Step 0). This block covers only the first 3d question below; the slug-collision follow-up further down names another module's table and is asked in guided and expert flow. **Saved answer** (`.on_missing_owner`): use it. **Otherwise, expert flow off:** apply option 1, "Set up <Plural Label> in this module for now" (`embed_locally`); create no `Q:` task, fire no widget, do not write `.on_missing_owner`, and name the choice in the 3g "Picked for you" line ("<Plural Label> set up in this module until <Missing Module Display Name> is added"). **Expert flow on:** ask as below.
+> **Fast flow, after the go-ahead:** a saved answer still wins; otherwise apply the same guided-flow default, "Set up <Plural Label> in this module for now", with no "Picked for you" line; log it; don't ask.
 
 When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) points at a module that does NOT exist in the live catalog, group these by missing module and, with expert flow on, fire one `AskUserQuestion` per missing module.
 
@@ -249,7 +249,7 @@ When a `contributor` or `consumer` entity (per blueprint §3 `mastered_in`) poin
 - Option 1 → `create-new` in this module's spec (this module is the entity's current owning module). Add a §7.2 🟡 note: *"<Plural Label> currently lives in this module. When <Missing Module Display Name> is added later, run the analyst on its blueprint and pick 'share via shared module' at the collision prompt to reassign — no data migration needed."*
 - Option 2 → `dropped (out of scope)` annotation.
 
-**Slug collision under option 1.** Entity slugs are globally unique. If the blueprint's bare `table_name` is already used by *another* module (e.g. blueprint wants `employees` but `northwind.employees` exists in the live catalog as a sales sample), option 1 can't create with the bare name. Fire a follow-up `AskUserQuestion` (in plan and expert flow):
+**Slug collision under option 1.** Entity slugs are globally unique. If the blueprint's bare `table_name` is already used by *another* module (e.g. blueprint wants `employees` but `northwind.employees` exists in the live catalog as a sales sample), option 1 can't create with the bare name. Fire a follow-up `AskUserQuestion` (in guided and expert flow):
 
 **Policy path:** `.slug_collision_naming` (global default; `context-prefix` / `module-prefix` / `reuse-existing`). Free-text "Other" answers are NOT cached (matches the not-written rules in admin `references/customizations-protocol.md`, 7.6).
 

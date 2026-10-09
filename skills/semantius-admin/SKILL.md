@@ -9,7 +9,7 @@ description: >-
   blueprint and deploy", "what's deployed in our instance?", "status of
   semantius", "audit this file" (naming no specific skill), "get started",
   "I'm new here, set this up", "turn on fast flow", "expert flow",
-  "plan flow", or anything needing workspace artifacts
+  "guided flow", or anything needing workspace artifacts
   inspected and routed to the right sub-skill. Also trigger on a deploy
   request with multiple URLs, paths, or a glob. Do NOT trigger when the user
   invokes one sub-skill directly (not "audit this spec with
@@ -52,7 +52,7 @@ Everything this skill prints to chat is read by a casual user who does not know 
 - The download milestone: ONE result-shaped line per URL the user named, emitted when the fetch has validated (Step 2 / 6.1): *"Downloaded the Hiring Starter blueprint from semantius.com."* Display name (front-matter `system_name`) and host only; nothing about paths, folders, staging, or validation. It reports what happened, never what is about to happen or what machinery ran. Local sources get no milestone (the user named the file; the first question or the plan lead-in names the design within a step).
 - The one-sentence plan lead-in (the plan itself is the task list; see the core invariant above).
 - Questions the user must answer (`AskUserQuestion`: scope flags, sub-skill decisions).
-- Results the user cares about: what's now live, where produced files landed, and any failure they must act on (with the failing sub-skill's verbatim message). In plan and expert flow this includes the architect's and the analyst's one-line close-outs naming the blueprint and spec files as each is written; only a fast run leaves file names out ([`references/fast-flow.md`](./references/fast-flow.md), 4.1).
+- Results the user cares about: what's now live, where produced files landed, and any failure they must act on (with the failing sub-skill's verbatim message). In guided and expert flow this includes the architect's and the analyst's one-line close-outs naming the blueprint and spec files as each is written; only a fast run leaves file names out ([`references/fast-flow.md`](./references/fast-flow.md), 4.1).
 - The close-out (Step 8).
 
 **The task list is a sanctioned surface, not chat.** Task subjects follow the same plain-language bar as chat (Writing Convention 8: no internal vocabulary, no stage names, no raw slugs where a display name exists); task descriptions are working memory (flag values, one-line step summaries, verbatim failure messages) and may carry internal keys but never diagnostic detail. Task tool calls need no narration.
@@ -68,7 +68,7 @@ Everything this skill prints to chat is read by a casual user who does not know 
 
 Bash `description` fields obey the same rule (they render as "Ran <description>" in chat): neutral plain English ("Checking the workspace", "Reading the artifact"), never "Probe org", "adenin guard", "yq check", "Append to customizations.yaml".
 
-**Pipeline hand-offs are not narrated.** When the admin advances from one sub-skill to the next inside an item's pipeline (e.g. the analyst finishes the spec and the modeler is next), emit nothing in chat: the pipeline task going to `in_progress` (Step 6.7) is the trace. Do **not** add a transition sentence announcing the next phase or pre-explaining what it will do: no *"Now applying it to your live model"*, no *"The deploy step will show you what it creates and ask you to confirm"*. Each sub-skill narrates its own work and gates its own writes, so an admin-level preamble in front of it is redundant narration the user did not ask for. The task list plus the sub-skill's own output is the complete trace. The sub-skills' result lines are part of that output, not hand-off narration: in plan and expert flow, the architect's and the analyst's "Wrote `<path>`" close-outs are always sent.
+**Pipeline hand-offs are not narrated.** When the admin advances from one sub-skill to the next inside an item's pipeline (e.g. the analyst finishes the spec and the modeler is next), emit nothing in chat: the pipeline task going to `in_progress` (Step 6.7) is the trace. Do **not** add a transition sentence announcing the next phase or pre-explaining what it will do: no *"Now applying it to your live model"*, no *"The deploy step will show you what it creates and ask you to confirm"*. Each sub-skill narrates its own work and gates its own writes, so an admin-level preamble in front of it is redundant narration the user did not ask for. The task list plus the sub-skill's own output is the complete trace. The sub-skills' result lines are part of that output, not hand-off narration: in guided and expert flow, the architect's and the analyst's "Wrote `<path>`" close-outs are always sent.
 
 **The admin never duplicates a sub-skill's execution play-by-play.** The deploy, verification, and sample-data steps belong to the modeler sub-skill, which runs inline (Step 6.7) and narrates in ITS own restrained voice. While following the modeler's instructions, obey the modeler's "Narration restraint" rules and add no second layer of admin narration on top: no *"Matching step done"*, *"Confirming the artifact before applying"*, *"Seeding sample data now"*, *"Seven of eight tables confirm cleanly…"*, and no narration of a transient error and its self-correction (*"that ERR was a transient blip"*). Those are exactly the lines the modeler's "Narration restraint" section deletes; emitting extra admin-level narration reintroduces the noise that restraint exists to remove. If you are narrating what the deploy is doing as it happens beyond what the modeler's own rules permit, you are doing the modeler's job in the wrong voice; stop, and let the sub-skill's voice stand.
 
@@ -287,17 +287,17 @@ Use the inference-then-ask procedure in Step 6.4 (intent table 6.4.1, exact word
 
 ### Interaction flow switch (no question)
 
-The interaction flow is a persisted switch, `.interaction_flow` in `$CUSTOMIZATIONS_FILE`: `plan` (default), `expert`, or `fast` (rules: [`references/interaction-flow.md`](./references/interaction-flow.md)). Handle it here, before any sub-skill starts:
+The interaction flow is a persisted switch, `.interaction_flow` in `$CUSTOMIZATIONS_FILE`: `guided` (default), `expert`, or `fast` (rules: [`references/interaction-flow.md`](./references/interaction-flow.md)). Handle it here, before any sub-skill starts:
 
-1. If the request says "expert flow", "plan flow", or "fast flow", write `.interaction_flow` (`expert` / `plan` / `fast`) with the usual provenance comment (`references/customizations-protocol.md` 7.5, step 4a) and narrate the one line from interaction-flow.md section 2.
+1. If the request says "expert flow", "guided flow", or "fast flow", write `.interaction_flow` (`expert` / `guided` / `fast`) with the usual provenance comment (`references/customizations-protocol.md` 7.5, step 4a) and narrate the one line from interaction-flow.md section 2.
 2. Otherwise, if `.interaction_flow` is `expert`, narrate once: *"Running in expert flow."*
-3. **Decide the flow for this run** and pass it to every sub-skill as `Interaction flow:` (Step 7.3): `fast` only for a new build (`Architect mode: create`) while the switch is `fast`; `plan` for any other run that starts from an existing design while the switch is `fast` (Rebuild excepted: it always runs in expert flow, so pass `expert` and narrate nothing), narrating once *"Fast flow covers new builds only; this run uses plan flow."*; otherwise the switch value.
+3. **Decide the flow for this run** and pass it to every sub-skill as `Interaction flow:` (Step 7.3): `fast` only for a new build (`Architect mode: create`) while the switch is `fast`; `guided` for any other run that starts from an existing design while the switch is `fast` (Rebuild excepted: it always runs in expert flow, so pass `expert` and narrate nothing), narrating once *"Fast flow covers new builds only; this run uses guided flow."*; otherwise the switch value.
 
 It is not a scope flag: no `Q:` task, no widget.
 
 ### Fast flow (experimental)
 
-In a fast run, read [`references/fast-flow.md`](./references/fast-flow.md) now and again after a context reset. The design step ends with one go-ahead question; after a yes, no sub-skill asks anything until the modeler's closing sample-data question, because the user approved the whole build at once, every further stop breaks that promise, and the closing summary is their review. When the user answers the go-ahead, write the marker into your pipeline tasks' descriptions (`fast: go-ahead given` / `fast: plan flow for this build`; `references/fast-flow.md`, section 3). Before entering the analyst, and again before the modeler, read the marker in your pipeline task's description (`TaskGet`): `fast: go-ahead given` means pass `Interaction flow: fast`; `fast: plan flow for this build` (the user chose "Ask me as usual") means pass `plan`.
+In a fast run, read [`references/fast-flow.md`](./references/fast-flow.md) now and again after a context reset. The design step ends with one go-ahead question; after a yes, no sub-skill asks anything until the modeler's closing sample-data question, because the user approved the whole build at once, every further stop breaks that promise, and the closing summary is their review. When the user answers the go-ahead, write the marker into your pipeline tasks' descriptions (`fast: go-ahead given` / `fast: guided flow for this build`; `references/fast-flow.md`, section 3). Before entering the analyst, and again before the modeler, read the marker in your pipeline task's description (`TaskGet`): `fast: go-ahead given` means pass `Interaction flow: fast`; `fast: guided flow for this build` (the user chose "Ask me as usual") means pass `guided`.
 
 ### Presenting the plan
 
@@ -616,7 +616,7 @@ The authoritative reference for how the admin and sub-skills share standing poli
 
 The architect and analyst never ask the same question twice. Every Stage 3 / authoring-stage answer is written to `semantius/<org>/customizations.yaml` as standing policy *before* the spec or catalog change proceeds. Re-runs of the same blueprint, sibling blueprints that reference the same entity, and brand-new blueprints that share a concept all auto-resolve from this single file.
 
-There is no "just this run" alternative, no follow-up "remember it?" widget, no opt-out. Decisions are policy unconditionally. (A default applied to a question skipped in plan flow, or a pick made in a fast run after the go-ahead, is not a decision: nothing is written; see `references/customizations-protocol.md` 7.6.) The customer's escape hatch is git: revert the line in `customizations.yaml`, re-deploy. Git is the audit log; the file itself carries provenance via trailing comments (`# decided <YYYY-MM-DD> during <blueprint_slug> deploy`).
+There is no "just this run" alternative, no follow-up "remember it?" widget, no opt-out. Decisions are policy unconditionally. (A default applied to a question skipped in guided flow, or a pick made in a fast run after the go-ahead, is not a decision: nothing is written; see `references/customizations-protocol.md` 7.6.) The customer's escape hatch is git: revert the line in `customizations.yaml`, re-deploy. Git is the audit log; the file itself carries provenance via trailing comments (`# decided <YYYY-MM-DD> during <blueprint_slug> deploy`).
 
 The only widgets that never write are explicit-cancel options ("Stop, I want to think about it"). On cancel, nothing changes in the file.
 
@@ -639,7 +639,7 @@ The `run_id` is also how each sub-skill finds its diagnostic-log folder: it writ
 ```
 Run context: run_id=run-20260527-143012
 Customizations file: /abs/path/to/semantius/<org>/customizations.yaml
-Interaction flow: plan                                          (every sub-skill; one of: plan | expert | fast; the flow for THIS run, Step 3)
+Interaction flow: guided                                          (every sub-skill; one of: guided | expert | fast; the flow for THIS run, Step 3)
 Architect mode: customize                                       (architect only; one of: create | catalog-clone | audit | extend | customize | rebuild)
 Analyst mode: reconcile                                         (analyst only; one of: reconcile | audit | extend | rebuild)
 Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md   (when an existing file is being operated on)

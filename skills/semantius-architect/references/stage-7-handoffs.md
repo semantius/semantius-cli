@@ -4,7 +4,7 @@
 
 > **Architect scope.** §6 carries the blueprint's cross-domain *context* in the template's four sub-sections: **§6.1 Master consumers** and **§6.4 Master providers** (derived from §3 `role` / `mastered in` — which other modules embed this module's masters, and which modules own the masters this module embeds), plus **§6.2 Outbound** / **§6.3 Inbound handoffs** (events the module publishes or reacts to, with trigger names, payloads, integration modes, friction levels). §6 does **not** carry a `From | To | Verb | Cardinality | Delete` FK-link table — per-FK cross-domain column resolution against the live catalog is the analyst's job (analyst Stage 2g + Stage 4). Use the template's §6.1–6.4 column layout verbatim.
 >
-> **Greenfield mode**: **keep §6 and its four sub-blocks present** even when the user did not ask for cross-domain context — each empty sub-block carries the canonical `_(none: <short reason>)_` placeholder. Never omit the section, never leave a bare empty heading. You may skip the rest of this stage's elicitation in that case, but still emit the placeholder sub-blocks in Stage 13.
+> **Greenfield mode**: **keep §6 and its four sub-blocks present** even when the user did not ask for cross-domain context — each empty sub-block carries the canonical `_(none: <short reason>)_` placeholder. Never omit the section, never leave a bare empty heading. Draft the handoffs and show them in the proposal below: the rows the user accepts count as requested and are written in Stage 13; rows never shown to the user are not written, and their sub-block keeps the placeholder.
 >
 > **Catalog-Clone mode**: inherit §6 from the source blueprint — but **flatten any `<details>` / `<summary>` collapsibles to plain markdown tables; replace any inherited old-form free-text stub with the canonical `_(none: <short reason>)_` placeholder** (catalog sources carry both) — then let the user trim or extend; a sub-block trimmed empty keeps its heading with the placeholder.
 
@@ -40,15 +40,16 @@ The handoff tables carry a `transition` column on top of the existing `trigger_e
 
 **Pre-emit validation:** for every §6.2 / §6.3 row whose `event_category` is `lifecycle`, the architect verifies the named `to_state` exists in the source entity's §7 lifecycle table. A mismatch is an authoring bug; emit `⚠ unresolved gate: <to_state> missing from <entity>'s §7` (Writing Convention 9) and ask the user to fix the source data.
 
-Present a short proposal to the user:
+Present a short proposal to the user, in plain sentences (Convention 8: no section labels, no backticked event or table names). Required in guided and expert flow; it is its own turn, never combined with another stage's confirmation. Word anything involving another module as a possibility ("could", "once <module> is set up"): a link only happens if that module exists and the user approves it when deploying.
 
-> **Cross-domain context.** Based on §3 and the module's neighborhood, I'll record:
+> **Links to other modules.** These are possibilities, not connections: each depends on that module being set up, and links are only made when you approve them while deploying.
 >
-> - **§6.4 Master providers** (mechanical from §3): `candidates` ← Candidate CRM, `interviews` ← Interviews, `job_offers` ← Offers — every embedded / contributor entity and its owning module.
-> - **§6.2 Outbound handoffs**: `candidate.hired` → HCM (creates the employee record); `job_offer.signed` → Comp Management.
-> - **§6.3 Inbound handoffs**: `background_check.flagged` ← Background Checks (may block an offer).
+> - Candidates, interviews and job offers could come from the Candidate CRM, Interviews and Offers modules, once those are set up.
+> - When a candidate is hired, an HR module could be told, so it can create the employee record.
+> - When a job offer is signed, a compensation module could be told.
+> - A flagged background check could block an offer, once a background-check module is set up.
 >
-> Add or drop any?
+> Does this look right, or should I add or drop any?
 
 > **Fast flow, after the go-ahead:** don't show the proposal and don't ask; accept it as drafted and log one line ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4). A `to_state` missing from the source lifecycle is not asked about: take the most conservative assumption, drop that handoff, and log it (rule 7).
 

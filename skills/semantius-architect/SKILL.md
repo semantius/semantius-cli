@@ -119,7 +119,7 @@ The Mode B audit catches DDL syntax as a 🔴 Blocker; the pre-save verification
 This convention covers **two surfaces** equally:
 
 - **Surface A: `AskUserQuestion` fields** — question, header, option labels, option descriptions.
-- **Surface B: every other thing the user sees in chat** — status updates ("Let me check the existing blueprint..."), progress reports ("Good, users is omitted from the entities catalog..."), plan summaries, peek-and-verify narration, the closing message after a write.
+- **Surface B: every other thing the user sees in chat** — status updates ("Let me check the existing blueprint..."), progress reports ("Good, the entity list is complete..."), plan summaries, peek-and-verify narration, the closing message after a write.
 
 Both surfaces follow the same ban list and the same "required" list below.
 
@@ -138,11 +138,11 @@ Both surfaces follow the same ban list and the same "required" list below.
   - Instead of *"mirror the vendor's schema"* → *"use [Vendor]'s naming so data migration to/from [Vendor] is easy"*.
   - Instead of *"master cluster hint"* → *"shared concept across modules"*.
   - Instead of *"the blueprint declares"* → *"this design includes"* or *"this module includes"*.
-  - Instead of *"users is omitted from §3, lives only in the Mermaid (class `platform_builtin`) and §5.2"* → *"the existing design treats platform users as built-in (no entry in the entities catalog; they appear only in the diagram and the built-in-edges section)"*.
+  - Instead of *"users is a §3 row with `_(platform built-in)_` and class `builtin` in the Mermaid"* → *"the design reuses the platform's built-in users (listed with the other entities, marked as built-in)"*.
 
 The internal value (`naming_mode: template:salesforce`, role classifications, `classDef` strings, etc.) still gets stamped on the file by the write stage — only chat and prompt text are plain. Map a user's choice to the internal value *after* they pick, not in the option label.
 
-**Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine. While expert flow is off, the Stage 1 name and scope question and the Stage 13 catalog-text confirmation are not sent; every other question is (see "Expert flow" below). In a fast run nothing is sent after the go-ahead (see "Fast flow" below).
+**Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine. While expert flow is off, the questions in the Expert flow table are not asked; every other question is (see "Expert flow" below). In a fast run nothing is sent after the go-ahead (see "Fast flow" below). Convention 8 controls how a required table or proposal is worded, never whether it is shown. Translate identifiers in a stage template into plain words; never drop the artifact.
 
 **AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
 
@@ -157,7 +157,7 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
 
 **Task tracking** (resident summary; the rules are the canonical text in [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md)). The architect uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`); the task list is rendered UI, not chat, so it does not count against narration restraint.
 
-- **Stage tasks.** At Step 0, once the mode is known (from the header or from detection): `TaskList`, then `TaskCreate` the `Design ›` tasks for that mode from the table below (subjects verbatim, `activeForm` = subject, all `pending`); in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's user confirmation landed (Mode A stages end with the user confirming; while expert flow is off, `Design › Write the design file` completes when the file is saved and the consistency check exits 0; in a fast run, a stage task completes when its draft is done and its picks are logged); a halt leaves the task `in_progress` with `halted: <reason>`. The subjects below are the same at both levels. Never a task for preflight, file reads, or the pre-save checks.
+- **Stage tasks.** At Step 0, once the mode is known (from the header or from detection): `TaskList`, then `TaskCreate` the `Design ›` tasks for that mode from the table below (subjects verbatim, `activeForm` = subject, all `pending`); in the same response, one `TaskUpdate` per task: `addBlockedBy: [<previous task id>]` for every task after the first, and, under the admin, `addBlocks: [<the in-progress unprefixed pipeline task id from TaskList>]` in the same call; the first task's call also carries `status: in_progress`. One `in_progress` at a time; `completed` when the stage's user confirmation landed and its description records "shown and confirmed" (Mode A stages end with the user confirming; while expert flow is off, `Design › Write the design file` completes when the file is saved and the consistency check exits 0; in a fast run, a stage task completes when its draft is done and its picks are logged); a halt leaves the task `in_progress` with `halted: <reason>`. The subjects below are the same at both levels. Never a task for preflight, file reads, or the pre-save checks.
 
   | Mode | Task subjects, in order |
   |---|---|
@@ -172,7 +172,9 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   - the Stage 1 and Stage 3 conversational confirmations (the Stage 1 name and scope question only while expert flow is on);
   - the Stage 3 "Also track" multiSelect;
   - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);
-  - the Stage 1 discovery interview (plan and expert flow, when no well-known product fits; fast flow, "Closest to" and "Must-haves" only);
+  - the Stage 3 re-confirmation of the entity table, when the "Also track" picks added entities;
+  - the Stage 5 relationships, diagram and lifecycles confirmation (`references/stage-5-mermaid.md`);
+  - the Stage 1 discovery interview (guided and expert flow, when no well-known product fits; fast flow, "Closest to" and "Must-haves" only);
   - the Stage 1 best-practice question (expert flow only);
   - the fast-flow go-ahead (fast runs only);
   - the Stage 6 related-modules confirmation (only while expert flow is on);
@@ -187,7 +189,7 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   - the Mode D no-collapsing gates;
   - the tagline and description confirmation (only while expert flow is on).
 
-  The Stage 6 related-modules gate is standalone (no `Q:` task) and fires only in expert flow; in plan and fast flow the list is built and accepted without being shown. Stages 5 and 8 ask nothing; Stage 11 asks only the RACI matrix confirmation (only for `raci`).
+  The Stage 6 related-modules gate is standalone (no `Q:` task) and fires only in expert flow; in guided and fast flow the list is built and accepted without being shown. The Stage 1 guidance aside (guided and expert flow) is a required turn of its own that asks nothing. Stage 8 asks nothing; Stage 11 asks only the RACI matrix confirmation (only for `raci`).
 
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a result. Hard rules:
 
@@ -280,7 +282,7 @@ After preflight, narrate one short line on first invocation: *"Using customizati
 ```
 Run context: run_id=run-...
 Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
-Interaction flow: plan
+Interaction flow: guided
 Architect mode: customize
 Input artifact: semantius/blueprints/<slug>-semantic-blueprint.md
 ```
@@ -302,7 +304,7 @@ The header's `Input artifact:` line tells you which file to load. Read it before
 
 | Mode | When to use |
 |---|---|
-| **Create-Greenfield** | User wants a brand-new blueprint from scratch. No existing file, no catalog source. §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the user did not ask for cross-domain context — never omit a canonical section, never leave a bare empty heading. §9 carries baseline roles + permission hierarchy always; RACI realization / Processes wired / functional ownership only under the `raci` access level (drafted and confirmed in Stage 11). |
+| **Create-Greenfield** | User wants a brand-new blueprint from scratch. No existing file, no catalog source. §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the user did not ask for cross-domain context — never omit a canonical section, never leave a bare empty heading. Stage 7 drafts and shows the handoffs; the rows the user accepts in the Stage 7 confirmation count as requested and are written, and rows never shown are not written (their sub-block keeps the placeholder). §9 carries baseline roles + permission hierarchy always; RACI realization / Processes wired / functional ownership only under the `raci` access level (drafted and confirmed in Stage 11). |
 | **Create-Catalog-Clone** | User wants to start from an existing curated blueprint (an uber-model slice from the catalog of ~100 reference blueprints) and customize. Workflow: ask the user for the source blueprint (file path or URL), load it, present §1 summary + §2 entity table + §3 catalog, then ask what to change. §5.3, §6, §9 (RACI realization + Processes wired + functional ownership), the optional `## Additional Requirements Specification` section, and `related_modules` are **inherited from the source and preserved** — trim only what the customize conversation explicitly removes. Never drop the source's uber-model governance just because the blueprint is being customized. **On inherit, flatten any `<details>` / `<summary>` collapsibles to plain markdown tables; when the customize conversation trims a canonical section empty, keep its heading and write the canonical `_(none: <short reason>)_` placeholder — never copy the source's raw HTML or old-form free-text stub strings verbatim (catalog sources carry both; they must not survive into the clone), and never omit the section.** After the "what to change" edits and before Stage 13, run the Stage 10 permission step ([`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md)) with the `--has-*` flags from the adjusted draft. |
 | **Audit** | User has an existing `*-semantic-blueprint.md` and wants it checked for quality, completeness, or correctness. |
 | **Extend** | User has an existing blueprint and wants to add entities, edges, lifecycle states, or permissions. **First, when the frontmatter has no `access_scope`:** run the Stage 10 permission step and write the file before anything else ([`references/modes-audit-extend-rebuild.md`](references/modes-audit-extend-rebuild.md) Step C1). |
@@ -325,7 +327,7 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 
 *Resident summary; the canonical rules are in [`../semantius-admin/references/interaction-flow.md`](../semantius-admin/references/interaction-flow.md).*
 
-**Read the switch at Step 0** (and again after a context reset): the run context's `Interaction flow:` line when present, otherwise `.interaction_flow` in `$CUSTOMIZATIONS_FILE`. `expert` = on; `plan`, absent, or a saved `fast` without the run-context line = off (plan flow). **Turning it on or off:** when the user says "expert flow", "plan flow", or "fast flow" (and you were not handed the run by the admin, which already did this), write `.interaction_flow` (`expert` / `plan` / `fast`) with the usual provenance comment and narrate the one line from interaction-flow.md section 2, then continue with the rest of the request. A bare "fast", "plan", "expert", "plan mode", "fast mode", "quick", "simple", "just do it", or "don't ask me" changes nothing. When called directly and the switch is on, narrate once: *"Running in expert flow."* **Mode D (Rebuild) always runs as if expert flow were on.**
+**Read the switch at Step 0** (and again after a context reset): the run context's `Interaction flow:` line when present, otherwise `.interaction_flow` in `$CUSTOMIZATIONS_FILE`. `expert` = on; any other value, absent, or a saved `fast` without the run-context line = off (guided flow). **Turning it on or off:** when the user says "expert flow", "guided flow", or "fast flow" (and you were not handed the run by the admin, which already did this), write `.interaction_flow` (`expert` / `guided` / `fast`) with the usual provenance comment and narrate the one line from interaction-flow.md section 2, then continue with the rest of the request. A bare "fast", "guided", "expert", "guided mode", "fast mode", "quick", "simple", "just do it", or "don't ask me" changes nothing. When called directly and the switch is on, narrate once: *"Running in expert flow."* **Mode D (Rebuild) always runs as if expert flow were on.**
 
 **While expert flow is off, these architect questions are skipped** and answered with the literal default below (the canonical list: interaction-flow.md, section 3). Each has an "Interaction flow" block in its stage file. The default is never written to `$CUSTOMIZATIONS_FILE`.
 
@@ -335,8 +337,9 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 | Stage 1 system name and scope (`references/stage-1-capture.md`) | Take them from the request, without a question. An unclear category is still settled in Stage 1, by the discovery interview's "Closest to" question. |
 | Stage 13 `tagline` / `description` / `module_kind` confirmation (`references/stage-13-write.md`) | Write your drafts and the derived `module_kind` without a confirmation; the close-out line says so. |
 | Stage 10 access-level question (`references/stage-10-workflow-perms.md`, permission step) | The script's result. |
+| Stage 6 related-modules confirmation (`references/stage-6-related-modules.md`) | Build the list and accept it as drafted, without showing it. |
 
-**Every other architect question is asked in plan and expert flow, unchanged:** naming style, the entity list, "Also track", the family question, related modules, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test and asks which best-practice points the design follows (`references/stage-1-capture.md`).
+**Every other architect question is asked in guided and expert flow, unchanged:** naming style, the entity list, "Also track", the family question, the entity-table re-confirmation, the relationships, diagram and lifecycles confirmation, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test and asks which best-practice points the design follows (`references/stage-1-capture.md`).
 
 **Switching during a run** writes the switch and applies from the next question on: turned on before Stage 13, the catalog text is confirmed; a name or scope the user wants changed is simply changed.
 
@@ -350,7 +353,9 @@ A run is a fast run when the run context says `Interaction flow: fast` (the admi
 
 ## Mode A: Create — stage pipeline
 
-Follow these stages in order. Do not skip ahead: each stage produces input the next one relies on, and each stage that asks something ends with the user confirming before you move on (Stages 5 and 8 ask nothing; Stage 11 asks only the RACI matrix confirmation, only for `raci`; while expert flow is off, the Stage 1 name and scope and the Stage 13 catalog text are not asked, see "Expert flow" above; in a fast run nothing is asked after the go-ahead, see "Fast flow" above). Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
+Follow these stages in order. Do not skip ahead: each stage produces input the next one relies on, and each stage that asks something ends with the user confirming before you move on (Stage 8 asks nothing; Stage 11 asks only the RACI matrix confirmation, only for `raci`; while expert flow is off, the questions in the Expert flow table are not asked, see "Expert flow" above; in a fast run nothing is asked after the go-ahead, see "Fast flow" above).
+
+**Each confirmation in the standalone-question list (Task tracking, above) is its own turn, in stage order.** The only shared turns are the family question inside the "Also track" call, and the one relationships, diagram and lifecycles confirmation. In guided and expert flow, use the stage template's wording and headings, and ask nothing that neither the list nor a stage file names: the file is written after the last confirmation, without a separate "write it up?" question. Guided flow skips exactly the questions in the Expert flow table. One "anything to change?" covering several stages is a bug in every flow. Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
 
 The Task column is the exact subject of the stage task (Task tracking, above); stages sharing a subject are one task.
 
@@ -359,7 +364,7 @@ The Task column is the exact subject of the stage task (Task tracking, above); s
 | 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | `Design › Capture what you are building and pick the naming style` | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
 | 2. Naming | Legacy-vendor vs agent-optimized naming (the one ledger question); built-in field alignment | (same task) | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
 | 3. Entities | Propose the entity list; keep each fact once (the mandatory `normalization.md` step inside the stage file); `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in` / Key types) | `Design › Agree the things to track and how they relate` | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
-| 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify; render, don't gate) | (same task) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
+| 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify) and draft the lifecycles; show relationships, diagram and lifecycles in one message and confirm | (same task) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
 | 6. Related modules | Two-axis neighborhood walk → `related_modules` | `Design › Related modules, rules, and who does what` | [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) |
 | 7. Handoffs | §6.1-6.4 cross-domain context + event handoffs | (same task) | [`references/stage-7-handoffs.md`](references/stage-7-handoffs.md) |
 | 8 + 9. Rules & classification | Business-rule intent; `entity_type` ladder + derived write tier; master-cluster hints | (same task) | [`references/stage-8-9-rules-classification.md`](references/stage-8-9-rules-classification.md) |
@@ -378,6 +383,8 @@ The Task column is the exact subject of the stage task (Task tracking, above); s
 *Resident gate: every Mode A / Extend / Rebuild write passes through this before the file is saved.*
 
 Before writing, run these checks **silently** — do NOT narrate them in chat. The verification is a quality gate for the model; it is not user content. The user wants to know one thing: did the file get written, or didn't it.
+
+If a helper writes the file, brief it with the confirmed decisions and the skill paths only, quoting the skill rather than paraphrasing it. Resolve every either/or first. Where a briefing conflicts with the skill, the skill wins and the helper reports the conflict.
 
 | Check | If it fails |
 |---|---|
@@ -413,7 +420,7 @@ Before writing, run these checks **silently** — do NOT narrate them in chat. T
 | No raw DDL syntax | halt; show the offending tokens |
 | Every canonical top-level / numbered section is present (no omitted canonical section, no bare empty heading); each empty one carries the canonical `_(none: <short reason>)_` placeholder, NOT an old-form free-text stub (`_(no cross-scope edges declared in greenfield mode...)_`, `_(no cross-domain context...)_`, `_(no industry-scoped aliases...)_`, similar) | halt; name the missing canonical section or the old-form stub, and tell the user to keep the heading with a `_(none: <short reason>)_` placeholder |
 | No raw HTML anywhere in the file body (`<details>`, `<summary>`, `</details>`, or any other `<tag>`). A collapsible inherited from a catalog source must be flattened to a plain markdown table — the tags stripped, the table kept | halt; name the offending lines |
-| Greenfield-mode files (`naming_mode` present) carry `departments` / `industries` frontmatter ONLY when populated; otherwise omit. `related_modules` is now allowed in greenfield as an advisory list | halt; remove the offending stubs |
+| Greenfield-mode files (`naming_mode` present) carry `departments` / `industries` frontmatter ONLY when populated; otherwise omit. They always carry `related_modules` (module slugs, built in Stage 6) | halt; remove the offending stubs or add the missing `related_modules` |
 | `description` and `license` are present and non-empty (no `description: ""` stub) | halt; name the missing or empty key |
 | Catalog-clone-mode files (`naming_mode` absent) carry no `naming_mode` key | halt; remove the offending key |
 
@@ -434,7 +441,7 @@ Template while expert flow is off (Create and Clone; the catalog-text clause is 
 
 > *Wrote `<path>`, with a catalog tagline and description written without asking (ask me to change them anytime). Tell me when you want to deploy it.*
 
-In plan and expert flow the line is always sent, under the admin too: the file name is the user's record of what was produced, and it is the architect's own result line, not admin hand-off narration. In a fast run there is no close-out line: set the task `completed` and let the admin move straight on to the next step.
+In guided and expert flow the line is always sent, under the admin too: the file name is the user's record of what was produced, and it is the architect's own result line, not admin hand-off narration. In a fast run there is no close-out line: set the task `completed` and let the admin move straight on to the next step.
 
 That is the entire post-save message. No counts, no breakdown of entities / lifecycles / permissions / edges, no narration of which sections are sparse, no "next step: hand off to semantius-analyst" boilerplate. The user knows from the design conversation what was built; the closing line just confirms the file landed.
 
@@ -501,7 +508,7 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 
 - [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) — the shared writing conventions (Conventions 1-8). This skill keeps its own fuller copy resident, including the architect-only Conventions 9-10 and the Pre-emit / Narration restraint phrased for blueprint authoring.
 - [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) — environment preflight (shared by all four skills).
-- [`../semantius-admin/references/interaction-flow.md`](../semantius-admin/references/interaction-flow.md): the plan / expert / fast switch: turning it on and off, the questions skipped in plan flow (shared with the analyst and the admin).
+- [`../semantius-admin/references/interaction-flow.md`](../semantius-admin/references/interaction-flow.md): the guided / expert / fast switch: turning it on and off, the questions skipped in guided flow (shared with the analyst and the admin).
 - [`../semantius-admin/references/fast-flow.md`](../semantius-admin/references/fast-flow.md): fast flow (experimental): the go-ahead, the pick procedure after it, the auto-picks log.
 - [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) — Semantius platform reference (entity naming rules, built-in tables, field format rules, relationship rules). Load it to reason about platform constraints during blueprint design.
 - [`../use-semantius/references/entity-families.md`](../use-semantius/references/entity-families.md) — platform facts for `is_a` / `has_a` families (what they allow, limits, vocabulary).
@@ -510,4 +517,4 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - [`../semantius-analyst/SKILL.md`](../semantius-analyst/SKILL.md) — downstream skill that reconciles the blueprint against live Semantius and produces a `*-semantic-spec.md`. Invoke after the blueprint is written.
 - [`../semantius-modeler/SKILL.md`](../semantius-modeler/SKILL.md) — deploys the spec to live Semantius. The architect doesn't invoke this directly; it's the third link in the chain.
 
-The catalog of common systems, vendors, and entity naming conventions lives in your own training knowledge, not in a reference file. That's deliberate: a fixed catalog would go stale, miss vendors, and imply a whitelist. Trust what you know about the product the user named; if you're genuinely unsure (an unfamiliar regional vendor, a very new product), ask the user for two or three example entity names from their system rather than guessing. In plan flow and fast flow, "unsure" has one objective bar: the product fails the four-object test (you can't name at least four of its headline objects, spelled its way; `references/stage-1-capture.md`). In a fast run, don't ask: use modern names and call the design "inspired by" that product at most.
+The catalog of common systems, vendors, and entity naming conventions lives in your own training knowledge, not in a reference file. That's deliberate: a fixed catalog would go stale, miss vendors, and imply a whitelist. Trust what you know about the product the user named; if you're genuinely unsure (an unfamiliar regional vendor, a very new product), ask the user for two or three example entity names from their system rather than guessing. In guided flow and fast flow, "unsure" has one objective bar: the product fails the four-object test (you can't name at least four of its headline objects, spelled its way; `references/stage-1-capture.md`). In a fast run, don't ask: use modern names and call the design "inspired by" that product at most.
