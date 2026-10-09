@@ -2,32 +2,7 @@
 
 ### Stage 2: Offer legacy-vendor compatibility vs agent-optimized
 
-**Policy path:** `.naming.mode` in `$CUSTOMIZATIONS_FILE`. Pick once per org; every sibling blueprint and every future deploy reuses the choice silently.
-
-**Customizations consultation.** Before firing the `AskUserQuestion` below, consult the policy file (see `../../semantius-admin/references/customizations-protocol.md` for the full protocol; overview in `../../semantius-admin/SKILL.md` Step 7):
-
-```bash
-DECISION_PATH=".naming.mode"
-if [ -f "$CUSTOMIZATIONS_FILE" ]; then
-  policy_match=$(yq -r "$DECISION_PATH" "$CUSTOMIZATIONS_FILE" 2>/dev/null)
-  if [ -n "$policy_match" ] && [ "$policy_match" != "null" ]; then
-    NAMING_MODE_VALUE="$policy_match"
-    # Narrate one line: "Using your rule for naming: <plain-English summary of $NAMING_MODE_VALUE>."
-    # Then skip AskUserQuestion and use $NAMING_MODE_VALUE for the rest of this stage.
-  fi
-fi
-```
-
-On cache miss, fire the prompt below. On answer (and only if the user did not pick an explicit cancel option), write the chosen value back atomically before continuing:
-
-```bash
-DATE=$(date +%Y-%m-%d)
-PROV="decided ${DATE} during ${THIS_BLUEPRINT} deploy"
-[ -f "$CUSTOMIZATIONS_FILE" ] || printf 'version: "1.0"\n' > "$CUSTOMIZATIONS_FILE"
-yq -i ".naming.mode = \"${NAMING_MODE_VALUE}\" | .naming.mode lineComment = \"${PROV}\"" "$CUSTOMIZATIONS_FILE"
-```
-
-When `$CUSTOMIZATIONS_FILE` is unset (architect invoked from a context that never went through Preflight), fall back to firing the widget every time and skip the write. In normal use this never happens — Preflight runs unconditionally.
+**The choice is never saved.** The naming style belongs to one blueprint and lives only in its `naming_mode`; nothing is read from or written to `$CUSTOMIZATIONS_FILE` (a `.naming.mode` key there is ignored). A new blueprint asks the question below in guided and expert flow; a fast run takes modern names; Customize, Extend and Audit keep the blueprint's own `naming_mode`; Rebuild re-asks it with the prior value as the default (`modes-audit-extend-rebuild.md`).
 
 **Tool-call description discipline.** The Bash tool's `description` field is user-facing prose (the harness renders it as "Ran <description>" above the tool call). Don't leak internal vocabulary like `naming_mode`, `customizations.yaml`, or `yq insert at .naming` there. Use neutral, plain-English descriptions: *"Saving your choice"* on a write, *"Checking earlier choices"* on a read. Same rule for any other Bash call you fire (frontmatter peeks, file checks): the description is user-facing, hold it to Convention 8.
 
@@ -35,9 +10,9 @@ When the domain is a well-known SaaS category, there is almost always a handful 
 
 Draw on your general knowledge of the market to identify **the top 3 cloud platforms** for the domain, ordered by how widely adopted they are among the kind of organization the user seems to be (check Stage 1 for cues about size, sector, budget). Reuse Stage 1's product list; a product the user named in the Stage 1 interview as the thing this replaces ranks first. **In expert flow**, only products that passed Stage 1's four-object test qualify: don't invent vendors you're unsure about, and if only 2 pass, list 2. For each vendor, know two or three of its headline entity names, use the vendor's own casing (e.g., Salesforce `Account`/`Opportunity`/`Case`, Zendesk `Ticket`/`User`/`Organization`, ServiceNow `Incident`/`Problem`/`Change`, Workday `Worker`/`Position`, Jira `Issue`/`Project`, HubSpot `Contact`/`Company`/`Deal`, Trello `Board`/`List`/`Card`, Notion `Page`/`Database`/`Block`). These names go **inside the option descriptions** in the AskUserQuestion call below, do not list them in prose first.
 
-> **Fast flow** (a fast run, before the go-ahead; `../../semantius-admin/references/fast-flow.md`, section 3). A saved `.naming.mode` wins as always. Otherwise, with a Stage 1 baseline, use `naming_mode: template:<baseline>`; with none, self-describing names. No widget, no `Q:` task, and nothing is written to `$CUSTOMIZATIONS_FILE` (the user did not choose it; the go-ahead summary names it and offers "modern names" instead). Skip the rest of this section up to "Naming rules by choice".
+> **Fast flow** (a fast run, before the go-ahead; `../../semantius-admin/references/fast-flow.md`, section 3). Always modern, self-describing names (`naming_mode: agent-optimized`), even with a Stage 1 baseline: no widget, no question, nothing saved. Skip the rest of this section up to "Naming rules by choice".
 
-**You MUST use the AskUserQuestion tool here, through the question ledger** (in guided and expert flow) (SKILL.md → Task tracking): on a policy miss, `TaskCreate` the `Q:` task (subject `Q: How should we name things in this <domain> module?`, description `Recorded in: .naming.mode`) and set it `in_progress` in one response, fire the widget alone in the next, then write the answer to the policy file and complete the task. Do not enumerate the vendors or describe the choices in prose before calling the tool, the option descriptions carry all the information the user needs. The only prose preceding the tool call should be one short framing sentence (e.g. *"{Domain} is a well-established category, here's the choice that drives naming for the rest of this session."*).
+**You MUST use the AskUserQuestion tool here** (guided and expert flow, new blueprints only). It is a standalone question (no `Q:` task); fire it alone in its own response. The answer goes only into this blueprint's `naming_mode`, never into `$CUSTOMIZATIONS_FILE`. Do not enumerate the vendors or describe the choices in prose before calling the tool, the option descriptions carry all the information the user needs. The only prose preceding the tool call should be one short framing sentence (e.g. *"{Domain} is a well-established category, here's the choice that drives naming for the rest of this session."*).
 
 Construct exactly one question with **2 to 4 options**: "Agent-optimized" first (the recommended default), followed by the named vendors, **at most 3** (so 4 options with 3 vendors, 3 with 2, 2 with 1; never a 5th). The runtime auto-adds an "Other" option for free-text input, that's how a user picks a vendor outside your list; never list "Other" yourself. With zero confident vendors, skip the widget entirely (last paragraph of this section).
 

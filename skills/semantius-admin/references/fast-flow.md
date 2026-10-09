@@ -42,7 +42,7 @@ The detail lives in the architect's stage files; this is the map.
 
 - **Baseline** (`stage-1-capture.md`). Pick 3 to 4 products whose data model fits the request. With none, there is no baseline: modern names.
 - **Interview** (`stage-1-capture.md`, the interview templates). Zero to two questions: "Closest to" (skipped when the user named a product) and the must-haves question, which replaces Stage 3's "Also track". "Users" and "Replaces" are not asked.
-- **Naming** (`stage-2-naming.md`). A saved `.naming.mode` wins. Otherwise the baseline's own names (`template:<baseline>`), with no widget and nothing saved. No baseline: modern names, and the design is described as "inspired by <Product>" at most.
+- **Naming** (`stage-2-naming.md`). Always modern, self-describing names, with or without a baseline: no widget, nothing saved. The baseline shapes the entities, not their names.
 - **Entities** (`stage-3-entities.md`). Drafted from the baseline's object model and trimmed to the interview answers; the family question takes its Recommended option; the entity-list question is not asked (the go-ahead covers it).
 - **The go-ahead** (below), at the end of Stage 3.
 
@@ -52,8 +52,8 @@ The detail lives in the architect's stage files; this is the map.
 
 **The summary**, one message, in plain language (Writing Convention 8):
 
-1. The baseline: *"Based on how <Product> models this. Names follow <Product>; say "modern names" to switch."*
-2. The entity table (Plural Label, one-line purpose, and the Vendor object column when naming follows a product).
+1. The baseline: *"Based on how <Product> models this, with modern, self-describing names."*
+2. The entity table (Plural Label, one-line purpose).
 3. The 2 to 4 best-practice points (Stage 1 aside).
 4. The exact matches, one line, left out when there are none: *"Organizations already exist in Sales; I'll use them."*
 5. What happens next: *"After your go-ahead I build and deploy without more questions. I only connect to records your instance already has when the name matches exactly, and that may share or reshape them; anything that only looks similar is kept separate. Everything I decide is listed at the end."*
@@ -124,7 +124,6 @@ The concrete pick at the main known gates, from rules 1 to 9. Every gate's own f
 | Architect | Stage 10 permission step: access level | The script's result (`--flow fast`; a fast run never picks `raci`). |
 | Architect | Stage 10 permission step: live module set up by hand (`custom`) | Pause and ask keep or replace; with the answer the run continues. |
 | Architect | Stage 11 RACI matrix confirmation (only when the live module already uses `raci`) | Accept the matrix without asking. |
-| Architect | "Unsure of the vendor object" offer (`stage-3-entities.md`) | Option (c): mark the entity "inspired-by, not canonical". |
 | Architect | Stage 13 catalog text | The guided-flow default (drafts written). |
 | Architect | Pre-save failure with a proposed fix | Apply the fix. |
 | Analyst | 3b, same table name in another module (3b.0, 3b.1, 3b.2 and its follow-ups) | The Recommended option: these are exact matches. Where to host, Case D (no Recommended option): the first module listed. |

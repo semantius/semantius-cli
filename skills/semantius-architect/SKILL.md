@@ -168,7 +168,8 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   | Customize (Mode C loop) | `Design › Edit the design with you` (stays `in_progress` for the whole C2 → C5 loop; `completed` only when the user answers the Step C5 question with "done"; the admin reads this status to decide whether it may advance to the analyst) |
   | Rebuild (Mode D) | `Design › Rebuild the design` |
 
-- **Ledger stage: Stage 2 only.** The naming-style question is a `Q:` task (subject = `Q: How should we name things in this <domain> module?`, `Recorded in: .naming.mode`, gated by `TaskUpdate` on the first stage task with `addBlockedBy: [<the Q: task id>]`), created after the policy consultation (a hit creates no task) and asked per the ledger sequence; being the only Stage 2 question, it is one round of B / A / R. Every other architect question is standalone (no `Q:` task):
+- **No ledger stages.** Every architect question is standalone (no `Q:` task):
+  - the Stage 2 naming-style question (new blueprints, guided and expert flow; never saved; Rebuild re-asks it);
   - the Stage 1 and Stage 3 conversational confirmations (the Stage 1 name and scope question only while expert flow is on);
   - the Stage 3 "Also track" multiSelect;
   - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);

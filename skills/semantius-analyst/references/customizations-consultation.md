@@ -35,7 +35,7 @@ When `$CUSTOMIZATIONS_FILE` is unset (a context that bypassed Preflight, which s
 
 **Tool-call description discipline.** The Bash tool requires a `description` field that the harness renders as a header above the tool-call entry in chat ("Ran <description>"). Do NOT leak internal vocabulary there. The user sees this string even when the rest of the consultation is silent.
 
-- ❌ Wrong: `"Record optionals decision in customizations.yaml"`, `"Append cross-module collision choice to .collisions"`, `"yq insert at .naming.mode"`.
+- ❌ Wrong: `"Record optionals decision in customizations.yaml"`, `"Append cross-module collision choice to .collisions"`, `"yq insert at .collisions"`.
 - ✅ Right: `"Saving your choice"` (on a write), `"Checking earlier choices"` (on a read), or simply omit by batching the write into a later, single quiet step.
 
 The same rule applies to any other Bash call you fire during Stage 3 (frontmatter peeks, slug lookups, similarity scans): the `description` is user-facing prose, hold it to Convention 8's plain-language bar.

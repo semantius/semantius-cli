@@ -10,7 +10,6 @@ Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZAT
 
 | Source | Decision | yq path | Shape |
 |---|---|---|---|
-| Architect authoring | Vendor-template choice | `.naming.mode` | scalar |
 | Architect authoring | Slug-collision strategy | `.naming.on_slug_collision` | scalar |
 | Architect authoring | Module display-name override | `.module_display_names.<slug>` | scalar |
 | Architect authoring | Embedded-master rename | `.aliases.<old_slug>` | object (slug, singular_label, plural_label) |
@@ -73,7 +72,7 @@ mkdir -p "$(dirname "$CUSTOMIZATIONS_FILE")"
 DATE=$(date +%Y-%m-%d)
 PROV="decided ${DATE} during ${BLUEPRINT_SLUG} deploy"
 
-# 4a. Scalar (mastership.host_module, naming.mode, on_missing_owner, ...):
+# 4a. Scalar (mastership.host_module, on_missing_owner, ...):
 yq -i "${DECISION_PATH} = \"${CHOICE_VALUE}\" | ${DECISION_PATH} lineComment = \"${PROV}\"" "$CUSTOMIZATIONS_FILE"
 
 # 4b. List append (none in 7.4 currently, but reserved):

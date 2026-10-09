@@ -23,6 +23,7 @@ The entries below are written in reverse chronological order (newest first). Eac
 9. **Greenfield §6:** only the handoff rows the user accepted are written. **`related_modules`** is always written in greenfield, as module slugs.
 10. **`system_slug` is kebab-case**, and the file name is exactly `<system_slug>-semantic-blueprint.md`.
 11. **Smaller fixes:** `operational_workflow` needs at least one restricted step; key prefixes are written without the separator; the template diagram uses the Stage 5 `builtin` / `master` classes; built-ins are listed in §3; the template frontmatter carries `version`, `naming_mode` and `initial_request`; fixed skipped-question counts are replaced by a pointer to the table; the helper-briefing rule (Pre-save verification).
+12. **The naming choice is no longer saved** (`.naming.mode` is gone from `customizations.yaml` and ignored if present). A saved vendor template had been reused silently for every later module, including other domains. Now a new blueprint asks the naming question in guided and expert flow; a fast run always takes modern, self-describing names (before, it took the baseline product's names); Customize, Extend and Audit keep the blueprint's own `naming_mode`; Rebuild re-asks it. The architect has no ledger stage left.
 
 No version bump (internal testing); the content contract changed (items 6, 9, 10, 11), so the next release bumps minor.
 
