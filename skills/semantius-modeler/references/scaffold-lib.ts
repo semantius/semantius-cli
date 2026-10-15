@@ -173,9 +173,9 @@ export interface ModulePayload {
   module_type?: string;             // default "domain"; never flipped on re-deploy
   catalog_module_code: string;      // write-once lineage
   domain_code: string;
-  icon_name: string;
+  icon_name: string;                // a Lucide icon name or an icon URL
   home_page?: string;               // frontmatter home_page: written only when non-empty (default "")
-  logo_color?: string;              // frontmatter logo_color: written verbatim when provided; when
+  logo_color?: string;              // frontmatter logo_color (hex, quotes stripped): written verbatim when provided; when
                                     // omitted, the bespoke script's cosmetic fallback random-fills an
                                     // empty live value (never overwrites a provided value)
   settings?: Record<string, unknown>;  // module_kind / naming_mode / catalog_snapshot / promotion_decisions

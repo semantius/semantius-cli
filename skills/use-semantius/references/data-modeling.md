@@ -79,7 +79,7 @@ The `description` field is a compact tagline (≤40 chars) shown beside `module_
 
 Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
 
-- **`icon_name`** — the module's UI icon (an icon-set handle, not a URL; distinct from the entity-level `icon_url` and the module `logo_url`).
+- **`icon_name`** — the module's UI icon: a Lucide icon name or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference); distinct from the entity-level `icon_url` and the module `logo_url`. The module's `logo_color` has format `color`.
 - **`domain_code`** — short uppercase business-domain code the module belongs to (`ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`.
 - **`access_scope`** — the permission structure of the module (its access level, decided by `semantius-architect`). `enum_values`: `custom` ("Custom permission structure"), `basic` ("Two permissions: view and edit"), `advanced` ("Three permissions: view, edit and admin."), `gated` ("Three permissions: view, edit and admin and process gates"), `raci` ("Three permissions: view, edit and admin and enforced process gates."); default `custom`.
 
@@ -293,11 +293,16 @@ Choose `format` carefully. Format **can** be changed after creation, but **only 
 | Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
-| Choice | `enum` (also set `enum_values`: each entry is a value or a `{"value", "label"}` pair, e.g. `["draft", {"value": "on_hold", "label": "On hold"}]`; see "Enum values and labels" below) |
+| Choice | `enum` (also set `enum_values`: each entry is a value or a `{"value", "label"}` object that may also carry an optional `description`, `color` and `icon`, e.g. `["draft", {"value": "on_hold", "label": "On hold", "color": "#f59e0b"}]`; see "Enum values and labels" below) |
+| Display | `color` (an HTML color), `icon` (a Lucide icon name or an icon URL, see below), `rating` (an integer 0–5, `0` = not rated; use for star ratings and 5-point scores, never for general integers) |
 | Structured | `json`, `object`, `array` |
 | Identifiers | `uuid`, `email`, `uri`, `url` |
 | Cross-entity link (independent) | `reference` + `reference_table` |
 | Ownership/composition | `parent` + `reference_table` |
+
+> ℹ️ **Colors are written as hex.** A `color` field, the `color` of an enum entry and a module's `logo_color` accept any HTML color; write lowercase `#rrggbb` (e.g. `#22c55e`). A value read back from the platform is kept as it is.
+
+> ℹ️ **Icons are Lucide icons.** An `icon` field, the `icon` of an enum entry and a module's `icon_name` take a Lucide icon name in kebab-case (e.g. `circle-check`, `users`, `shopping-cart`; never the PascalCase React component name `CircleCheck`), or an icon URL. The UI always uses the latest Lucide release, so every current icon is available. Find a name with `bun "<skill-folder>/references/lucide-icons.ts" find <word…>` (icon names whose name or tags contain every word), and confirm names with `bun "<skill-folder>/references/lucide-icons.ts" check <name…>` (exit 1 names the unknown ones; a URL always passes). Every icon a skill writes passes `check`. From another skill the path is `"<skill-folder>/../use-semantius/references/lucide-icons.ts"`.
 
 > 🛑 **Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. Never combine `reference_table` with scalar formats (`integer`, `uuid`, `string`, etc.). This will always fail.**
 
@@ -353,8 +358,9 @@ The Semantius column-add trigger picks a sensible default automatically based on
 
 | Format | PostgreSQL type | Auto-default when required |
 |---|---|---|
-| `string`, `text`, `multiline`, `email`, `url`, …  | `TEXT` | `''` |
+| `string`, `text`, `multiline`, `email`, `url`, `color`, `icon`, …  | `TEXT` | `''` |
 | `int32`, `int64`, `integer` | `INTEGER` / `BIGINT` | `0` |
+| `rating` | `INTEGER` | `0` (not rated). The 0–5 range is checked by the platform, not a database constraint; a required rating needs a value from 1 to 5 |
 | `number`, `float`, `double` | `NUMERIC` / `REAL` | `0.0` |
 | `boolean` | `BOOLEAN` | `FALSE` |
 | `json`, `object`, `array` | `JSONB` | `'{}'` |
@@ -387,19 +393,31 @@ semantius call crud create_field '{
 
 ### Enum values and labels
 
-An `enum_values` entry is either a plain value (`"draft"`) or a `{"value", "label"}` pair (`{"value": "on_hold", "label": "On hold"}`), and the two forms can be mixed. **Records store the value; the label is only what the UI shows.** Rules:
+An `enum_values` entry is either a plain value (`"draft"`) or a `{"value", "label"}` object (`{"value": "on_hold", "label": "On hold"}`), and the two forms can be mixed. An object may also carry an optional `description`, `color` (an HTML color) and `icon` (a Lucide icon name); these are UI hints only. **Records store the value; the label, description, color and icon are only what the UI shows.** Rules:
 
-- Use a pair when the value is a code or an abbreviation (`{"value": "nda", "label": "Non-disclosure agreement"}`); a readable value (`draft`) needs no label.
+- Use an object when the value is a code or an abbreviation (`{"value": "nda", "label": "Non-disclosure agreement"}`) or when the entry needs a color or icon; a readable value (`draft`) with no hints needs no object. An object always carries `label`.
+- `description` is the exception: add it only when the label is not self-describing (an internal code, a term of art, two choices a user could confuse). A label like "Approved" needs none.
 - Never an object map like `{"draft": "Draft"}`: `enum_values` is always an array.
-- Writes, filters, `default_value` and JsonLogic compare against the **value**, never the label.
-- Reading `enum_values` back (or the `enum` list of a property in `get_schema`) returns the entries as defined, so a pair comes back as an object: take its `value`. `get_schema` also lists `""` for an enum that is not required.
-- Changing only a label is cosmetic (records keep their values); adding, removing or renaming a value is a schema change (see Safe Evolution).
+- Writes, filters, `default_value` and JsonLogic compare against the **value**, never the label. Only the value reaches the CHECK constraint and the column default.
+- Reading `enum_values` back (or the `enum` list of a property in `get_schema`) returns the entries as defined, so an object comes back as an object with any `description`, `color` and `icon` it carries: take its `value`. `get_schema` also lists `""` for an enum that is not required.
+- Changing only a label, description, color or icon is cosmetic (records keep their values); adding, removing or renaming a value is a schema change (see Safe Evolution).
+- `update_field` replaces the whole `enum_values` array, so send every entry back with all of its keys; an entry sent without its `color` loses it.
 
 ```bash
 semantius call crud create_field '{"data": {
   "table_name": "contracts", "field_name": "contract_type", "title": "Contract Type", "format": "enum",
   "enum_values": ["msa", {"value": "nda", "label": "Non-disclosure agreement"}, {"value": "sow", "label": "Statement of work"}],
   "default_value": "msa", "input_type": "required", "width": "default"
+}}'
+
+semantius call crud create_field '{"data": {
+  "table_name": "contracts", "field_name": "workflow_state", "title": "Status", "format": "enum",
+  "enum_values": [
+    {"value": "draft", "label": "Draft", "color": "#64748b", "icon": "file-pen"},
+    {"value": "on_hold", "label": "On hold", "color": "#f59e0b", "icon": "circle-pause", "description": "Waiting for the counterparty to countersign"},
+    {"value": "signed", "label": "Signed", "color": "#22c55e", "icon": "circle-check"}
+  ],
+  "input_type": "required", "width": "default"
 }}'
 ```
 
@@ -478,7 +496,7 @@ Three separate `create_field` calls for the three fields would be three round tr
 | `field_order` | integer | Display position in the UI. **Omit it on create**: the platform gives each new field the next position after the entity's existing fields, in array order. Set it only to put a field at a specific position (on create, or later with `update_field`), and read the entity's live `field_order` values first: the auto-created fields already hold positions (the label field sits at 20), and a tie is not an error, the UI just renders the tied fields in an unpredictable order. Choose a value strictly between the two live neighbours the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 990000 to put it last. Values from 990000 up are reserved for system columns; every other field stays below 990000. |
 | `searchable` | boolean | Adds this field to the entity's full-text search index |
 | `unique_value` | boolean | Enforces uniqueness at database level |
-| `enum_values` | array | Required when `format: "enum"`: the allowed entries, each a value or a `{"value", "label"}` pair. Records and `default_value` hold the value, never the label; never an object map. See "Enum values and labels" above. |
+| `enum_values` | array | Required when `format: "enum"`: the allowed entries, each a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`. Records and `default_value` hold the value, never the label; never an object map. See "Enum values and labels" above. |
 | `precision` | integer (0–18) | For `format: "number"` only, number of digits after the decimal point in the generated `NUMERIC` column. Defaults to `2` (suits money and most measured quantities). Set higher (e.g. `4`–`6`) for tax rates, FX rates, or scientific values; `0` for integer-like counts that still want NUMERIC semantics. |
 | `default_value` | string | Override for the platform's auto-default. Only set when the auto-default is wrong for the domain. See `### default_value` above for the auto-default table per format. |
 | `reference_table` | string | Target entity's `table_name` for `reference`/`parent` fields |
@@ -618,7 +636,7 @@ This rule — **gates and overrides follow the ENTITY's current owning module, n
 ### ⚠️ Medium-Risk (warn user first)
 - Changing `reference_delete_mode`
 - Adding `view_permission`/`edit_permission` to previously open entities
-- Changing `enum_values` (values; a label-only change is cosmetic, since records store values)
+- Changing `enum_values` (values; a change to only labels, descriptions, colors or icons is cosmetic, since records store values)
 - Adding `unique_value: true` to an existing field (fails if duplicates exist)
 - Adding, modifying, or removing a `select_rule` on an entity (changes read visibility; rows may suddenly disappear or reappear for current users) — see `select-rule.md`
 - Modifying or removing an existing `input_type_rule` (forms suddenly show, hide, or unlock a field mid-workflow) — see `jsonlogic.md`

@@ -1,25 +1,21 @@
 # semantius-optimizer — changelog
 
-This file records the history of the optimizer's reverse-extraction contract: the live-to-spec mapping rules implemented in `references/spec-extract-lib.ts`. The current `SPEC_VERSION` constant and the compatibility rules a maintainer must follow when bumping it live in [SKILL.md](./SKILL.md) under "Schema compatibility". The body of SKILL.md is the current contract; this file is the history of how the extractor's coverage evolved.
+This file records the history of the optimizer's reverse-extraction contract: the live-to-spec mapping rules implemented in `references/spec-extract-lib.ts`. The file format version and its rule live in [SKILL.md](./SKILL.md) under "File format version". The body of SKILL.md is the current contract; this file is the history of how the extractor's coverage evolved.
 
 This file is NOT loaded into Claude's context when the skill triggers. Maintainers read it when planning a change; users read it when investigating why an extracted spec is shaped the way it is. Runtime behavior never depends on this file.
 
-Entries below are newest first. `SPEC_VERSION` tracks the analyst's `CURRENT_VERSION` in lockstep; an entry that adds a reader within the existing shape does not bump it.
+Entries below are newest first.
 
 ---
 
-## 5.9: `access_scope` takes the five platform values
+## file format version `3.1`; enum hints; quoted `logo_color`
 
-2026-10-05. Lockstep with analyst 5.9.
+2026-10-15. Paired with the analyst entry of the same date.
 
-1. `SPEC_VERSION` `"5.8"` → `"5.9"`.
-2. The live `modules.access_scope` (`custom` | `basic` | `advanced` | `gated` | `raci`) is still copied verbatim into the spec frontmatter.
-3. The `_(none: …)_` reasons are definitional:
-   - for §8.2 and §9.2, under `basic` and `custom`;
-   - for the Processes catalog, under every value but `raci`.
-
-   Otherwise they say "not extracted". Output for a `basic` module is byte-identical apart from the version line.
-4. The round-trip fixture `fixture-full.json` now carries `access_scope: raci` (it has gate permissions and processes); the goldens were regenerated.
+1. `FORMAT_VERSION = "3.1"` replaces `SPEC_VERSION`; the spec no longer lists `blueprint_version` among the omitted keys.
+2. §5 emits an object entry's `color`, `icon` and `description` as hint sub-bullets in that fixed order (never `Object.keys` order: jsonb reorders keys); an object always emits its label.
+3. `logo_color` is emitted in double quotes (an unquoted `#` is a YAML comment).
+4. Fixtures: `fixture-family.json` gains a `priority` enum with hints (one description), `fixture-full.json` gains `rating`, `color` and `icon` fields; goldens regenerated.
 
 ---
 
@@ -27,7 +23,7 @@ Entries below are newest first. `SPEC_VERSION` tracks the analyst's `CURRENT_VER
 
 2026-09-28. The description was 1156 characters; the read list and mechanism detail were condensed, every trigger phrase and exclusion kept. Now 995.
 
-## 5.8: entity families and enum labels
+## entity families and enum labels
 
 2026-09-28. `SPEC_VERSION` 5.7 → 5.8 in lockstep with the analyst. The platform added `is_a` / `has_a` key types (`entities.id_refentity`) and `{"value", "label"}` enum entries; the extractor now reads both back.
 
@@ -37,7 +33,7 @@ Entries below are newest first. `SPEC_VERSION` tracks the analyst's `CURRENT_VER
 4. **Round-trip:** new `fixture-family.json` / `expected-family.md`; the basic and full goldens changed only in the `version` line.
 5. **Fix: live extraction lost its slug.** The argument filter dropped `argv[0]` whenever `--from-fixture` was absent (`fixtureIdx + 1` is `0`), so `spec-extract-lib.ts <slug> [outfile]` read the outfile as the slug (or failed with the usage message). Found by extracting a live family module on the tests instance; the fixture path was unaffected, which is why the round-trip stayed green.
 
-## 5.7: `SPEC_VERSION` follows the analyst (class-99 rule codes)
+## `SPEC_VERSION` follows the analyst (class-99 rule codes)
 
 2026-09-26. `SPEC_VERSION` 5.6 → 5.7 in lockstep with the analyst. Validation rules are emitted verbatim from live state, so live rules already carry the class-99 `code` plus the `name` identifier; the extractor needs no mapping change. `fixture-full.json` now carries a class-99 rule (`"code": "99001", "name": "retire_needs_permission"`) and both goldens were regenerated (the version line, plus that rule entry).
 
@@ -49,21 +45,21 @@ Entries below are newest first. `SPEC_VERSION` tracks the analyst's `CURRENT_VER
 
 ---
 
-## 5.6: extractor emits the entity key type
+## extractor emits the entity key type
 
-`SPEC_VERSION` `5.5` → `5.6` (2026-09-26), in lockstep with the analyst. `entityDetail()` emits `**Key type:** <id_type>` right after `**Id column:**` when live `id_type` is not the default `auto_increment`, and `**Key prefix:** <id_prefix>` after it when the type is `typeid`: bare values, no backticks, the same omit-when-default rule as `**Edit mode:**`. Both read off the `entities` row already loaded; no new CLI reads. Built-in blocks emit neither (as with the other entity lines).
+2026-09-26. `SPEC_VERSION` `5.5` → `5.6` (2026-09-26), in lockstep with the analyst. `entityDetail()` emits `**Key type:** <id_type>` right after `**Id column:**` when live `id_type` is not the default `auto_increment`, and `**Key prefix:** <id_prefix>` after it when the type is `typeid`: bare values, no backticks, the same omit-when-default rule as `**Edit mode:**`. Both read off the `entities` row already loaded; no new CLI reads. Built-in blocks emit neither (as with the other entity lines).
 
 Round-trip eval: `fixture-full.json` gains `id_type` / `id_prefix` on its entities (`assets` `typeid` / `asset`, `vendors` `uuid`, `asset_vendors` default) and `fixture-basic.json` the defaults; goldens regenerated (version stamp, plus the three new lines in `expected-full.md`). `bun evals/round-trip/check.ts` is green.
 
 Files: `references/spec-extract-lib.ts`, SKILL.md (version), `evals/round-trip/{README.md,fixture-basic.json,fixture-full.json,expected-basic.md,expected-full.md}`.
 
-## Unreleased: routing exclusion for semantius-transfer
+## routing exclusion for semantius-transfer
 
 Description only, `SPEC_VERSION` unchanged (2026-09-26). "Export" and "snapshot" in the trigger list also match moving a module with its records between hosts, or backing it up as a restorable file, which this skill cannot do (it writes a markdown spec, no records). The description now routes those to the new `semantius-transfer` skill.
 
-## 5.5: byte-alignment with the pure-skeleton template; modeler-accepted tiers; offline round-trip eval
+## byte-alignment with the pure-skeleton template; modeler-accepted tiers; offline round-trip eval
 
-`SPEC_VERSION` `5.4` → `5.5` (2026-08-19), in lockstep with the analyst. The analyst template is now a pure skeleton (see the analyst CHANGELOG); this entry makes the extractor agree with it literal-for-literal and fixes four emitter defects that produced specs the analyst or modeler rejected.
+2026-08-19. `SPEC_VERSION` `5.4` → `5.5` (2026-08-19), in lockstep with the analyst. The analyst template is now a pure skeleton (see the analyst CHANGELOG); this entry makes the extractor agree with it literal-for-literal and fixes four emitter defects that produced specs the analyst or modeler rejected.
 
 1. **`**Label column:**`** is omitted when live `label_column` is null/empty (both the owned and the built-in block) instead of emitting `` `null` `` — a junction without a local label is valid.
 2. **§8.1 `tier`** is always a modeler-accepted value: `narrow` when the suffix is an owned entity's `edit_permission` suffix; `override` for `view_all_*` / `manage_all_*` (tested before the rule test, since overrides are wired into `select_rule` via `has_permission`); `workflow-gate (rule)` when the code occurs in an owned entity's `validation_rules` / `select_rule` JSON; else `workflow-gate (lifecycle)`. A bare `workflow-gate` (a modeler 🛑) is no longer emitted. **`included in :admin?`** is derived from the live hierarchy (`✓` iff `<slug>:admin` transitively includes the permission; `-` for the `baseline-admin` row; `✓` everywhere when no admin permission exists).
@@ -74,11 +70,11 @@ Description only, `SPEC_VERSION` unchanged (2026-09-26). "Export" and "snapshot"
 
 Files: `references/spec-extract-lib.ts`, SKILL.md, `evals/round-trip/{check.ts,README.md,fixture-basic.json,fixture-full.json,expected-basic.md,expected-full.md}`.
 
-## Unreleased: extractor emits the deploy-provenance keys (`deployed_version` / `deployed_version_date` / `deployed_related_versions`)
+## extractor emits the deploy-provenance keys (`deployed_version` / `deployed_version_date` / `deployed_related_versions`)
 
 2026-07-05. `frontmatter()` now emits the deploy-provenance keys from live state: `deployed_version` = the module's `modules.version`, `deployed_version_date` = `modules.version_date`, and `deployed_related_versions` = a `slug: version` map of every other module this spec reuses an entity from (computed in `main()` from the reference-target entities' owning modules). Unlike the authoring-only `reconciled_*` / `source_blueprint` keys the extractor drops, these are live truth, so a reverse-engineered spec carries them and is trivially in-sync (the analyst's 2a.1 drift gate reads `deployed_version == live.version` until prod next changes). Guarded on `mod.version` presence, so an older platform (no `version` column) omits all three. Pairs with the modeler's Stage 5b stamp and the analyst's 2a.1 gate. No `SPEC_VERSION` bump (additive optional keys within the v5.4 shape); validated with `bun build`.
 
-## 5.4: extractor now emits the v5.4 constructs — entity identity-spine / UI / icon lines, the `width` + `searchable` Notes markers, the `logo_color` / `home_page` frontmatter keys, §9.1 role lineage columns, and the §9 Processes catalog
+## extractor now emits the new constructs — entity identity-spine / UI / icon lines, the `width` + `searchable` Notes markers, the `logo_color` / `home_page` frontmatter keys, §9.1 role lineage columns, and the §9 Processes catalog
 
 2026-07-05. MINOR bump: `SPEC_VERSION` "5.3"→"5.4" (matches the analyst's `CURRENT_VERSION`; the modeler's `EXPECTED_MAJOR` stays `5` — this is not a major change). The analyst template and modeler parser were extended for the same v5.4 constructs against the shared canonical syntax doc; this entry is the optimizer's (primary emitter) half. Every new construct obeys the universal omit-when-default rule — it is emitted ONLY when the live value is non-empty AND not the platform default (defaults determined from `semantius info crud create_*`), so an authored and a reverse-engineered spec stay byte-identical. No section-numbering or table-shape change beyond the two additive §9.1 columns.
 
@@ -102,7 +98,7 @@ Files: `references/spec-extract-lib.ts`, SKILL.md, `evals/round-trip/{check.ts,R
 
 **Minor / major unchanged.** Additive emit coverage plus two additive §9.1 columns; the modeler's `EXPECTED_MAJOR` is untouched. A module previously carrying any of these values regenerates with them on the next extract.
 
-## Unreleased: extractor now emits the four §3 behavior blocks and the cube_type / parent-label / default_value annotations it previously dropped
+## extractor now emits the four §3 behavior blocks and the cube_type / parent-label / default_value annotations it previously dropped
 
 2026-07-05. A three-skill audit confirmed the reverse extractor had NO readers for four §3 entity/field behavior blocks and several §3 Notes annotations, so snapshotting a live module into a spec and redeploying silently stripped data-integrity / RLS / dynamic-UI logic and dropped authored annotations. The analyst template (`../semantius-analyst/references/semantic-spec-template.md`) already defined the exact byte-format for each; the extractor simply never read them. Closes that silent round-trip loss. All changes are new readers within the existing spec shape; `SPEC_VERSION` stays `5.3`.
 

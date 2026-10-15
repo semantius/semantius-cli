@@ -10,8 +10,8 @@ Referenced by `semantius-admin/SKILL.md` Step 5. These operations don't involve 
 
 > **Workspace:**
 >
-> - `semantius/blueprints/ats-candidate-crm-semantic-blueprint.md` (blueprint, blueprint_version 2.0, slug `ats-candidate-crm`)
-> - `semantius/specs/ats-candidate-crm-semantic-spec.md` (spec, version 4.1, reconciled 2026-05-25, owns 6 entities)
+> - `semantius/blueprints/ats-candidate-crm-semantic-blueprint.md` (blueprint, version 3.1, slug `ats-candidate-crm`)
+> - `semantius/specs/ats-candidate-crm-semantic-spec.md` (spec, version 3.1, reconciled 2026-05-25, owns 6 entities)
 >
 > **Live semantic model:**
 >

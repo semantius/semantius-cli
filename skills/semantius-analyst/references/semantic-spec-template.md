@@ -17,8 +17,7 @@ Use the skeleton below verbatim for the final semantic-spec output in Stage 11. 
 ```markdown
 ---
 artifact: semantic-spec
-version: "{{analyst_skill_version}}"
-blueprint_version: "{{blueprint_version}}"
+version: "3.1"
 license: {{license?}}
 system_name: {{system_name}}
 tagline: {{tagline}}
@@ -33,7 +32,7 @@ raci_mode: {{raci_mode?}}
 raci_mode_source: {{raci_mode_source?}}
 domain_code: {{domain_code}}
 naming_mode: {{naming_mode}}
-logo_color: {{logo_color?}}
+logo_color: "{{logo_color?}}"
 home_page: {{home_page?}}
 created_at: {{created_at}}
 reconciled_at: {{reconciled_at}}
@@ -150,6 +149,10 @@ promotion_decisions:
 ### `{{table_name}}.{{field_name}}`
 - `{{value}}`
 - `{{code_value}}` - {{Label?}}
+- `{{hinted_value}}` - {{Label}}
+  - color: `{{color?}}`
+  - icon: `{{icon?}}`
+  - description: {{description?}}
 
 ## 6. Cross-model link suggestions
 
@@ -274,12 +277,11 @@ _enforcement rules_
 ### Frontmatter keys
 
 - **`artifact`** is always `semantic-spec`.
-- **`version`** is the analyst skill's `CURRENT_VERSION` at the time the file was last written (currently `"5.8"`), as a quoted string `"MAJOR.MINOR"`. The analyst stamps this on every save (Mode A Stage 11, Mode B fix-up writes, Mode C extend writes); it is never authored by hand. Major changes only on breaking schema/structure shifts (frontmatter keys removed, sections renumbered, table column shapes changed); minor changes on any non-breaking analyst-skill update (new audit checks, clarified rules, additional optional fields). The deployer rejects models whose major differs from its expected major; the analyst treats older-major files as archived knowledge rather than literal models. Files with no `version` key require an explicit review-and-migrate pass before any audit/extend or deploy.
-- **`blueprint_version`** is carried through from the blueprint (currently `"3.1"`; a `3.0` blueprint is carried as `"3.0"`).
+- **`version`** is the file format version, `"3.1"`, as a quoted string. It is the same in blueprint and spec files and changes only when the file format changes, and only with the user's approval. The analyst stamps it on every save; it is never authored by hand. A spec whose `version` is not `3.x`, or that has no `version`, is not in the current format and is rejected by every skill that reads it.
 - **`license`** is carried from the blueprint (e.g. `MIT`). OPTIONAL: present when the blueprint carries it; absence is not a finding.
 - **`system_name`** is the system display name. Keep acronyms as acronyms (CRM, ITSM, CMDB).
 - **`tagline`** is **required**: a compact ≤40-character (2-5 word) string shown in the UI module-selector chip and on the module landing page beside `system_name`, carried from the blueprint; it populates `modules.description`. Its job is to disambiguate similar-looking names at a glance (ITSM vs ITAM, CRM vs CDP). For acronym `system_name`s use the plain English expansion (`CRM` → `Customer Relationship Management`, `ITSM` → `IT Service Management`, `CMDB` → `Configuration Management Database`, `HRIS` → `Human Resources Information System`, `SAM` → `Software Asset Management`, `ATS` → `Applicant Tracking System`, `CDP` → `Customer Data Platform`). For non-acronym names use a 2-4 word disambiguating noun phrase (`Helpdesk` → `IT Support & Ticketing`, `Workforce Planning` → `Headcount & Org Design`). Full-sentence descriptions belong in §1 Overview, not here.
-- **`icon_name`** is the module's UI icon as an icon-set handle (not a URL), e.g. `briefcase`, `users`, `ticket`. Carried from the blueprint; the deployer stamps it into `modules.icon_name`.
+- **`icon_name`** is the module's UI icon: a Lucide icon name in kebab-case (e.g. `briefcase`, `users`, `circle-help`) or an icon URL (see "Icons are Lucide icons" in `use-semantius/references/data-modeling.md`). Carried from the blueprint; the deployer stamps it into `modules.icon_name`.
 - **`description`** is the longer marketing-voice prose for the catalog page, carried from the blueprint as a multi-line YAML literal block (`|`). OPTIONAL: present when the blueprint carries it (older blueprints may not; absence is not a finding).
 - **`system_slug`** is the module identifier. **Module identity comes from `system_slug`.** The frontmatter `system_slug` is the single source of truth for the module identifier. Do not introduce a second name like `{domain}_spend` or `{domain}_tracker` anywhere; if the frontmatter says `acme_crm`, the module is `acme_crm` and the permissions are `acme_crm:read` / `acme_crm:manage` / `acme_crm:admin` (with an admin level, or `acme_crm:read` / `acme_crm:manage` under `access_scope: basic`). The §8.1 Permissions catalog and the deployed module record must agree with the frontmatter; a divergence is a blocker the deployer cannot resolve silently.
 - **`module_type`** is `domain` or `master`. OPTIONAL; omit for the default `domain`. Set to `master` when authoring a master model.
@@ -289,7 +291,7 @@ _enforcement rules_
 - **`raci_mode_source`** (`computed-default` | `non-interactive`) is REQUIRED alongside `raci_mode`. How the mode was derived: `computed-default` for the value auto-derived from instance state on an interactive run; `non-interactive` for headless runs. Allowed values are `computed-default` and `non-interactive`. `consistency-check.ts` rejects a RACI spec missing either key.
 - **`domain_code`** is carried from the blueprint: an uppercase TLA / short code, e.g. ATS, HCM, ITSM, CRM.
 - **`naming_mode`** is `template:<vendor>` or `agent-optimized`.
-- **`logo_color`** is a hex color (e.g. `#2563eb`) → `modules.logo_color`. OPTIONAL: emit ONLY when set (non-empty). The modeler honors a provided value and random-fills only when this key is ABSENT. Omit the key entirely when unset.
+- **`logo_color`** is a lowercase hex color in double quotes (`logo_color: "#2563eb"`; unquoted, YAML reads `#` as the start of a comment) → `modules.logo_color` (format `color`). OPTIONAL: emit ONLY when set (non-empty). The modeler honors a provided value and random-fills only when this key is ABSENT. Omit the key entirely when unset.
 - **`home_page`** is a path (e.g. `/dashboard`) → `modules.home_page`, the module's default landing path. OPTIONAL: emit ONLY when set (non-empty/non-null); omit the key entirely otherwise.
 - **`created_at`** (`YYYY-MM-DD`) is the blueprint's creation date. **`reconciled_at`** (`YYYY-MM-DD`) is when the analyst ran. **`reconciled_against_catalog_snapshot`** is the ISO 8601 timestamp of the catalog read in Stage 2. **`source_blueprint`** is the relative path to the blueprint `.md`.
 - **Deploy provenance (`deployed_version`, `deployed_version_date`, `deployed_related_versions`)** is MODELER-written at the end of a clean deploy (Stage 5b), NOT authored by the analyst. All three keys are absent until the spec has been deployed once. On a later analyst write they are carried forward verbatim (the analyst never computes them). They describe the LAST deploy; the analyst's 2a.1 gate compares live `modules.version` against `deployed_version` to detect prod drift. `deployed_version` is `modules.version` after the last clean deploy (integer); `deployed_version_date` is `modules.version_date` (ISO 8601); `deployed_related_versions` maps each module this spec reuses/promotes an entity from to its live `modules.version` (omit the key when none). Omit all three until first deploy.
@@ -303,11 +305,11 @@ _enforcement rules_
   - `industries` is **optional**: list the industry/industries the system is specific to (e.g. `SaaS`, `Manufacturing`, `Healthcare`, `Retail`, `Financial Services`, `Education`, `Logistics`). Most models have 0–1 industries. **Omit the key entirely** when the model is industry-agnostic; do not write an empty list.
 - **`initial_request`** is **immutable**. It captures the user's verbatim opening ask from the Create session (e.g. "I need a basic lead tracker"). Audit and Extend modes must preserve it exactly, never rewrite, summarize, tidy, or "improve" it, even if the wording is rough or the scope has since expanded. It's a historical record of the original intent, not a live scope statement. Use a YAML literal block (`|`) so newlines and punctuation survive round-trips.
 - **`promotion_decisions`** is a list of objects, one per promoted entity: `{entity: <table_name>, host_module: <master_slug>, manage_option: 1 | 2 | 3 | 4}`. Omit the key when no entity is promoted.
-- The front-matter is YAML, every value must be quoted if it contains a colon.
+- The front-matter is YAML, every value must be quoted if it contains a colon or starts with `#`.
 
 ### H1 and §1 Overview
 
-- The H1 is `# <system_name>: Semantic Model` (a colon separator; the modeler reads the human-readable system name from it and also accepts the pre-5.5 em-dash form on older files).
+- The H1 is `# <system_name>: Semantic Model` (a colon separator; the modeler reads the human-readable system name from it).
 - §1 is two or three sentences describing the system, its users, and the problem it solves. Written for a human reviewer; keep it concrete and avoid marketing tone. §1 is the catalog-readable system narrative — downstream skills (notably semantius-skill-maker) copy it verbatim into their human-facing README. Hard bans: no §-number cross-references (no "see §6", "via §6 hint rows"); no snake_case identifiers or column-shaped tokens (no `cost_center_id`, no `features.cost_center_id`); no platform plumbing words ("Semantius", "deployer", "deploy time", "self-contained"); no scope-deferral or authoring-decision narration ("deliberately out of scope", "moved to a sibling domain", "fully declared even though..."). Deferrals live in `related_domains` plus §6, never in §1 prose. Authoring decisions about platform built-ins are the deployer's concern at deploy time, not §1's. If you find yourself wanting to add a third paragraph that explains a *modeling choice*, delete it: §1 describes the system, not the model file.
 
 ### §2 Entity summary and diagram
@@ -363,7 +365,7 @@ For each entity, repeat the §3 sub-structure, numbered 3.1, 3.2, … in the can
 - **`**Cube mode:**`** — OPTIONAL: bare enum value, no backticks. How the entity is exposed to the cube semantic layer. Emit ONLY when non-default; omit the line when the value is the platform default. The deployer stamps it into `entities.cube_mode`.
 - **`**Icon URL:**`** — OPTIONAL: plain URL value, NO backticks. The entity's icon image URL. Emit ONLY when set; omit the line when empty/null. The deployer stamps it into `entities.icon_url`.
 - **`**Catalog entity code:**`** — OWNED entities only (create-new / rename-incoming-from / promote-to-master). The catalog uber-model code from the blueprint's §3 `catalog code` column (equals `table_name` for agent-optimized naming). The deployer stamps it into `entities.catalog_entity_code` as write-once identity — the catalog code, not the deployed `table_name`. Omit for `reuse-from` / built-in entities — those are referenced, not provisioned, and already carry their own stamp. Fields need no equivalent line: the deployer stamps `fields.catalog_field_code` = the field's `field_name` on `create_field` (write-once), so a field's design name is its identity.
-- **`**Entity type:**`** `operational_workflow | operational_record | catalog | junction | computed` — OWNED entities only. The closed 6-way class from the blueprint's §3 `entity_type` column, carried verbatim. The deployer stamps it into `entities.entity_type`. Write `unclassified` only when the blueprint left it absent (pre-3.0 fallback) — the deployer treats that as derive-locally; never coin a value outside the closed set. Omit for `reuse-from` / built-in entities.
+- **`**Entity type:**`** `operational_workflow | operational_record | catalog | junction | computed` — OWNED entities only. The closed 6-way class from the blueprint's §3 `entity_type` column, carried verbatim. The deployer stamps it into `entities.entity_type`. Write `unclassified` only when the blueprint left it absent — the deployer treats that as derive-locally; never coin a value outside the closed set. Omit for `reuse-from` / built-in entities.
 - **`**Catalog owner:**`** — OPTIONAL, placeholder masters only: the owner-module slug for an `embedded_master` entity provisioned locally as a placeholder while its catalog owner module is absent (a first-mover `create-new`, or a silo `rename-incoming-from`), from the blueprint's `mastered_in`. The deployer stamps it into `entities.catalog_owner_module`. Omit the line when this module owns the entity, when the entity is local/custom, and on `reuse-from` / `promote-to-master`.
 - **`**Label parent:**`** — OPTIONAL: omit the line when none. Names the one FK field on this entity that is its identity spine: the parent whose composed `_label` prefixes this record's `_label`. Derived by the analyst at Stage 4 via the label_parent decision rule: NONE for `junction` entities (legs auto-combine) and for self-identifying records (intrinsic name — name/title/code/email — in `label_column`); otherwise the FK to the principal subject (the lone `parent` FK by default, else the architect-informed identity spine). MUST name a real `reference`/`parent` FK declared on this entity and MUST NOT target a junction. The deployer stamps it into `entities.label_parent`; re-pointing it changes `_label` with no data migration. Omit for `junction` entities and `reuse-from` / built-in entities.
 - **`**Reconciliation:**`** `create-new | reuse-from <module>.<entity> | rename-incoming-from <module>.<entity> as <new> | promote-to-master <master>.<entity> | dropped (optional, user declined) | dropped (policy-excluded)` — omit the line when `create-new`.
@@ -400,7 +402,16 @@ A single table showing every link between entities. An agent uses this to sanity
 
 ### §5 Enumerations
 
-Collect every `enum` field's allowed values here, one sub-section per enum, **sorted alphabetically by `table_name.field_name`**. If two fields share an enum, note it and list once. The sub-heading is **unnumbered** (just the backticked `table.field`, no `5.N`); the member values inside a block keep their defined lifecycle/semantic order (do NOT alphabetize the values). One bullet per entry: `` - `value` ``, or `` - `value` - Label `` when the value is a code or an abbreviation (`` - `nda` - Non-disclosure agreement ``; the modeler sends it as a `{"value", "label"}` pair). The Notes `enum_values:` hold the same values, without labels; `consistency-check.ts` checks the bullet grammar and that both agree. If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
+Collect every `enum` field's allowed values here, one sub-section per enum, **sorted alphabetically by `table_name.field_name`**. If two fields share an enum, note it and list once. The sub-heading is **unnumbered** (just the backticked `table.field`, no `5.N`); the member values inside a block keep their defined lifecycle/semantic order (do NOT alphabetize the values). One bullet per entry: `` - `value` ``, or `` - `value` - Label `` when the value is a code or an abbreviation (`` - `nda` - Non-disclosure agreement ``) or when the entry carries a hint. An entry's hints are sub-bullets directly under it, indented exactly two spaces, in this order and each at most once:
+
+```
+- `on_hold` - On hold
+  - color: `#f59e0b`
+  - icon: `circle-pause`
+  - description: Waiting for the counterparty to countersign
+```
+
+`color` (lowercase hex) and `icon` (a Lucide icon name or URL) are backticked; `description` is plain text to the end of the line. An entry with any hint must carry ` - Label`. The modeler sends an entry with a label or hint as a `{"value", "label", …}` object (meaning of the keys: "Enum values and labels" in `use-semantius/references/data-modeling.md`; which enums get hints: `stage-4-fields.md`). The Notes `enum_values:` hold the same values, without labels or hints; `consistency-check.ts` checks the bullet grammar and that both agree. If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
 
 ### §6 Cross-model link suggestions and handoffs
 
@@ -423,7 +434,7 @@ Collect every `enum` field's allowed values here, one sub-section per enum, **so
 - Column vocabulary is the blueprint's: `transition` carries `<to_state> _(<event_category>)_` with `event_category` ∈ {`lifecycle`, `state_change`, `entity_event`} (for an `entity_event` the cell is `_(entity_event)_` alone); `integration` ∈ {`event_stream`, `api_call`, `batch_sync`, `lifecycle_progression`}; `friction` ∈ {`low`, `medium`, `high`}; `payload` is the backticked `table_name` of the entity whose change the event carries.
 - The `source module` column (outbound) follows the entity-owning-module rule: when the source entity is an `embedded_master` whose catalog owner is absent, the source module is the installing unit; otherwise it is the catalog owner. On master-install the deployer's Stage 4n re-attributes the handoff to the new catalog owner module.
 - `to_state` validation applies to **Outbound** `lifecycle` rows (and to an Inbound row only when its `payload` names an entity declared in this spec's §3): the `to_state` must be one of that entity's `workflow_state` enum values. Inbound payloads normally belong to the source module and are not checked. `consistency-check.ts` additionally requires every Outbound `payload` to be a declared entity.
-- The modeler parses both sub-sections **when present** (specs written before 5.5 carry none) and feeds Stage 4m; the optimizer cannot read handoffs back from live state and emits the placeholders.
+- The modeler parses both sub-sections **when present** and feeds Stage 4m; the optimizer cannot read handoffs back from live state and emits the placeholders.
 
 ### §7 Open questions
 

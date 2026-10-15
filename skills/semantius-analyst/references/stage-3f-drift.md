@@ -60,7 +60,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
 
 **Policy path:** `.drift.enum.<entity>.<field>`.
 
-**Compare by value.** A live `enum_values` entry may be a `{"value", "label"}` pair: take its `value`. Entries whose values match but whose labels differ are **not** 3f.2 drift: a label-only change is cosmetic (records store values) and goes to the 3f.6 cosmetic batch as `"<Field Label>: choice labels"`.
+**Compare by value.** A live `enum_values` entry may be a `{"value", "label"}` object with an optional `description`, `color` and `icon`: take its `value`. Entries whose values match but whose labels or hints differ are **not** 3f.2 drift: such a change is cosmetic (records store values) and goes to the 3f.6 cosmetic batch as `"<Field Label>: choice labels, colors and icons"`. A hint the spec does not state is kept from live on deploy (modeler `mergeEnumEntries`, `deploy-script-template.md`), so it is never drift.
 
 **Fires when** the blueprint declares `enum_values` for a field that already exists live, AND any of these conditions hold: (a) live has values the blueprint doesn't list, (b) blueprint introduces values that re-classify existing live values, (c) live `default` differs from blueprint `default`. Especially urgent when live records actually use any value the blueprint would drop (`live_distinct_enum_values_in_use` includes a value missing from the blueprint's list).
 
@@ -118,7 +118,7 @@ Use both the naming-pair heuristic AND format / lifecycle-stamp / required-ness 
 
 **Fires when** the blueprint declares a different `format` or `required` value than the live entity for a field that already exists. Distinguish two cases:
 
-- **Same-primitive format variation** (text ↔ string ↔ multiline ↔ html, integer ↔ int32 ↔ int64): the platform usually accepts these via `update_field`. The widget is informational — recommends aligning to spec (live can be updated) with a "keep live" escape hatch.
+- **Same-primitive format variation** (formats with the same PostgreSQL type in the format → type table of `use-semantius/references/data-modeling.md` (`default_value` section)): the platform usually accepts these via `update_field`. The widget is informational — recommends aligning to spec (live can be updated) with a "keep live" escape hatch.
 - **Cross-primitive format change** (text → integer, text → date, integer → number, etc.): this is a 🔴 hard blocker and there is nothing to choose, so **no widget fires**. Write a 🔴 §7.1 blocker into the spec and name it in the 3g plan summary's blockers line (stage-3-confirm.md, authoring rule 10) so the user sees it before the file is written.
 
   > **Fast flow, after the go-ahead:** no blocker: keep the live format and align the spec to it, because fast flow never removes or destructively changes anything deployed; log it; don't ask.
@@ -193,7 +193,7 @@ For every renamed `<old_token>`, grep the entire assembled spec text for `"<old_
 
 **Policy path:** `.drift.property.<entity>.<field|entity>.<property>`.
 
-**This is the catch-all that guarantees EVERY property is validated, not just the specialized five.** Fires when any captured property outside 3f.1–3f.4 differs between live and intended. Covers, at minimum: `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `id_type`, `id_prefix`, `id_refentity`, enum labels (values matching, labels differing), `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` — entity- or field-level as applicable. Grade each divergence by risk, then resolve; **nothing is auto-applied silently — every drifted property is shown and decided, in guided and expert flow.**
+**This is the catch-all that guarantees EVERY property is validated, not just the specialized five.** Fires when any captured property outside 3f.1–3f.4 differs between live and intended. Covers, at minimum: `description`, `title`, `default_value`, `precision`, `scale`, `unique_value`, `reference_delete_mode`, `view_permission`, `label_column`, `label_parent`, `order_column`, `id_column`, `id_type`, `id_prefix`, `id_refentity`, enum labels and hints (values matching, labels or `description` / `color` / `icon` differing), `edit_mode`, `cube_mode`, `icon_url`, `width`, `searchable` — entity- or field-level as applicable. Grade each divergence by risk, then resolve; **nothing is auto-applied silently — every drifted property is shown and decided, in guided and expert flow.**
 
 > **Fast flow, after the go-ahead:** every single keep-live / apply-design question below (one cosmetic property, a value change, the record ids) takes the option marked "(Recommended)"; the multi-select cosmetic batch selects none, so every property in it takes the live value; log it; don't ask.
 

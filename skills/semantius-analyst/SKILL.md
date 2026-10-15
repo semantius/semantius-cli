@@ -79,15 +79,11 @@ A useful test: *"if I deleted this chat message before sending, would the user n
 
 ---
 
-## Skill version: `CURRENT_VERSION = "5.9"` and `EXPECTED_BLUEPRINT_VERSION = "3.1"`
+## File format version
 
-This skill stamps every spec file it writes with `version: "<CURRENT_VERSION>"` in the front-matter, as a quoted string `"MAJOR.MINOR"` (currently `"5.9"`). The version is the analyst skill's own version at the time of the write, not a property of the model's content. It is the single source of truth for compatibility downstream.
+Every spec this skill writes carries `version: "3.1"` in the front-matter. A blueprint or spec this skill reads whose `version` is not `3.x` (or that has no `version`) is rejected: stop and tell the user the file is not in the current format.
 
-The analyst reads `blueprint_version` from the blueprint's front-matter. **Major** must equal `EXPECTED_BLUEPRINT_VERSION`'s major (currently `"3.1"`, i.e. major `3` — minor is informational and not compared, so a `3.0` blueprint is accepted). Major older → ask the user to regenerate the blueprint via `semantius-architect` Mode D Rebuild. Major newer → ask the user to update this analyst skill.
-
-The downstream `semantius-modeler` maintains its own `EXPECTED_MAJOR` constant on the spec; it must equal this analyst's CURRENT_VERSION major. Bumping major here implies a coordinated bump in the modeler.
-
-**When to bump.** Same rules as the architect: bump *minor* for non-breaking content rule changes (new optional sub-block, new modeling convention authors must follow); bump *major* for breaking shape changes (section renumbered, frontmatter key removed, table column shape changed). Reconciliation-annotation set is part of the major contract — adding a new annotation value is a minor; removing or renaming one is a major.
+`version` is the file format version. It changes only when the file format changes, and only with the user's approval.
 
 ---
 
@@ -161,7 +157,7 @@ semantius call crud read_entity '{}'
 
 **Identify the blueprint.** Look in the workspace for `*-semantic-blueprint.md`. If multiple, ask the user which. If none, ask the user for a file path or URL. For URLs, use `curl -s <url>` (Bash) to fetch the raw bytes — **never `WebFetch`** (it runs through an HTML→markdown summarization pass that silently strips YAML front-matter).
 
-Verify the blueprint front-matter says `artifact: semantic-blueprint` and that `blueprint_version`'s **major** matches `EXPECTED_BLUEPRINT_VERSION` (currently `"3.1"`, i.e. major `3`; the architect stamps `"3.1"` today, and `3.0` files parse the same: `3.1` only added the optional `based on` column of `**Key types:**` and the dotted family edges). Major mismatch → halt and ask the user to regenerate via `semantius-architect` Mode D Rebuild. (The `2.x → 3.0` bump inserted the §3 `catalog code` and `entity_type` columns, so a 2.x blueprint genuinely lacks them; Rebuild re-authors with both derived.)
+Verify the blueprint front-matter says `artifact: semantic-blueprint` and `version: "3.x"` (see "File format version"). Any other `version`, or none → halt and tell the user the blueprint is not in the current format.
 
 ---
 
@@ -355,7 +351,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 
 | Check | Failure surfaces as |
 |---|---|
-| `version` is `"5.9"` | front-matter has wrong major |
+| `version` is `"3.1"` | wrong version |
 | Every blueprint §3 entity has a Reconciliation decision | missing decisions list |
 | No `reuse-from` entity carries a Fields block | over-spec list |
 | No `create-new` / `rename-incoming-from` / `promote-to-master` entity is missing a Fields block | under-spec list |
@@ -383,7 +379,8 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | **JsonLogic field references resolve** — every `{"var": "<token>"}` in every `computed_fields`, `validation_rules`, `input_type_rules`, and `select_rule` references a field that exists on the relevant entity (either declared in the spec's Fields block, or carried from live state via Stage 2h for adopted/reused entities, or known to be a Semantius built-in column like `id`, `created_at`) | dangling JsonLogic var list (entity, rule name, unresolved token) |
 | **JsonLogic permission references resolve** — every `require_permission(<code>)` and every `has_permission(<code>)` argument in JsonLogic resolves to a permission row in §8.1 OR a known platform-level permission | unbound permission code list |
 | **JsonLogic enum-value references resolve** — every literal value compared against an enum-typed field in JsonLogic exists in that field's `enum_values` as a **value**, never a label (after any Stage 3f.2 merge) | unknown enum literals list |
-| **Enum entries well-formed** — every §5 bullet is `` - `value` `` or `` - `value` - Label ``; each Notes `enum_values:` set equals its §5 values; every `default:` is a value, never a label (enforced by `consistency-check.ts`) | enum list (entity, field, issue) |
+| **Enum entries well-formed** — every §5 bullet and hint sub-bullet follows the §5 grammar in `semantic-spec-template.md`; an enum with hints follows the hint rules of `stage-4-fields.md` ("Enum values, labels and hints"); each Notes `enum_values:` set equals its §5 values; every `default:` is a value, never a label (enforced by `consistency-check.ts`) | enum list (entity, field, issue) |
+| **Icons exist** — every §5 `icon` and the frontmatter `icon_name` pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>` (a URL always passes) | unknown icon list |
 | **Label column is text** — the §3 row named by `**Label column:**` (and marked `` `label_column` ``) has Format `string`, never `enum`, `multiline`, a FK or any other format: the platform creates it as text and locks its format (`90219`) (enforced by `consistency-check.ts`) | label list (entity, field, format) |
 | **JsonLogic rename cascade complete** — for every rename recorded in Stage 3f.1 / 3f.3, grep the assembled spec text for the old token; the count must be zero | partial rename list (token, line numbers where stale references remain) |
 | **No enum value would orphan live records** — for every adopted entity, no **value** (compared by value; a label change orphans nothing) in `live_distinct_enum_values_in_use` is missing from the spec's final `enum_values` for that field UNLESS a §7.1 🔴 blocker documents the required pre-deploy data migration | enum drop list (entity, field, dropped value, live record count) |

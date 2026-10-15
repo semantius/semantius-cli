@@ -71,14 +71,14 @@ Per field:
 | `precision` | Max decimal places seen; `0` for every non-numeric base format. |
 | `required` | `true` = no empty cell was seen in any inspected row; `false` = at least one exists. A statement about the CSV with **no `create_field` counterpart** — never send it. |
 | `input_type` | `"required"`, present **only** when `required` is `true`. The derived property that IS sendable to `create_field`; treated as a proposal the user can downgrade (section 6). |
-| `enum_values` | Present only for `format: "enum"`: the distinct values, **always strings** in the introspection output. (A live field's `enum_values` may also hold `{"value", "label"}` pairs; see section 3.) |
+| `enum_values` | Present only for `format: "enum"`: the distinct values, **always strings** in the introspection output. (A live field's `enum_values` may also hold `{"value", "label"}` objects with an optional `description`, `color` and `icon`; see section 3.) |
 | `sample_values` | Present for every non-enum format: the distinct values seen, capped at 11. JSON numbers for numeric formats, verbatim strings otherwise (so `007` keeps its leading zeros). These are unique values, not the first N rows. |
 
 ### Detection quirks you cannot see in the output
 
 These rules are baked into the introspector and are load-bearing for the review steps below. They are not inferable from any single file's output.
 
-1. **Enum overrides at low cardinality.** Any column with 10 or fewer distinct non-empty values is reported `enum`, even when every value is an integer, a number, or a date. A numeric status code column, a 1-to-5 rating, or a small FK id column will arrive as `enum` with string `enum_values`. Section 3 exists because of this.
+1. **Enum overrides at low cardinality.** Any column with 10 or fewer distinct non-empty values is reported `enum`, even when every value is an integer, a number, or a date. A numeric status code column, a 1-to-5 rating, or a small FK id column will arrive as `enum` with string `enum_values`. Section 3 exists because of this (it offers `rating` for a rating column).
 2. **Boolean detection is exact-pair.** `boolean` fires only when the column's distinct values are exactly one of these pairs (case-insensitive): `0|1`, `f|t`, `false|true`, `n|y`, `no|yes`. The raw pair is preserved in `sample_values`; the import script needs it for coercion.
 3. **Identifier heuristic.** Numeric-looking columns with leading zeros (`007`) or a uniform fixed length (zip codes, SKU codes) are deliberately kept `string`. Never "upgrade" them to `integer`; the leading zeros are data. The verdict is authoritative: if you believe the column is genuinely numeric rather than an identifier, propose the change as a question to the user per the section 2 format-override rule — do not silently send `integer` (or any other override) into the mapping or `create_field`. This applies whether or not the sampled values carry leading zeros; a uniform-length id column is still an identifier by default.
 4. **`date` vs `date-time`.** Values must be ISO (`YYYY-MM-DD` prefix). A column is `date` only when every value carries the identical time-of-day signature (plain dates, or all midnight); otherwise `date-time`.
@@ -105,8 +105,10 @@ The vocabulary is aligned, so most formats pass straight into `create_field`:
 | `boolean` | `boolean` | | map the detected raw pair to `true`/`false` |
 | `string` | `string`, or `multiline` when the field name matches the multiline heuristic (`description`, `notes`, `body`, `comment`, `summary`, `details`, `rationale`) | | pass through |
 | `enum` | reviewed first, see section 3 | `enum_values: [...]` when confirmed | pass through |
+| (chosen in section 3, or the format of an existing target field) | `rating` | | parse as integer; a value outside 0–5 fails the row |
+| (the format of an existing target field) | `color`, `icon` | | pass through |
 
-**Fallback rule: any `format` not in the table passes through verbatim.** The table documents the formats whose handling has nuances; it is guidance, never an allowlist. A format without a row (`email`, `url`, anything a future CLI version emits) is sent to `create_field` as-is (together with `precision`, `enum_values`, and `input_type` when present), passed through untouched by the import script's coercion, and gets the string-family empty-cell default (`""`) unless the platform's nullability rule marks it NULL-capable. A new format must never break or block the skill.
+**Fallback rule: any `format` not in the table passes through verbatim.** The table documents the formats whose handling has nuances; it is guidance, never an allowlist. A format without a row (`email`, `url`, anything a future CLI version emits) is sent to `create_field` as-is (together with `precision`, `enum_values`, and `input_type` when present), passed through untouched by the import script's coercion, and gets the empty-cell default of its PostgreSQL type (section 7; types: the format → type table in `use-semantius/references/data-modeling.md`) unless the platform's nullability rule marks it NULL-capable. A new format must never break or block the skill.
 
 **The introspection verdict is gold — default to it, and never override it silently.** Every `format` (and `precision`, `enum_values`, `input_type`, and the boolean pair) in the csvschema output is a deliberate decision produced by the detection rules of section 1, not an accident. Pass it through to `create_field` unchanged unless there is a genuine, domain-level reason to change it. If you are confident the verdict is wrong for the data (e.g. a heuristic `string` id column that is really a numeric measurement, or an enum that is really an integer), that override is a **user decision, not a mapping edit**: raise it in the mapping review as an `AskUserQuestion` that states the introspected format, the proposed override, and the reason, and defaults to the introspected format. Silently changing a column's format in the mapping is editorializing the source's declared type — the exact mistake this rule exists to prevent. A mapping that differs from the csvschema verdict without a recorded user decision is a defect.
 
@@ -125,14 +127,14 @@ Because of quirk 1, treat every `enum` verdict as a claim to verify, not a fact.
 | All `enum_values` are... | Verdict |
 |---|---|
 | a recognized boolean pair (quirk 2 list) | `boolean` |
-| integer strings (`"1"`, `"42"`) | ambiguous: `integer` vs genuine enum. Decide by meaning: quantities and measurements are `integer`; codes and ratings can be either; ask the user when unclear |
+| integer strings (`"1"`, `"42"`) | ambiguous: `integer`, `rating` or genuine enum. Decide by meaning: quantities and measurements are `integer`; a person's judgment on a 1–5 or star scale (values within 0–5, a header like `rating`, `stars`, `score`) is `rating` (drop the introspected `enum_values`); codes are a genuine enum; ask the user when unclear |
 | numeric strings with decimals | `number` (with `precision` re-derived from the values) |
 | ISO dates / datetimes | `date` / `date-time` |
 | a handful of short lowercase tokens (`draft`, `active`, `archived`) | genuine `enum`; keep `enum_values` as-is (sorted, deduped) |
 | readable labels (`On hold`, `Key account`) | genuine `enum`: propose snake_case values with the file's text as the label, `{"value": "on_hold", "label": "On hold"}`; records store the value and the import translates each cell (the `coerce` enum branch matches a value, then a label, case-insensitively) |
 | longer free text, names, or values that clearly continue beyond the sample | `string`; the low cardinality is an artifact of a small file |
 
-**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` pair; records, `default_value` and comparisons always use the value. Against an existing field, compare by value: a file holding the labels of a live field's pairs is not a mismatch (the import translates them), and a label-only difference is cosmetic.
+**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`; records, `default_value` and comparisons always use the value. Against an existing field, compare by value: a file holding the labels of a live field's entries is not a mismatch (the import translates them), and a difference in labels or hints is cosmetic.
 
 Genuine enum extras: consider whether the CSV plausibly contains every lifecycle value. A 30-row export may miss states. When the user knows more values exist, add them to `enum_values` now; adding later is also possible via `update_field`.
 
@@ -223,9 +225,10 @@ The platform computes nullability from `format`: only `reference`, `date`, and `
 | Target format | Empty cell sends | Note |
 |---|---|---|
 | `date`, `date-time`, `reference` | `null` | |
-| `string`, `multiline` | `""` | |
+| `string`, `multiline`, `color`, `icon` | `""` | |
 | `integer`, `number` | `0` | When the column has empties and zero would be a lie (a missing measurement is not a zero), surface it once during mapping review: keep `0`, keep the column as `string`, or drop the column |
 | `boolean` | `false` | Same caveat as numbers when absence differs from "no" |
+| `rating` | `0` | `0` means not rated, so an empty cell is honest. A required rating needs 1–5: when the column has empties, surface it once during mapping review (make the field optional, or drop the column) |
 | `enum` | ask during review: add an explicit `"unknown"`-style value to `enum_values`, send `""`, or drop the column | |
 
 **Uniform keys.** Every object in a batch POST carries **every** mapped key, with empties filled per this table, never omitted. PostgREST rejects heterogeneous arrays with the misleading `PGRST102 Empty or invalid json`.
@@ -329,8 +332,8 @@ Four diff buckets:
 | Add a field | `create_field` |
 | Make a field required / optional | `update_field` with `input_type: "required"` / `"default"` |
 | Change `precision` on a `number` field | `update_field` |
-| Add values to `enum_values` | `update_field` (extend, never silently remove values that live rows may use) |
-| Format change within the same Postgres primitive | `update_field`, e.g. `string` ↔ `multiline` ↔ `html` ↔ `code` (all text) |
+| Add values to `enum_values` | `update_field` (extend, never silently remove values that live rows may use). `enum_values` is replaced as a whole, so send every live entry back with all of its keys (`label`, `description`, `color`, `icon`) plus the new values |
+| Format change within the same PostgreSQL type (the format → type table in `use-semantius/references/data-modeling.md`) | `update_field`, e.g. `string` ↔ `multiline` ↔ `html` ↔ `code` (all text) |
 | Retitle a field, adjust `field_order` / `width` | `update_field` |
 
 `update_field` is keyed by the composite id: `{"id": "<table>.<field>", "data": {...}}`, and the payload carries **only** the changing keys.

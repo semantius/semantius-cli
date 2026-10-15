@@ -55,6 +55,18 @@
     "type": "string",
     "description": "One of the values listed in enum"
   },
+  "color": {
+    "type": "string",
+    "description": "HTML Color"
+  },
+  "icon": {
+    "type": "string",
+    "description": "Name of a build-in icon"
+  },
+  "rating": {
+    "type": "integer",
+    "description": "Rating from 0 to 5, where 0 means not rated"
+  },
   "date": {
     "type": "string",
     "description": "Full date, RFC 3339 (2026-09-15)"

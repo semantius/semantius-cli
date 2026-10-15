@@ -63,14 +63,13 @@ from live state, which then feeds `semantius-analyst` Extend/Audit or a
 
 ---
 
-## Schema compatibility
+## File format version
 
-This skill writes files at `version: "5.9"` (the analyst's `CURRENT_VERSION`; the
-`SPEC_VERSION` constant in `spec-extract-lib.ts`). The `semantius-modeler` carries
-an `EXPECTED_MAJOR` and rejects a mismatched major, so the constant must track the
-analyst. A major analyst bump (section renumber, table-shape change, new required
-key) forces a coordinated update of the analyst template, this skill's extractor,
-and the modeler.
+This skill writes files at `version: "3.1"` (the `FORMAT_VERSION` constant in
+`spec-extract-lib.ts`), the file format version shared by every skill.
+
+`version` is the file format version. It changes only when the file format changes,
+and only with the user's approval.
 
 The authoritative output shape is
 `semantius-plugin/skills/semantius-analyst/references/semantic-spec-template.md`
@@ -241,7 +240,7 @@ based entity, audit log, edit permission, entity type, label parent, key type / 
 `**Based on:**`, reconciliation, including `reuse-from <module>.<table>` for a related
 entity of another module such as a family base); every §3 field's name / format /
 required / Notes; §3 Relationships prose (with the family sentence); §4 rows; §5
-enumerations (a `{value, label}` entry as `` - `value` - Label ``); the dotted family
+enumerations (a `{value, label}` entry as `` - `value` - Label ``, its `color`, `icon` and `description` as hint sub-bullets); the dotted family
 edges;
 §8.1 permission names, descriptions, and `included in :admin?` (derived from the live
 hierarchy); §9.1 baseline roles (with `♻ exists`, since live is the source), §9.1
@@ -250,7 +249,7 @@ Processes catalog. Entity order is the canonical `entity_type` tier
 then `table_name` A->Z, so it round-trips against a convention-compliant spec.
 
 **Category B — best-effort or omitted (this is your fix-by-hand source):**
-1. Authored frontmatter keys — `description` block, `blueprint_version`, `license`,
+1. Authored frontmatter keys — `description` block, `license`,
    `created_at`, `reconciled_*`, `source_blueprint`, `related_modules`,
    `related_domains`, `departments`, `initial_request`, `persona`,
    `raci_mode` / `raci_mode_source`. Omitted (not persisted).

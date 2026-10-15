@@ -28,8 +28,8 @@ type ColumnSpec = {
   reason?: string;
   title?: string;
   precision?: number;
-  // An entry is a value or a {value, label} pair; records store the value.
-  enum_values?: Array<string | { value: string; label?: string }>;
+  // An entry is a value or a {value, label} object (optional description / color / icon); records store the value.
+  enum_values?: Array<string | { value: string; label: string; description?: string; color?: string; icon?: string }>;
   input_type?: string;
   field_order?: number;
   reference_table?: string;
@@ -56,6 +56,7 @@ const M: Mapping = JSON.parse(
 function extras(c: ColumnSpec): string {
   const parts: string[] = [];
   if (typeof c.precision === "number" && c.format === "number") parts.push(`precision ${c.precision}`);
+  if (c.format === "rating") parts.push("0–5");
   if (c.enum_values) {
     const list = c.enum_values.map((e) => (typeof e === "object" ? e.value : e)).join(", ");
     parts.push(`enum: ${list.length > 60 ? `${c.enum_values.length} values` : list}`);

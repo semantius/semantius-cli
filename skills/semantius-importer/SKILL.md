@@ -90,7 +90,7 @@ That file is the distilled subset of `use-semantius` this workflow needs: CLI fo
 | `update_field` identifier | Composite id string: `{"id": "<table>.<field>", "data": {...}}`; payload carries only the changing keys | data-modeling.md → Updating and Deleting |
 | `update_entity` identifier | Keyed by `table_name` at top level, not numeric id | data-modeling.md |
 | Big payloads | Pipe JSON via stdin (`... | semantius call crud postgrestRequest`); the CLI reads stdin when no JSON argument is given. The "always pass inline JSON" warning is about interactive shells with an empty stdin, not scripts that pipe | cli-usage.md → Passing Arguments |
-| Format vocabulary | `enum` (with `enum_values`), never `select`; monetary values are `number` + `precision` | data-modeling.md |
+| Format vocabulary | `enum` (with `enum_values`), never `select`; monetary values are `number` + `precision`; a 0–5 judgment is `rating` | data-modeling.md |
 
 ---
 
@@ -129,7 +129,7 @@ First create the run workspace with the **canonical setup block** (import-script
 Apply schema-mapping.md sections 2–7 to produce the proposed mapping:
 
 - format passthrough (the CLI vocabulary is aligned; unlisted formats flow through verbatim per the fallback rule) plus the `multiline` naming heuristic;
-- **enum review** for every `enum` verdict (low-cardinality columns masquerade as enums);
+- **enum review** for every `enum` verdict (low-cardinality columns masquerade as enums; a 1–5 rating column is offered as `rating`);
 - **the id line** (schema-mapping.md section 4): `id_mode` applies to the **new-entity path only** — report the detection ("this file carries a usable primary key" / "the first column is an id candidate"), then apply the **classic policy**: id-named column renamed to `external_id` (offered as the unique key, below), an `id_move_column` kept as its own integer field. Importing source ids into a newly created entity's primary key is **deferred** (design and roadmap in the README; the `fix_id_sequence` RPC it needs now ships with the platform, but re-enabling preservation still needs its own plan). For an **existing target entity**, `id_mode` is ignored; the live `id_column` drives the collision policy and the payload guard;
 - **the unique-key question** (schema-mapping.md section 4): when the file carries a column that identifies each row (a source system id, a code, an external reference), ask **once**, in plain words, whether to **mark that field unique** so re-imports cannot create duplicates: *"`<Header>` looks like a unique id from the source. Mark `<field>` as unique so re-running this import skips rows that are already there?"* with two options — **Unique** (Recommended: `unique_value: true` on the field; the import skips rows whose value already exists) / **Not unique** (plain insert; re-running the file inserts every row again). Never say "natural key" to the user; that is only the internal `mapping.json` name (`natural_key`) for the field the script dedupes on. Never offer an "update existing rows" option: **updating existing records is postponed** (README → Postponed), the import is insert-only;
 - field-name verification, digit-leading renames, and **reserved-column resolutions** (`created_at`, `updated_at`, `label`);

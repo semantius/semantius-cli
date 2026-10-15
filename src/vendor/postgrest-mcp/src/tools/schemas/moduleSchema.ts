@@ -60,7 +60,7 @@ export const moduleSchema = z.looseObject({
       'Default admin role of this module (FK to roles.id)'
     ),
   logo_color: z.string().optional().describe('Hex color code for module logo'),
-  icon_name: z.string().optional().describe('Icon or logo name identifier'),
+  icon_name: z.string().optional().describe('Icon shown for the module: a Lucide icon name in kebab-case (e.g. "users"; latest Lucide release, names searchable in https://cdn.jsdelivr.net/npm/lucide-static/tags.json) or an icon URL'),
   home_page: z.string().optional().describe('Default home page path for module'),
   module_slug: z
     .string()

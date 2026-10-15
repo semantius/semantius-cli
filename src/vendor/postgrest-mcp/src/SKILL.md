@@ -105,7 +105,7 @@
       - `description`
       - Optional: `module_slug` — the module's identifier in UI links (`{ui_baseurl}/{module_slug}/...`). Leave unset: it is derived from `module_name`.
       - Optional: `access_scope` — permission structure of the module: `"custom"` (default), `"basic"`, `"advanced"`, `"gated"` or `"raci"`. Leave unset for ordinary modules.
-      - Optional: `icon_name` — name of the icon to show for the module in navigation; leave unset unless the user requests a specific icon.
+      - Optional: `icon_name` — the icon to show for the module in navigation: a Lucide icon name (see Field Format Quick Reference) or an icon URL; leave unset unless the user requests a specific icon.
 
    3. **Create baseline permissions** (always both):
       - `<module>:read` — grants read access to the module's entities
@@ -609,12 +609,15 @@
    | **Dates/Time** | `date`, `time`, `date-time`, `duration` |
    | **Relationships** | `reference` (cross-entity link, independent lifecycle — default delete: `restrict`) |
    | **Composition** | `parent` (ownership/composition, child lifecycle bound to parent — default delete: `cascade`; also used for M:N junction FKs) |
-   | **Choice** | `enum` (requires `enum_values`: an array whose entries are a value or a `{"value", "label"}` pair, e.g. `["draft", {"value": "on_hold", "label": "On hold"}]`. Records store the value; the label is what the UI shows. Use a pair when the value is a code or abbreviation. Never an object map like `{"draft": "Draft"}`) |
+   | **Choice** | `enum` (requires `enum_values`: an array whose entries are a value or a `{"value", "label"}` object, e.g. `["draft", {"value": "on_hold", "label": "On hold", "color": "amber"}]`. An object may also carry an optional `description`, `color` (HTML color) and `icon` (Lucide icon name, see below) — UI hints only. Records store the value; the label is what the UI shows. Use an object when the value is a code or abbreviation or needs a color or icon. Never an object map like `{"draft": "Draft"}`) |
+   | **Display** | `color` (HTML color, e.g. a hex code or color name), `icon` (Lucide icon name or icon URL, see below), `rating` (integer 0–5, 0 = not rated; use for star ratings and 5-point scores, not for general integers) |
    | **Boolean** | `boolean` |
    | **Structured** | `json`, `jsonlogic`, `object`, `array` |
    | **Identifiers** | `uuid`, `email`, `uri`, `url` |
 
-   > ℹ️ **An enum record stores the value, never the label.** `enum_values`, and the `enum` list of an enum property in `get_schema` output, hold the entries as defined: an entry may be a `{"value", "label"}` object, so write its `value`. `get_schema` also lists `""` for an enum that is not required.
+   > ℹ️ **Icons are Lucide icons.** An `icon` field, the `icon` of an enum entry and a module's `icon_name` take a Lucide icon name in kebab-case (e.g. `circle-check`, `users`, `shopping-cart`; never the PascalCase React component name `CircleCheck`), or an icon URL. The UI always uses the latest Lucide release, so every current icon is available. To find a name, search https://cdn.jsdelivr.net/npm/lucide-static/tags.json (icon name → search tags, ~1,900 icons): look a name up by key, or an idea up by its tags; search it, don't load it whole.
+
+   > ℹ️ **An enum record stores the value, never the label.** `enum_values`, and the `enum` list of an enum property in `get_schema` output, hold the entries as defined: an entry may be a `{"value", "label"}` object, with any `description`, `color` and `icon` it carries, so write its `value`. `get_schema` also lists `""` for an enum that is not required.
 
    ---
 
@@ -624,9 +627,10 @@
 
    | Format(s) | PostgreSQL type | Auto default | Nullable? |
    |-----------|-----------------|--------------|-----------|
-   | `string`, `text`, `multiline`, `html`, `code`, `email`, `url`, `uri`, `uuid`, `password` | TEXT | `''` | NOT NULL |
+   | `string`, `text`, `multiline`, `html`, `code`, `email`, `url`, `uri`, `uuid`, `password`, `color`, `icon` | TEXT | `''` | NOT NULL |
    | `enum` | TEXT | `''` unless `input_type: "required"`, then the value of the first entry of `enum_values` | NOT NULL |
    | `integer`, `int32` / `int64` | INTEGER / BIGINT | `0` | NOT NULL |
+   | `rating` | INTEGER | `0` (not rated) | NOT NULL — the 0–5 range is checked by the platform, not a database constraint; a required rating needs a value from 1 to 5 |
    | `number`, `float`, `double` | NUMERIC / REAL | `0.0` | NOT NULL |
    | `boolean` | BOOLEAN | `FALSE` | NOT NULL |
    | `json`, `jsonlogic`, `object`, `array` | JSONB | `'{}'` | NOT NULL |

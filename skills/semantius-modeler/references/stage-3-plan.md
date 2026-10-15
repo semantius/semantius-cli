@@ -55,6 +55,7 @@ If the module already exists, swap `✨ Will create` for `♻️ Exists (ID: 12)
   ♻️ subscriptions: 26 fields, 4 drifted, 1 new
      ~ vendor_name.description: "Vendor" → "Legal name of the contracting vendor"
      ~ workflow_state.enum_values: + "renewed", + "expired"
+     ~ priority.enum_values: colors and icons on every entry (cosmetic)
      ~ amount.searchable: false → true
      ~ contract_url.format: text → html (same primitive, accepted)
      + renewal_date (date, optional)

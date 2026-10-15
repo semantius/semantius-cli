@@ -183,7 +183,7 @@ A slug may live in the convention folder, at the repo root, or both; the skill r
 For each candidate file, read **only the front-matter** (the first 30 lines is enough). Extract:
 
 - `artifact` (`semantic-blueprint` vs `semantic-spec`)
-- `blueprint_version` (blueprints) or `version` (specs)
+- `version` (blueprints and specs; the file format version, `"3.x"`)
 - `system_slug`
 - `reconciled_at` and `source_blueprint` (specs only)
 
@@ -192,16 +192,16 @@ Build a workspace summary:
 ```
 Workspace artifacts:
   semantius/blueprints/
-    - ats-candidate-crm-semantic-blueprint.md  (artifact: semantic-blueprint, blueprint_version: "2.0", slug: ats-candidate-crm)
+    - ats-candidate-crm-semantic-blueprint.md  (artifact: semantic-blueprint, version: "3.1", slug: ats-candidate-crm)
   semantius/specs/
-    - ats-candidate-crm-semantic-spec.md       (artifact: semantic-spec, version: "4.1", slug: ats-candidate-crm, reconciled 2026-05-25)
+    - ats-candidate-crm-semantic-spec.md       (artifact: semantic-spec, version: "3.1", slug: ats-candidate-crm, reconciled 2026-05-25)
 ```
 
 If the request mentions a URL, plan to fetch it first (Step 2).
 
 If the request mentions a specific file by path or name, prefer that over auto-discovery. **When the location the user names doesn't match where the file actually is** (e.g. they say "from the root folder" but the only match lives in `semantius/blueprints/`), just use the unambiguous match silently. Do NOT narrate a paragraph explaining the discrepancy; the user named the artifact, not the path, and a location correction is housekeeping for `$DIAG_LOG`. Surface a one-line clarification only if there are genuinely two candidates and you had to pick.
 
-The workspace summary itself is internal: it goes to `$DIAG_LOG`, not chat. The user does not need a front-matter dump (`blueprint_version`, entity counts, "reconciled" dates) before the plan. Lead the chat with the plan, not with an inventory. **Exception: 1.3 below.** When an existing workspace artifact matches the user's request, that match MUST be surfaced before the plan is built. The "no inventory dump" rule covers unrelated artifacts; it does NOT cover a slug-match on the thing the user just asked for.
+The workspace summary itself is internal: it goes to `$DIAG_LOG`, not chat. The user does not need a front-matter dump (`version`, entity counts, "reconciled" dates) before the plan. Lead the chat with the plan, not with an inventory. **Exception: 1.3 below.** When an existing workspace artifact matches the user's request, that match MUST be surfaced before the plan is built. The "no inventory dump" rule covers unrelated artifacts; it does NOT cover a slug-match on the thing the user just asked for.
 
 ### 1.3 Match check: surface pre-existing artifacts that could satisfy the request
 

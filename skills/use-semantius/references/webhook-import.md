@@ -72,7 +72,7 @@ semantius call crud getCurrentUser '{}'
 
 Never map to `input_type: "readonly"` or `input_type: "disabled"` fields — both indicate a non-caller-writable column (computed fields land in `disabled`; manual locks land in `readonly`). Never map to `_label` or a `<fk>_label` companion (e.g. `_label`, `customer_id_label`) either — they are read-only composed labels the platform derives, not writable columns.
 
-**Enum columns.** An enum field accepts only the values of its `enum_values`. When the source sends labels instead (e.g. "On hold" for `on_hold`), translate each to the `value` of the matching `{"value", "label"}` entry.
+**Enum columns.** An enum field accepts only the values of its `enum_values`. When the source sends labels instead (e.g. "On hold" for `on_hold`), translate each to the `value` of the matching `{"value", "label"}` entry (an entry may also carry a `description`, `color` and `icon`; ignore them).
 
 **The key column depends on the entity's `id_type`:**
 

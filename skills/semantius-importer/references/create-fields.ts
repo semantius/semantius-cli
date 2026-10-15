@@ -58,8 +58,8 @@ type ColumnSpec = {
   reason?: string;
   title?: string;
   precision?: number;
-  // An entry is a value or a {value, label} pair; records store the value.
-  enum_values?: Array<string | { value: string; label?: string }>;
+  // An entry is a value or a {value, label} object (optional description / color / icon); records store the value.
+  enum_values?: Array<string | { value: string; label: string; description?: string; color?: string; icon?: string }>;
   input_type?: string;
   field_order?: number;
   reference_table?: string;
@@ -101,7 +101,7 @@ function rowFor(c: ColumnSpec): Record<string, unknown> {
   };
   if (typeof c.field_order === "number") data.field_order = c.field_order;
   if (typeof c.precision === "number" && c.format === "number") data.precision = c.precision;
-  if (c.enum_values) data.enum_values = c.enum_values;   // values and {value, label} pairs, verbatim
+  if (c.enum_values) data.enum_values = c.enum_values;   // values and {value, label, …} objects, verbatim
   if (c.reference_table) {
     data.reference_table = c.reference_table;
     data.reference_delete_mode = c.reference_delete_mode ?? "restrict";

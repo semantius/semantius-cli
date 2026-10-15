@@ -1,14 +1,25 @@
 # semantius-architect — changelog
 
-This file records the history of the analyst skill's `CURRENT_VERSION` and the content-contract changes each version introduced. The current `CURRENT_VERSION` and the rules a maintainer must follow when bumping it live in [SKILL.md](./SKILL.md) under "Skill version". The body of SKILL.md is the **current contract**; this file is the **history of how the contract evolved**.
+This file records the content-contract changes of the architect skill. The file format version and its rule live in [SKILL.md](./SKILL.md) under "File format version". The body of SKILL.md is the **current contract**; this file is the **history of how the contract evolved**.
 
-This file is NOT loaded into Claude's context when the skill triggers. Maintainers read it when planning a bump; users read it when investigating why an older-major file is shaped the way it is. Runtime behavior never depends on this file.
+This file is NOT loaded into Claude's context when the skill triggers. Maintainers read it when planning a change; users read it when investigating why a blueprint is shaped the way it is. Runtime behavior never depends on this file.
 
 The entries below are written in reverse chronological order (newest first). Each entry follows the template the maintainer keeps using: what changed, why, the new convention as a numbered list, and the major-vs-minor justification.
 
 ---
 
-## Unreleased: every confirmation its own turn; plain-language templates; "plan flow" renamed "guided flow"
+## file format version `3.1`; §5 enum hint grammar in the checker; `icon_name` is a Lucide name
+
+2026-10-15. Paired with the analyst entry of the same date.
+
+1. **`version` is the file format version**, `"3.1"`, the same in blueprint and spec files and in every skill; it changes only when the file format changes, and only with the user's approval. The blueprint no longer carries `blueprint_version`; `CURRENT_VERSION`, the bump rules and the archived-knowledge routing by major are gone. A blueprint whose `version` is not `3.x` is rejected (SKILL.md "File format version", audit checklist).
+2. **`consistency-check.ts`** parses §5 hint sub-bullets (`  - color:`, `  - icon:`, `  - description:`, in that order, each at most once). Errors: a hint on an entry without a label, an unknown key, wrong order, a duplicate, bad indentation, an unbackticked color or icon, an icon that is neither kebab-case nor a URL. Warnings: a non-hex color, a description that starts with its label, more than half of an enum's entries described, an enum where only some entries carry hints.
+3. **`icon_name`** is a Lucide icon name in kebab-case or an icon URL (template, Stage 13).
+4. **Checks before save.** Stage 13 finds the module icon with `use-semantius/references/lucide-icons.ts find`, and the pre-save gate gains "`icon_name` passes `lucide-icons.ts check`". `consistency-check.ts` fails a blueprint or spec whose frontmatter `version` is missing or not `3.x` (check `version`), so every skill that runs it before saving or deploying stops on a file in an old format.
+
+---
+
+## every confirmation its own turn; plain-language templates; "plan flow" renamed "guided flow"
 
 2026-10-09. From the Roadmap Planner postmortem: a plan-flow run collapsed seven confirmations into two widgets and never showed the relationships, diagram, classification or restricted steps. Causes: no rule against merging confirmations, chat templates written in identifiers the writing conventions ban, no step that presents relationships or lifecycles, and contradicting rules.
 
@@ -29,7 +40,7 @@ No version bump (internal testing); the content contract changed (items 6, 9, 10
 
 ---
 
-## Unreleased: Stage 1 guidance in expert flow; shorter fast-flow interview
+## Stage 1 guidance in expert flow; shorter fast-flow interview
 
 2026-10-06. Expert flow now does everything plan flow does in Stage 1, plus more, and fast flow asks less, so each flow adds to the one before it (fast → plan → expert). Rules: `references/stage-1-capture.md`, `../semantius-admin/references/interaction-flow.md`, `../semantius-admin/references/fast-flow.md`.
 
@@ -45,53 +56,7 @@ No version bump: the blueprint's content contract is unchanged.
 
 ---
 
-## 5.5: the architect decides the access level (`access_scope`)
-
-2026-10-05. The module's access level is now decided once, in the architect, by a deterministic script, and stamped into the blueprint frontmatter. Before, the analyst decided "basic vs full" again from live state (asking in advanced mode), so the user was asked twice and, in standard mode, gates confirmed in Stage 10 could be silently dropped. The analyst and modeler now only carry the value out.
-
-1. **New frontmatter key `access_scope`** (directly after `module_kind`): `custom` | `basic` | `advanced` | `gated` | `raci`, matching the platform's `modules.access_scope` enum.
-   - `basic`: read + manage. `advanced`: read + manage + admin. Process gates are not enforced at either level.
-   - `gated`: read + manage + admin; entering a gated state (or a gated creation) requires `<slug>:admin` directly.
-   - `raci`: read + manage + admin plus one `workflow-gate (lifecycle)` permission per gate, held only by the business roles of the confirmed RACI matrix and not included in `<slug>:admin`.
-   - `custom`: the live module's permissions were set up by hand and are kept.
-2. **New Stage 10 permission step** with the script `references/decide-access-scope.ts`.
-   - Inputs: `--has-reference-data-entities`, `--has-process-gate` (or `--blueprint`), `--mode`, and an optional `--requested-level`.
-   - The script itself reads whether another module uses `raci` and this module's current access level (two read-only `read_module` calls, the architect's one live read).
-   - It asks only in advanced mode, plus the keep-or-replace question for a hand-made (`custom`) module in every mode. An existing module is never lowered. A yolo run never picks `raci`.
-3. **The blueprint body follows the access level.**
-   - Under `raci`, §7 `derived gate` carries the gate's own code with a §8.1 `workflow-gate (lifecycle)` row (`included in :admin?` = `-`).
-   - Under every other level, the derived gate is `<slug>:admin` and §8.1 has no gate rows.
-   - §9.1 never rolls a process gate up under `<slug>:admin`.
-4. **Restricted creation (W6)** is recorded as a §8.2 rule with the new source flag `create`.
-5. **RACI matrix under `raci`.** Stage 11 drafts it when missing (one process per gate, an accountable persona per gate). The user always confirms it, in standard and advanced mode, also when it is inherited from a catalog blueprint. A yolo run reaches it only for a live `raci` module and accepts the matrix. Under every other level it is never drafted, and kept as documentation when inherited.
-   - **The RACI rule** (pre-save, audit, `consistency-check.ts`): every gate belongs to exactly one process, every process has exactly one accountable row, and that row holds its process's gates (`grant gates [...]`). The accountable (A) realization is now `grant gates [...]` instead of `approval gate`, so the approver holds the permission.
-6. **Removed:**
-   - the Stage 10 "gates but no admin tier" option 1 / option 2 question;
-   - the purely-operational and purely-reference special cases in Stage 9;
-   - the Extend "upgrade to the three-permission baseline" rules.
-
-   The access level decides the permission count.
-7. **Customize / Extend** on a blueprint without `access_scope` run the permission step first, with `--blueprint`, and write the result without a confirmation. Every later write re-runs it on the draft (with the `--has-*` flags), reusing the stamped answer when the gates and reference data entities did not change. A body that already exists is converted to the access level (recipe in Stage 10). Rebuild runs it after its Stage 10 gate in advanced mode. Clone runs it before Stage 13.
-   - **Yolo:** the keep-or-replace question for a hand-made module pauses the run, is asked, and the run continues.
-   - A live `gated` / `raci` module that lost its last gate keeps its level (a warning, not an error).
-8. **Checks.**
-   - Pre-save and the audit checklist gain the `access_scope` rows.
-   - `consistency-check.ts` checks, in blueprint mode:
-     - the value set;
-     - a gate for `gated` / `raci`;
-     - the RACI realization table for `raci`;
-     - no `workflow-gate (lifecycle)` rows outside `raci`;
-     - the §7 `derived gate` per level;
-     - no process gate rolled up under admin under `raci`;
-     - the RACI rule.
-
-   A missing key is a warning.
-
-**Minor bump** (5.4 → 5.5): a new frontmatter key with defined values and new authoring rules for §7 / §8.1 / §9.1. Older files remain readable; a blueprint without the key is routed through Customize, whose first step stamps it.
-
----
-
-## Unreleased: standard-mode guidance, yolo mode (experimental), confirmation list fixed
+## standard-mode guidance, yolo mode (experimental), confirmation list fixed
 
 2026-09-30. The interaction level switch now has three values: `standard` (default, guidance), `advanced` (control), `yolo` (autonomy, experimental). Rules: `../semantius-admin/references/interaction-level.md` and `../semantius-admin/references/yolo-mode.md` (new).
 
@@ -119,7 +84,7 @@ Files:
 - SKILL.md, `stage-1-capture.md`, `stage-2-naming.md`, `stage-3-entities.md`, `stage-6-related-modules.md`, `stage-7-handoffs.md`, `stage-8-9-rules-classification.md`, `stage-10-workflow-perms.md`, `stage-13-write.md`, `normalization.md`.
 - Shared: `../semantius-admin/references/yolo-mode.md` (new) and `interaction-level.md`.
 
-## Unreleased: advanced mode switch
+## advanced mode switch
 
 2026-09-29. Advanced mode is a persisted on / off switch, `.interaction_level` in `customizations.yaml` (`advanced` = on; `standard` or absent = off). Saying "advanced mode" turns it on, "standard mode" turns it off; it stays until changed. Rules: `../semantius-admin/references/interaction-level.md`.
 
@@ -131,11 +96,11 @@ Files:
 
 Files: SKILL.md, `stage-1-capture.md`, `stage-3-entities.md`, `stage-13-write.md`; also `../semantius-admin/references/interaction-level.md` (new), `../semantius-admin/SKILL.md`, `../semantius-admin/references/customizations-protocol.md`, `../semantius-admin/references/task-tracking.md`, and `../../commands/build.md`.
 
-## Unreleased: `consistency-check.ts` checks the spec label column format
+## `consistency-check.ts` checks the spec label column format
 
 2026-09-29. Spec mode only; blueprints are unaffected. The checker now records each §3 `**Label column:**` value and fails when that row (or the row marked `` `label_column` ``) has a Format other than `string` / `text`, on entities the spec creates. The platform creates the label column as text and never lets its format change (`90219`). Details in `../semantius-analyst/CHANGELOG.md` ("the label column is always text"). No version bump.
 
-## Unreleased: publish question removed; `description` / `license` required again
+## publish question removed; `description` / `license` required again
 
 2026-09-29. The Stage 13 publish question (catalog vs internal-only) is removed. It gated two keys that are never deployed (`license` is carry-only; the module record's short description comes from `tagline`), so it cost every run a question and bought nothing. The move of catalog-surface copy from Stage 1 to Stage 13 stays.
 
@@ -147,9 +112,9 @@ Files: SKILL.md, `stage-1-capture.md`, `stage-3-entities.md`, `stage-13-write.md
 
 Files: SKILL.md, `stage-1-capture.md`, `stage-13-write.md`, `semantic-blueprint-template.md`, `audit-checklist.md`, `modes-audit-extend-rebuild.md`; also `../semantius-analyst/references/semantic-spec-template.md` and `../../docs/architecture.md` (wording).
 
-## `5.4` (MINOR): keep each fact once; entity families (`is_a` / `has_a`)
+## keep each fact once; entity families (`is_a` / `has_a`)
 
-`CURRENT_VERSION` `5.3` → `5.4` (2026-09-28); `blueprint_version` `"3.0"` → `"3.1"`. Paired with analyst 5.8. The platform (semantius `fa0a92e`) added two key types that share another entity's key: `is_a` (a subtype, its kind fixed at creation, several levels deep) and `has_a` (an optional 0..1 extension of a `typeid` base, one level), both naming the base in `entities.id_refentity`. A design that stores one real-world thing in two entities (customers and vendors of one company) can now keep it once.
+2026-09-28. `CURRENT_VERSION` `5.3` → `5.4` (2026-09-28); `blueprint_version` `"3.0"` → `"3.1"`. Paired with analyst 5.8. The platform (semantius `fa0a92e`) added two key types that share another entity's key: `is_a` (a subtype, its kind fixed at creation, several levels deep) and `has_a` (an optional 0..1 extension of a `typeid` base, one level), both naming the base in `entities.id_refentity`. A design that stores one real-world thing in two entities (customers and vendors of one company) can now keep it once.
 
 1. **New `references/normalization.md`** (the judgment layer): the one test ("if this fact changed, would it need changing in more than one place?", with the copied-phone vs snapshot-address pair), five filters run first (per-level data, shared field names, lists in a record, process stages, snapshots), and the decision table asked in order: Q1 can one record be two at once → `has_a`; Q2 one at a time but it can switch → type enum; Q3 3 fields or fewer, no own relationships or lifecycle → type enum plus a no-change rule; Q4 fixed at creation and wanted in one list → `is_a`; otherwise separate. Q3 runs before Q4 so small differences never become a locked family. Also: what to write per outcome, the type-enum handoff sentence ("Each <Singular> is one of: …"), scope (entity level only; Clone / Customize / Extend touch only what the user adds or changes), one aside per family, and the full Q1 / Q4 widget text.
 2. **Stage 3** gains a mandatory "Before presenting" step that reads `normalization.md`; Extend C3 and Rebuild D2 run the same step. The family question is the one exception to "no separate question" for key types, and goes first in the "Also track" call. Rebuild re-asks it with the prior choice first.
@@ -167,9 +132,9 @@ Files: SKILL.md, `stage-1-capture.md`, `stage-13-write.md`, `semantic-blueprint-
 
 Files: SKILL.md, CHANGELOG.md, `references/normalization.md` (new), `stage-3-entities.md`, `modes-audit-extend-rebuild.md`, `semantic-blueprint-template.md`, `stage-8-9-rules-classification.md`, `audit-checklist.md`, `consistency-check.ts`.
 
-## `5.3` (MINOR): entity key types (optional §3 `**Key types:**` sub-block)
+## entity key types (optional §3 `**Key types:**` sub-block)
 
-`CURRENT_VERSION` `5.2` → `5.3` (2026-09-26); `blueprint_version` stays `"3.0"`. Paired with analyst 5.6. The platform's entity key type (`entities.id_type`) is locked once an entity exists, so it is a modelling decision the blueprint must make: `typeid` (prefixed ids such as `acct_01h4…`) for records users or other systems see, the default `auto_increment` for internal tables.
+2026-09-26. `CURRENT_VERSION` `5.2` → `5.3` (2026-09-26); `blueprint_version` stays `"3.0"`. Paired with analyst 5.6. The platform's entity key type (`entities.id_type`) is locked once an entity exists, so it is a modelling decision the blueprint must make: `typeid` (prefixed ids such as `acct_01h4…`) for records users or other systems see, the default `auto_increment` for internal tables.
 
 1. **Template §3** gains an optional, omit-when-empty `**Key types:**` sub-block after the catalog's column rules: `| data_object | key type | key prefix |`, listing only entities this module provisions whose key is not the default (`bigint` / `text` / `uuid` / `typeid`; prefix only for `typeid`, `-` otherwise). The empty-section convention names it as the second omit-when-empty exception.
 2. **Stage 3** (`stage-3-entities.md`, "Key type") holds the decision rule and says to mention the choice in plain words in the entity-list confirmation (no extra question).
@@ -180,7 +145,7 @@ Files: SKILL.md, CHANGELOG.md, `references/normalization.md` (new), `stage-3-ent
 
 Files: SKILL.md, `references/semantic-blueprint-template.md`, `stage-3-entities.md`, `stage-13-write.md`, `audit-checklist.md`, `consistency-check.ts`.
 
-## Unreleased: `consistency-check.ts` spec checks revived (§5, §8.2), §6 handoff check added, NUL bytes removed; audit-checklist `persona` conditional
+## `consistency-check.ts` spec checks revived (§5, §8.2), §6 handoff check added, NUL bytes removed; audit-checklist `persona` conditional
 
 Checker and audit-guidance change only, no blueprint contract change, `CURRENT_VERSION` unchanged (2026-08-19). Paired with the analyst 5.5 / optimizer 5.5 bumps.
 
@@ -193,23 +158,23 @@ Checker and audit-guidance change only, no blueprint contract change, `CURRENT_V
 
 Both revived checks can newly fail a malformed existing spec (a §5 heading or §8.2 `data_object` naming an undeclared entity) — intended, same posture as the earlier checker tightenings. Verified against `semantius/specs/it-ops-starter-semantic-spec.md` (exit 0) and scratch negatives for §5 / §8.2 / Outbound payload (each fails), a legacy numbered §5 heading and a foreign Inbound payload (each passes).
 
-## Unreleased: task-tool call economy
+## task-tool call economy
 
 Guidance only, no contract change, `CURRENT_VERSION` unchanged (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (resident "Task tracking" section, stage tasks and the Stage 2 gate). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
 
-## Unreleased: task tracking and the question ledger
+## task tracking and the question ledger
 
 Guidance only, no contract change, `CURRENT_VERSION` unchanged (2026-08-18). The architect now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): a resident "Task tracking" paragraph in SKILL.md with a per-mode table of `Design ›` stage tasks (four for Create-Greenfield, two for Catalog-Clone, one for Audit / Extend / Customize / Rebuild); the Mode A stage table gains a Task subject column; the Customize task stays `in_progress` for the whole C2 → C5 loop and is completed only when the user answers the C5 question with "done", which is the status the admin now reads at its customize gate (`modes-audit-extend-rebuild.md` C1 and C5). Stage 2's naming-style question is the one ledger question (`stage-2-naming.md`); every other architect question stays a standalone prose or widget question. Files: SKILL.md, `stage-2-naming.md`, `modes-audit-extend-rebuild.md`.
 
-## Unreleased: `AskUserQuestion` call mechanics
+## `AskUserQuestion` call mechanics
 
 Guidance only, no contract change, `CURRENT_VERSION` unchanged. The resident writing conventions in SKILL.md (mirroring `semantius-admin/references/writing-conventions.md`) gain an unnumbered "AskUserQuestion mechanics" paragraph (Conventions 1-10 stay as numbered): call the widget alone in its own response after edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. `stage-2-naming.md` corrected: the answer arrives as a `<user_answers>` block mapping each question text to the chosen label, not as an answer ordinal like "A: 2". Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
 
-## Unreleased: historical / version-stamp narration removed from runtime files
+## historical / version-stamp narration removed from runtime files
 
 No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history on the `blueprint_version` bullet, "no longer …" phrasings, and the "legacy slug" parenthetical in `stage-2-naming.md` from the references; the rules those lines carried are stated present-tense. History lives here and in git only.
 
-## Unreleased: catalog-surface elicitation moved to Stage 13; `description` / `license` become publish-only
+## catalog-surface elicitation moved to Stage 13; `description` / `license` become publish-only
 
 2026-07-23. Stage 1 asked the user for buyer-facing marketing copy (`tagline`, `description`), a `license`, and a `module_kind` before a single entity existed — yet the `hiring-starter` reference description literally enumerates the entity list ("postings, candidates, applications, interviews, and offers"), which cannot be written well before Stage 3, and `module_kind`'s defaults are defined by §3 role composition, which doesn't exist yet either. Separately, `description` and `license` are catalog-publication metadata that internal-only blueprints never need.
 
@@ -220,7 +185,7 @@ No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history
 
 **Minor**: a frontmatter-key presence change (two previously-required keys become conditional) plus a stage-content reshuffle; no section renumbering, no column change, and downstream skills already handle absence, so non-breaking. Unlike the presentation-only entries below, this one DOES change the artifact shape and warrants the `5.2 → 5.3` bump at release. **Version bump deferred to the maintainer** per this file's convention.
 
-## Unreleased: canonical entity order (entity_type tier, then A->Z)
+## canonical entity order (entity_type tier, then A->Z)
 
 2026-07-04. Entity sequence in the blueprint had no formal rule (entities were listed in authoring/discovery order), so it never reliably matched what `semantius-analyst` carried into the spec or what `semantius-optimizer` reverse-engineers from live state (a cosmetic but real round-trip drift on `it-ops-starter`). The blueprint now declares the same canonical order the analyst and optimizer use.
 
@@ -228,7 +193,7 @@ No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history
 
 **Minor**: no blueprint artifact-shape, frontmatter-key, or section-numbering change. `CURRENT_VERSION` stays `5.2`, `blueprint_version` stays `3.0`, and the modeler's `EXPECTED_MAJOR` is untouched. A presentation-order convention only. **Version bump deferred to the maintainer** per this file's convention.
 
-## Unreleased: `consistency-check.ts` derives + validates spec §2 mermaid diagrams instead of only checking node/endpoint completeness
+## `consistency-check.ts` derives + validates spec §2 mermaid diagrams instead of only checking node/endpoint completeness
 
 2026-07-03. `checkBlueprint` has always byte-compared mermaid edges against a declared relationship table (§5.1/§5.2); `checkSpec` never had the equivalent — it only verified mermaid edge *endpoints* resolved to declared entities, never that an edge's direction or verb agreed with §3's `relationship_label` / §4's `Cardinality`/`Kind`. That blind spot let a real spec ship with §3 declaring `relationship_label: "owns"` while §2 drew the same edge reversed with the verb `"owned by"` — self-contradictory within one file, undetected by the "mandatory" gate `semantius-analyst/SKILL.md` claimed was enforcing it.
 
@@ -238,7 +203,7 @@ No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history
 
 **Minor**: purely additive to the checker and to the analyst's authoring workflow; the spec artifact's shape, frontmatter, and section numbering are unchanged, so no version bump / no modeler lockstep. Existing specs with drifted diagrams will newly fail `consistency-check.ts` where they previously passed — that's the intended effect, not a breaking change to fix.
 
-## Unreleased: SKILL.md restructured into a resident spine + per-stage / per-mode references
+## SKILL.md restructured into a resident spine + per-stage / per-mode references
 
 2026-06-28. The architect SKILL.md had grown to 1439 lines (~31k words) loaded into context on every trigger. Restructured it into a ~420-line resident orchestration spine plus 12 `references/*.md` files loaded on demand, mirroring the structure `semantius-analyst` (400-line spine + refs) and `semantius-modeler` (386 + refs) already use. No content-contract change: the blueprint artifact shape, frontmatter keys, section numbering, and authoring rules are untouched, so this is behavior-preserving.
 
@@ -252,7 +217,7 @@ No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history
 
 **No `CURRENT_VERSION` bump.** Organizational only: no blueprint-artifact shape, frontmatter-key, section-numbering, or convention change. `CURRENT_VERSION` stays `"5.2"`, `blueprint_version` stays `"3.0"`, and the modeler's `EXPECTED_MAJOR` is untouched. **Minor** (organizational); deferred to the maintainer like the entries below.
 
-## Unreleased: §3 behavior flags removed, frontmatter simplified, canonical→catalog rename
+## §3 behavior flags removed, frontmatter simplified, canonical→catalog rename
 
 2026-06-26. Three coordinated contract changes:
 
@@ -264,7 +229,7 @@ No behavior change. Removed "(formerly `label`)", the `2.x → 3.0` bump history
 
 These three contract changes (a §3 column removed, a frontmatter key removed + another added, a §3 column renamed) require the **analyst** and **modeler** to be updated in lockstep — both parse §3 by header name and read the frontmatter. Platform-side changes (`modules.icon_name` / `domain_code` / `access_scope` columns, `entities.catalog_owner_module` rename, `pattern_flags` / `is_nullable` deletion) are tracked in `use-semantius`. (Version numbers unchanged — the prior version was not deployed.)
 
-## Unreleased: renaming a catalog-derived entity is now a silo rename (canonical lineage preserved)
+## renaming a catalog-derived entity is now a silo rename (canonical lineage preserved)
 
 2026-06-21. Fixes a lineage-loss defect. Renaming a catalog-derived `embedded_master` entity (e.g. `incidents` → `issues` in the `it-ops-starter` starter, cloned from `itsm-incident-mgmt`) silently re-derived `canonical = local` and dropped `mastered in`: the entity deployed as `catalog_entity_code: service_issues` with a blank `canonical_owner_module`, instead of `catalog_entity_code: service_incidents` / `canonical_owner_module: itsm-incident-mgmt`. That severs the keys the canonical owner uses to recognize and promote/merge the entity when it later installs — it would create a duplicate instead of adopting the renamed entity.
 
@@ -277,7 +242,7 @@ The architect's own `canonical code` rule already says a *silo rename* must keep
 
 Content-contract clarification only; `CURRENT_VERSION` / `blueprint_version` unchanged. The analyst and modeler carry §3 through verbatim, so no change there.
 
-## Unreleased: blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
+## blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
 
 2026-06-15. The blueprint front-matter version key `fact_sheet_version` was renamed to `blueprint_version` (value unchanged at `"3.0"`). The old name was a holdover from the earlier fact-sheet artifact and misread on a `semantic-blueprint`. Coordinated across the architect (emit + pre-save verification), analyst, modeler, the blueprint/spec templates, `consistency-check.ts`, the architecture docs, and existing 3.0 artifacts.
 
@@ -285,9 +250,9 @@ Content-contract clarification only; `CURRENT_VERSION` / `blueprint_version` unc
 
 ---
 
-## `5.2` (MINOR) — fixed lifecycle state field name (`workflow_state`); retire `catalog_field_code`
+## fixed lifecycle state field name (`workflow_state`); retire `catalog_field_code`
 
-`CURRENT_VERSION` bumps MINOR `5.1 → 5.2`; `fact_sheet_version` stays `3.0` (no blueprint shape change). A tightened modeling convention plus a shared-reference cleanup, both non-breaking.
+2026-06-15. `CURRENT_VERSION` bumps MINOR `5.1 → 5.2`; `fact_sheet_version` stays `3.0` (no blueprint shape change). A tightened modeling convention plus a shared-reference cleanup, both non-breaking.
 
 **The new convention.**
 
@@ -298,9 +263,9 @@ Content-contract clarification only; `CURRENT_VERSION` / `blueprint_version` unc
 
 ---
 
-## `5.1` (MINOR) — composed record labels: N-ary junction clarification + identity-spine note (prose-only)
+## composed record labels: N-ary junction clarification + identity-spine note (prose-only)
 
-`CURRENT_VERSION` bumps MINOR `5.0 → 5.1`; `fact_sheet_version` stays `3.0` (no blueprint shape change). The platform added read-time composed labels (`_label` per entity, `<fk>_label` per reference/parent FK) driven by an optional per-entity `label_parent` (the identity-spine FK). For the architect this is **prose-only** — no blueprint column is added.
+2026-06-14. `CURRENT_VERSION` bumps MINOR `5.0 → 5.1`; `fact_sheet_version` stays `3.0` (no blueprint shape change). The platform added read-time composed labels (`_label` per entity, `<fk>_label` per reference/parent FK) driven by an optional per-entity `label_parent` (the identity-spine FK). For the architect this is **prose-only** — no blueprint column is added.
 
 **The new convention.**
 
@@ -318,9 +283,9 @@ Content-contract clarification only; `CURRENT_VERSION` / `blueprint_version` unc
 
 ---
 
-## `5.0` (MAJOR) — provenance-in-platform: §3 gains `canonical code` + `entity_type` columns
+## provenance-in-platform: §3 gains `canonical code` + `entity_type` columns
 
-`CURRENT_VERSION` bumps MAJOR `4.3 → 5.0` and `fact_sheet_version` bumps MAJOR `2.2 → 3.0` in lockstep with analyst `5.1` and the modeler's stamping pass. The §3 entities catalog gained two new columns — a breaking column-shape change to a structural table.
+2026-06-14. `CURRENT_VERSION` bumps MAJOR `4.3 → 5.0` and `fact_sheet_version` bumps MAJOR `2.2 → 3.0` in lockstep with analyst `5.1` and the modeler's stamping pass. The §3 entities catalog gained two new columns — a breaking column-shape change to a structural table.
 
 **The new convention.**
 
@@ -332,9 +297,9 @@ Content-contract clarification only; `CURRENT_VERSION` / `blueprint_version` unc
 
 ---
 
-## `4.3` (MINOR) — empty-section convention flips to keep-with-placeholder; §9.1 gains the `manage → narrow` rollup row
+## empty-section convention flips to keep-with-placeholder; §9.1 gains the `manage → narrow` rollup row
 
-Two coordinated contract changes land together in this lockstep bump (the pipeline bumps once, not twice):
+2026-06-05. Two coordinated contract changes land together in this lockstep bump (the pipeline bumps once, not twice):
 
 **Change A — empty-section convention (blueprint structure).** Every canonical top-level / numbered section (plus the §5.3 / §6 sub-blocks) is now **always present**. An intentionally-empty section carries the canonical placeholder `_(none: <short reason>)_` (lowercase `none`, **colon not em-dash**; bare `_(none)_` allowed when a reason adds nothing). This **inverts** the prior "omit-empties, free-text stubs forbidden" rule: the pre-save verifier now rejects a *missing* canonical section (and a bare empty heading) and *accepts* the `_(none: …)_` placeholder. `fact_sheet_version` bumps `2.1 → 2.2`.
 
@@ -357,9 +322,9 @@ Two coordinated contract changes land together in this lockstep bump (the pipeli
 
 ---
 
-## `4.2` (MINOR) — RACI gains a stable `process_key` + per-consulted mode (drives the platform's live-RACI engine)
+## RACI gains a stable `process_key` + per-consulted mode (drives the platform's live-RACI engine)
 
-§9.1 RACI realization gained two additive columns and the frontmatter gained one optional hint, so the downstream skills can drive the platform's now-shipped live-RACI engine (catalog tables `processes` / `raci_assignments` / `process_gates` / `raci_events`; operators `is_raci_actor` / `has_consultation`; the generic emit trigger + `raci_notify` queue) instead of only compiling RACI into opaque RBAC grants. Lands in lockstep with analyst `4.2` and modeler `4.1`. Gated on the platform change (semantius-core `0210_raci.sql`, PR #189), which is merged.
+2026-06-03. §9.1 RACI realization gained two additive columns and the frontmatter gained one optional hint, so the downstream skills can drive the platform's now-shipped live-RACI engine (catalog tables `processes` / `raci_assignments` / `process_gates` / `raci_events`; operators `is_raci_actor` / `has_consultation`; the generic emit trigger + `raci_notify` queue) instead of only compiling RACI into opaque RBAC grants. Lands in lockstep with analyst `4.2` and modeler `4.1`. Gated on the platform change (semantius-core `0210_raci.sql`, PR #189), which is merged.
 
 **The failure mode this fixes.** Pre-4.2 the blueprint named processes as free-text only and had no per-consulted mode, so the matrix could not be stored or enforced live — it was compiled into `role_permissions` at deploy and the process axis, the R/A/C/I letters, and agent actors were lost (the modeler explicitly deferred `kind = skill` rows as "🟡 informational … when the platform exposes the relevant tables"). The new columns carry the durable identity and intent the analyst needs to plan `raci_assignments` / `process_gates` and author the `is_raci_actor` gate.
 
@@ -375,9 +340,9 @@ Two coordinated contract changes land together in this lockstep bump (the pipeli
 
 ---
 
-## `4.1` (MINOR) — extended blueprint contract: write tier col, FK shape cols, transition col, §9 governance, ⚠ annotations, has_single_approver named gate, embedded-entity governance completeness
+## extended blueprint contract: write tier col, FK shape cols, transition col, §9 governance, ⚠ annotations, has_single_approver named gate, embedded-entity governance completeness
 
-The blueprint format gained six new contract carriers without renumbering or removing sections. Closes the gap where the analyst was re-deriving facts the architect already knew (write tier, FK format, delete mode) and the deployer was provisioning phantom permissions (`approve_<entity>_approval`) or silent broken constraints (required FKs to non-installed targets). Lands in lockstep with analyst `4.1` and modeler `v4.0`.
+2026-06-03. The blueprint format gained six new contract carriers without renumbering or removing sections. Closes the gap where the analyst was re-deriving facts the architect already knew (write tier, FK format, delete mode) and the deployer was provisioning phantom permissions (`approve_<entity>_approval`) or silent broken constraints (required FKs to non-installed targets). Lands in lockstep with analyst `4.1` and modeler `v4.0`.
 
 **The failure modes this fixes.**
 
@@ -412,9 +377,9 @@ The blueprint format gained six new contract carriers without renumbering or rem
 
 ---
 
-## `3.6` (MINOR) — Stage 9b cross-tier FK reconciliation
+## Stage 9b cross-tier FK reconciliation
 
-Adds a new mandatory mechanical sub-stage between Stage 9 (tier classification) and Stage 10 (workflow-permission scan) that walks every planned `format: parent` FK after tiers are resolved and downgrades cross-tier ones to `format: reference` + `restrict`. Closes a long-standing gap where the divergent-permission-scope rule (`data-modeling.md:748`) was authoritative on paper but never fired because FK shapes were committed before tiers were classified.
+2026-05-27. Adds a new mandatory mechanical sub-stage between Stage 9 (tier classification) and Stage 10 (workflow-permission scan) that walks every planned `format: parent` FK after tiers are resolved and downgrades cross-tier ones to `format: reference` + `restrict`. Closes a long-standing gap where the divergent-permission-scope rule (`data-modeling.md:748`) was authoritative on paper but never fired because FK shapes were committed before tiers were classified.
 
 **The failure mode this fixes.** Pre-3.6 flows applied the FK-shape table (`data-modeling.md:739-746`) during the entity-draft pass, then ran Stage 9 to classify tiers. By the time tiers were known, `format: parent` had already been emitted for every junction leg and every owned-child FK. The divergent-permission-scope override sat in the reference doc with no stage that actually invoked it. The canonical defect: a junction like `feature_tags` linking an operational `feature_tags` to an admin-tier `tags` shipped with `format: parent (junction)` + `cascade` on the tag leg, which lets a roadmap admin's tag deletion silently cascade through to manager-owned tagging decisions. The audit checklist's §IV.5 catches the residual case, but only after the file is written.
 
@@ -434,9 +399,9 @@ Adds a new mandatory mechanical sub-stage between Stage 9 (tier classification) 
 
 ---
 
-## `3.5` (MINOR) — platform `permission_hierarchy` field rename (`parent`/`child` → `including`/`included`)
+## platform `permission_hierarchy` field rename (`parent`/`child` → `including`/`included`)
 
-The platform renamed the `permission_hierarchy` columns: `parent_permission_id` → `including_permission_id` (the broader permission, the one doing the including) and `child_permission_id` → `included_permission_id` (the narrower permission, the one being included). The `id` natural-key shape is unchanged (`"<including_permission_id>.<included_permission_id>"` — same format as before, just with new column names supplying the values). Old field names are gone, not aliased; sending the old payload shape fails at PostgREST with an unknown-column error.
+2026-05-27. The platform renamed the `permission_hierarchy` columns: `parent_permission_id` → `including_permission_id` (the broader permission, the one doing the including) and `child_permission_id` → `included_permission_id` (the narrower permission, the one being included). The `id` natural-key shape is unchanged (`"<including_permission_id>.<included_permission_id>"` — same format as before, just with new column names supplying the values). Old field names are gone, not aliased; sending the old payload shape fails at PostgREST with an unknown-column error.
 
 **Why this is a minor bump for the analyst even though the model file shape is unchanged.** A 3.4 model file and a 3.5 model file are byte-identical for the same input — the §2 Permissions summary table still uses the `Hierarchy parent` column header, and the analyst's authoring rules for that column (rollup direction, type-vs-direction constraints) are unchanged. What did change is the SKILL.md *guide text* for what the deployer does with the column: the cell is now documented as mapping to `including_permission_id` (the broader, including end of the hierarchy row), with the row's own `Permission` mapping to `included_permission_id` (the narrower, included end). §8 step 1 documentation and the template's §8 step 1 wording were updated to spell out the new payload shape. Authors using a 3.4 file against a 3.5 deployer get the same result as authors using a 3.5 file — the analyst doesn't write hierarchy rows itself; the deployer does. The bump exists so a maintainer reading a 3.4-stamped file knows it was authored under the old documentation and a 3.5-stamped one under the new. Pre-3.5 audit / extend / rebuild flows route unchanged.
 
@@ -451,9 +416,9 @@ The platform `permission_hierarchy.origin` enum and the `id` natural-key format 
 
 ---
 
-## `3.4` (MINOR) — no DDL in models, no identifier leakage in user-facing prose
+## no DDL in models, no identifier leakage in user-facing prose
 
-Two real bugs landed in v3.3 output that the existing rule set didn't catch:
+2026-05-27. Two real bugs landed in v3.3 output that the existing rule set didn't catch:
 
 1. Analyst-emitted DDL fragments (`CREATE UNIQUE INDEX feature_votes_unique_voter ON feature_votes (feature_id, user_id);` and similar) appeared in the model file as if they were enforceable constraints. The deployer never executes DDL, so the line was decorative — but humans read it as a real constraint, and the underlying need (multi-column uniqueness) had no actual representation anywhere in the catalog.
 2. Entity-level **Description** sub-blocks leaked `table_name` references wrapped in backticks: *"A reusable label for categorizing `features` (e.g. mobile, enterprise, platform)."* The existing v3.3 rule against `field_name` references in §3 field-row Description cells didn't extend to the entity-level Description, and the broader "no backticks around identifiers in user-facing prose" intent was never written down as a rule the audit could enforce.
@@ -476,9 +441,9 @@ Two real bugs landed in v3.3 output that the existing rule set didn't catch:
 
 ---
 
-## `3.2` (MINOR) — cross-entity JsonLogic primitives: `set_record`, `let`, `throw_error`
+## cross-entity JsonLogic primitives: `set_record`, `let`, `throw_error`
 
-The platform now exposes three JsonLogic operators that bind values into the data context before the expression body evaluates, on top of an underlying `get_record_by_id(entity_name, id)` Postgres helper. This lets `computed_fields` and `validation_rules` reach off the current row for the first time — parent-state gates, inherited values, merged labels, and domain-specific error messages are no longer "out of scope, use cube views".
+2026-05-27. The platform now exposes three JsonLogic operators that bind values into the data context before the expression body evaluates, on top of an underlying `get_record_by_id(entity_name, id)` Postgres helper. This lets `computed_fields` and `validation_rules` reach off the current row for the first time — parent-state gates, inherited values, merged labels, and domain-specific error messages are no longer "out of scope, use cube views".
 
 The motivation: a meaningful fraction of every model's "out of scope" deferrals were cross-entity rules the analyst recognized but had no way to encode (an order line can't be modified once the parent order is shipped; a child line should inherit the order's currency; a label should combine the parent's number with the child's sequence). Without the operators, these landed in §7.2 with a "moves to cube view" footnote that the deployer couldn't act on and that future readers couldn't enforce. The operators let the analyst keep these rules on the entity where they belong.
 
@@ -506,9 +471,9 @@ The motivation: a meaningful fraction of every model's "out of scope" deferrals 
 
 ---
 
-## `3.0` (MAJOR) — `module_type: master` frontmatter and `**Shared master cluster:**` annotation
+## `module_type: master` frontmatter and `**Shared master cluster:**` annotation
 
-Schema major bumps from `2` to `3` in lockstep with `semantic-model-deployer`'s `EXPECTED_MAJOR`. The bump introduces two optional, forward-compatible authoring conventions that let an analyst-authored model file express what kind of module it represents and which entities are classic master concepts.
+2026-05-27. Schema major bumps from `2` to `3` in lockstep with `semantic-model-deployer`'s `EXPECTED_MAJOR`. The bump introduces two optional, forward-compatible authoring conventions that let an analyst-authored model file express what kind of module it represents and which entities are classic master concepts.
 
 The motivation is the deployer's new master-module promotion path: when two domain models collide on a shared concept (`vendors` declared by both ITSM and ITAM, `cost_centers` declared by both finance and procurement), the deployer can now route the colliding entity into a neutral master module both modules consume. Picking which master to host it, and what to name a new one, is a deploy-time decision shaped by analyst hints embedded in the model. The annotation gives the analyst a place to record its domain knowledge about what concepts are typically shared; the frontmatter directive lets a model file declare itself as a master spec (formalizing an ad-hoc runtime-promoted master into a proper domain cluster).
 
@@ -541,9 +506,9 @@ Pre-3.0 files (analyst `2.x`) parse against a 3.0 deployer with both new fields 
 
 ---
 
-## `2.4` — `has_permission` IS available in `select_rule` (and `input_type_rule`)
+## `has_permission` IS available in `select_rule` (and `input_type_rule`)
 
-Correction release. The 2.2 / 2.3 contract claimed `select_rule` could not reference permissions: "There is no `has_permission` / `require_permission` operator confirmed for the SELECT context", and prose naming a permission as a broadening mechanism inside `select_rule` was treated as a 🔴 Blocker. That claim was wrong. The platform exposes a `{"has_permission": "<code>"}` operator specifically designed for the SELECT context (returns boolean, never throws — `require_permission`'s throw-on-miss semantics are wrong for SELECT, but `has_permission` was added precisely so `select_rule` *can* check the caller's permissions and broaden visibility for elevated roles).
+2026-05-27. Correction release. The 2.2 / 2.3 contract claimed `select_rule` could not reference permissions: "There is no `has_permission` / `require_permission` operator confirmed for the SELECT context", and prose naming a permission as a broadening mechanism inside `select_rule` was treated as a 🔴 Blocker. That claim was wrong. The platform exposes a `{"has_permission": "<code>"}` operator specifically designed for the SELECT context (returns boolean, never throws — `require_permission`'s throw-on-miss semantics are wrong for SELECT, but `has_permission` was added precisely so `select_rule` *can* check the caller's permissions and broaden visibility for elevated roles).
 
 The same `has_permission` operator is also available in `input_type_rule` (the I5 "permission-driven UI mode" family was previously deferred to a §7.1 question; it now emits a rule directly) and inside `validation_rules` (as a non-throwing alternative to `require_permission`, important when a permission check is one branch of a wider `or`).
 
@@ -564,9 +529,9 @@ The shipped 2.3 content treated tiered visibility ("regular sees own; manager se
 
 ---
 
-## `2.3` — formalize the in-place v2.2 corrections under a real version stamp
+## formalize the in-place read-side rule corrections
 
-Bump-only release. No new modeling conventions beyond what v2.2-late already documented on disk. The reason for the bump is structural: between the initial v2.2 ship and this entry, three substantive corrections were rolled into SKILL.md in-place under the same `2.2` stamp:
+2026-05-27. Bump-only release. No new modeling conventions beyond what v2.2-late already documented on disk. The reason for the bump is structural: between the initial v2.2 ship and this entry, three substantive corrections were rolled into SKILL.md in-place under the same `2.2` stamp:
 
 1. The "Critical limit (load-bearing)" rule in Stage 12 — `select_rule` applies uniformly to every caller with `view_permission`, there is no documented platform mechanism by which holding a permission causes the rule to be skipped, and prose promising "callers holding `<slug>:view_all_X` bypass the filter" is **forbidden** absent platform confirmation. The §7.1 four-option matrix (accept uniform / encode in column / split entities / DBA-side `BYPASSRLS`) was added as the canonical resolution flow.
 2. A new mandatory **Stage 12.5 view & edit rules consistency check** gate whose explicit purpose is catching the canonical v2.2 defect — prose claiming a permission bypasses `select_rule` while the JsonLogic encodes nothing of the kind — before Stage 13 writes the file.
@@ -591,9 +556,9 @@ Minor bump, not major: front-matter shape is unchanged; the §3 sub-section stru
 
 ---
 
-## `2.2` — read-side rules + view/edit consistency gate
+## read-side rules + view/edit consistency gate
 
-Two new mandatory mechanical scans, mirroring the v1.12 (workflow-permission) and v1.4/1.5 (validation-rules) pattern: a per-field **conditional input-type scan** and a per-entity **row-level read-access scan**. Each produces a structured table the analyst must walk, with empty cells as visible misses; matching results become a new optional §3 `Input type rules` sub-block (per field) and a new optional §3 `Select rule` sub-block (per entity).
+2026-05-27. Two new mandatory mechanical scans, mirroring the v1.12 (workflow-permission) and v1.4/1.5 (validation-rules) pattern: a per-field **conditional input-type scan** and a per-entity **row-level read-access scan**. Each produces a structured table the analyst must walk, with empty cells as visible misses; matching results become a new optional §3 `Input type rules` sub-block (per field) and a new optional §3 `Select rule` sub-block (per entity).
 
 Platform background. The Semantius MCP now exposes two read-side JsonLogic surfaces that already existed in the database but were not addressable from the tool schemas (`postgrest-mcp` model-neon, handover 2026-05-12): `entities.select_rule` (JSONB object, drives a generated `FOR SELECT` RLS policy, must return a boolean — `true` = row visible) and `fields.input_type_rule` (JSONB object, evaluated client-side at form render, must return one of the `input_type` enum values — `"default"` / `"required"` / `"readonly"` / `"disabled"` / `"hidden"`, fallback to the static `input_type` on empty / malformed / out-of-enum result). Both default to `{}` (no rule), are additive, and have lifecycle-on-empty semantics (rule resets to `{}` ⇒ generated policy / override is dropped). Reserved variables match the validation/computed-rule vocabulary: `$today`, `$now`, `$user_id` (`$old` is server-side only on writes and not meaningful in either read context).
 
@@ -625,9 +590,9 @@ Minor bump, not major: front-matter is unchanged; the §3 sub-section structure 
 
 ---
 
-## `2.1` — workflow-narrow permission tier
+## workflow-narrow permission tier
 
-New `workflow-narrow` Type value in the §2 Permissions summary, for permissions that grant *less* authority than `<slug>:manage` rather than more.
+2026-05-27. New `workflow-narrow` Type value in the §2 Permissions summary, for permissions that grant *less* authority than `<slug>:manage` rather than more.
 
 v2.0 modeled every non-baseline permission as a single `workflow` Type whose `Hierarchy parent` must be `<slug>:admin` or `—` and never `<slug>:manage` (rolling up under `manage` would auto-grant the gated authority and defeat the conditional check). That covered every *elevated* workflow permission (offer approval, manager-override on personal records, signing authority) but had no shape for the inverse case: a permission granted to **external participants who should get less than `manage`**. The canonical example is the ATS narrow tier for panel interviewers — engineers, PMs, AEs who write `interview_feedback` scorecards but should not get the rest of recruiter-level access. Other examples: external reviewers in performance management, guest contributors in CMS, vendor reps in procurement portals.
 
@@ -647,9 +612,9 @@ Minor bump, not major: the v2.0 column shape is unchanged (still five columns, s
 
 ---
 
-## `2.0` (MAJOR) — mandatory §2 Permissions summary table
+## mandatory §2 Permissions summary table
 
-Mandatory **Permissions summary** table as the canonical source of truth for module permissions; the downstream deployer, optimizer, and skill-maker bump `EXPECTED_MAJOR` to `2` in lockstep.
+2026-05-27. Mandatory **Permissions summary** table as the canonical source of truth for module permissions; the downstream deployer, optimizer, and skill-maker bump `EXPECTED_MAJOR` to `2` in lockstep.
 
 In `1.x`, a model's permission story was scattered across three places: per-entity `**Edit permission:**` annotations in §3 (the static tier per entity), the `require_permission` references inside `validation_rules` JsonLogic (which permissions gate which transitions), and §8 step 1 (the enumeration of every permission to create with hierarchy rows). A reviewer had to read all three to understand what permissions a module declared, and the deployer had to cross-reference them on every parse. Drift between the three was a recurring audit finding. `2.0` collapses them: a single **Permissions summary** sub-section in §2 lists every permission with its tier, description, hierarchy parent, and the entities/rules that use it. The per-entity `**Edit permission:**` annotations and the per-rule `require_permission` references still exist as their own data (they're per-entity and per-rule respectively, not per-permission), but the permission *catalog* lives in one table.
 
@@ -664,9 +629,9 @@ Major bump, not minor: the file shape has a new required structural element (the
 
 ---
 
-## `1.13` — linear stage numbering + parent requires shared permission scope
+## linear stage numbering + parent requires shared permission scope
 
-Stage renumbering (linear Stage 1 through Stage 11, no more `4b/4c/4d/4e/4f/4f-bis`); and a new modeling rule, `parent` requires shared-permission scope.
+2026-05-27. Stage renumbering (linear Stage 1 through Stage 11, no more `4b/4c/4d/4e/4f/4f-bis`); and a new modeling rule, `parent` requires shared-permission scope.
 
 Two cleanups, one mechanical and one semantic.
 
@@ -677,9 +642,9 @@ Minor bump, not major: column shape and front-matter keys are unchanged. The dow
 
 ---
 
-## `1.12` — mandatory mechanical workflow-permission walk
+## mandatory mechanical workflow-permission walk
 
-Mandatory mechanical workflow-permission walk; the `1.11` shape was passive and got skipped.
+2026-05-27. Mandatory mechanical workflow-permission walk; the `1.11` shape was passive and got skipped.
 
 `1.11` added Families 12 / 13 to the signal-scan, plus a Stage 10 "workflow-permission scan" that walked every entity for approval / sign-off / lock-in events. In practice, none of that fired. The scan was framed as "look for signals" rather than "produce an artifact", and Mode D's Step D2 walk did not explicitly call Stage 10 as its own mandatory gate. The result: rebuilds shipped without proposing the workflow permissions a non-trivial domain obviously needs (an interviewer permission for `interview_feedback.is_submitted`, an approver for `offers.status='approved'`, a closer for `job_openings.status='closed'`). The `1.12` design fixes this by treating workflow-permission discovery the same way `1.4`/`1.5` fixed validation-rules under-detection: a *structured table the analyst must produce*, with an empty cell as a visible miss, plus an explicit gate in every write mode.
 
@@ -694,9 +659,9 @@ Minor bump, not major: column shape and front-matter are unchanged. The audit-pa
 
 ---
 
-## `1.11` — conditional permissions via `value_changed` + `require_permission`
+## conditional permissions via `value_changed` + `require_permission`
 
-Conditional permissions via two new JsonLogic operators, plus a workflow-permission scan in Stage 4.
+2026-05-27. Conditional permissions via two new JsonLogic operators, plus a workflow-permission scan in Stage 4.
 
 The platform's JsonLogic dialect now ships two side-effecting extensions: `{"value_changed": "<field>"}` (true when the field moved relative to `$old`, true on INSERT) and `{"require_permission": "<perm_code>"}` (true when caller holds it, throws otherwise). Together they make *conditional* permission checks expressible inside `validation_rules`, which closes the gap between coarse static `edit_permission` and the per-transition or per-owner gates real business workflows need (approval steps, owner-only edits, sign-off gates).
 
@@ -711,9 +676,9 @@ Minor bump, not major: column shape and front-matter are unchanged. The two new 
 
 ---
 
-## `1.10` — three baseline permissions + per-entity tier annotation
+## three baseline permissions + per-entity tier annotation
 
-Three baseline permissions instead of two, with an entity-level tier annotation.
+2026-05-27. Three baseline permissions instead of two, with an entity-level tier annotation.
 
 Two-permission baseline (`<slug>:read` / `<slug>:manage`) is too coarse for most non-trivial modules. The same recruiters who manage `job_openings` and `job_applications` shouldn't also be rewriting the canonical `candidate_sources` list; the same support agents working tickets shouldn't be editing the `priorities` enum table. The split is universal: **operational** data (the bulk of records, edited many times a day by many people) versus **reference / config** data (small lookup / pipeline-definition / type tables that change rarely and only by an admin).
 
@@ -729,9 +694,9 @@ Minor bump, not major: column shape and front-matter are unchanged. The new `Edi
 
 ---
 
-## `1.9` — default coupled to validation + description for jargon titles
+## default coupled to validation + description for jargon titles
 
-Two authoring rules tightened, both prompted by a real deployment foot-gun where an ATS `Headcount` field opened forms prefilled with `0` and failed the `headcount_positive` rule on save.
+2026-05-27. Two authoring rules tightened, both prompted by a real deployment foot-gun where an ATS `Headcount` field opened forms prefilled with `0` and failed the `headcount_positive` rule on save.
 
 1. **Default coupled to validation.** When a field's auto-default (per the Semantius `is_nullable()` / column-default contract) would violate any `validation_rules` entry that references the field, the analyst must declare an explicit `default: "<value>"` annotation that satisfies the rule. Common trigger: required integer/number with a `>= N` floor (N>0) — auto-default `0` fails. The audit pass enforces this as a 🔴 Blocker.
 2. **Description for jargon titles.** The "fill the Description column when" list grew a 7th trigger: the title is a domain term-of-art a non-specialist couldn't parse cold (acronyms `MRR`/`FTE`/`RICE`, single-word jargon like `Headcount`/`Disposition`/`Loss Reason`). Descriptions remain the exception, not the rule — plain-English titles (`First Name`, `Email`, `City`) still leave the column blank. The added rule is calibrated with examples and a one-line test ("would someone from a different department know what to type?") to keep it from drifting into "describe every field just in case".
@@ -740,6 +705,6 @@ Minor bump, not major: column shape is unchanged, only the rules content must sa
 
 ---
 
-## `1.8` — §3 Description column
+## §3 Description column
 
-§3 field tables grew a new **Description** column between **Label** and **Reference / Notes**. Description prose now lives in that dedicated column instead of being smuggled into Notes as a `description: "..."` annotation. The deployer reads the column directly. **Major stays at `1`** because this skill is still pre-release / prototyping and no committed models need migrating; once the convention is stable and external models exist, a column-shape change like this becomes a major bump.
+2026-05-27. §3 field tables grew a new **Description** column between **Label** and **Reference / Notes**. Description prose now lives in that dedicated column instead of being smuggled into Notes as a `description: "..."` annotation. The deployer reads the column directly. **Major stays at `1`** because this skill is still pre-release / prototyping and no committed models need migrating; once the convention is stable and external models exist, a column-shape change like this becomes a major bump.

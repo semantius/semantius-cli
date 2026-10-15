@@ -59,6 +59,34 @@ bun run .tmp_deploy/deploy_<slug>.ts
 import { read1, readMany, readIn, write, ensure, ensureMany, ensureEntitiesByLevel, ensurePairs, updateEntity, runDeploy } from "./deploy-lib";
 import { scaffoldModule, verifyScaffold, preflightSchemas } from "./scaffold-lib";
 
+// enum_values: merge the spec's §5 entries with the live entries BY VALUE before diffing or sending (diffField
+// uses it for every existing enum field). The spec's order, values, labels and stated hints win; a hint the spec
+// does not state (a description / color / icon set in the UI) is kept from live, and the live label is kept when
+// a kept hint needs the object form. Live values the spec omits are not here: removals are Stage 2 / 3's job.
+type EnumEntry = string | { value: string; label: string; description?: string; color?: string; icon?: string };
+const HINTS = ["color", "icon", "description"] as const;
+function mergeEnumEntries(spec: EnumEntry[], live: EnumEntry[] = []): EnumEntry[] {
+  const liveBy = new Map(live.map((e) => [typeof e === "string" ? e : e.value, e]));
+  return spec.map((s) => {
+    const sv: any = typeof s === "string" ? { value: s } : s;
+    const l = liveBy.get(sv.value);
+    const lo: any = l && typeof l === "object" ? l : undefined;
+    const out: any = { value: sv.value };
+    if (sv.label) out.label = sv.label;
+    for (const k of HINTS) { const v = sv[k] ?? lo?.[k]; if (v) out[k] = v; }
+    if (!out.label && HINTS.some((k) => out[k])) out.label = lo?.label;   // the object form needs a label
+    return out.label ? out : sv.value;
+  });
+}
+// Compare entries key by key, never as JSON strings: jsonb reorders object keys on read-back.
+function sameEnumEntries(a: EnumEntry[], b: EnumEntry[] = []): boolean {
+  const norm = (e: EnumEntry): any => (typeof e === "string" ? { value: e } : e);
+  return a.length === b.length && a.every((x, i) => {
+    const p = norm(x), q = norm(b[i]);
+    return ["value", "label", ...HINTS].every((k) => (p[k] ?? "") === (q[k] ?? ""));
+  });
+}
+
 runDeploy(async () => {
   // 0. Preflight the tools THIS script hand-authors (scaffoldModule preflights its own). Fails loud on a
   //    stale field name (e.g. `name` vs `role_name`) BEFORE any write. List EVERY key your payloads send so
@@ -85,7 +113,8 @@ runDeploy(async () => {
     module: { module_slug: "<slug>", module_name: "<System Name>", description: "<tagline>",
               catalog_module_code: "<code>", domain_code: "<DOMAIN>", icon_name: "<icon>",
               // home_page / logo_color: pass ONLY when the frontmatter carries them (both optional).
-              // A provided logo_color is written verbatim; omit it to let the cosmetic fallback (step 2) fill an empty live value.
+              // A provided logo_color (lowercase hex, quotes stripped by Stage 1) is written verbatim; omit it to let the
+              // cosmetic fallback (step 2) fill an empty live value. icon_name is a Lucide icon name or an icon URL.
               // home_page: "<frontmatter home_page>", logo_color: "<frontmatter logo_color>",
               settings: { module_kind: "<kind>", naming_mode: "<mode>", catalog_snapshot: "<iso>" } },
     scope: "raci" as const,   // the spec's access_scope: "custom" | "basic" | "advanced" | "gated" | "raci"
@@ -131,7 +160,9 @@ runDeploy(async () => {
     await ensureMany("read_field", "field_name", (f) => f.field_name, "create_field", missing, `table_name=eq.${t}`);
     for (const f of fieldRows[t]) {
       const l = liveBy.get(f.field_name); if (!l) continue;
-      const patch = diffField(f, l);                                   // the 4d property list
+      const patch = diffField(f, l);                                   // the 4d property list; for enum_values:
+      //   const merged = mergeEnumEntries(f.enum_values, l.enum_values);
+      //   if (!sameEnumEntries(merged, l.enum_values)) patch.enum_values = merged;
       if (Object.keys(patch).length) await write("update_field", { id: `${t}.${f.field_name}`, data: patch });
     }
   }

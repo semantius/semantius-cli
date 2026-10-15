@@ -224,42 +224,11 @@ This convention is what lets bundles like `hiring-starter` and master modules wi
 
 ---
 
-## Skill version: `CURRENT_VERSION = "5.5"`
+## File format version
 
-This skill stamps every blueprint file it writes with TWO version keys in the front-matter: `version: "<CURRENT_VERSION>"` (the architect skill's own version, currently `"5.5"`) and `blueprint_version: "3.1"` (the blueprint artifact format version). The architect skill version is the single source of truth for what authoring rules the file was written under. The artifact version signals the blueprint shape (sections, columns) to downstream skills.
+Every blueprint this skill writes carries `version: "3.1"` in the front-matter. A blueprint this skill reads (Audit, Extend, Customize, Rebuild) whose `version` is not `3.x` (or that has no `version`) is rejected: stop and tell the user the file is not in the current format.
 
-### When to bump
-
-The version stamp tracks the file's **content contract**: its structural shape *and* the modeling rules its content was written under. Bump when that contract changes; do not bump when only the skill's internal mechanics change.
-
-Bump *minor* when the contract changes in a non-breaking way:
-- A new optional front-matter key with a defined default.
-- A new optional section or sub-block that older readers can ignore.
-- A new modeling convention authors must follow when writing content (e.g., a new naming rule, a new field-format constraint, a new required `relationship_label` annotation). Files written under the new rule are still readable by old tools, but their content reflects a tighter standard, the stamp signals which rule set was applied at write time.
-
-Bump *major* when the contract changes in a breaking way, meaning files written by the new version cannot be processed by tools that expect the old version (or vice versa). Concrete breaking-change triggers:
-
-- Section renumbering (e.g. swapping §6 and §8 in the model template).
-- Removing or renaming a front-matter key.
-- Changing the column shape or required columns of a structural table (§3 entities, §5 relationships, §6 cross-domain context).
-- Switching how a section is parsed (e.g. flat list to keyed sub-sections).
-
-**Do not bump** when the change is internal to the skill and produces output indistinguishable from what the prior version would have produced under the same input:
-- New modes that don't change the output shape or the rules its content follows (e.g., a new workflow path that ends in the same Mode-A-style write).
-- New audit checks that only flag findings to the user, not changes the rules content must satisfy.
-- Clarified prose, added examples, refactored skill internals.
-
-In short: ask "would two files, one written by the prior version and one by the new version under the same Stage 1 input, differ in shape or in the rules their content follows?". If no, don't bump. If yes (non-breaking), bump minor. If yes (breaking), bump major.
-
-When you bump, **update `CURRENT_VERSION` in this section's heading and rewrite this paragraph's quoted string to match**. The analyst reads the version from this section programmatically (the heading line `## Skill version: \`CURRENT_VERSION = "<version>"\``), so the format must stay byte-stable.
-
-**How files are routed by version.**
-
-- **Same major as `CURRENT_VERSION`**, operate normally. Audit, extend, deploy all work as documented. Differing minors are not flagged.
-- **Older major than `CURRENT_VERSION` (or no `version` key, treated as major `0`)**, the file's shape may not match current rules. **This skill does not carry per-version translation rules.** The semantic content of a model (entities, fields, relationships, enum values, business intent) is stable across schema bumps; only the encoding changes. So the analyst treats older files as **archived knowledge**: the LLM reads the file as natural-language content, extracts the semantic model, and offers the user one of two next steps. (a) **Re-author at current major**, drive a Mode D Rebuild pass using the extracted content as input; the output is a brand-new file at `CURRENT_VERSION`, the old file is left untouched (git tracks it). (b) **Reference only**, load the entities and relationships into context for the conversation, propose no edits, hand nothing to the deployer; useful when the user just wants to discuss "how did we model X before?" without rebuilding. Audit and Extend modes refuse to operate on older-major files directly: they would otherwise try to apply current-major rules against a shape that doesn't match.
-- **Newer major than `CURRENT_VERSION`**, error. The file was written by a future version of this skill that knows things this one doesn't. Refuse to operate; ask the user to update the skill.
-
-The downstream `semantius-modeler` skill maintains its own `EXPECTED_MAJOR` constant and rejects models whose major differs. The two skills must be kept in sync; bumping major in this skill always implies a coordinated bump in the deployer.
+`version` is the file format version. It changes only when the file format changes, and only with the user's approval.
 
 ---
 
@@ -389,7 +358,8 @@ If a helper writes the file, brief it with the confirmed decisions and the skill
 
 | Check | If it fails |
 |---|---|
-| `version` is `"5.5"` and `blueprint_version` is `"3.1"` | halt; print plain-English failure |
+| `version` is `"3.1"` | halt; print plain-English failure |
+| `icon_name` passes `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <icon_name>` (a URL always passes) | halt; name the unknown icon |
 | No field-level content anywhere (no Format/Required/Label columns in entities catalog; no JSON sub-blocks for computed_fields/validation_rules/input_type_rules/select_rule). **The optional `## Additional Requirements Specification` section is exempt** — it is free prose and MAY name fields (see "The one exception" near the top of this skill). | halt; tell the user *"This file has field-level detail; that work belongs to the next step (reconciliation)."* |
 | Every `master` entity that has lifecycle states has a §7 sub-section (an entity without a state machine, reference data or a plain operational record, has none; see the template §7 rule) | halt; name the missing masters in plain English |
 | Every §7 row with `requires_permission? = ✓` has a `derived gate` per the access level: under `raci` the gate's own code with a matching §8.1 `workflow-gate (lifecycle)` row; under every other access level `<slug>:admin` | halt; name the unbound gates by their lifecycle name |

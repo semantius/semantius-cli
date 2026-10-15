@@ -275,8 +275,8 @@ function parseMermaid(block: string[]): { nodes: MNode[]; edges: MEdge[]; dotted
 
 /**
  * The §3 optional `**Key types:**` sub-block, parsed BY HEADER NAME:
- * | data_object | key type | key prefix | based on |  (blueprint_version 3.1; the legacy
- * 3-column form without `based on` parses too). `-` cells read as empty.
+ * | data_object | key type | key prefix | based on |  (the 3-column form without
+ * `based on` parses too). `-` cells read as empty.
  */
 function parseBlueprintKeyTypes(s3: string[]): { id: string; type: string; prefix: string; basedOn: string }[] | null {
   const start = s3.findIndex((l) => /^\*\*Key types:\*\*/.test(l.trim()));
@@ -308,9 +308,7 @@ function checkBlueprint(text: string, lines: string[]): Issue[] {
 
   // Registry from §3: identifier -> { display, role }
   const s3 = topSection(lines, 3);
-  // §3 catalog columns are parsed BY HEADER NAME, not by fixed offset. blueprint_version 3.0
-  // inserted `catalog code` (after data_object) and `entity_type` (before write tier), so the
-  // old row[1]/row[2]/row[3]/row[4] offsets no longer locate data_object/singular/plural/role.
+  // §3 catalog columns are parsed BY HEADER NAME, not by fixed offset.
   // Header row shape: | # | data_object | catalog code | singular | plural | role | mastered in | mastered label | necessity | entity_type | write tier | notes |
   // The fallbacks (1/2/3/4) keep an older 2.x header (no canonical/entity_type) parsing identically.
   const s3rows = tableRows(s3);
@@ -356,7 +354,7 @@ function checkBlueprint(text: string, lines: string[]): Issue[] {
   // intentionally NOT parsed here. `topSection(lines, 2)` already stops at its `## ` heading,
   // so §2 stays correctly bounded, and `topSection(lines, 3)` finds §3 by its own number. Do
   // not "fix" the parser to treat this section as unexpected — it is allowed by design.
-  // §2 entity summary (v2 format): | Name (plural) | data_object | Description |
+  // §2 entity summary: | Name (plural) | data_object | Description |
   // Verify §2.data_object ⟺ §3.data_object (identifier) AND §2.Name ⟺ §3 plural label.
   const s2 = topSection(lines, 2);
   const s2ids = new Set<string>();
@@ -684,26 +682,94 @@ function parseEnumNotes(notes: string): { values: string[] | null; def: string |
   return { values, def: dm ? dm[1] : null };
 }
 
+/** The hint keys of a §5 entry, in the order they must appear. */
+const ENUM_HINT_KEYS = ["color", "icon", "description"] as const;
+type EnumHintKey = (typeof ENUM_HINT_KEYS)[number];
+type SpecEnumEntry = { value: string; label: string | null; hints: Partial<Record<EnumHintKey, string>> };
+const ENUM_HINT_FORM = 'hint sub-bullets go directly under their entry, indented exactly two spaces, in this order and each at most once: "  - color: `#rrggbb`", "  - icon: `lucide-name`", "  - description: text"';
+
 /**
  * §5 blocks: ``### `table.field` `` then one bullet per entry, `` - `value` `` or
- * `` - `value` - Label `` (a label only when the value is a code). Returns value lists and
- * any line that breaks the bullet grammar.
+ * `` - `value` - Label ``, optionally followed by hint sub-bullets (`  - color: `…``,
+ * `  - icon: `…``, `  - description: …`, in that order). Returns value lists, the parsed
+ * entries, and every line that breaks the grammar.
  */
-function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; bad: string[] } {
+function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entries: Map<string, SpecEnumEntry[]>; bad: string[] } {
   const blocks = new Map<string, string[]>();
+  const entries = new Map<string, SpecEnumEntry[]>();
   const bad: string[] = [];
   let cur: string[] | null = null;
+  let curEntries: SpecEnumEntry[] = [];
+  let last: SpecEnumEntry | null = null;
+  let lastHint = -1;
   let key = "";
+  const flagUnlabeled = () => {
+    if (last && last.label === null && Object.keys(last.hints).length) {
+      bad.push(`\`${key}\`: entry \`${last.value}\` has hints but no label; write it as "- \`${last.value}\` - <Label>"`);
+    }
+  };
   for (const l of topSection(lines, 5)) {
     const h = l.match(/^###\s+(?:5\.\d+\s+)?`([^`]+)`/);
-    if (h) { key = h[1].trim(); cur = []; blocks.set(key, cur); continue; }
-    if (/^#/.test(l)) { cur = null; continue; }
+    if (h) { flagUnlabeled(); key = h[1].trim(); cur = []; curEntries = []; blocks.set(key, cur); entries.set(key, curEntries); last = null; continue; }
+    if (/^#/.test(l)) { flagUnlabeled(); cur = null; last = null; continue; }
     if (!cur || !l.trim()) continue;
     const b = l.match(/^- `([^`]+)`(?: - (\S.*))?$/);
-    if (b) cur.push(b[1]);
-    else bad.push(`\`${key}\`: "${l.trim()}"`);
+    if (b) {
+      flagUnlabeled();
+      last = { value: b[1], label: b[2] ? b[2].trim() : null, hints: {} };
+      lastHint = -1;
+      cur.push(b[1]);
+      curEntries.push(last);
+      continue;
+    }
+    const s = l.match(/^ {2}- ([a-z_]+): (\S.*)$/);
+    if (!s || !last) {
+      bad.push(`\`${key}\`: "${l.trim()}" must be "- \`value\`", "- \`value\` - Label", or a hint sub-bullet (${ENUM_HINT_FORM})`);
+      continue;
+    }
+    const hk = s[1], idx = (ENUM_HINT_KEYS as readonly string[]).indexOf(hk);
+    if (idx < 0) { bad.push(`\`${key}\`: entry \`${last.value}\` has unknown hint \`${hk}\` (${ENUM_HINT_FORM})`); continue; }
+    if (hk in last.hints) { bad.push(`\`${key}\`: entry \`${last.value}\` repeats \`${hk}\` (${ENUM_HINT_FORM})`); continue; }
+    if (idx < lastHint) { bad.push(`\`${key}\`: entry \`${last.value}\` has \`${hk}\` out of order (${ENUM_HINT_FORM})`); continue; }
+    lastHint = idx;
+    let v = s[2].trim();
+    if (hk !== "description") {
+      const bt = v.match(/^`([^`]+)`$/);
+      if (!bt) { bad.push(`\`${key}\`: entry \`${last.value}\` ${hk} must be backticked: "  - ${hk}: \`${v.replace(/`/g, "")}\`"`); continue; }
+      v = bt[1];
+    }
+    last.hints[hk as EnumHintKey] = v;
   }
-  return { blocks, bad };
+  flagUnlabeled();
+  return { blocks, entries, bad };
+}
+
+/** Warnings on §5 hints: the drafting rules of the analyst's stage-4-fields.md. */
+function enumHintWarnings(entries: Map<string, SpecEnumEntry[]>): Issue[] {
+  const out: Issue[] = [];
+  for (const [key, list] of entries) {
+    const hinted = list.filter((e) => e.hints.color || e.hints.icon);
+    if (hinted.length && list.some((e) => !e.hints.color || !e.hints.icon)) {
+      out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: some entries carry a color and icon and some don't; an enum with hints gives every entry both` });
+    }
+    for (const e of list) {
+      if (e.hints.icon && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(e.hints.icon) && !/^https?:\/\/\S+$/.test(e.hints.icon)) {
+        out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: entry \`${e.value}\` icon \`${e.hints.icon}\` is not a Lucide icon name in kebab-case (e.g. \`circle-check\`) or an icon URL` });
+      }
+      if (e.hints.color && !/^#[0-9a-f]{6}$/.test(e.hints.color)) {
+        out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: entry \`${e.value}\` color \`${e.hints.color}\` is not lowercase hex \`#rrggbb\`` });
+      }
+      const d = e.hints.description, lab = e.label;
+      if (d && lab && d.toLowerCase().startsWith(lab.toLowerCase())) {
+        out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: entry \`${e.value}\` description starts with its label; a description says what the label doesn't, or is left off` });
+      }
+    }
+    const described = list.filter((e) => e.hints.description).length;
+    if (described * 2 > list.length) {
+      out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: ${described} of ${list.length} entries carry a description; a description is the exception, only where the label is not self-describing` });
+    }
+  }
+  return out;
 }
 
 /** The `_process_gates_` table under §9 (living-mode RACI plan): the entity of each gate. */
@@ -743,7 +809,7 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
   }
 
   // §3 sub-section headings: ### 3.N `table` - Singular (canonical separator is the
-  // plain hyphen; the en/em-dash alternatives are accepted for pre-5.4 files only).
+  // plain hyphen; en/em-dash are tolerated).
   const s3singular = new Map<string, string>();
   for (const l of lines) {
     const m = l.match(/^###\s+3\.\d+\s+`([^`]+)`\s*[—–-]\s*(.+?)\s*$/);
@@ -802,8 +868,8 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
     }
   }
 
-  // §5 enum headings: unnumbered ``### `table.field` `` (template v5.4+) or the legacy
-  // numbered ``### 5.N `table.field` ``. Scoped to the §5 body so a backticked
+  // §5 enum headings: unnumbered ``### `table.field` `` (a numbered
+  // ``### 5.N `table.field` `` is tolerated). Scoped to the §5 body so a backticked
   // `x.y` heading elsewhere is never mistaken for an enum block.
   for (const l of topSection(lines, 5)) {
     const m = l.match(/^###\s+(?:5\.\d+\s+)?`([^.`]+)\.[^`]+`/);
@@ -898,10 +964,11 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
     }
   }
 
-  // Enumerations: §5 bullet grammar; the Notes `enum_values:` equal the §5 values; `default:` is a value.
+  // Enumerations: §5 bullet and hint grammar; the Notes `enum_values:` equal the §5 values; `default:` is a value.
   {
-    const { blocks, bad } = parseSpecEnums(lines);
-    for (const b of bad) issues.push({ check: "§5 enum entries", detail: `${b} must be "- \`value\`" or "- \`value\` - Label"` });
+    const { blocks, entries, bad } = parseSpecEnums(lines);
+    for (const b of bad) issues.push({ check: "§5 enum entries", detail: b });
+    issues.push(...enumHintWarnings(entries));
     for (const [id, e] of ents) {
       for (const f of e.fields) {
         if (f.format !== "enum") continue;
@@ -1159,14 +1226,21 @@ function checkSpecMermaidAgainstSource(lines: string[], text: string, fm: Return
 
 // ---------- driver ----------
 
+// The frontmatter `version` is the file format version; a file outside the current format (3.x) is refused.
+function checkVersion(fm: ReturnType<typeof frontmatter>): Issue[] {
+  const v = fm.get("version");
+  if (v !== null && /^3\.\d+$/.test(v)) return [];
+  return [{ check: "version", detail: `not in the current file format (\`version\` must be \`3.x\`, found \`${v ?? "(none)"}\`)` }];
+}
+
 function checkFile(path: string): { issues: Issue[]; artifact: string } {
   // Normalize BOM + CRLF/CR so the checker is line-ending agnostic (Windows files are often CRLF).
   const text = readFileSync(path, "utf8").replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const lines = text.split("\n");
   const fm = frontmatter(text);
   const artifact = fm.get("artifact") ?? "(unknown)";
-  if (artifact === "semantic-blueprint") return { issues: checkBlueprint(text, lines), artifact };
-  if (artifact === "semantic-spec") return { issues: checkSpec(text, lines, fm), artifact };
+  if (artifact === "semantic-blueprint") return { issues: [...checkVersion(fm), ...checkBlueprint(text, lines)], artifact };
+  if (artifact === "semantic-spec") return { issues: [...checkVersion(fm), ...checkSpec(text, lines, fm)], artifact };
   return { issues: [{ check: "artifact", detail: `unrecognized or missing \`artifact:\` (got "${artifact}"); expected semantic-blueprint or semantic-spec` }], artifact };
 }
 

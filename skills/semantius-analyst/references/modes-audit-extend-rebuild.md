@@ -86,12 +86,12 @@ End with: *"Run `semantius-analyst` Extend mode to fix specific items, or fix ma
 
 When the user wants to add entities, fields, rules, or §6 link rows to an existing spec:
 
-1. Read the current spec. Note its `version` (must be major `5`, i.e. `"5.x"`; older → Mode D Rebuild first).
+1. Read the current spec. Its `version` must be `"3.x"`; any other `version`, or none → stop and tell the user the spec is not in the current format.
 2. Capture what to add (entity / field / rule) via conversation.
 3. **If adding entities**, re-run Stage 2 reconciliation against the live catalog for the new entities only. Same collision detection, same widgets, same ledger: the widgets are `Q:` tasks under the `Match › Extend the design` stage task, and step 4 starts only when `TaskList` shows none pending or in progress.
 4. **If adding fields to an existing owned entity**, apply Stage 4 field elicitation for the new fields. Then re-run Stages 5-10 (scans, consistency gate) on the affected entity.
 5. **If adding rules**, draft the JsonLogic; run the Stage 8 consistency gate.
-6. Stamp `version: "5.8"` (the current `CURRENT_VERSION`). When the spec being extended predates 5.7, its `validation_rules` carry snake_case `code` values and no `name`: move each old `code` into `name` and reassign every `code` sequentially from `99001` (§3 entity order, then array order) before saving.
+6. Stamp `version: "3.1"`.
 7. Write the updated file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input file you read in step 1 sits at the workspace root, leave that file alone; the `semantius/specs/` path is the truth-source. Run the pre-save verification block from Stage 11.
 
 ---
@@ -104,4 +104,4 @@ Use when the blueprint has materially changed (entities added/removed, role clas
 2. Drive a fresh Stage 1-10 pass with the current blueprint as input.
 3. **Carry forward** the preserved decisions where they still apply (e.g. a `promote-to-master` decision for an entity that's still in the blueprint).
 4. Show the user a diff summary: what's new, what's changed, what's removed.
-5. Stamp `version: "5.8"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.
+5. Stamp `version: "3.1"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.

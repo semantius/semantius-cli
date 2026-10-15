@@ -1,39 +1,28 @@
 # semantius-analyst — changelog
 
-This file records the history of the analyst skill's `CURRENT_VERSION` (and its paired `EXPECTED_BLUEPRINT_VERSION`) and the content-contract changes each version introduced. The current constants and the rules a maintainer must follow when bumping them live in [SKILL.md](./SKILL.md) under "Skill version". The body of SKILL.md is the **current contract**; this file is the **history of how the contract evolved**.
+This file records the content-contract changes of the analyst skill. The file format version and its rule live in [SKILL.md](./SKILL.md) under "File format version". The body of SKILL.md is the **current contract**; this file is the **history of how the contract evolved**.
 
-This file is NOT loaded into Claude's context when the skill triggers. Maintainers read it when planning a bump; users read it when investigating why an older-major spec is shaped the way it is. Runtime behavior never depends on this file.
+This file is NOT loaded into Claude's context when the skill triggers. Maintainers read it when planning a change; users read it when investigating why a spec is shaped the way it is. Runtime behavior never depends on this file.
 
 Entries below are newest first. Each entry follows the maintainer template: what changed, why, the new convention as a numbered list, and the major-vs-minor justification. (Pre-`5.0` analyst history lived alongside the architect's CHANGELOG and in git history; this file starts at the `5.0` lockstep bump.)
 
 ---
 
-## 5.9: the access level comes from the blueprint; the analyst never asks
+## file format version `3.1`; enum hints; `color`, `icon` and `rating` formats
 
-2026-10-05. Paired with architect 5.5 and the modeler change of the same date. The architect now decides the module's access level (`access_scope`) with a deterministic script and stamps it into the blueprint. The analyst no longer resolved it from live state or asked the basic-vs-advanced question, which had asked the user twice and could silently drop gates confirmed in the architect.
+2026-10-15. The platform added the `color`, `icon` and `rating` field formats and optional `description`, `color` and `icon` keys on `{"value", "label"}` enum entries (postgrest-mcp `d66989e`). The version scheme was also wrong: `version` was a per-skill counter, raised for rule changes and without approval.
 
-1. **`access_scope` is read from the blueprint** and carried verbatim into the spec: `custom` | `basic` | `advanced` | `gated` | `raci` (the platform's `modules.access_scope` values).
-   - A blueprint without it stops at Stage 1 and is routed to architect Customize.
-2. **Removed:**
-   - the access question, its detection, and `references/access-control-scope.md`;
-   - the analyst's `.access_scopes` saved answer;
-   - the access clause of the 3g "Picked for you" line.
-3. **"What each access level authors"** replaces the basic-only contract:
-   - `custom`: no permission or role work.
-   - `basic`: read + manage.
-   - `advanced` / `gated`: read + manage + admin plus field-level permissions; under `gated`, gated states and §8.2 `create` rules require `<slug>:admin`.
-   - `raci`: per-gate permissions held only by the business roles, not included in `<slug>:admin`, plus RACI realization.
-
-   Field-level permissions (Stages 5, 7, 10) run from `advanced` up. Stage 9.5 Step 0 (RACI mode, derivation unchanged) runs only under `raci`. Functional ownership and handoffs run from `advanced` up.
-4. **§8.2 `create` rules** (restricted creation) become insert-time `validation_rules` (Stage 10); `create` is a parsed source flag.
-   - **The RACI rule:** under `raci`, every process has exactly one accountable row, and each gate is granted from the accountable row's `grant gates [...]` list (Stage 9.5).
-5. **Pre-save:** one coherence row per access level; `persona` only under `raci`.
-
-**Minor bump** (5.8 → 5.9): `access_scope` takes new values and is now always present. Older specs carrying `basic` still deploy; the modeler rejects any other legacy value.
+1. **`version` is the file format version**, `"3.1"`, the same in blueprint and spec files and in every skill; it changes only when the file format changes, and only with the user's approval. `CURRENT_VERSION`, `EXPECTED_BLUEPRINT_VERSION` and the bump rules are gone; the spec no longer carries `blueprint_version`. A blueprint or spec whose `version` is not `3.x` is rejected (SKILL.md "File format version", Stage 1, Mode C).
+2. **Enum hints in §5.** An entry may carry `color`, `icon` and `description` sub-bullets (grammar in the template's §5 guidance, enforced by `consistency-check.ts`); an entry with hints carries a label. Stage 4 "Enum values, labels and hints" sets which enums get hints (`workflow_state`, priority / severity / urgency / impact / risk_level, `*_status`), all or none, the hex palette, Lucide icons, and `description` only when the label is not self-describing.
+3. **Display formats** `color`, `icon`, `rating` in the Stage 4 vocabulary, with a `rating` vs `integer` table; no range rule on a `rating` field.
+4. **Drift:** a difference in labels or hints is cosmetic (Stage 2 / 3f); same-primitive lists point to the type table in `data-modeling.md`. The Stage 3 Adjust view edits hints.
+5. **Frontmatter:** `logo_color` is written in double quotes (an unquoted `#` is a YAML comment); `icon_name` is a Lucide icon name or an icon URL.
+6. Stage 1 no longer synthesizes a Processes catalog for older blueprints, and Mode C no longer migrates snake_case validation-rule codes of older specs (both are rejected).
+7. **Icons are confirmed, not guessed.** New `use-semantius/references/lucide-icons.ts` (Bun, cross-platform): `find <word…>` lists icon names whose name or tags contain every word, `check <name…>` confirms names (an icon URL always passes); it caches the Lucide `tags.json` in the OS temp folder for 24 hours. Stage 4 hint rule 4 finds icons with it, and the pre-save gate gains "Icons exist": every §5 `icon` and the frontmatter `icon_name` pass `check`. Stage 2 says where `icon_name` goes to `create_module` that it is a Lucide icon name or an icon URL.
 
 ---
 
-## Unreleased: yolo mode (experimental) and question-flow fixes
+## yolo mode (experimental) and question-flow fixes
 
 2026-09-30. Paired with the admin, architect, and modeler changes of the same name; rules in `../semantius-admin/references/yolo-mode.md`. Yolo mode is the third value of `.interaction_level`: for a new build, the architect asks one go-ahead, and after a yes the rest of the pipeline runs without questions.
 
@@ -58,7 +47,7 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `stage-3-collisions.md`, `stage-3-confirm.md`, `stage-3-placement.md`, `stage-3-shared-base.md`, `stage-3f-drift.md`, `stage-4-fields.md`, `stage-10-rules.md`.
 
-## Unreleased: advanced mode switch
+## advanced mode switch
 
 2026-09-29. Paired with the architect's entry of the same name; rules in `../semantius-admin/references/interaction-level.md`. Advanced mode is a persisted on / off switch, `.interaction_level` in `customizations.yaml`; off by default, "advanced mode" turns it on, "standard mode" turns it off.
 
@@ -74,7 +63,7 @@ Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `s
 
 Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `stage-3-collisions.md`, `stage-3-confirm.md`, `stage-4-fields.md`.
 
-## Unreleased: the label column is always text
+## the label column is always text
 
 2026-09-29. A live deploy halted when a spec declared `issue_links.link_type` as both the `**Label column:**` and an `enum`. `create_entity` creates the label column as `text`, and as a core column (`ctype: label`) its format can never change: the deployer's `update_field` to `enum` was refused with `90219` ("Cannot change format of core system field"). The platform's `update_field` schema states it ("a core column … its format and default value cannot change"), and 40 of the 41 label columns on the test instance are `text` (the exception is the built-in `users.email`). Stage 4 said "must be a string field, never a FK", but the reason it gave covered only FKs, the platform reference never said what format the field gets, and no check caught it before deploy.
 
@@ -85,7 +74,7 @@ Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `s
 
 **Major-vs-minor.** MINOR: a spec that passes the new check deploys exactly as before; a spec it fails would have failed at deploy. **Version bump deferred to the maintainer.**
 
-## 5.8: entity families (`is_a` / `has_a`), enum labels, keep each fact once
+## entity families (`is_a` / `has_a`), enum labels, keep each fact once
 
 2026-09-28. `CURRENT_VERSION` `5.7` → `5.8`, `EXPECTED_BLUEPRINT_VERSION` `"3.0"` → `"3.1"` (major 3 unchanged, so 3.0 blueprints are accepted). Paired with architect 5.4 and optimizer `SPEC_VERSION` 5.8. The platform added `is_a` / `has_a` key types (an entity based on another, sharing its key through `entities.id_refentity`) and `{"value", "label"}` enum entries.
 
@@ -102,7 +91,7 @@ Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `s
 
 **Why minor:** new optional lines and modeling rules within the 5.x shape; no section renumbered, no table column changed, no annotation removed. The modeler's `EXPECTED_MAJOR` stays 5 and parses the new lines (its 5.8 tolerance).
 
-## 5.7: validation-rule `code` is a class-99 error code; the identifier moves to `name`
+## validation-rule `code` is a class-99 error code; the identifier moves to `name`
 
 2026-09-26. The platform now rejects any entity `validation_rules[].code` that is not a class-99 SQLSTATE code (error `90905`: "validation_rules[i] on <table> must carry a class 99 code"). Found when a live deploy of a 5.6 spec halted at its first `update_entity` carrying rules. Verified by probing: `99001` and `99999` are accepted, `9900A` and `990010` are rejected, duplicate codes are accepted within and across entities, and extra keys on an entry are preserved. The platform's own rules on built-in tables use class 90 codes and carry `source_module: "platform"`.
 
@@ -116,9 +105,9 @@ Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `s
 
 ---
 
-## 5.6: entity key type (`**Key type:**` / `**Key prefix:**`)
+## entity key type (`**Key type:**` / `**Key prefix:**`)
 
-`CURRENT_VERSION` `5.5` → `5.6` (2026-09-26); `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"`. Coordinated with the architect (5.3: the blueprint's optional §3 `**Key types:**` sub-block), the optimizer (`SPEC_VERSION` `5.5` → `5.6`) and the modeler (`EXPECTED_MAJOR` stays `5`). The platform gained `entities.id_type` (`auto_increment` default | `bigint` | `text` | `uuid` | `typeid` | `computed`, system-only) and `entities.id_prefix` (the TypeID prefix); the key type is set on `create_entity` and locked afterwards (`90233`). No spec could express it, and a key type missed at create means rebuilding the entity.
+2026-09-26. `CURRENT_VERSION` `5.5` → `5.6` (2026-09-26); `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"`. Coordinated with the architect (5.3: the blueprint's optional §3 `**Key types:**` sub-block), the optimizer (`SPEC_VERSION` `5.5` → `5.6`) and the modeler (`EXPECTED_MAJOR` stays `5`). The platform gained `entities.id_type` (`auto_increment` default | `bigint` | `text` | `uuid` | `typeid` | `computed`, system-only) and `entities.id_prefix` (the TypeID prefix); the key type is set on `create_entity` and locked afterwards (`90233`). No spec could express it, and a key type missed at create means rebuilding the entity.
 
 1. **Two optional §3 entity lines** after `**Id column:**`: `**Key type:** <id_type>` and `**Key prefix:** <id_prefix>`, bare values, no backticks, mirroring `**Edit mode:**`. Key type is emitted only when not `auto_increment` (absent = `auto_increment`, so every 5.5 spec reads unchanged); the prefix exactly when the type is `typeid`. Template skeleton + guidance, `stage-11-write.md` delta 12.
 2. **Stage 1** parses the blueprint's §3 `**Key types:**` sub-block (by header name; absent = default) and carries each row verbatim.
@@ -130,9 +119,9 @@ Files: SKILL.md, `access-control-scope.md`, `customizations-consultation.md`, `s
 
 Files: SKILL.md, `references/semantic-spec-template.md`, `stage-1-parse.md`, `stage-2-inspect.md`, `stage-3f-drift.md`, `stage-9-governance.md`, `stage-11-write.md`, `modes-audit-extend-rebuild.md` (version stamps).
 
-## 5.5: one rule per spec surface; pure-skeleton template; §6 handoff sub-sections
+## one rule per spec surface; pure-skeleton template; §6 handoff sub-sections
 
-`CURRENT_VERSION` `5.4` → `5.5` (2026-08-19). **Minor**: every change is additive or a clarification of a rule the spec already implied; no canonical section is renumbered, no existing table column is removed or reshaped, no frontmatter key is removed. The modeler's `EXPECTED_MAJOR = 5` is unchanged and reads 5.4 and 5.5 files alike (its Stage 1 accepts both forms wherever one changed).
+2026-08-19. `CURRENT_VERSION` `5.4` → `5.5` (2026-08-19). **Minor**: every change is additive or a clarification of a rule the spec already implied; no canonical section is renumbered, no existing table column is removed or reshaped, no frontmatter key is removed. The modeler's `EXPECTED_MAJOR = 5` is unchanged and reads 5.4 and 5.5 files alike (its Stage 1 accepts both forms wherever one changed).
 
 **What changed and why.** A pipeline run spent a large share of its reasoning reconciling contradictions between the template, SKILL.md's pre-save table, the stage references, the modeler's parse rules, and the optimizer's emitter. Root cause: the template's ```markdown fence mixed the emitted skeleton with ~150 lines of authoring commentary (so the analyst and the optimizer each guessed what to emit), conditional keys added over time got explicit emit-rules while older surfaces kept unconditional prose, and several spec-side docs still used blueprint section numbers. Nothing mechanical caught it (see the architect CHANGELOG for `consistency-check.ts`).
 
@@ -151,23 +140,23 @@ Files: SKILL.md, `references/semantic-spec-template.md`, `stage-1-parse.md`, `st
 
 Files: `references/semantic-spec-template.md` (restructured), SKILL.md, `references/stage-11-write.md`, `stage-9-governance.md`, `stage-1-parse.md`, `stage-2-inspect.md`, `stage-3-collisions.md`, `stage-4-fields.md`, `stage-3f-drift.md`, `modes-audit-extend-rebuild.md`.
 
-## Unreleased: task-tool call economy
+## task-tool call economy
 
 Guidance only, no contract change, `CURRENT_VERSION` unchanged (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (resident "Task tracking" section). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
 
-## Unreleased: task tracking and the question ledger
+## task tracking and the question ledger
 
 Guidance only, no contract change, `CURRENT_VERSION` unchanged (2026-08-18). The analyst now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): a resident "Task tracking" paragraph in SKILL.md; the Stage pipeline index gains a Task subject column (three `Match ›` stage tasks in reconcile mode, one per non-reconcile mode; an earlier draft had a fourth, `Match › Look at the design and your live model`, for the Stage 1 parse + Stage 2 catalog read, dropped 2026-08-19 because reading the design and the catalog is mechanics with no user-visible outcome, which the shared rule "internal mechanics never become tasks" already excludes; those stages now run under `Match › Settle reuse, naming, and optional parts`, and the access-control `Q:` task gates that task); ledger stages are access scope, 3a-3e, 3f, and Extend's Stage 2/3 re-run: every widget becomes a `Q:` task (subject = the exact question text; a multiSelect over four choices is several "(i of N)" tasks) before the first widget fires, questions are asked in batches of up to four per `AskUserQuestion` call, and a task is completed only after its answer is in `customizations.yaml`; the 3g plan render and closing confirmation require the ledger clean; the MUST-FIRE rule is restated mechanically (a MUST-FIRE widget is a `Q:` task that must reach `completed`). The 3a "successive calls until all are covered" wording is replaced by the ledger; the sentence claiming batched questions inherit the first question's header is removed (verified false: each question carries its own header chip), so optional-parts questions may share a call. The 3g confirmation and its follow-ups stay standalone; "revise" re-opens the affected `Q:` tasks. Files: SKILL.md, `stage-3-collisions.md`, `stage-3f-drift.md`, `stage-3-confirm.md`, `access-control-scope.md`, `customizations-consultation.md`, `modes-audit-extend-rebuild.md`.
 
-## Unreleased: `AskUserQuestion` call mechanics
+## `AskUserQuestion` call mechanics
 
 Guidance only, no contract change, `CURRENT_VERSION` unchanged. The resident writing conventions in SKILL.md (mirroring `semantius-admin/references/writing-conventions.md`) gain an unnumbered "AskUserQuestion mechanics" paragraph: call the widget alone in its own response after edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. `stage-3-confirm.md` option 2 now says to apply edits and re-render first, then fire the confirmation widget alone. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
 
-## Unreleased: historical / version-stamp narration removed from runtime files
+## historical / version-stamp narration removed from runtime files
 
 No behavior change. Removed "used to be" prose ("no longer" / "formerly" / "legacy" labels on current states, retired-mechanism notes) and every `vX.Y+` / "analyst vX.Y+" arrival tag from SKILL.md and `references/*` (notably `semantic-spec-template.md`, `stage-11-write.md`, `stage-9-governance.md`); the rules those lines carried are stated present-tense. Fixed the stale "3-option" 3d widget rows in `stage-3-placement.md` (the widget has two options: embed locally / skip). History lives here and in git only.
 
-## Unreleased: 2a.1 version-match drift gate + deploy-provenance frontmatter carry-forward
+## 2a.1 version-match drift gate + deploy-provenance frontmatter carry-forward
 
 2026-07-05. Closes the owned-entity drift gap: previously the analyst reconciled a spec against its **blueprint** (Reconcile / Rebuild) and deep-inspected only **adopted** entities against live (2h), so prod-side drift on the spec's own OWNED entities surfaced only at modeler-deploy time (a late halt). Two additions, both keyed on a platform-maintained `modules.version` (monotonic integer, bumped on any owned-schema change):
 
@@ -178,7 +167,7 @@ No behavior change. Removed "used to be" prose ("no longer" / "formerly" / "lega
 
 Additive / behavioral; optional frontmatter keys omitted until deploy, so 5.3/earlier specs are unaffected. No spec-shape break, no forced major bump.
 
-## Unreleased: 5.4, eleven optional round-trip constructs (entity lines, field markers, frontmatter keys, role-lineage columns)
+## eleven optional round-trip constructs (entity lines, field markers, frontmatter keys, role-lineage columns)
 
 2026-07-05. `CURRENT_VERSION` bumps MINOR `5.3 -> 5.4`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"`. Coordinated with `semantius-optimizer` (`SPEC_VERSION` `5.3 -> 5.4`, the primary emitter) and `semantius-modeler` (whose `EXPECTED_MAJOR` stays `5`, but which now parses and writes the new constructs). These are display / round-trip carriers the optimizer reverse-engineers from a live module; the analyst DOCUMENTS them as optional so authored specs may carry them and Audit / Extend / Rebuild tolerate them. Every construct is OPTIONAL with an omit-when-default rule (emit only when the live value is non-empty AND not the platform default), so a hand-authored spec normally omits all of them and reads identically to a 5.3 spec.
 
@@ -195,7 +184,7 @@ Files touched: `references/semantic-spec-template.md` (all eleven constructs add
 
 **Major-vs-minor.** MINOR: additive optional lines / markers / keys only. No section is renumbered, no frontmatter key is removed, no existing table column is removed (only two trailing columns are added to §9.1 before its final column), and the reconciliation-annotation set is unchanged. A 5.3 spec still parses on the bumped modeler; an older modeler that ignores the new lines / markers / keys leaves the corresponding columns at their platform defaults with no regression. `version` major stays `5` and the modeler's `EXPECTED_MAJOR` stays `5`. A previously-shipped spec regenerates with any live-non-default constructs present on next optimizer emit.
 
-## Unreleased: §4 Kind vs fk_format rule, outbound-only rows, and A/An article agreement
+## §4 Kind vs fk_format rule, outbound-only rows, and A/An article agreement
 
 2026-07-04. A live `it-ops-starter` run produced a §4 Relationship summary the `semantius-optimizer` reverse pass disagreed with on two points, plus a grammar slip in §3 prose. The modeler still deployed correctly (it keys entities by `table_name` and reads FK shape from §3, never from §4's descriptive columns), so the drift was cosmetic-but-wrong — a spec that fails a round-trip against the deterministic extractor. Three template gaps, now closed:
 
@@ -205,7 +194,7 @@ Files touched: `references/semantic-spec-template.md` (all eleven constructs add
 
 **Minor**: no frontmatter, table-shape, or section-numbering change; `Kind = junction` was already a documented template value. Pure authoring-guidance clarification so forward-authored specs round-trip against the optimizer. `CURRENT_VERSION` stays `5.3`. A previously-shipped spec regenerates with the corrected §4 and article on next write.
 
-## Unreleased: canonical entity order + unnumbered/alphabetical §5 Enumerations
+## canonical entity order + unnumbered/alphabetical §5 Enumerations
 
 2026-07-04. Two ordering conventions had no formal rule, so a forward-authored spec and a `semantius-optimizer` reverse-engineered one drifted purely on sequence (the `it-ops-starter` round-trip differed on entity order across §2/§3/§4/§5 and on §5 sub-heading numbering, though every value matched). Both sides now sort by the same key, computable identically from the spec and from live state.
 
@@ -214,7 +203,7 @@ Files touched: `references/semantic-spec-template.md` (all eleven constructs add
 
 **Minor**: no frontmatter key, table-shape, or top-level section-number change (§5 stays §5; only its sub-heading loses a number). `CURRENT_VERSION` stays `5.3` and the modeler's `EXPECTED_MAJOR` is untouched (the modeler reads enum values from §3 `Notes`, never §5, and keys entities by `table_name`, not order or §-number). **Version bump deferred to the maintainer** per this file's convention. A previously-shipped spec regenerates with the canonical order and unnumbered §5 on next write.
 
-## Unreleased: M:N verb survives junction decomposition (no longer dropped from §3/§2)
+## M:N verb survives junction decomposition (no longer dropped from §3/§2)
 
 2026-07-03. A live run on `it-ops-starter` decomposed the blueprint M:N edge `asset_contracts covers saas_applications` into the `asset_contract_saas_applications` junction but lost the verb entirely: the spec's §2 drew two bare arrows (`asset_contracts --> asset_contract_saas_applications`) and §3 carried no `relationship_label` on either junction leg. The blueprint said *covers*; the spec said nothing. Root cause was a contradiction in the contract — stage-4 said "set `relationship_label` for every FK field … §2 edge label and this annotation must agree byte-for-byte," while the §2 emitter (`consistency-check.ts:emitSpecMermaid`) and the template's junction convention said `parent`/junction legs are ALWAYS bare "even when §3 declares a relationship_label." The emitter's `row.kind === "parent" ? null` guard won, so the verb was unconditionally discarded.
 
@@ -224,7 +213,7 @@ Files touched: `references/semantic-spec-template.md` (all eleven constructs add
 
 **Minor**: no spec artifact-shape, frontmatter, or section-numbering change — `CURRENT_VERSION` stays `5.3`. Richer content (a `relationship_label` on junction legs, a verb on the §2 source-leg edge) within the existing shape. A previously-shipped spec that dropped an M:N verb will regenerate with the verb present on next write.
 
-## Unreleased: §2 mermaid diagram is generated, never hand-authored; consistency gate now validates diagram direction/verb
+## §2 mermaid diagram is generated, never hand-authored; consistency gate now validates diagram direction/verb
 
 2026-07-03. Two independent live runs of the analyst on the identical `it-ops-starter` blueprint produced spec files whose §3 `relationship_label` and §4 `Cardinality` were byte-identical, but whose §2 mermaid diagrams disagreed with each other — one run drew arrows parent→child with the declared verb, the other drew them reversed with a different verb that didn't even match its own §3 declaration. `consistency-check.ts`'s spec-side checks never validated mermaid edges against §3/§4 at all (only that endpoints resolved to known entities), so neither run's inconsistency was caught before the spec was written.
 
@@ -234,7 +223,7 @@ Files touched: `references/semantic-spec-template.md` (all eleven constructs add
 
 **Minor**: no spec artifact-shape, frontmatter, or section-numbering change — `CURRENT_VERSION` stays `5.3`. Purely a tooling + authoring-workflow fix. A previously-shipped spec whose diagram had drifted from its own §3/§4 will newly fail the gate on next write; that's the fix working, not a regression to accommodate.
 
-## Unreleased: §3 flag removal, frontmatter simplification, `canonical_`→`catalog_` rename, row-scope playbook now analyst-owned
+## §3 flag removal, frontmatter simplification, `canonical_`→`catalog_` rename, row-scope playbook now analyst-owned
 
 2026-06-27. Downstream half of the platform-schema contract change (architect + use-semantius landed the upstream half; the modeler moves in lockstep). The architect's new blueprint shape removed the §3 `pattern flags` column, renamed §3 `canonical code` → `catalog code`, dropped `system_description` and added `icon_name` to frontmatter, and dropped the `has_*` §8.2 source flags. The analyst absorbs the row-scope / lock / approval authoring those flags used to hint. No version bump — `CURRENT_VERSION` stays `5.3`, `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"` (the architect still stamps `"3.0"`; the prior analyst version was never released, so this folds into `5.3`).
 
@@ -248,7 +237,7 @@ What changed:
 
 **Minor** (folds into `5.3`): no spec major-shape break an existing released spec would fail on (the prior version was unreleased). The analyst + modeler land together and are coordinated with the platform-schema go-live.
 
-## Unreleased: SKILL.md restructured into a resident spine + per-stage references
+## SKILL.md restructured into a resident spine + per-stage references
 
 2026-06-25. The analyst SKILL.md had grown to 1760 lines (roughly 70k tokens loaded into context on every trigger). Restructured it into a ~400-line resident orchestration spine plus 16 per-stage `references/*.md` files loaded on demand, mirroring the modeler's structure. The writing conventions (near-identically duplicated across all four skills) were extracted to a shared [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md).
 
@@ -259,7 +248,7 @@ What changed:
 
 **No `CURRENT_VERSION` bump.** This changes SKILL.md's internal organization only: no spec-artifact shape, frontmatter-key, section-numbering, or reconciliation-annotation change, so the analyst/modeler version contract is untouched and the modeler's `EXPECTED_MAJOR` stays put. **Minor** (organizational); deferred to the maintainer like the entries below.
 
-## Unreleased: optional-entity question respects the 4-option cap; access-control label and wording plainer
+## optional-entity question respects the 4-option cap; access-control label and wording plainer
 
 2026-06-22. Two user-facing fixes in Stage 3a (Optional concepts) and Stage 2c (Access control):
 
@@ -268,7 +257,7 @@ What changed:
 
 **Minor**: user-facing widget wording and option-count handling only. No spec shape, frontmatter contract, or reconciliation-annotation change.
 
-## Unreleased: access-scope default now reads recorded per-module scope, not a permission sniff
+## access-scope default now reads recorded per-module scope, not a permission sniff
 
 2026-06-20. The access-control-scope question's **Recommended** option was defaulting wrong. The old detection treated the instance as "already uses access control" when any non-built-in permission or non-system role existed. But a *basic* deploy also creates `<slug>:read` / `<slug>:manage` permissions and viewer / manager roles, so the sniff could not distinguish basic from full and recommended **Full** on an instance whose other modules were all basic.
 
@@ -278,7 +267,7 @@ Paired with a modeler change: the modeler now persists `settings.access_scope` o
 
 **Minor** (deferred to maintainer): detection-default change only. No spec shape, frontmatter contract, or reconciliation-annotation change; the `access_scope` frontmatter key and the question/options are unchanged.
 
-## Unreleased: blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
+## blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
 
 2026-06-15. The blueprint/spec front-matter version key `fact_sheet_version` was renamed to `blueprint_version` (value unchanged at `"3.0"`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"`). The analyst now reads `blueprint_version` from the blueprint and carries it through to the spec front-matter. Coordinated with the architect, modeler, templates, and docs.
 
@@ -286,9 +275,9 @@ Paired with a modeler change: the modeler now persists `settings.access_scope` o
 
 ---
 
-## `5.3` (MINOR) — fixed lifecycle state field name (`workflow_state`); retire `catalog_field_code`
+## fixed lifecycle state field name (`workflow_state`); retire `catalog_field_code`
 
-`CURRENT_VERSION` bumps MINOR `5.2 → 5.3`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"` and `fact_sheet_version` is unchanged (no blueprint shape change). Two coordinated changes, in lockstep with architect `5.2` and the modeler's parse/verify enforcement pass.
+2026-06-15. `CURRENT_VERSION` bumps MINOR `5.2 → 5.3`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"` and `fact_sheet_version` is unchanged (no blueprint shape change). Two coordinated changes, in lockstep with architect `5.2` and the modeler's parse/verify enforcement pass.
 
 **The new convention.**
 
@@ -301,9 +290,9 @@ Paired with a modeler change: the modeler now persists `settings.access_scope` o
 
 ---
 
-## `5.2` (MINOR) — composed record labels: derive `label_parent`
+## composed record labels: derive `label_parent`
 
-`CURRENT_VERSION` bumps MINOR `5.1 → 5.2`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"` and `fact_sheet_version` is unchanged (no blueprint shape change). The platform now derives a read-only, read-time `_label` on every entity (its composed label, folded from the parent chain), a `<fk>_label` companion on every reference/parent FK, and accepts an optional `label_parent` entity property naming the one FK that is a record's identity spine. The analyst learns to derive and validate `label_parent`.
+2026-06-14. `CURRENT_VERSION` bumps MINOR `5.1 → 5.2`; `EXPECTED_BLUEPRINT_VERSION` stays `"3.0"` and `fact_sheet_version` is unchanged (no blueprint shape change). The platform now derives a read-only, read-time `_label` on every entity (its composed label, folded from the parent chain), a `<fk>_label` companion on every reference/parent FK, and accepts an optional `label_parent` entity property naming the one FK that is a record's identity spine. The analyst learns to derive and validate `label_parent`.
 
 **The new convention.**
 
@@ -322,9 +311,9 @@ Paired with a modeler change: the modeler now persists `settings.access_scope` o
 
 ---
 
-## `5.1` (MINOR) — provenance-in-platform: consume catalog provenance, carry it through
+## provenance-in-platform: consume catalog provenance, carry it through
 
-`CURRENT_VERSION` bumps MINOR `5.0 → 5.1`; `EXPECTED_BLUEPRINT_VERSION` bumps to `"3.0"` (major 3). The architect bumped `fact_sheet_version 2.2 → 3.0` (MAJOR) by inserting two §3 columns — `canonical code` (the canonical uber-model code) and `entity_type` (the closed 6-way class). The analyst consumes both and carries them through.
+2026-06-14. `CURRENT_VERSION` bumps MINOR `5.0 → 5.1`; `EXPECTED_BLUEPRINT_VERSION` bumps to `"3.0"` (major 3). The architect bumped `fact_sheet_version 2.2 → 3.0` (MAJOR) by inserting two §3 columns — `canonical code` (the canonical uber-model code) and `entity_type` (the closed 6-way class). The analyst consumes both and carries them through.
 
 **The new convention.**
 
@@ -336,9 +325,9 @@ Paired with a modeler change: the modeler now persists `settings.access_scope` o
 
 ---
 
-## `5.0` (MAJOR) — §2 Permissions summary retired; §8.1 / §9.1 canonical; keep-with-placeholder empty sections
+## §2 Permissions summary retired; §8.1 / §9.1 canonical; keep-with-placeholder empty sections
 
-`CURRENT_VERSION` bumps MAJOR `4.2 → 5.0`, with the modeler's `EXPECTED_MAJOR` bumping `4 → 5` and the architect landing `4.3` in lockstep. Two coordinated contract changes ship together so the pipeline bumps once, not twice.
+2026-06-05. `CURRENT_VERSION` bumps MAJOR `4.2 → 5.0`, with the modeler's `EXPECTED_MAJOR` bumping `4 → 5` and the architect landing `4.3` in lockstep. Two coordinated contract changes ship together so the pipeline bumps once, not twice.
 
 **Change B (breaking — this skill's major) — §2 Permissions summary retired; §8.1 / §9.1 canonical.** The spec no longer carries the §2 Permissions summary table. The §8.1 Permissions catalog and the §9.1 Permission hierarchy — including the `<slug>:manage → <slug>:<narrow>` rollup row that previously lived only in §2 — are now the canonical permission surface. Removing a structural table is a breaking spec-structure change: specs emitted by ≤4.2 carry §2 and must be regenerated to deploy on the bumped modeler (`major != EXPECTED_MAJOR` rejects them at Stage 1). The analyst stamps `version: "5.0"`.
 

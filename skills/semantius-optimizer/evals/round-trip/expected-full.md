@@ -1,6 +1,6 @@
 ---
 artifact: semantic-spec
-version: "5.9"
+version: "3.1"
 system_name: Demo Ops Pro
 tagline: "Demo operations tracker (governed)"
 icon_name: wrench
@@ -10,7 +10,7 @@ module_kind: domain
 access_scope: raci
 domain_code: DEMOPRO
 naming_mode: agent-optimized
-logo_color: #2563eb
+logo_color: "#2563eb"
 deployed_version: 4
 deployed_version_date: "2026-08-02T09:30:00+00:00"
 entities:
@@ -97,6 +97,9 @@ flowchart LR
 | `vendor_id` | `reference` | yes | Vendor | | → `vendors` (N:1), relationship_label: "supplies" |
 | `owner_id` | `reference` | no | Owner | | → `users` (N:1), relationship_label: "owns" |
 | `sort_key` | `integer` | no | Sort Key | | width: s |
+| `condition_rating` | `rating` | no | Condition | | default: "0" |
+| `tag_color` | `color` | no | Tag Color | | |
+| `asset_icon` | `icon` | no | Icon | | |
 
 **Relationships**
 

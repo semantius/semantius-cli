@@ -29,9 +29,8 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 **Frontmatter (required keys), both modes:**
 
 - `artifact: semantic-blueprint` (fixed)
-- `blueprint_version: "3.1"`
-- `version: "<CURRENT_VERSION>"` (currently `"5.5"`)
-- `system_name`, `system_slug` (lowercase kebab-case, e.g. `it-ops-starter`; the file name is exactly `<system_slug>-semantic-blueprint.md`), `icon_name` (icon-set handle, not a URL)
+- `version: "3.1"` (the file format version)
+- `system_name`, `system_slug` (lowercase kebab-case, e.g. `it-ops-starter`; the file name is exactly `<system_slug>-semantic-blueprint.md`), `icon_name` (a Lucide icon name in kebab-case (e.g. `briefcase`, `users`, `circle-help`) or an icon URL; find a name with `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" find <word…>`, and the picked name must pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name>` before the blueprint is written; `use-semantius/references/data-modeling.md` → "Icons are Lucide icons")
 - `tagline` (one-line marketing-voice line; also feeds `modules.description`)
 - `description` (longer marketing-voice prose for the catalog page; YAML literal block fine)
 - `license` (catalog metadata; e.g. `MIT`)

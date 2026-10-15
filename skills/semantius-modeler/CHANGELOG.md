@@ -1,6 +1,6 @@
 # semantius-modeler — changelog
 
-The deployer's `EXPECTED_MAJOR` and the parser version are bumped in lockstep with the analyst skill (`semantius-architect`). This file records the deployer-side delta for each analyst minor / major bump. The current `EXPECTED_MAJOR` constant and the routing rules for older / newer majors live in [SKILL.md](./SKILL.md) under "Schema compatibility"; this file records how the deployer's behavior changed when each contract change landed.
+This file records how the deployer's behavior changed when each contract change landed. The file format version and its rule live in [SKILL.md](./SKILL.md) under "File format version".
 
 This file is NOT loaded into Claude's context when the skill triggers.
 
@@ -8,30 +8,18 @@ Entries below are newest first.
 
 ---
 
-## Unreleased: the access level is deployed as written; Stage 2.5 never asks
+## file format version `3.1`; enum hints deployed without wiping live ones; display formats
 
-2026-10-05. Paired with architect 5.5 and analyst 5.9. The architect now decides `access_scope` and the analyst carries it into the spec, so Stage 2.5 no longer resolved it, detected defaults, asked, or projected a full spec down to basic.
+2026-10-15. Paired with the analyst entry of the same date.
 
-1. **`access_scope` is required** and takes the platform's new values `custom` | `basic` | `advanced` | `gated` | `raci` (Stage 1). Missing → 🛑 *"This spec has no access level. Re-run the design step on its blueprint."*; any other value (including the old `full`) → 🛑.
-2. **Stage 2.5 "Access level"** deploys the spec's `access_scope` as written (also a value lower than the live one; nothing is deleted), per a per-level table (canonical in `stage-2-reconcile.md`, duplicated at the top of `stage-4-execute.md`):
-   - `custom`: no permission, role, module-reference or `access_scope` write; entities get the module's current view / manage permissions.
-   - `basic`: read + manage.
-   - `advanced` / `gated` / `raci`: read + manage + admin.
-
-   4k runs only under `raci`; 4l / 4m run from `advanced` up.
-3. **Removed:** the 2.5 detection, the `Q: Basic or advanced access control?` ledger question, and the two-permission projection.
-4. **Plan and summary** name the access level in plain words (`🔐 Access level: …`).
-5. **`scaffold-lib.ts`:**
-   - `Scope` is the five values.
-   - `custom` makes `scaffoldModule` write only the module's name, description and empty provenance keys (no access level, permission or role) and return the module's current references; a hand-made module with no manage permission deploys its entities without an edit permission.
-   - Admin is built from `advanced` up.
-   - `verifyScaffold` skips the scaffold checks under `custom`.
-
-`EXPECTED_MAJOR` unchanged.
+1. **`version` is the file format version**: Stage 1 accepts only `version: "3.x"` and rejects anything else. `EXPECTED_MAJOR` and the minor-version tolerance paragraph are replaced by "File format version" and "Optional lines" in SKILL.md.
+2. **Enum hints:** Stage 1 parses §5 hint sub-bullets into the entry object. `mergeEnumEntries` / `sameEnumEntries` in `deploy-script-template.md` build and compare the array sent by `update_field`: the spec's values, labels and stated hints win, a hint the spec does not state is kept from live. Stage 5 verifies only the keys the spec states; a label or hint difference is cosmetic.
+3. **Same-primitive formats** point to the type table in `data-modeling.md`. This removes the list in Stage 4d that put `json` in the TEXT family, treated `integer` / `number` as one primitive and named a `datetime` format.
+4. **Display formats:** `rating` joins the non-nullable integers (`0` = not rated); sample data keeps ratings in 0–5, colors hex, icons real Lucide names; `color` / `icon` empty is `""`. `logo_color` is read with its quotes stripped.
 
 ---
 
-## Unreleased: yolo mode (experimental)
+## yolo mode (experimental)
 
 Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-09-30). No bump: the modeler reads the same spec and its output keeps its shape (the deploy, the verification report, the Closing Contract); only which questions are asked changes, and only in a yolo run. Canonical rules: `../semantius-admin/references/yolo-mode.md` (the modeler rows of its fixed-picks table, 4.4, are what this entry implements).
 
@@ -44,7 +32,7 @@ Files: SKILL.md, `references/stage-1-parse.md`, `stage-2-reconcile.md`, `stage-3
 
 ---
 
-## Analyst 5.8: entity families and enum labels; `EXPECTED_MAJOR = 5` unchanged
+## entity families and enum labels
 
 2026-09-28. Paired with analyst 5.8 (minor; a 5.7 spec deploys unchanged). The platform added `is_a` / `has_a` key types (an entity based on another through `entities.id_refentity`, sharing its key) and `{"value", "label"}` enum entries.
 
@@ -58,7 +46,7 @@ Files: SKILL.md, `references/stage-1-parse.md`, `stage-2-reconcile.md`, `stage-3
 
 ---
 
-## Platform: name-keyed permissions; `SCAFFOLD_LIB_MAJOR = 6`; `EXPECTED_MAJOR = 5` unchanged
+## Platform: name-keyed permissions
 
 2026-09-26. The platform re-keyed the RBAC catalog on `permission_name`. Found by a live deploy that halted in the `scaffoldModule` preflight with zero writes (`create_permission_hierarchy has no field(s) [including_permission_id, included_permission_id]`). The spec format is unchanged, so `EXPECTED_MAJOR` stays 5; the schema-coupled scaffold library takes a major bump because its return shape changed.
 
@@ -86,7 +74,7 @@ Files: SKILL.md, `references/stage-1-parse.md`, `stage-2-reconcile.md`, `stage-3
 
 ---
 
-## Analyst 5.5 → 5.6 (entity key type); `EXPECTED_MAJOR = 5` unchanged
+## entity key type
 
 2026-09-26. Deployer-side delta for the analyst's 5.6 minor: the optional `**Key type:**` / `**Key prefix:**` entity lines (→ `entities.id_type` / `entities.id_prefix`). The key type is create-only: the platform locks it once the table exists (`90233`).
 
@@ -99,11 +87,11 @@ Files: SKILL.md, `references/stage-1-parse.md`, `stage-2-reconcile.md`, `stage-3
 
 Files: SKILL.md, `references/stage-1-parse.md`, `stage-2-reconcile.md`, `stage-4-execute.md`, `stage-5-verify.md`, `stage-6-sample-data.md`, `deploy-script-template.md`, `deploy-lib.ts`.
 
-## Unreleased: CLI env-var name correction
+## CLI env-var name correction
 
 Documentation only, no contract change, `EXPECTED_MAJOR` unchanged (2026-09-26). `references/deploy-script-template.md` ("Large deploys") named the CLI's timeout variable `MCP_TIMEOUT`, which the CLI never reads: every operational variable carries the `SEMANTIUS_` prefix (or the `--env` prefix). It now reads `SEMANTIUS_TIMEOUT` (default 1800 s). Entry #13 below keeps the old name as written at the time.
 
-## Analyst 5.4 → 5.5 (spec-contract clarifications); `EXPECTED_MAJOR = 5` unchanged
+## spec-contract clarifications
 
 2026-08-19. Parser-side delta for the analyst's 5.5 minor (see the analyst CHANGELOG). All changes are tolerant of 5.4 files; nothing in the deploy procedure changes.
 
@@ -115,23 +103,23 @@ Documentation only, no contract change, `EXPECTED_MAJOR` unchanged (2026-09-26).
 
 Files: SKILL.md, `references/stage-1-parse.md`, `references/stage-4-execute.md`, `references/stage-5-verify.md`.
 
-## Unreleased: task-tool call economy
+## task-tool call economy
 
 Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (resident "Task tracking" section, stage tasks and the 2.5 / Stage 3 gates). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
 
-## Unreleased: task tracking and the question ledger
+## task tracking and the question ledger
 
 Guidance only, no contract change, `EXPECTED_MAJOR` unchanged (2026-08-18). The modeler now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): a resident "Task tracking" paragraph in SKILL.md; the High-Level Workflow table gains a Task subject column (four `Apply ›` stage tasks created at Step 0, Stage 4 always one task, the sample-data task created only on the user's yes); Stages 2.5 and 3 are ledger stages (the access-control question, ambiguous cross-model rows, field-name collisions, the four-or-more-proposals question and its "Review each one" fallback become `Q:` tasks with fixed subject templates, asked in batches of up to four per call, completed only after the answer is applied to the plan; Gate A requires the ledger clean); the pre-execute yes/no, the 1-3-proposals inline confirmation, the tier-flip confirmations, the 4e-merge and 4f prompts, and the sample-data question stay standalone. Closing Contract: the Verify task is completed in the response before the closing block. Files: SKILL.md, `stage-2-reconcile.md` (2.5 prompt), `stage-3-plan.md` (link flow, standalone list), `stage-4-execute.md` (halt marks the task), `stage-6-sample-data.md`, `conflict-resolution.md` (two rows).
 
-## Unreleased: `AskUserQuestion` call mechanics
+## `AskUserQuestion` call mechanics
 
 Guidance only, no contract change, `EXPECTED_MAJOR` unchanged. The resident writing conventions in SKILL.md (mirroring `semantius-admin/references/writing-conventions.md`) gain an unnumbered "AskUserQuestion mechanics" paragraph: call the widget alone in its own response after edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
 
-## Unreleased: historical / version-stamp narration removed from runtime files
+## historical / version-stamp narration removed from runtime files
 
 No behavior change. Removed the retired `single_approver` pattern-flag note, the `alias` note, "legacy" labels on current states (two-permission baseline, `readonly` fields, entries without `source_module`), "no longer" / "used to fail" phrasings, and "Older 5.3 specs" / "v5.4 specs" wording (kept as version-free tolerance rules) from SKILL.md and `references/*`. History lives here and in git only.
 
-## Unreleased: bulk (array) writes, entities before fields, preflight fix for the `anyOf` tool schemas
+## bulk (array) writes, entities before fields, preflight fix for the `anyOf` tool schemas
 
 2026-08-17. The crud server (postgrest-mcp "array inserts") and the CLI ("add array support") now take `data` on every typed `create_*` as one object **or a non-empty array** (one request, one transaction, all-or-nothing; items may have different keys — the server sends `?columns=<union>` + `Prefer: missing=default`; the response is always an array), and `id` / `table_name` on every `update_*` / `delete_*` as one value or an array (`in.(...)`, same `data` for all). `--single` is rejected (exit 1, `SINGLE_ARRAY_INPUT`) when any of those is an array. The platform's new golden rule: more than one record of the same kind pending → ONE call. Deployer-side only; `EXPECTED_MAJOR` stays `5`, `SCAFFOLD_LIB_MAJOR` stays `5` (additive).
 
@@ -145,11 +133,11 @@ No behavior change. Removed the retired `single_approver` pattern-flag note, the
 
 `deploy-lib.ts` and `scaffold-lib.ts` type-checked with `tsc --strict` and exercised live end-to-end (scaffold → bulk entities → bulk fields → id-array update → re-run no-op → array deletes) against the `tests` org.
 
-## Unreleased: Stage 5b stamps the deployed module version back into the spec (drift gate)
+## Stage 5b stamps the deployed module version back into the spec (drift gate)
 
 2026-07-05. New **Stage 5b** in `stage-5-verify.md`: on a clean deploy, after all Stage 4 writes settle, read the platform-maintained `modules.version` (monotonic integer, bumped by the platform on any owned-schema change) + `modules.version_date` and upsert them into the spec front-matter as `deployed_version` / `deployed_version_date`, plus `deployed_related_versions` (the live `version` of each `reuse-from` / `promote-to-master` source module). This is the **only** write the modeler makes to the spec, and only on a clean deploy — an in-place front-matter upsert, nothing else touched. Graceful no-op when the platform predates the `version` column. Pairs with the analyst's new 2a.1 gate, which reads `deployed_version` to answer "did prod drift since deploy?" in one read instead of deep-inspecting every entity. Additive / behavioral; no spec-shape break, `EXPECTED_MAJOR` stays `5`.
 
-## Unreleased: parse + write the v5.4 spec constructs (entity UI columns, field `width` / `searchable` on create, module `logo_color` / `home_page`, header-based §9.1)
+## parse + write the new spec constructs (entity UI columns, field `width` / `searchable` on create, module `logo_color` / `home_page`, header-based §9.1)
 
 2026-07-05. Minor bump to lockstep with the analyst v5.4 (analyst `CURRENT_VERSION` "5.3"→"5.4", optimizer `SPEC_VERSION` "5.3"→"5.4"). **`EXPECTED_MAJOR` stays `5`; a minor does not touch it.** The modeler compares only the spec version's MAJOR part (SKILL.md "Schema compatibility"), so a `5.4` spec (major 5) already passes the gate; there is no minor-version pin anywhere in the skill to relax. Older 5.3 specs (which omit every construct below) deploy byte-for-byte unchanged (each new construct is emitted only when non-default, so its absence is indistinguishable from a 5.3 spec). All additive / behavioral; no spec-shape break, no forced major bump. The parse mappings for `edit_mode` / `cube_mode` already existed (`stage-1-parse.md`); the gap was that the EXECUTE stage never wrote them, plus five brand-new columns and the header-based §9.1 conversion.
 
@@ -165,7 +153,7 @@ Platform defaults confirmed from the live `semantius info crud` schemas (all ski
 
 Reference-prose / contract edits plus one additive `scaffold-lib.ts` change (validated with `bun build`); `deploy-lib.ts` unchanged, no other rebuild.
 
-## Unreleased: fix `input_type` required-ness regression + write the dropped field columns (`default_value` / `precision` / `cube_type` / `singular_label_parent` / `plural_label_parent`)
+## fix `input_type` required-ness regression + write the dropped field columns (`default_value` / `precision` / `cube_type` / `singular_label_parent` / `plural_label_parent`)
 
 2026-07-05. The analyst authors the §3 `Required` column and several §3 Notes annotations (`default:`, `precision:`, `cube_type:`, `parent label:`), and the optimizer already round-trips `input_type === "required"` ⟺ `Required = yes`, but the deployer never wrote any of them to `create_field` / `update_field` — so every deployed field landed `input_type: "default"` (nothing UI-mandatory), FK parent labels were lost, and number `precision` / `cube_type` / `default_value` were silently dropped. This makes the deployer honor the EXISTING spec contract (the analyst already emits these; the optimizer already reads `input_type`), so it is deployer-side only: `EXPECTED_MAJOR` stays `5`; no spec-shape change. The platform property is `input_type` (enum `default`/`required`/`readonly`/`disabled`/`hidden`) — there is no boolean `required` column and no settable `is_nullable` (DB nullability is format-computed).
 
@@ -176,7 +164,7 @@ Reference-prose / contract edits plus one additive `scaffold-lib.ts` change (val
 
 The §6 cross-model-link `create_field` example is deliberately left at `input_type: "default"` — those FK links have no §3 `Required` source. Reference-prose / contract edits only; no `deploy-lib.ts` / `scaffold-lib.ts` logic changed, no rebuild.
 
-## Unreleased: deploy + verify field `unique_value` (the §3 `unique` marker)
+## deploy + verify field `unique_value` (the §3 `unique` marker)
 
 2026-07-03. The analyst template lists `unique` among the §3 Reference / Notes markers and names `semantius-optimizer` as its round-trip carrier, but the deployer never parsed or wrote it — so a spec declaring a `unique` natural key (e.g. `it-ops-starter`'s `asset_contracts.contract_number` and `saas_applications.application_name`) deployed with `unique_value: false` and the database enforced no uniqueness. Surfaced by an optimizer round-trip: `extract(live)` showed no `unique`, diverging from the master spec. Deployer-side only; `EXPECTED_MAJOR` stays `5`; no spec-shape change (the marker already exists in the analyst contract).
 
@@ -187,7 +175,7 @@ The §6 cross-model-link `create_field` example is deliberately left at `input_t
 
 Companion fix in `semantius-optimizer` (separate skill): its extractor now emits `unique` from live `unique_value` (`mapNotes`), which it previously dropped — the same round-trip gap from the other direction. Reference-prose / contract edits only here; no `deploy-lib.ts` / `scaffold-lib.ts` logic changed, no rebuild.
 
-## Unreleased: deploy-time correctness fixes — UI link, create-response id, role-slug hyphens, `label_parent` ordering, module-record wiring, role provenance
+## deploy-time correctness fixes — UI link, create-response id, role-slug hyphens, `label_parent` ordering, module-record wiring, role provenance
 
 2026-06-28. Four executor fixes from a real deploy post-mortem. All are deployer-side behavior; `EXPECTED_MAJOR` stays `5`; no spec-shape change, no analyst/architect lockstep needed (the analyst already handles its half of #3).
 
@@ -206,7 +194,7 @@ Companion fix in `semantius-optimizer` (separate skill): its extractor now emits
 12. **Four-skill end-to-end run post-mortem — seed idempotency, seed nullability, `ensure` pre-wrap, modeler `yq`.** A full architect→analyst→modeler→deploy-test run surfaced nine rough edges; an independent subagent verified each against the source before any change. **Three claims were rejected as misreadings and NOT acted on:** (a) "`update_entity`'s `{table_name, data}` shape is undocumented and `preflightSchemas` rejects `data`" — the shape is documented (cheat row #313) and `preflightSchemas` checks `data`-LEVEL columns, never the `data` key itself (`toolDataKeys` reads `properties.data.properties`), so there is no contradiction and `update_entity` is simply not preflighted; (b) "Stage 2 emits only `✓ Reused: <table>`" — that string does not exist anywhere; reuse already renders field-level in the Stage 3 plan (`♻️ vendors: 6 fields, no drift`); (c) "bulk insert needs a `Prefer: return=representation` recipe" — the seed path inserts one row per `post()` (never an array body), so the uniform-keys constraint never applies, and the return-row mechanism is `--single`, not a `Prefer` header. **Five valid gaps were fixed:** (0) **`update_entity` shape had no owning helper — the structural root of the "3 attempts" confusion.** The skill's established pattern is "a helper owns the fumble-prone envelope so call sites can't get it wrong" (`ensure` owns the create-then-read-id dance, `post`/`pgRequest` own the PostgREST `body`, `scaffoldModule` owns the baseline). `update_entity` was the one common mutating call with NO owning helper: hand-rolled through raw `write("update_entity", {table_name, data})`, with its shape documented only in a backstop cheat row, a table in a *different* skill (use-semantius `crud-tools.md`), and stage-4 prose — so the agent reassembled it from memory each time and got it wrong (table_name buried in `data`, or the patch double-wrapped). Added `updateEntity(tableName, data)` to `deploy-lib.ts` (it owns the `{table_name, data}` envelope, goes through `write` so it stays loud, blind-PATCH to pair with a read1/readMany diff), wired it into the deploy-script-template (export-table row, import line, the create-or-diff orchestration comment), and re-pointed the SKILL cheat row at the helper so the backstop is no longer the primary source of the shape. Also added a template preflight note that update tools are NOT preflighted (their shape is helper-owned, and `update_entity`'s top-level `table_name` would false-fail against the tool's `data` schema) — closing the *other* half of the report's confusion (trying to preflight `update_entity`), which the verifier had flagged as a misread of `preflightSchemas` (it checks `data`-level columns, not the `data` key). (1) **Seed idempotency.** `post()` is a bare INSERT, so a re-run (common after a partial first run halts mid-seed) appends a second full batch, and `assertSeedCounts` cannot see it (it tallies only this run's inserts). Added `seedEnsure(path, row, keyField)` to `deploy-lib.ts` — read-before-write keyed on a `unique_value` column built with `uniq(base, i)` (stable across runs), returns the row with its id like `post`, converges on re-run — plus a new "Re-running the seed (idempotency)" Stage 6 subsection and an import-line note. (2) **Seed nullability.** Required TEXT formats (`string`/`text`/`multiline`/`html`/`code`) are `NOT NULL` and need `""` not `null` in seed VALUES (a `null` aborts the run before the count guard); the cheat table covered this only for `create_field` schema, not for row data — added a "Nullability safety" note to Stage 6 alongside Enum/String safety. (3) **`ensure` pre-wrap footgun.** `ensure` already wraps its `data` arg in `{data}` for the write; a reader who conflates it with `write()` (which DOES take `{data: f}`) double-wraps to `{data:{data:...}}` and the create fails. Spelled out the raw-fields-vs-payload distinction on the template's `ensure` row. (4) **Modeler does not need `yq`.** The shared admin preflight checks `bun jq yq`, but `yq` only serves the customizations layer the modeler skips, so a missing `yq` was wrongly blocking standalone runs — the SKILL preflight note now states the modeler needs `bun` + `jq`, not `yq`. The centralized-preflight design itself is intentional and unchanged. `bun build` validated.
 11. **Sample-data uniqueness at scale (`unique_value` 409 crash + lockstep / pool-cap traps).** A second independent subagent review found the loop-to-target pattern guaranteed the COUNT but not UNIQUENESS past pool size: `pick(pool, i)` cycles, so above `pool.length` values repeat, and a field carrying `unique_value: true` (email, code, external id) then fails its insert with a **409** — which `post()` throws on, aborting the whole run *before* `assertSeedCounts` runs (the count guard cannot catch it; the seed doc never mentioned `unique_value` at all). The shipped example also had a lockstep bug (`pick(first,i)` + `pick(last,i)` share `i` → only 10 distinct names, not 100). Fixes: added `combine(i, pools)` (mixed-radix composition → F×L×… distinct tuples from small pools) and `uniq(base, i, suffix)` (index-composed, collision-proof) to `deploy-lib.ts`; a new "Uniqueness that scales (and `unique_value` safety)" Stage 6 subsection with Enum/String-safety prominence (detect `unique_value` fields and make them distinct by construction; `pick` for repeat-OK, `combine` for distinct-at-scale, in-loop derivation for correlated fields); and the example now uses `combine` for names + `uniq` for a `unique_value` email. Net: count is structural (loop), uniqueness is compositional (helpers), neither needs hand-authoring N rows. `bun build` validated.
 
-## Unreleased: §3 flag removal, frontmatter simplification, `canonical_`→`catalog_` rename, `domain_code`/`access_scope`/`icon_name` as top-level columns
+## §3 flag removal, frontmatter simplification, `canonical_`→`catalog_` rename, `domain_code`/`access_scope`/`icon_name` as top-level columns
 
 2026-06-27. Deployer-side half of the platform-schema contract change (architect + use-semantius landed the upstream half). `EXPECTED_MAJOR` stays `5` — the prior version was never deployed, so there is no installed base to migrate.
 
@@ -220,7 +208,7 @@ Platform columns moved / renamed / deleted, so the deployer's writes change:
 
 Deploy-time correctness change (the deployer would otherwise write platform columns that no longer exist as `settings` keys / under the old names); no spec-shape change beyond the frontmatter keys above. The `settings.access_scope` / `settings.domain_code` entries further down are now historical — read them as "what was true before this entry."
 
-## Unreleased: plain-language vocabulary pinned (entity vs. field vs. record); access-control label plainer
+## plain-language vocabulary pinned (entity vs. field vs. record); access-control label plainer
 
 2026-06-22. Two user-facing wording fixes, both documentation/contract (no executor-code change), `EXPECTED_MAJOR` stays `5`:
 
@@ -229,7 +217,7 @@ Deploy-time correctness change (the deployer would otherwise write platform colu
 
 **Minor**: user-facing prose only. No parser, executor, or schema-compatibility change.
 
-## Unreleased: Stage 6 sample-data count made prescriptive (fixes under-seeding drift)
+## Stage 6 sample-data count made prescriptive (fixes under-seeding drift)
 
 2026-06-22. A deploy seeded only 2 records per entity despite the Stage 6 question promising 10, because the count lived solely in advisory prose and the script-pattern example demonstrated exactly 2 rows per entity — so agents copied the example, not the instruction. No skill regression; this was runtime drift the prose did not prevent. Three coupled changes to Stage 6, all documentation/contract (no executor-code change), `EXPECTED_MAJOR` stays `5`:
 
@@ -237,7 +225,7 @@ Deploy-time correctness change (the deployer would otherwise write platform colu
 2. **Fixed the misleading script example.** The pattern previously showed 2 hard-coded rows per entity; it now loops over a row array with explicit `... 10 total ...` markers and a banner stating the example is abbreviated for readability only.
 3. **Summary must report per-entity counts.** The run step now requires reporting how many records landed per entity, with a reason on any line below the target. Turns silent under-seeding into a visible defect.
 
-## Unreleased: `module_id` is now reliably set + self-healing on permissions, roles, AND entities
+## `module_id` is now reliably set + self-healing on permissions, roles, AND entities
 
 2026-06-21. Fixes a deployed defect from the `it-ops-starter` deploy where `module_id` came back NULL on records that the platform/model expects to own a module FK:
 
@@ -261,7 +249,7 @@ All four record types (`permissions`, `roles`, `entities`, plus the existing `mo
 
 Live note: the five stranded `it-ops-starter` entities still carry NULL `module_id` in the instance — a re-deploy now repairs them via the Stage 4c converge path (or an explicit `update_entity ... module_id=1033`).
 
-## Unreleased: persist `settings.access_scope` on every deploy path; access-scope default reads it
+## persist `settings.access_scope` on every deploy path; access-scope default reads it
 
 2026-06-20. Two coupled changes so the access-scope default reflects what the instance actually uses.
 
@@ -271,7 +259,7 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 `EXPECTED_MAJOR` stays `5`. Behavior change to a deploy-time default and an added idempotent write only; no spec-contract change.
 
-## Unreleased: blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
+## blueprint front-matter key renamed (`fact_sheet_version` → `blueprint_version`)
 
 2026-06-15. The spec front-matter key carrying the blueprint artifact version was renamed `fact_sheet_version` → `blueprint_version` (value unchanged at `"3.0"`). `EXPECTED_MAJOR` stays `5`; the deployer gates on the spec's `version` major (not this key), so there is no behavior change. Coordinated with the architect and analyst.
 
@@ -279,7 +267,7 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## Unreleased — access-control scope (basic vs full RBAC); Stage 2.5 backstop
+## access-control scope (basic vs full RBAC); Stage 2.5 backstop
 
 `EXPECTED_MAJOR` stays `5`. Lockstep delta with the access-control change folded into the (unreleased) analyst `5.3` — no version bump, since the analyst was never released. **The architect is not involved** (it is platform-agnostic and never decides access control; the analyst owns the decision because it is platform-aware). Closes the reliability gap where the modeler deployed a spec's full RBAC (permissions, roles, workflow gates, lifecycle gating) unconditionally and never asked whether the user wanted plain read + edit access.
 
@@ -295,9 +283,9 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## `v5.3` (MINOR) — enforce lifecycle state field name (`workflow_state`); stop stamping `catalog_field_code`
+## enforce lifecycle state field name (`workflow_state`); stop stamping `catalog_field_code`
 
-`EXPECTED_MAJOR` stays `5` (analyst `5.3` is the same major). Lockstep delta with analyst `5.3` and architect `5.2`. Two changes in the deployer.
+2026-06-15. `EXPECTED_MAJOR` stays `5` (analyst `5.3` is the same major). Lockstep delta with analyst `5.3` and architect `5.2`. Two changes in the deployer.
 
 **What changed in the deployer.**
 
@@ -308,9 +296,9 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## `v5.2` (MINOR) — composed record labels: parse / stamp / verify `label_parent`; skip `_label` / `<fk>_label`; reserved-name guard
+## composed record labels: parse / stamp / verify `label_parent`; skip `_label` / `<fk>_label`; reserved-name guard
 
-`EXPECTED_MAJOR` stays `5` (analyst `5.2` is the same major). Lockstep delta with analyst `5.2` and architect `5.1`. The platform added read-time composed labels (`_label` on every entity, `<fk>_label` on every reference/parent FK) and an optional `label_parent` entity property naming the identity-spine FK. The analyst now derives and emits `label_parent`; the deployer stamps and verifies it.
+2026-06-14. `EXPECTED_MAJOR` stays `5` (analyst `5.2` is the same major). Lockstep delta with analyst `5.2` and architect `5.1`. The platform added read-time composed labels (`_label` on every entity, `<fk>_label` on every reference/parent FK) and an optional `label_parent` entity property naming the identity-spine FK. The analyst now derives and emits `label_parent`; the deployer stamps and verifies it.
 
 **What changed in the deployer.**
 
@@ -326,9 +314,9 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## `v5.1` (MINOR) — provenance stamping pass: `catalog_entity_code` / `entity_type` / `catalog_entity_aliases`
+## provenance stamping pass: `catalog_entity_code` / `entity_type` / `catalog_entity_aliases`
 
-`EXPECTED_MAJOR` stays `5` (analyst `5.1` is the same major). Lockstep with analyst `5.1` and architect `5.0` (`fact_sheet_version 2.2 → 3.0`). The analyst began carrying the blueprint's provenance into the spec as per-entity lines; the deployer learned to stamp them onto the platform's v0.1.2 core provenance columns.
+2026-06-14. `EXPECTED_MAJOR` stays `5` (analyst `5.1` is the same major). Lockstep with analyst `5.1` and architect `5.0` (`fact_sheet_version 2.2 → 3.0`). The analyst began carrying the blueprint's provenance into the spec as per-entity lines; the deployer learned to stamp them onto the platform's v0.1.2 core provenance columns.
 
 **What changed in the deployer.**
 
@@ -340,9 +328,9 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## `v5.0` (MAJOR) — §2-Permissions-summary retirement finalized; `EXPECTED_MAJOR 4 → 5`; canonical empty-section placeholder recognized
+## §2-Permissions-summary retirement finalized; canonical empty-section placeholder recognized
 
-`EXPECTED_MAJOR` bumps from `4` to `5` in lockstep with analyst `5.0` (and architect `4.3`). Two coordinated contract changes land together:
+2026-06-05. `EXPECTED_MAJOR` bumps from `4` to `5` in lockstep with analyst `5.0` (and architect `4.3`). Two coordinated contract changes land together:
 
 **Change B (breaking, this skill's major) — §2 Permissions summary retired; §8.1 / §9.1 canonical.** The analyst's spec no longer carries the §2 Permissions summary table; the §8.1 Permissions catalog and the §9.1 Permission hierarchy (including the `manage → narrow` rollup row that moved out of §2) are the canonical permission surface. This is a breaking spec-structure change (a structural table removed), so pre-existing `4.x` specs — which carry §2 Permissions summary with the narrow rollup that lived only there — are **non-deploy-safe** and are rejected at Stage 1 (`major != EXPECTED_MAJOR`) until regenerated through the analyst. This is the intended migration signal, not a regression.
 
@@ -360,9 +348,9 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## `v4.1` (MINOR) — RACI-mode-aware Stage 4k: sync the live RACI matrix + enforcement (living mode); agent actors
+## RACI-mode-aware Stage 4k: sync the live RACI matrix + enforcement (living mode); agent actors
 
-`EXPECTED_MAJOR` stays `4` (analyst `4.2` is the same major). The deployer learns to drive the platform's now-shipped live-RACI engine (`0210_raci.sql`, PR #189) instead of only compiling RACI into `role_permissions`. Lands in lockstep with architect `4.2` and analyst `4.2`. Backward compatible: `documentation` mode is the default and reproduces v4.0 behavior exactly.
+2026-06-03. `EXPECTED_MAJOR` stays `4` (analyst `4.2` is the same major). The deployer learns to drive the platform's now-shipped live-RACI engine (`0210_raci.sql`, PR #189) instead of only compiling RACI into `role_permissions`. Lands in lockstep with architect `4.2` and analyst `4.2`. Backward compatible: `documentation` mode is the default and reproduces v4.0 behavior exactly.
 
 **What changed.**
 
@@ -375,9 +363,9 @@ Live note: the five stranded `it-ops-starter` entities still carry NULL `module_
 
 ---
 
-## `v4.0` (MAJOR) — extended blueprint/spec contract: §9 governance, module_kind, presence-conditional FKs, ⚠ handling, has_single_approver cross-check, entity-owning-module rule + master-install reconciliation
+## extended blueprint/spec contract: §9 governance, module_kind, presence-conditional FKs, ⚠ handling, has_single_approver cross-check, entity-owning-module rule + master-install reconciliation
 
-`EXPECTED_MAJOR` bumped from `3` to `4` in lockstep with analyst `4.0` → `4.1`. Files written by analyst `4.x` may carry six new authoring conventions on top of `3.x`:
+2026-06-03. `EXPECTED_MAJOR` bumped from `3` to `4` in lockstep with analyst `4.0` → `4.1`. Files written by analyst `4.x` may carry six new authoring conventions on top of `3.x`:
 
 1. **Frontmatter additions** — `tagline`, `description`, `persona` (flat list), `license`, `module_kind` (informational label; NOT a behavior switch).
 2. **§3 `**Reconciliation:** re-prefixed-from <canonical-module>.<verb>` annotation** on workflow gates and pattern-flag overrides for `embedded_master` entities whose canonical owner module is absent.
@@ -430,9 +418,9 @@ Pre-3.0 files are still rejected (the major mismatch is a halt); a 4.0+ deployer
 
 ---
 
-## `v3.3` (MINOR) — `permission_hierarchy` column rename (`parent`/`child` → `including`/`included`)
+## `permission_hierarchy` column rename (`parent`/`child` → `including`/`included`)
 
-In lockstep with analyst minor `3.5`. The platform renamed two columns on `permission_hierarchy`:
+2026-05-27. In lockstep with analyst minor `3.5`. The platform renamed two columns on `permission_hierarchy`:
 
 - `parent_permission_id` → `including_permission_id` (the broader permission, the one doing the including; e.g. `crm:manage` when expressing "`crm:manage` includes `crm:read`")
 - `child_permission_id` → `included_permission_id` (the narrower permission, the one being included; e.g. `crm:read`)
@@ -457,9 +445,9 @@ The CLI (`semantius v0.4.2` and later) accepts only the new field names. A `v3.2
 
 ---
 
-## `v3.2.1` (PATCH) — `create_permission` must pass `module_id`; lookup conventions formalized
+## `create_permission` must pass `module_id`; lookup conventions formalized
 
-In lockstep with no analyst change; pure deployer-side bug fix plus a conventions tightening that prevents the same defect class.
+2026-05-27. In lockstep with no analyst change; pure deployer-side bug fix plus a conventions tightening that prevents the same defect class.
 
 **Bug fix.** Stage 2a-scaffold step 2 previously passed only `permission_name` and `description` to `create_permission`, leaving `permissions.module_id` NULL on insert. The defect was invisible to hierarchy edges and role-permission joins (which resolve by `permission_name` or by FK id, neither needing `module_id`) but produced real catalog drift: permissions were unscoped, so `?module_id=eq.<id>` queries silently missed them and per-module RBAC audits reported drift.
 
@@ -481,9 +469,9 @@ No `EXPECTED_MAJOR` change.
 
 ---
 
-## `v3.2` (MINOR) — cross-entity JsonLogic primitives pass through transparently
+## cross-entity JsonLogic primitives pass through transparently
 
-In lockstep with analyst minor `3.2`. No `EXPECTED_MAJOR` change; 3.x files continue to pass the version gate.
+2026-05-27. In lockstep with analyst minor `3.2`. No `EXPECTED_MAJOR` change; 3.x files continue to pass the version gate.
 
 The platform now exposes three additional JsonLogic operators inside `validation_rules`, `computed_fields`, and `select_rule` bodies: `{"set_record": ["<name>", "<entity>", <id-expr>, <body>]}`, `{"let": ["<name>", <value-expr>, <body-expr>]}`, and `{"throw_error": "<message>"}`. The deployer already passes these arrays byte-for-byte to `create_entity` / `update_entity`, so the operators travel through the existing path with no parser change. Two adjustments to the deployer's static-analysis posture:
 
@@ -495,9 +483,9 @@ The 3.2 minor is forward-compatible: a 3.1 file parses unchanged against a 3.2 d
 
 ---
 
-## `v3.0` (MAJOR) — master modules, module scaffold, shared-entity promotion
+## master modules, module scaffold, shared-entity promotion
 
-`EXPECTED_MAJOR` bumped from `2` to `3` in lockstep with the analyst skill.
+2026-05-27. `EXPECTED_MAJOR` bumped from `2` to `3` in lockstep with the analyst skill.
 
 Files written by analyst `3.0+` may carry two new authoring conventions on top of `2.x`: an optional `module_type: master` frontmatter directive (default `"domain"` when absent), and an optional per-entity `**Shared master cluster:** <name>` annotation in §3 alongside `**Edit permission:**` / `**Audit log:**`. Both are forward-compatible additions: pre-3.0 model files parse against a 3.0 deployer with both fields defaulted. However, a pre-3.0 deployer reading a 3.0 master-typed model would silently create a regular domain module instead of a master, producing the wrong shape rather than a missed optimization — the major bump is the honest signal that the two skills must move in lockstep.
 
@@ -536,9 +524,9 @@ Files written by analyst `3.0+` may carry two new authoring conventions on top o
 
 ---
 
-## `v2.2` — read-side sub-blocks (`Input type rules`, `Select rule`)
+## read-side sub-blocks (`Input type rules`, `Select rule`)
 
-Files written by analyst `2.2+` may carry two new optional §3 sub-blocks per entity: **`Input type rules`** (a JSON array of `{field, jsonlogic, description?}` entries that bind dynamic UI-mode overrides to specific fields — same shape as `Computed fields` / `Validation rules`) and **`Select rule`** (a single JsonLogic object that drives a `FOR SELECT` row-level security policy on the entity).
+2026-05-27. Files written by analyst `2.2+` may carry two new optional §3 sub-blocks per entity: **`Input type rules`** (a JSON array of `{field, jsonlogic, description?}` entries that bind dynamic UI-mode overrides to specific fields — same shape as `Computed fields` / `Validation rules`) and **`Select rule`** (a single JsonLogic object that drives a `FOR SELECT` row-level security policy on the entity).
 
 Both are platform features that already exist server-side; the analyst skill v2.2 made them addressable from the model file. The deployer applies them in **Stage 4f** ("Apply read-side rules") after fields exist, via `update_field` (per `Input type rules` entry) and `update_entity` (per `Select rule`). Missing headings mean no rule (both columns default to `{}` on the platform); the deployer never silently clears an existing live rule when the model omits a heading (same drift-handling rule as `computed_fields` / `validation_rules`).
 
@@ -561,9 +549,9 @@ Major stays at `2`; v2.1 files contain neither sub-block and parse cleanly under
 
 ---
 
-## `v2.0` (MAJOR) — mandatory `### Permissions summary` table
+## mandatory `### Permissions summary` table
 
-Files written by analyst `2.0+` carry a mandatory `### Permissions summary` table under `## 2` (after the entity-summary table and the Mermaid diagram). This table is the canonical source for the module's permission catalog and its hierarchy rows. The deployer reads the table directly in Stage 2a (module + permissions setup) and creates every `create_permission` + `create_permission_hierarchy` call from it; the legacy parallel enumeration in §8 step 1 is gone in v2.0 files (§8 step 1 just points the deployer at the §2 table). v1.x files lack this table and are refused; route the user back to analyst Mode D Rebuild to materialize the v2 file from the v1 content.
+2026-05-27. Files written by analyst `2.0+` carry a mandatory `### Permissions summary` table under `## 2` (after the entity-summary table and the Mermaid diagram). This table is the canonical source for the module's permission catalog and its hierarchy rows. The deployer reads the table directly in Stage 2a (module + permissions setup) and creates every `create_permission` + `create_permission_hierarchy` call from it; the legacy parallel enumeration in §8 step 1 is gone in v2.0 files (§8 step 1 just points the deployer at the §2 table). v1.x files lack this table and are refused; route the user back to analyst Mode D Rebuild to materialize the v2 file from the v1 content.
 
 Parse-time validation that previously checked §8 step 1 now checks the §2 table directly. See SKILL.md "Parse the Permissions summary table" for the column shape and the full validation list.
 

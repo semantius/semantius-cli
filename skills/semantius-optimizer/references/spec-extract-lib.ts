@@ -1,6 +1,6 @@
 /**
  * spec-extract-lib.ts — deterministic reverse-engineer of a live Semantius module
- * into a `*-semantic-spec.md` (analyst artifact, version "5.7").
+ * into a `*-semantic-spec.md` (analyst artifact, file format version "3.1").
  *
  * READ-ONLY against Semantius. Every read shells out via `Bun.spawn` with an
  * ARG ARRAY (bypasses the shell — inline JSON is safe on Windows and POSIX),
@@ -20,7 +20,8 @@
  * attributable.
  */
 
-const SPEC_VERSION = "5.9";
+/** The file format version (the same in blueprint and spec files; changes only with the user's approval). */
+const FORMAT_VERSION = "3.1";
 
 /** Semantius platform built-ins — reused by the deployer, not owned by any module. */
 const BUILTINS = new Set([
@@ -90,13 +91,13 @@ const isRef = (f: any): boolean => !!f.reference_table;
 /** An `is_a` / `has_a` entity: based on `id_refentity`, sharing its key (template §3 `**Based on:**`). */
 const isBased = (e: any): boolean => e.id_type === "is_a" || e.id_type === "has_a";
 
-/** An `enum_values` entry is a value or a `{value, label}` pair; records store the value. */
+/** An `enum_values` entry is a value or a `{value, label}` object (optional description / color / icon); records store the value. */
 const enumValue = (v: any): string => (v !== null && typeof v === "object" ? String(v.value) : String(v));
 
 /** Live format → spec format vocabulary. */
 function mapFormat(f: any, e: any): string {
   if (f.format === "text") return isLabelCol(f, e) ? "string" : "multiline";
-  return f.format; // string, enum, date, number, integer, boolean, multiline, reference
+  return f.format; // string, enum, color, icon, rating, date, number, integer, boolean, multiline, reference, …
 }
 
 /** Required is sourced strictly from input_type. */
@@ -197,7 +198,7 @@ function frontmatter(mod: any, ownedTables: string[], relatedVersions: Record<st
   const settings = mod.settings || {};
   const lines: string[] = ["---"];
   lines.push(`artifact: semantic-spec`);
-  lines.push(`version: "${SPEC_VERSION}"`);
+  lines.push(`version: "${FORMAT_VERSION}"`);
   lines.push(`system_name: ${mod.module_name}`);
   lines.push(`tagline: "${mod.description}"`);
   lines.push(`icon_name: ${mod.icon_name}`);
@@ -207,11 +208,11 @@ function frontmatter(mod: any, ownedTables: string[], relatedVersions: Record<st
   lines.push(`access_scope: ${mod.access_scope}`);
   lines.push(`domain_code: ${mod.domain_code}`);
   lines.push(`naming_mode: ${settings.naming_mode || "agent-optimized"}`);
-  // v5.4 module presentation keys (canonical spec §3), after naming_mode, before entities.
+  // Module presentation keys (canonical spec §3), after naming_mode, before entities.
   // Top-level `modules` columns (NOT under settings); emit each only when non-empty.
-  if (mod.logo_color) lines.push(`logo_color: ${mod.logo_color}`);
+  if (mod.logo_color) lines.push(`logo_color: "${mod.logo_color}"`);   // quoted: YAML reads an unquoted `#` as a comment
   if (mod.home_page) lines.push(`home_page: ${mod.home_page}`);
-  // Deploy provenance (v5.4+): live truth, so the optimizer emits it (unlike the
+  // Deploy provenance: live truth, so the optimizer emits it (unlike the
   // authoring-only reconciled_* / source_blueprint keys it deliberately drops).
   // deployed_version mirrors the module's current modules.version; a spec extracted
   // from live is by definition in-sync, so the analyst's 2a.1 drift gate reads equal
@@ -229,7 +230,7 @@ function frontmatter(mod: any, ownedTables: string[], relatedVersions: Record<st
   for (const t of ownedTables) lines.push(`  - ${t}`);
   lines.push("---");
   // Category-B authoring-only keys deliberately omitted: description block,
-  // blueprint_version, license, created_at, reconciled_*, source_blueprint,
+  // license, created_at, reconciled_*, source_blueprint,
   // related_modules, related_domains, departments, initial_request, persona,
   // catalog_module_code, raci_mode/raci_mode_source (any access_scope other than raci).
   return lines.join("\n");
@@ -357,7 +358,7 @@ function entityDetail(e: any, fields: any[]): string {
   // from its base (the platform sets them), so none of the three lines is emitted for it.
   const based = isBased(e);
   if (e.label_column && !based) out.push(`**Label column:** \`${e.label_column}\``);
-  // v5.4 identity-spine lines (canonical spec §1), pinned right after **Label column:**.
+  // Identity-spine lines (canonical spec §1), pinned right after **Label column:**.
   // Both backticked as a `field_name` like **Label column:**. Order column: omit when
   // empty/null. Id column: omit when the platform default `id` (or empty) — every live
   // entity reads back id_column "id" unless explicitly overridden.
@@ -373,7 +374,7 @@ function entityDetail(e: any, fields: any[]): string {
   if (based && e.id_refentity) out.push(`**Based on:** \`${e.id_refentity}\``);
   out.push(`**Audit log:** ${e.audit_log ? "yes" : "no"}`);
   if (editSuffix !== "manage") out.push(`**Edit permission:** ${editSuffix}`);
-  // v5.4 UI/cube/icon lines (canonical spec §1), pinned right after **Edit permission:**.
+  // UI/cube/icon lines (canonical spec §1), pinned right after **Edit permission:**.
   // Edit mode / Cube mode: bare enum value, no backticks; omit at the platform default
   // `auto` (verified via `create_*` schema + every live row reads back "auto"). Icon URL:
   // plain URL value, NO backticks; omit when empty/null.
@@ -559,8 +560,7 @@ function relationshipSummary(entities: any[], fieldsByTable: Record<string, any[
 function enumerations(entities: any[], fieldsByTable: Record<string, any[]>): string {
   const out: string[] = ["## 5. Enumerations", ""];
   // Collect every enum field, then sort the BLOCKS alphabetically by
-  // `table.field` and emit an unnumbered `### `table.field`` heading (analyst
-  // v5.4+ convention). The member values inside each block keep their defined
+  // `table.field` and emit an unnumbered `### `table.field`` heading. The member values inside each block keep their defined
   // (lifecycle / semantic) order; only the block order and headings change.
   const blocks: Array<{ key: string; values: any[] }> = [];
   for (const e of entities) {
@@ -576,9 +576,15 @@ function enumerations(entities: any[], fieldsByTable: Record<string, any[]>): st
   }
   for (const b of blocks) {
     out.push(`### \`${b.key}\``);
-    // A `{value, label}` entry is a labeled bullet (`- `value` - Label`); a plain entry the bare value.
+    // A `{value, label}` entry is a labeled bullet (`- `value` - Label`), its hints sub-bullets in the
+    // fixed order color, icon, description (never Object.keys order: jsonb reorders keys); a plain
+    // entry is the bare value. An object always carries its label (the platform requires one).
     for (const v of b.values) {
-      out.push(v !== null && typeof v === "object" && v.label ? `- \`${enumValue(v)}\` - ${v.label}` : `- \`${enumValue(v)}\``);
+      if (v === null || typeof v !== "object") { out.push(`- \`${enumValue(v)}\``); continue; }
+      out.push(v.label ? `- \`${enumValue(v)}\` - ${v.label}` : `- \`${enumValue(v)}\``);
+      if (v.color) out.push(`  - color: \`${v.color}\``);
+      if (v.icon) out.push(`  - icon: \`${v.icon}\``);
+      if (v.description) out.push(`  - description: ${v.description}`);
     }
     out.push("");
   }
@@ -700,7 +706,7 @@ function governance(
   out.push("");
   out.push("**Baseline roles:**");
   out.push("");
-  // v5.4: two trailing lineage columns (`origin`, `catalog role code`) inserted before
+  // Two trailing lineage columns (`origin`, `catalog role code`) before
   // the final `reconciliation` column (canonical spec §4). These are display-only — the
   // deployer re-derives both from module_type/slug — so the round-trip is a functional
   // no-op; the modeler parses §9.1 by header name and ignores them as inputs.
@@ -742,7 +748,7 @@ function governance(
     if (inc && included) out.push(`| \`${inc}\` | \`${included}\` | ♻ exists |`);
   }
   out.push("");
-  // v5.4: read the module's Processes catalog (no typed `read_process` CRUD tool exists —
+  // Read the module's Processes catalog (no typed `read_process` CRUD tool exists —
   // read via `postgrestRequest` GET `/processes?module_id=eq.<id>`, the same table the
   // modeler writes in living-RACI mode). Emit the §9 catalog in the analyst template's
   // exact format (semantic-spec-template.md §9.1 Processes) when rows exist; keep the
@@ -947,7 +953,7 @@ function render(data: LiveData): string {
   parts.push(enumerations(owned, fieldsByTable));
   parts.push("");
   // §6: the link table (first table directly under `## 6.`), then the two handoff
-  // sub-sections (template v5.5+). Live state carries neither in a recoverable shape:
+  // sub-sections. Live state carries neither in a recoverable shape:
   // every cross-module FK already exists as a §3 reference, and the platform exposes
   // no handoff / trigger registry to read back — so all three are placeholders.
   parts.push("## 6. Cross-model link suggestions");

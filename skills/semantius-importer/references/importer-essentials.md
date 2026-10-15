@@ -85,7 +85,7 @@ Properties the importer uses:
 |---|---|
 | `table_name`, `field_name` | Required. `field_name` must not start with `_` or end with `_id_label` (platform-reserved; rejected). |
 | `title` | Human label. |
-| `format` | Open vocabulary; the importer passes the csvschema verdict through (`string`, `multiline`, `integer`, `number`, `date`, `date-time`, `boolean`, `enum`, `email`, `url`, ...). `enum` requires `enum_values` (never `select`). Monetary values: `number` + `precision`. |
+| `format` | Open vocabulary; the importer passes the csvschema verdict through (`string`, `multiline`, `integer`, `number`, `date`, `date-time`, `boolean`, `enum`, `email`, `url`, ...; also `rating`, `color`, `icon`, see data-modeling.md). `enum` requires `enum_values` (never `select`). Monetary values: `number` + `precision`. |
 | `precision` | `number` only; digits after the decimal (default 2). |
 | `input_type` | `default`, `required` (mandatory in UI), `readonly`, `disabled`, `hidden`. **There is no `required` column and no `is_nullable`** — sending either fails. Never target live `readonly`/`disabled` fields with an import. |
 | `field_order` | Display order. **Omit it**: the platform appends each new field after the entity's existing ones in array order, so the CSV column order becomes the display order. Set it only when the user asks for a specific position, after reading the entity's live `field_order` values: the auto-created fields already hold positions (the label field sits at 20), and a tie renders in an unpredictable order without any error. Choose a value strictly between the two live neighbours the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 990000 to put it last. Values from 990000 up are reserved for system columns; every other field stays below 990000. |
@@ -95,7 +95,7 @@ Properties the importer uses:
 | `default_value` | Only when the platform auto-default is wrong (e.g. a required enum whose starting value is not `enum_values[0]`, the first entry's value). Always a value, never a label. |
 | `reference_table` (+ `reference_delete_mode`) | **Mandates `format: "reference"` or `"parent"`** — never combine `reference_table` with a scalar format. Delete modes: `restrict`, `clear`, `cascade`. |
 
-**Nullability is computed from `format`**: only `reference`, `date`, `date-time` accept NULL; every other format is NOT NULL with an auto-default (`''`, `0`, `false`, first enum value). This drives the empty-cell policy in schema-mapping.md section 7.
+**Nullability is computed from `format`**: only `reference`, `date`, `date-time` accept NULL; every other format is NOT NULL with an auto-default (`''`, `0`, `false`, first enum value; `0` for `rating` means not rated). This drives the empty-cell policy in schema-mapping.md section 7.
 
 ## 4. Updates
 
@@ -104,7 +104,7 @@ semantius call crud update_field  '{"id": "<table>.<field>", "data": {"title": "
 semantius call crud update_entity '{"table_name": "products", "data": {"description": "..."}}'  # keyed by table_name, not numeric id
 ```
 
-`format` changes only within the same Postgres primitive (`string` ↔ `multiline` ↔ `html` ↔ `code`); cross-primitive changes are rejected (schema-mapping.md section 9 classifies these).
+`format` changes only within the same PostgreSQL type (the format → type table in data-modeling.md, e.g. `string` ↔ `multiline` ↔ `html` ↔ `code`); cross-primitive changes are rejected (schema-mapping.md section 9 classifies these).
 
 ## 5. postgrestRequest (business rows)
 

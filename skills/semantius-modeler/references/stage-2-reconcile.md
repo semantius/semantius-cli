@@ -17,10 +17,10 @@ semantius call crud read_module --single '{"filters": "module_slug=eq.<system_sl
 ```
 
 - **Exit 0 (exists)**: capture the `id`; plan `update_module` to refresh `module_name` / `description` if they drift.
-- **Exit 1 (missing)**: plan `create_module` with `module_name = <system_name>`, `module_slug = <system_slug>`, `description = <tagline>`, `icon_name = <icon_name>`, `domain_code = <domain_code>`, `module_type = "domain"`, then run the scaffold pass (subsection 2a-scaffold below).
+- **Exit 1 (missing)**: plan `create_module` with `module_name = <system_name>`, `module_slug = <system_slug>`, `description = <tagline>`, `icon_name = <icon_name>` (a Lucide icon name or an icon URL; `use-semantius/references/data-modeling.md` → "Icons are Lucide icons"), `domain_code = <domain_code>`, `module_type = "domain"`, then run the scaffold pass (subsection 2a-scaffold below).
 - **Exit 2 (duplicate)**: hard catalog bug; surface and stop.
 
-> **Module schema note.** Modules carry `module_name` (display), `module_slug` (URL handle), `description` (≤40-char selector chip, sourced from frontmatter `tagline`), `icon_name`, the top-level columns `domain_code` and `access_scope` (`custom` / `basic` / `advanced` / `gated` / `raci`), and `module_type` (`"domain"` default). The §1 Overview prose does NOT go on the module record. `module_type` from the spec (default `"domain"`); reject if it differs from a pre-existing module's `module_type`.
+> **Module schema note.** Modules carry `module_name` (display), `module_slug` (URL handle), `description` (≤40-char selector chip, sourced from frontmatter `tagline`), `icon_name` (a Lucide icon name or an icon URL; `use-semantius/references/data-modeling.md` → "Icons are Lucide icons"), the top-level columns `domain_code` and `access_scope` (`custom` / `basic` / `advanced` / `gated` / `raci`), and `module_type` (`"domain"` default). The §1 Overview prose does NOT go on the module record. `module_type` from the spec (default `"domain"`); reject if it differs from a pre-existing module's `module_type`.
 
 #### 2a-scaffold: standard module scaffold (idempotent)
 

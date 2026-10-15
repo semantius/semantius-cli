@@ -114,7 +114,10 @@
       { "field_name": "workflow_state", "format": "enum", "title": "Status", "description": "", "input_type": "required", "enum_values": ["in_stock", "deployed", "retired"], "default_value": "in_stock", "ctype": "custom", "field_order": 2 },
       { "field_name": "vendor_id", "format": "reference", "title": "Vendor", "description": "", "input_type": "required", "reference_table": "vendors", "reference_delete_mode": "restrict", "relationship_label": "supplies", "ctype": "custom", "field_order": 3 },
       { "field_name": "owner_id", "format": "reference", "title": "Owner", "description": "", "input_type": "default", "reference_table": "users", "reference_delete_mode": "clear", "relationship_label": "owns", "ctype": "custom", "field_order": 4, "input_type_rule": { "if": [ { "==": [ { "var": "workflow_state" }, "retired" ] }, "readonly", "default" ] } },
-      { "field_name": "sort_key", "format": "integer", "title": "Sort Key", "description": "", "input_type": "default", "ctype": "custom", "field_order": 5, "width": "s" }
+      { "field_name": "sort_key", "format": "integer", "title": "Sort Key", "description": "", "input_type": "default", "ctype": "custom", "field_order": 5, "width": "s" },
+      { "field_name": "condition_rating", "format": "rating", "title": "Condition", "description": "", "input_type": "default", "default_value": "0", "ctype": "custom", "field_order": 6 },
+      { "field_name": "tag_color", "format": "color", "title": "Tag Color", "description": "", "input_type": "default", "ctype": "custom", "field_order": 7 },
+      { "field_name": "asset_icon", "format": "icon", "title": "Icon", "description": "", "input_type": "default", "ctype": "custom", "field_order": 8 }
     ],
     "vendors": [
       { "field_name": "vendor_name", "format": "text", "title": "Vendor", "description": "", "input_type": "required", "unique_value": false, "ctype": "label", "field_order": 1 },

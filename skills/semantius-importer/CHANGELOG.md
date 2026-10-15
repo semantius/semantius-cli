@@ -2,7 +2,15 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
-## Unreleased: `field_order` left to the platform
+## `rating`, `color` and `icon` formats; enum entry hints
+
+2026-10-15. The platform added the `color`, `icon` and `rating` formats and optional `description`, `color` and `icon` keys on enum entries.
+
+- `coerce` gains a `rating` branch: an integer from 0 to 5, anything else fails the row with a reason; `color` / `icon` pass through.
+- `enum_values` typings in `import.template.ts`, `create-fields.ts` and `render-plan.ts` take `{value, label, description?, color?, icon?}` (`label` required, as the platform requires); the plan shows `0–5` for a rating.
+- `schema-mapping.md`: rows for `rating` and `color` / `icon`; empty cells (`rating` → `0`, `color` / `icon` → `""`); the enum review offers `rating` for a 1–5 judgment column; entries compare by value (a label or hint difference is cosmetic); extending `enum_values` sends the live entries back with all their keys; same-primitive changes point to the type table in `data-modeling.md`.
+
+## `field_order` left to the platform
 
 2026-09-28. The platform appends each new field after the entity's existing ones in array order, so explicit `field_order` values are no longer written by default. Hand-picked values had caused a silent tie with the auto-created label field (20), which renders the tied fields in an unpredictable order without any error.
 
@@ -10,11 +18,11 @@ This file is history, not contract: it is **not** loaded into context at runtime
 - `render-plan.ts` no longer warns on a missing `field_order`; it now lists any explicit one so the reviewer confirms it was requested and does not tie with a live field.
 - Same rule in `use-semantius` (Golden Rule 3, the data-modeling examples and property table, the cli-usage bulk example) and in the modeler's Stage 4d, whose "`field_order` is explicit anyway" was wrong: the modeler never sent it.
 
-## Unreleased: description under the 1024-character limit
+## description under the 1024-character limit
 
 2026-09-28. The description was 1191 characters; the mechanism detail (introspection util, field-by-field diff wording) was shortened, every trigger phrase and exclusion kept. Now 992.
 
-## Unreleased: enum labels and entity families
+## enum labels and entity families
 
 2026-09-28. The platform added `{"value", "label"}` enum entries and `is_a` / `has_a` entities (sharing their base's key through `id_refentity`).
 
@@ -22,7 +30,7 @@ This file is history, not contract: it is **not** loaded into context at runtime
 - `coerce` gains an `enum` branch: a cell matches a value exactly, then a value or label case-insensitively, and imports the **value**; anything else fails the row with a reason instead of reaching the platform.
 - `schema-mapping.md`: readable labels become snake_case values with the text as label; existing fields compare by value (a label-only difference is cosmetic); the key type decides whether a column maps to `id` (`bigint` / `text` yes; `has_a` only to attach to existing base records; generated otherwise); an `is_a` / `has_a` target diffs against the family's fields (every level via `id_refentity`) and is never upserted (42P10); no cascade on an `is_a` entity's FKs.
 
-## Unreleased: routing boundary with semantius-transfer; `fix_id_sequence` premise corrected
+## routing boundary with semantius-transfer; `fix_id_sequence` premise corrected
 
 Description and docs only, no contract change (2026-09-26).
 
@@ -30,11 +38,11 @@ Description and docs only, no contract change (2026-09-26).
 - "Exporting back out" is now "Download as CSV", with a pointer to `export_entities` for anything that must be re-importable.
 - The `fix_id_sequence` RPC is no longer described as missing: it ships with current platform databases and the CLI's transfer import calls it. Id preservation stays deferred; re-enabling it is a separate planning item (README roadmap, `schema-mapping.md` section 4, SKILL.md Stage 2).
 
-## Unreleased: task-tool call economy
+## task-tool call economy
 
 Guidance only, no contract change (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (writing convention 7 "Stage tasks" and "Ledger stages"; Stage 2 review-loop step 1, E). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
 
-## Unreleased: helpers run from `<cwd>` by path, never from inside the run folder
+## helpers run from `<cwd>` by path, never from inside the run folder
 
 Fix (2026-08-18). The workspace setup block ended with `cd "<cwd>/.tmp_import/run-<ts>" && bun add csv-parse` and every helper was documented as "run inside the run folder", contradicting shared preflight check 1 (never `cd`: the CLI reads `.env` from cwd). `create-fields.ts` and `import.ts` spawn `semantius call crud …`, and a child inherits the shell's cwd, so from inside the run folder the CLI looked for `.env` where none exists; on an API-key install every field create and every batch insert fails with exit 5 (an auth error that reads like a CLI bug). It went unnoticed only because the test harness authenticated by JWT injection.
 
@@ -42,34 +50,34 @@ Fix (2026-08-18). The workspace setup block ended with `cd "<cwd>/.tmp_import/ru
 - Docs: import-script-template.md (setup block, a "Never `cd` into the run folder" paragraph, run commands by path); SKILL.md (a Preflight paragraph binding check 1 to the helpers, the mandatory-commands table and every `bun run` site now `bun run <run-folder>/…`, Stage 2 / 4 / 5 notes); shared `preflight.md` check 1 now states explicitly that it covers the staged Bun scripts under `.tmp_deploy/` / `.tmp_import/` / `.tmp_admin/`, the by-path invocation, `bun add --cwd`, and never copying `.env` into a scratch folder.
 - Scripts: header comments give the by-path invocation; `create-fields.ts` and `import.template.ts` print an `AUTH_HINT` on exit 5 (the CLI's `.env` cwd and the by-path form), so a run started from the wrong directory names its likely cause instead of looking like a CLI bug. `render-plan.ts` header only (offline). All three pass `bun build`.
 
-## Unreleased: task tracking and the question ledger
+## task tracking and the question ledger
 
 Guidance only, no contract change (2026-08-18). The importer now uses the harness task tools (`TaskCreate` / `TaskUpdate` / `TaskList` / `TaskGet`; canonical rules in `../semantius-admin/references/task-tracking.md`; ordering via `blocks` / `blockedBy`: stage tasks chained, pointed at the admin pipeline task when orchestrated, and every `Q:` task blocking its stage task): new writing convention 7; the Workflow table gains a Task subject column (five `Import ›` stage tasks, created at Step 0 for the operating mode) and `TaskList` as a mandatory command of Stages 2-4; Stages 2, 3, and 4 are ledger stages: every open decision becomes a `Q:` task before the first widget (subject = the exact question text, from a fixed template list), questions are asked in batches of up to four per `AskUserQuestion` call, and a task is completed only after its answer is in `mapping.json`; the pre-write gate and the diff report require `TaskList` clean of open `Q:` tasks. Standalone (unchanged): the mode question, the previous-run-folder question, the pre-write gate. Motivated by the 4-questions-per-call cap: reviews with more open decisions than that had no durable record of what was still unasked. `schema-mapping.md` §2 carries a one-paragraph pointer.
 
-## Unreleased
+## `AskUserQuestion` mechanics
 
 `AskUserQuestion` mechanics (guidance only, no contract change): call the widget alone in its own response after mapping edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. New writing convention 6, plus sequencing sentences in the Stage 2 review loop and the Stage 4 pre-write gate. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
 
-## 1.5
+## update mode postponed; "mark this field unique?" question
 
-Update mode postponed; the "natural key" wording replaced by a plain "mark this field unique?" question.
+2026-08-17. Update mode postponed; the "natural key" wording replaced by a plain "mark this field unique?" question.
 
 - **Insert-only.** The `insert` / `update` write-mode question is gone, and with it `on_exists` from `mapping.json`. `import.template.ts` no longer preloads mapped fields, diffs, or `PATCH`es; it preloads only the key values and skips rows already present (`skipped`), and exits 4 if a mapping still carries `on_exists: "update"`. Summary shape is now `parsed / inserted / skipped / failed`. `render-plan.ts` warns on a stale `on_exists` and on a `natural_key` column that lacks `unique_value: true`.
 - **User-facing wording.** Semantius has no "natural key" concept; the user's decision is whether the identifying column is **unique** (`unique_value: true`). SKILL.md Stage 2 and schema-mapping.md section 4 now prescribe the exact question ("Mark `<field>` as unique so re-running this import skips rows that are already there?" — Unique (Recommended) / Not unique). `natural_key` stays as the internal `mapping.json` name for the field the script dedupes on and never appears in a question or plan; the plan line reads "unique key: …".
 - README: update mode moved from "Works today" to a new "Postponed" section with the re-enable prerequisite (batched upsert); the 1.1 update-mode design lives in git history.
 
-## 1.4
+## bulk field creation in one `create_field` call
 
-Bulk field creation: one `create_field` call instead of one per column.
+2026-08-17. Bulk field creation: one `create_field` call instead of one per column.
 
 - The crud server (postgrest-mcp "array inserts") and the CLI ("add array support") now take `data` on every typed `create_*` as one object **or an array** (items may have different keys — the server sends `?columns=<union>` with `Prefer: missing=default`; one request, one transaction, all-or-nothing; the response is always an array), and `id` / `table_name` on `update_*` / `delete_*` as a value or an array. `--single` is rejected (`SINGLE_ARRAY_INPUT`) with any array argument. Platform golden rule: more than one record of the same kind pending → ONE call.
 - `references/create-fields.ts` rewritten around that: every `disposition: "create"` column goes into **one bulk `create_field` call** (up to 100 per call; the pool-of-5 concurrency runner is gone). Kept: `mapping.json` in, `--dry-run` (now prints the exact `{ "data": [ … ] }` payload per call), read-before-create idempotency, exit-3 retry with 1s/3s/9s backoff (now per call, and re-reading the live fields before each retry so rows that landed despite a lost response are never resent), fail-fast on exit 4/5, the `ok / failed / skipped-exists / not-run` result table, exit codes 0/1/5. New: after the calls succeed the live fields are re-read and every requested name must be present; a failed call is reported as "nothing from this call landed" (one transaction) with the platform's first stderr line, and there is deliberately no per-field fallback loop. Verified live: 6 heterogeneous fields in one call, re-run issues zero calls.
 - Both baseline permissions of a new module go out in one `create_permission` call (SKILL.md Stage 4 step 1, importer-essentials.md module block).
 - Docs aligned: SKILL.md Stage 4 step 3 and the safety-net table (new "Several records of one kind" row; the `postgrestRequest` row now says the typed tools take mixed-key arrays while the raw path still needs uniform keys or `?columns=` with NULL for omitted keys), import-script-template.md (runner contract, design rule 4), importer-essentials.md (response shapes, order line, fields example as an array), schema-mapping.md section 2 ("one bulk call" instead of "concurrently"), README.
 
-## 1.3
+## run workspace moved out of the OS temp directory
 
-Run workspace moved out of the OS temp directory.
+2026-08-12. Run workspace moved out of the OS temp directory.
 
 - The run workspace is now `<cwd>/.tmp_import/run-<ts>/` (gitignored; same scratch-folder family as the modeler's `.tmp_deploy/` and the admin's `.tmp_admin/`) instead of `<os-tmpdir>/semantius-import/run-<ts>/`. Sandboxes can wipe the OS temp directory when they restart mid-run, which lost the approved `mapping.json` and the `failed-batches.json` history; cwd survives a restart and stays inspectable by path. The `bun -e 'os.tmpdir()'` resolution step is gone.
 - Retention unchanged: run folders persist after the run (re-run reuse, failure history in one place); the user manages cleanup. The three run scripts needed no changes — they resolve `mapping.json` and their outputs relative to their own location.
@@ -81,9 +89,9 @@ Run workspace moved out of the OS temp directory.
   - New per-stage command checklist at the top of the SKILL.md workflow: a stage counts as run only when its listed commands ran; substituting a variant call (a bare `read_entity '{}'` for Stage 3's `--single` read + field-overlap sweep) is skipping the stage. The Stage 3 sweep is what prevents duplicate entities on a populated instance.
   - Stage 6 spot-reads select `<id_column>,<label_column>,<sample fields>`, never `select=label` — the computed `label` is a read-time projection, not a PostgREST column, and the probe fails with `42703` (verified live; also noted in importer-essentials.md). New rule: probe errors are findings — an errored verification probe goes into the report verbatim as failed/not-verified, never reasoned away into a pass.
 
-## 1.2 
+## determinism and throughput: shipped import script, `render-plan.ts`, `create-fields.ts`
 
-Determinism and throughput rev, driven by a real HubSpot-leads import: no more hand-transcribed scripts, no more prose arithmetic, no more serial field creation, plus the "introspection verdict is gold" rule.
+2026-08-12. Determinism and throughput rev, driven by a real HubSpot-leads import: no more hand-transcribed scripts, no more prose arithmetic, no more serial field creation, plus the "introspection verdict is gold" rule.
 
 - Verdict is gold: the `get_csvschema` output is the authoritative default for every `format` (and `precision`, `enum_values`, `input_type`, boolean pair). Overrides are user decisions raised via `AskUserQuestion` (defaulting to the introspected format), never silent mapping edits; a mapping that deviates without a recorded user answer is a defect (schema-mapping.md section 2, quirk 3, SKILL.md Stage 2).
 - The import script ships as a real file, `references/import.template.ts`, copied byte-for-byte into the run folder; it reads all run configuration from `./mapping.json` at startup. The fenced markdown template and its generation-time placeholder filling are gone (transcription was a standing escaping/divergence risk; a nested-template-literal failure burned a cycle in the field).
@@ -95,9 +103,9 @@ Determinism and throughput rev, driven by a real HubSpot-leads import: no more h
 - The deferred id-preservation design (Status banner, two DEFERRED comment blocks) moved wholesale into the README's "Deferred design" section, out of the runtime contract.
 - Shared preflight (in `semantius-admin`): a successful `getCurrentUser` probe now ends credential handling regardless of auth mechanism (API key, JWT preauth); only explicit auth evidence (exit 5 / 401 / 403) triggers the API-key path, and transient errors re-probe once instead of touching `.env`.
 
-## 1.1
+## csv-schema wrapper contract, update write mode, id preservation deferred
 
-Updated for semantius-cli v0.8.3 (vendored csv-schema 2.0.0), added the update write mode, and deferred id preservation. A `README.md` now carries the skill's visible status: what works, what is disabled and why, and the roadmap (MCP `prefer` passthrough for batched upsert; platform `fix_id_sequence` RPC).
+2026-08-09. Updated for semantius-cli v0.8.3 (vendored csv-schema 2.0.0), added the update write mode, and deferred id preservation. A `README.md` now carries the skill's visible status: what works, what is disabled and why, and the roadmap (MCP `prefer` passthrough for batched upsert; platform `fix_id_sequence` RPC).
 
 - Contract: `get_csvschema` now returns a wrapper `{id_mode, id_move_column?, record_count, fields}`; per-field `input_type` ("required", present only when no empties were seen) is passed through to `create_field` as the proposal; the format set is documented as open (`email` / `url` arrived) with a passthrough fallback rule — unlisted formats go to `create_field` and through the script verbatim.
 - Write mode: with a natural key, the mapping review now asks `on_exists` — `insert` (existing keys skipped) or `update` (default offer): existing records are synchronized via diff-then-PATCH (unchanged rows untouched, changed rows updated, new rows batch-inserted); requires a unique key field. Batched upsert replaces the PATCH path once the MCP passes the `prefer` header through (today the server strips it — earlier `prefer` payload keys were silently ignored, now removed from the template).
@@ -105,9 +113,9 @@ Updated for semantius-cli v0.8.3 (vendored csv-schema 2.0.0), added the update w
 - Detection: when no matching table exists, the skill now asks whether to create the derived entity or target an existing one (candidates ranked by name similarity and field overlap) instead of silently creating.
 - Verification: `parsed` is checked against the wrapper's `record_count` on full scans (script `EXPECTED_RECORDS`); capped scans are warned against (they degrade formats and suppress id detection).
 
-## 1.0
+## initial release
 
-Initial release.
+2026-08-08. Initial release.
 
 - Workflow: introspect (`utils/get_csvschema`) → map & review → detect & diff → decide & create → batched import → verify.
 - Three operating modes: full import, schema-only (create the entity, import nothing), compare-only (classified diff report, zero writes).

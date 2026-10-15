@@ -32,8 +32,8 @@ type ColumnSpec = {
   header: string;                       // raw CSV header (row key)
   field_name: string;                   // Semantius field name (payload key)
   // Open set - e.g. "string", "multiline", "integer", "number", "date",
-  // "date-time", "boolean", "enum", "reference", "email", "url". Formats the
-  // coercion switch does not know pass through verbatim.
+  // "date-time", "boolean", "enum", "rating", "color", "icon", "reference",
+  // "email", "url". Formats the coercion switch does not know pass through verbatim.
   format: string;
   empty_value: string | number | boolean | null;
   bool_pair?: { true: string; false: string };
@@ -44,8 +44,8 @@ type ColumnSpec = {
   reason?: string;
   title?: string;
   precision?: number;
-  // An entry is a value or a {value, label} pair; records store the value.
-  enum_values?: Array<string | { value: string; label?: string }>;
+  // An entry is a value or a {value, label} object (optional description / color / icon); records store the value.
+  enum_values?: Array<string | { value: string; label: string; description?: string; color?: string; icon?: string }>;
   input_type?: string;
   field_order?: number;
   reference_table?: string;
@@ -134,6 +134,11 @@ function coerce(spec: ColumnSpec, raw: string | undefined): { ok: boolean; value
       if (!/^[+-]?\d+$/.test(v)) return { ok: false, reason: `not an integer: "${v}"` };
       return { ok: true, value: Number.parseInt(v, 10) };
     }
+    case "rating": {
+      // An integer from 0 to 5 (0 = not rated); the platform rejects anything else.
+      if (!/^\d+$/.test(v) || Number.parseInt(v, 10) > 5) return { ok: false, reason: `not a rating from 0 to 5: "${v}"` };
+      return { ok: true, value: Number.parseInt(v, 10) };
+    }
     case "number": {
       const n = Number.parseFloat(v);
       if (Number.isNaN(n)) return { ok: false, reason: `not a number: "${v}"` };
@@ -165,7 +170,7 @@ function coerce(spec: ColumnSpec, raw: string | undefined): { ok: boolean; value
       return { ok: false, reason: `not one of the enum values: "${v}"` };
     }
     default:
-      return { ok: true, value: v }; // string / multiline / reference / email / url pass through
+      return { ok: true, value: v }; // string / multiline / color / icon / reference / email / url pass through
   }
 }
 

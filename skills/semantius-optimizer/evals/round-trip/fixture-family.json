@@ -210,6 +210,23 @@
         "reference_table": "business_partners",
         "reference_delete_mode": "restrict",
         "relationship_label": "logs"
+      },
+      {
+        "field_name": "priority",
+        "format": "enum",
+        "title": "Priority",
+        "description": "",
+        "input_type": "default",
+        "unique_value": false,
+        "searchable": false,
+        "ctype": "",
+        "field_order": 3,
+        "enum_values": [
+          { "icon": "arrow-down", "color": "#64748b", "label": "Low", "value": "low" },
+          { "icon": "minus", "color": "#3b82f6", "label": "Medium", "value": "medium" },
+          { "icon": "arrow-up", "color": "#f59e0b", "label": "High", "value": "high" },
+          { "icon": "triangle-alert", "color": "#ef4444", "label": "Critical", "value": "critical", "description": "Blocks a customer go-live; handle the same day" }
+        ]
       }
     ],
     "customers": [

@@ -4,7 +4,7 @@ Imports a CSV file into Semantius: introspect the file's schema with the CLI's b
 
 ## Works today
 
-- **Introspection** against the v0.8.3 csvschema contract: wrapper output (`id_mode`, `record_count`, `fields`), derived `input_type`, open format set with passthrough for formats the skill does not special-case (`email`, `url`, and anything future CLI versions add).
+- **Introspection** against the v0.8.3 csvschema contract: wrapper output (`id_mode`, `record_count`, `fields`), derived `input_type`, open format set with passthrough for formats the skill does not special-case (`email`, `url`, `color`, `icon`, and anything future CLI versions add); `rating` cells are parsed and range-checked.
 - **Three run modes**: full import, schema-only (create the entity, import nothing), compare-only (classified diff report, zero writes).
 - **Entity + module creation** with correct label-column mechanics, plus a field-by-field diff against existing entities with every needed change classified **possible** (executed on request) or **impossible** (alternatives offered).
 - **Target-entity selection**: when no table matches, candidates are ranked by name similarity and field overlap and the user chooses create-new vs use-existing.
