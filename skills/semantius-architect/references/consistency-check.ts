@@ -682,17 +682,16 @@ function parseEnumNotes(notes: string): { values: string[] | null; def: string |
   return { values, def: dm ? dm[1] : null };
 }
 
-/** The hint keys of a §5 entry, in the order they must appear. */
-const ENUM_HINT_KEYS = ["color", "icon", "description"] as const;
-type EnumHintKey = (typeof ENUM_HINT_KEYS)[number];
+/** The property keys of a §5 entry, in the order they must appear. */
+const ENUM_PROP_KEYS = ["label", "color", "icon", "description"] as const;
+type EnumHintKey = Exclude<(typeof ENUM_PROP_KEYS)[number], "label">;
 type SpecEnumEntry = { value: string; label: string | null; hints: Partial<Record<EnumHintKey, string>> };
-const ENUM_HINT_FORM = 'hint sub-bullets go directly under their entry, indented exactly two spaces, in this order and each at most once: "  - color: `#rrggbb`", "  - icon: `lucide-name`", "  - description: text"';
+const ENUM_PROP_FORM = 'property sub-bullets go directly under their entry, indented exactly two spaces, in this order and each at most once: "  - label: text", "  - color: `#rrggbb`", "  - icon: `lucide-name`", "  - description: text"';
 
 /**
- * §5 blocks: ``### `table.field` `` then one bullet per entry, `` - `value` `` or
- * `` - `value` - Label ``, optionally followed by hint sub-bullets (`  - color: `…``,
- * `  - icon: `…``, `  - description: …`, in that order). Returns value lists, the parsed
- * entries, and every line that breaks the grammar.
+ * §5 blocks: ``### `table.field` `` then one bullet per entry, `` - `value` ``, followed by
+ * property sub-bullets (`  - label: …`, `  - color: `…``, `  - icon: `…``, `  - description: …`,
+ * in that order). Returns value lists, the parsed entries, and every line that breaks the grammar.
  */
 function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entries: Map<string, SpecEnumEntry[]>; bad: string[] } {
   const blocks = new Map<string, string[]>();
@@ -705,7 +704,7 @@ function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entri
   let key = "";
   const flagUnlabeled = () => {
     if (last && last.label === null && Object.keys(last.hints).length) {
-      bad.push(`\`${key}\`: entry \`${last.value}\` has hints but no label; write it as "- \`${last.value}\` - <Label>"`);
+      bad.push(`\`${key}\`: entry \`${last.value}\` has hints but no label; add "  - label: <Label>" as its first sub-bullet`);
     }
   };
   for (const l of topSection(lines, 5)) {
@@ -713,44 +712,57 @@ function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entri
     if (h) { flagUnlabeled(); key = h[1].trim(); cur = []; curEntries = []; blocks.set(key, cur); entries.set(key, curEntries); last = null; continue; }
     if (/^#/.test(l)) { flagUnlabeled(); cur = null; last = null; continue; }
     if (!cur || !l.trim()) continue;
+    // A value bullet; the old inline-label form `- `value` - Label` is an error but keeps its value,
+    // so the Notes ⟺ §5 comparison does not report it a second time.
     const b = l.match(/^- `([^`]+)`(?: - (\S.*))?$/);
     if (b) {
       flagUnlabeled();
+      if (b[2]) bad.push(`\`${key}\`: "${l.trim()}" puts the label on the value bullet; write "- \`${b[1]}\`" with "  - label: ${b[2].trim()}" under it`);
       last = { value: b[1], label: b[2] ? b[2].trim() : null, hints: {} };
-      lastHint = -1;
+      lastHint = b[2] ? 0 : -1;
       cur.push(b[1]);
       curEntries.push(last);
       continue;
     }
     const s = l.match(/^ {2}- ([a-z_]+): (\S.*)$/);
     if (!s || !last) {
-      bad.push(`\`${key}\`: "${l.trim()}" must be "- \`value\`", "- \`value\` - Label", or a hint sub-bullet (${ENUM_HINT_FORM})`);
+      bad.push(`\`${key}\`: "${l.trim()}" must be "- \`value\`" or a property sub-bullet (${ENUM_PROP_FORM})`);
       continue;
     }
-    const hk = s[1], idx = (ENUM_HINT_KEYS as readonly string[]).indexOf(hk);
-    if (idx < 0) { bad.push(`\`${key}\`: entry \`${last.value}\` has unknown hint \`${hk}\` (${ENUM_HINT_FORM})`); continue; }
-    if (hk in last.hints) { bad.push(`\`${key}\`: entry \`${last.value}\` repeats \`${hk}\` (${ENUM_HINT_FORM})`); continue; }
-    if (idx < lastHint) { bad.push(`\`${key}\`: entry \`${last.value}\` has \`${hk}\` out of order (${ENUM_HINT_FORM})`); continue; }
+    const hk = s[1], idx = (ENUM_PROP_KEYS as readonly string[]).indexOf(hk);
+    if (idx < 0) { bad.push(`\`${key}\`: entry \`${last.value}\` has unknown property \`${hk}\` (${ENUM_PROP_FORM})`); continue; }
+    if (hk === "label" ? last.label !== null : hk in last.hints) { bad.push(`\`${key}\`: entry \`${last.value}\` repeats \`${hk}\` (${ENUM_PROP_FORM})`); continue; }
+    if (idx < lastHint) { bad.push(`\`${key}\`: entry \`${last.value}\` has \`${hk}\` out of order (${ENUM_PROP_FORM})`); continue; }
     lastHint = idx;
     let v = s[2].trim();
-    if (hk !== "description") {
+    if (hk === "color" || hk === "icon") {
       const bt = v.match(/^`([^`]+)`$/);
       if (!bt) { bad.push(`\`${key}\`: entry \`${last.value}\` ${hk} must be backticked: "  - ${hk}: \`${v.replace(/`/g, "")}\`"`); continue; }
       v = bt[1];
     }
-    last.hints[hk as EnumHintKey] = v;
+    if (hk === "label") last.label = v;
+    else last.hints[hk as EnumHintKey] = v;
   }
   flagUnlabeled();
   return { blocks, entries, bad };
 }
 
-/** Warnings on §5 hints: the drafting rules of the analyst's stage-4-fields.md. */
+/** Warnings on §5 labels and hints: the drafting rules of the analyst's stage-4-fields.md. */
 function enumHintWarnings(entries: Map<string, SpecEnumEntry[]>): Issue[] {
   const out: Issue[] = [];
   for (const [key, list] of entries) {
-    const hinted = list.filter((e) => e.hints.color || e.hints.icon);
-    if (hinted.length && list.some((e) => !e.hints.color || !e.hints.icon)) {
-      out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: some entries carry a color and icon and some don't; an enum with hints gives every entry both` });
+    const unlabeled = list.filter((e) => e.label === null).map((e) => `\`${e.value}\``);
+    if (unlabeled.length) {
+      out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: ${unlabeled.join(", ")} carry no label; every entry gets one ("  - label: <Label>")` });
+    }
+    const uncolored = list.filter((e) => !e.hints.color).map((e) => `\`${e.value}\``);
+    if (uncolored.length) {
+      out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: ${uncolored.join(", ")} carry no color; every entry gets one (data-modeling.md "Enum colors")` });
+    }
+    const byColor = new Map<string, string[]>();
+    for (const e of list) if (e.hints.color) byColor.set(e.hints.color, [...(byColor.get(e.hints.color) || []), `\`${e.value}\``]);
+    for (const [c, vals] of byColor) {
+      if (vals.length > 1) out.push({ check: "§5 enum hints", warn: true, detail: `\`${key}\`: ${vals.join(", ")} share color \`${c}\`; no two entries of an enum share a color (data-modeling.md "Enum colors")` });
     }
     for (const e of list) {
       if (e.hints.icon && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(e.hints.icon) && !/^https?:\/\/\S+$/.test(e.hints.icon)) {

@@ -30,7 +30,7 @@ The Additional Requirements section is a blueprint-only channel: it is NOT copie
 
 | Situation | Action | What to write | Example | Not this |
 |---|---|---|---|---|
-| The sentence is present | One required enum field `<singular>_type` | Notes: `` enum_values: `a`, `b`, `c`; default: "a" `` (values in snake_case, in the sentence's order); §5 block with a label bullet only where a value is a code (no hints: the type enum is not on the hint list below) | "Each Expense is one of: mileage or receipt." → `expense_type`, `` enum_values: `mileage`, `receipt` `` | A family, or one entity per kind |
+| The sentence is present | One required enum field `<singular>_type` | Notes: `` enum_values: `a`, `b`, `c`; default: "a" `` (values in snake_case, in the sentence's order); §5 block with a label and a color per entry (rules in "Enum values, labels and hints" below) | "Each Expense is one of: mileage or receipt." → `expense_type`, `` enum_values: `mileage`, `receipt` `` | A family, or one entity per kind |
 | Some fields belong to only some kinds | `input_type_rule` per such field (Stage 6) showing it for its kinds | `{"if": [{"==": [{"var": "expense_type"}, "mileage"]}, "required", "hidden"]}` on `distance_km` | Separate entities |
 | Always | A validation rule (Stage 10) that blocks changing the type after creation | `{"or": [{"==": [{"var": "$old"}, null]}, {"==": [{"var": "expense_type"}, {"var": "$old.expense_type"}]}]}`, name `type_fixed_after_creation` | A lifecycle on the type |
 
@@ -92,22 +92,11 @@ Everything else is `reference`. `parent` implies cascade-on-delete; `reference` 
 
 **Defaults**:
 - Required enum → declare `default: "<value>"` explicitly (auto-fallback would use `enum_values[0]`, the first entry's value). The default is always a **value**, never a label.
-- **Enum values, labels and hints.** The Notes `enum_values:` annotation lists **values only** (`` enum_values: `msa`, `nda` ``). Labels and hints go only in the §5 block, in the grammar defined in `semantic-spec-template.md` (§5 Enumerations). A label is written when the value is a code or an abbreviation (`` - `nda` - Non-disclosure agreement ``) or when the entry carries a hint; a readable value without hints gets a plain `` - `draft` `` bullet. `consistency-check.ts` enforces the bullet grammar, Notes = §5, and a value default (platform rules: `data-modeling.md` → "Enum values and labels"). Draft hints by these rules:
-  1. **Which enums get `color` and `icon`:** `workflow_state`, and enums whose field name is `priority`, `severity`, `urgency`, `impact`, `risk_level` or ends in `_status`. Every other enum gets none unless the user asks for them.
-  2. **All or none:** when an enum gets hints, every entry gets both a `color` and an `icon` (and therefore a label).
-  3. **Colors** come from this palette, by the meaning of the entry; write the hex exactly as shown:
-
-     | Entry meaning | `color` |
-     |---|---|
-     | draft, new, initial | `#64748b` |
-     | active, open, in progress | `#3b82f6` |
-     | waiting, on hold, pending | `#f59e0b` |
-     | done, approved, closed as success | `#22c55e` |
-     | cancelled, failed, rejected | `#ef4444` |
-     | levels (priority, severity, urgency, impact, risk_level) low · medium · high · critical | `#64748b` · `#3b82f6` · `#f59e0b` · `#ef4444` |
-
-  4. **Icons** are Lucide icon names in kebab-case that fit the entry (`file-pen` for draft, `circle-pause` for on hold, `circle-check` for done, `circle-x` for cancelled). Find candidates with `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" find <word…>`; every drafted icon must pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>` before the spec is saved (`data-modeling.md` → "Icons are Lucide icons").
-  5. **`description` is the exception.** Add one only when a user could misread the label: an internal code, a term of art, or two entries a user could confuse. One sentence, at most 100 characters, never restating the label. Good: `on_hold` - On hold → `description: Waiting for the counterparty to countersign` (says what "on hold" means here). Not this: `approved` - Approved → `description: The item is approved` (restates the label; leave it off).
+- **Enum values, labels and hints.** The Notes `enum_values:` annotation lists **values only** (`` enum_values: `msa`, `nda` ``). Labels and hints go only in the §5 block, in the grammar defined in `semantic-spec-template.md` (§5 Enumerations). `consistency-check.ts` enforces the bullet grammar, Notes = §5, and a value default, and warns on an entry without a label or a color and on a color repeated within an enum (platform rules: `data-modeling.md` → "Enum values and labels"). Draft labels and hints by these rules:
+  1. **Every entry gets a `label`:** the value in words, in sentence case (`checked_out` → `label: Checked out`), or the full term for a code or an abbreviation (`nda` → `label: Non-disclosure agreement`).
+  2. **Every entry gets a `color`, no two entries of one enum the same**, by `data-modeling.md` → "Enum colors": by meaning in a state-like enum (`workflow_state`, `priority`, `severity`, `urgency`, `impact`, `risk_level`, `*_status`), a second entry of one meaning taking the next shade; in any other enum by meaning where the label relates to it (red, amber and green only then), otherwise the next unused color of the set there.
+  3. **Icons where they fit:** in any enum, an entry gets an `icon` when a Lucide icon fits its meaning (`file-pen` for draft, `circle-pause` for on hold, `circle-check` for done, `circle-x` for cancelled, `bed-single` for a single room); an entry with no fitting icon gets none. Icons are Lucide icon names in kebab-case. Find candidates with `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" find <word…>`; every drafted icon must pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>` before the spec is saved (`data-modeling.md` → "Icons are Lucide icons").
+  4. **`description` is the exception.** Add one only when a user could misread the label: an internal code, a term of art, or two entries a user could confuse. One sentence, at most 100 characters, never restating the label. Good: `on_hold` with `label: On hold` → `description: Waiting for the counterparty to countersign` (says what "on hold" means here). Not this: `approved` with `label: Approved` → `description: The item is approved` (restates the label; leave it off).
 - Other formats → only add explicit `default` when auto-fallback would violate a validation rule (e.g. required integer with `>= 1` rule auto-defaults to `0`, fails the rule — declare `default: "1"`).
 - Nullability: only `reference`, `date`, `date-time` are DB-nullable. Other formats are NOT NULL with the auto-default. `Required = yes` on a nullable format means UI-required, not DB-NOT-NULL.
 

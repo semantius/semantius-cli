@@ -130,11 +130,11 @@ Because of quirk 1, treat every `enum` verdict as a claim to verify, not a fact.
 | integer strings (`"1"`, `"42"`) | ambiguous: `integer`, `rating` or genuine enum. Decide by meaning: quantities and measurements are `integer`; a person's judgment on a 1–5 or star scale (values within 0–5, a header like `rating`, `stars`, `score`) is `rating` (drop the introspected `enum_values`); codes are a genuine enum; ask the user when unclear |
 | numeric strings with decimals | `number` (with `precision` re-derived from the values) |
 | ISO dates / datetimes | `date` / `date-time` |
-| a handful of short lowercase tokens (`draft`, `active`, `archived`) | genuine `enum`; keep `enum_values` as-is (sorted, deduped) |
+| a handful of short lowercase tokens (`draft`, `active`, `archived`) | genuine `enum`; keep the values (sorted, deduped), each with a label and a color (see "Values and labels" below) |
 | readable labels (`On hold`, `Key account`) | genuine `enum`: propose snake_case values with the file's text as the label, `{"value": "on_hold", "label": "On hold"}`; records store the value and the import translates each cell (the `coerce` enum branch matches a value, then a label, case-insensitively) |
 | longer free text, names, or values that clearly continue beyond the sample | `string`; the low cardinality is an artifact of a small file |
 
-**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`; records, `default_value` and comparisons always use the value. Against an existing field, compare by value: a file holding the labels of a live field's entries is not a mismatch (the import translates them), and a difference in labels or hints is cosmetic.
+**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`; records, `default_value` and comparisons always use the value. An enum field the import creates gets every entry as an object with a `label` and a `color`, and an `icon` where a Lucide icon fits, by the rules in `../use-semantius/references/data-modeling.md` → "Enum values and labels" and "Enum colors"; check each icon with `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>`. Against an existing field, compare by value: a file holding the labels of a live field's entries is not a mismatch (the import translates them), and a difference in labels or hints is cosmetic.
 
 Genuine enum extras: consider whether the CSV plausibly contains every lifecycle value. A 30-row export may miss states. When the user knows more values exist, add them to `enum_values` now; adding later is also possible via `update_field`.
 

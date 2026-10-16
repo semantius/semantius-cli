@@ -2,6 +2,12 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## enum entries get a label and a color
+
+2026-10-15. Paired with the analyst entry of the same name.
+
+- `schema-mapping.md`: an enum field the import creates gets every entry as an object with a `label` and a `color`, and an `icon` where a Lucide icon fits, by `use-semantius/references/data-modeling.md` → "Enum values and labels" and "Enum colors"; each icon passes `lucide-icons.ts check`.
+
 ## `rating`, `color` and `icon` formats; enum entry hints
 
 2026-10-15. The platform added the `color`, `icon` and `rating` formats and optional `description`, `color` and `icon` keys on enum entries.

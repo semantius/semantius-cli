@@ -148,9 +148,8 @@ promotion_decisions:
 
 ### `{{table_name}}.{{field_name}}`
 - `{{value}}`
-- `{{code_value}}` - {{Label?}}
-- `{{hinted_value}}` - {{Label}}
-  - color: `{{color?}}`
+  - label: {{Label}}
+  - color: `{{color}}`
   - icon: `{{icon?}}`
   - description: {{description?}}
 
@@ -402,16 +401,17 @@ A single table showing every link between entities. An agent uses this to sanity
 
 ### §5 Enumerations
 
-Collect every `enum` field's allowed values here, one sub-section per enum, **sorted alphabetically by `table_name.field_name`**. If two fields share an enum, note it and list once. The sub-heading is **unnumbered** (just the backticked `table.field`, no `5.N`); the member values inside a block keep their defined lifecycle/semantic order (do NOT alphabetize the values). One bullet per entry: `` - `value` ``, or `` - `value` - Label `` when the value is a code or an abbreviation (`` - `nda` - Non-disclosure agreement ``) or when the entry carries a hint. An entry's hints are sub-bullets directly under it, indented exactly two spaces, in this order and each at most once:
+Collect every `enum` field's allowed values here, one sub-section per enum, **sorted alphabetically by `table_name.field_name`**. If two fields share an enum, note it and list once. The sub-heading is **unnumbered** (just the backticked `table.field`, no `5.N`); the member values inside a block keep their defined lifecycle/semantic order (do NOT alphabetize the values). One bullet per entry, `` - `value` ``, and its properties as sub-bullets directly under it, indented exactly two spaces, in this order and each at most once:
 
 ```
-- `on_hold` - On hold
+- `on_hold`
+  - label: On hold
   - color: `#f59e0b`
   - icon: `circle-pause`
   - description: Waiting for the counterparty to countersign
 ```
 
-`color` (lowercase hex) and `icon` (a Lucide icon name or URL) are backticked; `description` is plain text to the end of the line. An entry with any hint must carry ` - Label`. The modeler sends an entry with a label or hint as a `{"value", "label", …}` object (meaning of the keys: "Enum values and labels" in `use-semantius/references/data-modeling.md`; which enums get hints: `stage-4-fields.md`). The Notes `enum_values:` hold the same values, without labels or hints; `consistency-check.ts` checks the bullet grammar and that both agree. If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
+`label` and `description` are plain text to the end of the line; `color` (lowercase hex) and `icon` (a Lucide icon name or URL) are backticked. An entry with any other property must carry `label`. A bullet with no `label` (a spec extracted from a module whose entries carry none) still parses and draws a warning. The modeler sends an entry with properties as a `{"value", "label", …}` object (meaning of the keys: "Enum values and labels" in `use-semantius/references/data-modeling.md`; which label and hints each entry gets: `stage-4-fields.md`). The Notes `enum_values:` hold the same values, without properties; `consistency-check.ts` checks the bullet grammar and that both agree. If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
 
 ### §6 Cross-model link suggestions and handoffs
 

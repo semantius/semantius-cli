@@ -293,7 +293,7 @@ Choose `format` carefully. Format **can** be changed after creation, but **only 
 | Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
-| Choice | `enum` (also set `enum_values`: each entry is a value or a `{"value", "label"}` object that may also carry an optional `description`, `color` and `icon`, e.g. `["draft", {"value": "on_hold", "label": "On hold", "color": "#f59e0b"}]`; see "Enum values and labels" below) |
+| Choice | `enum` (also set `enum_values`: each entry is a value or a `{"value", "label"}` object that may also carry an optional `description`, `color` and `icon`, e.g. `[{"value": "draft", "label": "Draft", "color": "#64748b"}, {"value": "on_hold", "label": "On hold", "color": "#f59e0b"}]`; see "Enum values and labels" below) |
 | Display | `color` (an HTML color), `icon` (a Lucide icon name or an icon URL, see below), `rating` (an integer 0–5, `0` = not rated; use for star ratings and 5-point scores, never for general integers) |
 | Structured | `json`, `object`, `array` |
 | Identifiers | `uuid`, `email`, `uri`, `url` |
@@ -395,7 +395,8 @@ semantius call crud create_field '{
 
 An `enum_values` entry is either a plain value (`"draft"`) or a `{"value", "label"}` object (`{"value": "on_hold", "label": "On hold"}`), and the two forms can be mixed. An object may also carry an optional `description`, `color` (an HTML color) and `icon` (a Lucide icon name); these are UI hints only. **Records store the value; the label, description, color and icon are only what the UI shows.** Rules:
 
-- Use an object when the value is a code or an abbreviation (`{"value": "nda", "label": "Non-disclosure agreement"}`) or when the entry needs a color or icon; a readable value (`draft`) with no hints needs no object. An object always carries `label`.
+- Write every entry as an object with a `label` and a `color`. The label is the value in words, in sentence case (`{"value": "checked_out", "label": "Checked out"}`), or the full term for a code or an abbreviation (`{"value": "nda", "label": "Non-disclosure agreement"}`); an entry without a label shows its raw value. The color follows "Enum colors" below. An object always carries `label`.
+- Give an entry an `icon` when a Lucide icon fits its meaning, in any enum (`circle-check` for approved, `bed-single` for a single room); an entry with no fitting icon has none, so one enum can mix entries with and without icons.
 - `description` is the exception: add it only when the label is not self-describing (an internal code, a term of art, two choices a user could confuse). A label like "Approved" needs none.
 - Never an object map like `{"draft": "Draft"}`: `enum_values` is always an array.
 - Writes, filters, `default_value` and JsonLogic compare against the **value**, never the label. Only the value reaches the CHECK constraint and the column default.
@@ -406,7 +407,11 @@ An `enum_values` entry is either a plain value (`"draft"`) or a `{"value", "labe
 ```bash
 semantius call crud create_field '{"data": {
   "table_name": "contracts", "field_name": "contract_type", "title": "Contract Type", "format": "enum",
-  "enum_values": ["msa", {"value": "nda", "label": "Non-disclosure agreement"}, {"value": "sow", "label": "Statement of work"}],
+  "enum_values": [
+    {"value": "msa", "label": "Master services agreement", "color": "#8b5cf6"},
+    {"value": "nda", "label": "Non-disclosure agreement", "color": "#14b8a6", "icon": "lock"},
+    {"value": "sow", "label": "Statement of work", "color": "#ec4899"}
+  ],
   "default_value": "msa", "input_type": "required", "width": "default"
 }}'
 
@@ -420,6 +425,38 @@ semantius call crud create_field '{"data": {
   "input_type": "required", "width": "default"
 }}'
 ```
+
+#### Enum colors
+
+Write each hex in lowercase, exactly as listed. No two entries of one enum share a color.
+
+**State-like enums**, `workflow_state` and enums whose field name is `priority`, `severity`, `urgency`, `impact`, `risk_level` or ends in `_status`, take each entry's color by its meaning. When two or more entries share a meaning (`submitted` and `in_review` are both waiting), the first takes the `color`, the next ones the shades in order:
+
+| Entry meaning | `color` | Shades |
+|---|---|---|
+| draft, new, initial | `#64748b` | `#475569` · `#94a3b8` |
+| active, open, in progress | `#3b82f6` | `#2563eb` · `#60a5fa` |
+| waiting, on hold, pending | `#f59e0b` | `#d97706` · `#fbbf24` |
+| done, approved, closed as success | `#22c55e` | `#16a34a` · `#4ade80` |
+| cancelled, failed, rejected | `#ef4444` | `#dc2626` · `#f87171` |
+| levels (priority, severity, urgency, impact, risk_level) low · medium · high · critical | `#64748b` · `#3b82f6` · `#f59e0b` · `#ef4444` | |
+
+Past the listed shades, a further entry of that meaning gets another shade of the same hue that the enum does not use yet.
+
+**Every other enum:** an entry whose label carries one of the meanings above takes that color (`defect` → `#ef4444`, `approved` → `#22c55e`). Red, amber and green go only to such entries, never to an entry whose label does not relate to them (never red for `approved`). Every other entry takes the next color of this set that the enum does not use yet, in order:
+
+| # | Color | `color` |
+|---|---|---|
+| 1 | violet | `#8b5cf6` |
+| 2 | teal | `#14b8a6` |
+| 3 | pink | `#ec4899` |
+| 4 | cyan | `#06b6d4` |
+| 5 | indigo | `#6366f1` |
+| 6 | fuchsia | `#d946ef` |
+| 7 | blue | `#3b82f6` |
+| 8 | slate | `#64748b` |
+
+Once the set is used up, each further entry gets a new hex that is not red, amber or green in hue.
 
 ### `cube_type` Values
 

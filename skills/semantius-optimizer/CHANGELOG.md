@@ -8,6 +8,14 @@ Entries below are newest first.
 
 ---
 
+## `label` is a §5 property
+
+2026-10-16. Paired with the analyst entry "every enum entry gets a label and a color; `label` is a §5 property".
+
+1. **`spec-extract-lib.ts`** emits each enum entry as a `` - `value` `` bullet and a `{value, label}` entry's properties as sub-bullets in the order label, color, icon, description. `expected-family.md` regenerated; round-trip check green.
+
+---
+
 ## file format version `3.1`; enum hints; quoted `logo_color`
 
 2026-10-15. Paired with the analyst entry of the same date.

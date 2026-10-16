@@ -8,6 +8,17 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## every enum entry gets a label and a color; `label` is a §5 property
+
+2026-10-16. A deployed `workflow_state` showed raw values (`checked_in`) because readable values got no label, and colors were limited to state-like enums while tools like Airtable and SmartSuite color the options of every select field. The label sat inline on the value bullet while every other property was a named sub-bullet.
+
+1. **Every entry gets a label** (Stage 4 "Enum values, labels and hints" rule 1): the value in words, in sentence case, or the full term for a code. In §5 the label is a property sub-bullet like the others: `` - `value` `` then `  - label:`, `  - color:`, `  - icon:`, `  - description:`, in that order. The inline `` - `value` - Label `` form is gone (an error in `consistency-check.ts`); a bullet with no `label` still parses and draws a warning.
+2. **Every entry gets a color**, by `use-semantius/references/data-modeling.md` → "Enum colors": no two entries of one enum share a color. State-like enums by the meaning palette, a second entry of one meaning taking the next shade of its hue; other enums by meaning where the label relates to it (red, amber and green only then), otherwise the next unused color of a set of eight, then a new non-red, non-amber, non-green hex.
+3. **Icons in any enum, per entry**, where a Lucide icon fits; "all or none" is gone.
+4. The type-enum handoff row, the §5 template, Stage 11 item 13 and the "Enum entries well-formed" pre-save row follow suit. A missing label or color is a warning, never a failure. `version` stays `3.1` (not released yet).
+
+---
+
 ## file format version `3.1`; enum hints; `color`, `icon` and `rating` formats
 
 2026-10-15. The platform added the `color`, `icon` and `rating` field formats and optional `description`, `color` and `icon` keys on `{"value", "label"}` enum entries (postgrest-mcp `d66989e`). The version scheme was also wrong: `version` was a per-skill counter, raised for rule changes and without approval.

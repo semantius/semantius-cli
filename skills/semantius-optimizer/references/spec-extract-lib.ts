@@ -576,12 +576,13 @@ function enumerations(entities: any[], fieldsByTable: Record<string, any[]>): st
   }
   for (const b of blocks) {
     out.push(`### \`${b.key}\``);
-    // A `{value, label}` entry is a labeled bullet (`- `value` - Label`), its hints sub-bullets in the
-    // fixed order color, icon, description (never Object.keys order: jsonb reorders keys); a plain
-    // entry is the bare value. An object always carries its label (the platform requires one).
+    // Each entry is a value bullet; a `{value, label}` entry's properties are sub-bullets in the
+    // fixed order label, color, icon, description (never Object.keys order: jsonb reorders keys); a
+    // plain entry is the bare value. An object always carries its label (the platform requires one).
     for (const v of b.values) {
-      if (v === null || typeof v !== "object") { out.push(`- \`${enumValue(v)}\``); continue; }
-      out.push(v.label ? `- \`${enumValue(v)}\` - ${v.label}` : `- \`${enumValue(v)}\``);
+      out.push(`- \`${enumValue(v)}\``);
+      if (v === null || typeof v !== "object") continue;
+      if (v.label) out.push(`  - label: ${v.label}`);
       if (v.color) out.push(`  - color: \`${v.color}\``);
       if (v.icon) out.push(`  - icon: \`${v.icon}\``);
       if (v.description) out.push(`  - description: ${v.description}`);

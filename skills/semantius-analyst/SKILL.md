@@ -19,6 +19,17 @@ description: >-
 
 # Semantius Analyst
 
+## Execution context (mandatory, read before anything else)
+
+**This skill is interactive and MUST run in the conversation the user is in.**
+
+- Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
+- Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation."
+- An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
+
+**What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.
+
 You are a systems analyst whose job is to take a platform-agnostic semantic blueprint and reconcile it with a live Semantius instance, producing a deployable spec. The blueprint says *what the domain needs*; the spec says *what to actually deploy on this Semantius instance*.
 
 The three-skill workflow this fits into:
@@ -379,7 +390,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | **JsonLogic field references resolve** — every `{"var": "<token>"}` in every `computed_fields`, `validation_rules`, `input_type_rules`, and `select_rule` references a field that exists on the relevant entity (either declared in the spec's Fields block, or carried from live state via Stage 2h for adopted/reused entities, or known to be a Semantius built-in column like `id`, `created_at`) | dangling JsonLogic var list (entity, rule name, unresolved token) |
 | **JsonLogic permission references resolve** — every `require_permission(<code>)` and every `has_permission(<code>)` argument in JsonLogic resolves to a permission row in §8.1 OR a known platform-level permission | unbound permission code list |
 | **JsonLogic enum-value references resolve** — every literal value compared against an enum-typed field in JsonLogic exists in that field's `enum_values` as a **value**, never a label (after any Stage 3f.2 merge) | unknown enum literals list |
-| **Enum entries well-formed** — every §5 bullet and hint sub-bullet follows the §5 grammar in `semantic-spec-template.md`; an enum with hints follows the hint rules of `stage-4-fields.md` ("Enum values, labels and hints"); each Notes `enum_values:` set equals its §5 values; every `default:` is a value, never a label (enforced by `consistency-check.ts`) | enum list (entity, field, issue) |
+| **Enum entries well-formed** — every §5 bullet and hint sub-bullet follows the §5 grammar in `semantic-spec-template.md`; every entry carries a label and a color, and labels and hints follow `stage-4-fields.md` ("Enum values, labels and hints"); each Notes `enum_values:` set equals its §5 values; every `default:` is a value, never a label (enforced by `consistency-check.ts`) | enum list (entity, field, issue) |
 | **Icons exist** — every §5 `icon` and the frontmatter `icon_name` pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>` (a URL always passes) | unknown icon list |
 | **Label column is text** — the §3 row named by `**Label column:**` (and marked `` `label_column` ``) has Format `string`, never `enum`, `multiline`, a FK or any other format: the platform creates it as text and locks its format (`90219`) (enforced by `consistency-check.ts`) | label list (entity, field, format) |
 | **JsonLogic rename cascade complete** — for every rename recorded in Stage 3f.1 / 3f.3, grep the assembled spec text for the old token; the count must be zero | partial rename list (token, line numbers where stale references remain) |

@@ -240,7 +240,7 @@ based entity, audit log, edit permission, entity type, label parent, key type / 
 `**Based on:**`, reconciliation, including `reuse-from <module>.<table>` for a related
 entity of another module such as a family base); every §3 field's name / format /
 required / Notes; §3 Relationships prose (with the family sentence); §4 rows; §5
-enumerations (a `{value, label}` entry as `` - `value` - Label ``, its `color`, `icon` and `description` as hint sub-bullets); the dotted family
+enumerations (a `{value, label}` entry as a `` - `value` `` bullet with its `label`, `color`, `icon` and `description` as property sub-bullets); the dotted family
 edges;
 §8.1 permission names, descriptions, and `included in :admin?` (derived from the live
 hierarchy); §9.1 baseline roles (with `♻ exists`, since live is the source), §9.1

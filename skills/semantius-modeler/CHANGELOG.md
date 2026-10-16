@@ -8,6 +8,15 @@ Entries below are newest first.
 
 ---
 
+## `label` is a §5 property
+
+2026-10-16. Paired with the analyst entry "every enum entry gets a label and a color; `label` is a §5 property".
+
+1. **Stage 1 parse:** a §5 bullet `` - `value` `` with no sub-bullets is the value; one with property sub-bullets (`label`, `color`, `icon`, `description`) is the `{"value", "label", …}` object. The inline `` - `value` - Label `` form is no longer read.
+2. **Stage 6 sample data** names the property sub-bullets as what a seed never writes.
+
+---
+
 ## file format version `3.1`; enum hints deployed without wiping live ones; display formats
 
 2026-10-15. Paired with the analyst entry of the same date.

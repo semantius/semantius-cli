@@ -8,6 +8,15 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## checker: every enum entry gets a label and a color; `label` is a §5 property
+
+2026-10-16. Paired with the analyst entry of the same name.
+
+1. **`label` is a property sub-bullet** in `consistency-check.ts`: §5 properties are `label`, `color`, `icon`, `description`, in that order, each at most once; `label` and `description` are plain text. An inline `` - `value` - Label `` bullet is an error naming the sub-bullet form.
+2. **Warnings** on an entry without a label, an entry without a color, and two entries of one enum sharing a color. The warning on an enum where only some entries carry hints is gone.
+
+---
+
 ## file format version `3.1`; §5 enum hint grammar in the checker; `icon_name` is a Lucide name
 
 2026-10-15. Paired with the analyst entry of the same date.
