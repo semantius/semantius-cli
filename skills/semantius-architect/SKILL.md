@@ -25,7 +25,7 @@ description: >-
 
 - Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
 - Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
-- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation."
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the **Muse chat** paragraph of this skill.
 - An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
 
 **What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.
@@ -154,6 +154,14 @@ Both surfaces follow the same ban list and the same "required" list below.
 The internal value (`naming_mode: template:salesforce`, role classifications, `classDef` strings, etc.) still gets stamped on the file by the write stage — only chat and prompt text are plain. Map a user's choice to the internal value *after* they pick, not in the option label.
 
 **Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine. While expert flow is off, the questions in the Expert flow table are not asked; every other question is (see "Expert flow" below). In a fast run nothing is sent after the go-ahead (see "Fast flow" below). Convention 8 controls how a required table or proposal is worded, never whether it is shown. Translate identifiers in a stage template into plain words; never drop the artifact.
+
+**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
+this session's tool list, load
+[`../semantius-admin/references/muse-questions.md`](../semantius-admin/references/muse-questions.md)
+before the first question of the run, and follow it in place of every
+`AskUserQuestion` rule in this skill, for single-select and
+`multiSelect: true` alike. Skip the load when the tool is present. One
+load per run covers every skill active in the same conversation.
 
 **AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
 
@@ -464,35 +472,10 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 
 ## Reference material
 
-**Per-stage detail (Mode A, loaded on demand):**
+Platform references in `use-semantius`; read one when the step at hand needs it:
 
-- [`references/stage-1-capture.md`](references/stage-1-capture.md) — Stage 1: capture the system
-- [`references/stage-2-naming.md`](references/stage-2-naming.md) — Stage 2: naming + built-in field alignment
-- [`references/stage-3-entities.md`](references/stage-3-entities.md) — Stage 3: entity list + §3 catalog-column policy
-- [`references/normalization.md`](references/normalization.md) — keep each fact once: filters, the family decision table, what to write, the family question (read at Stage 3, Extend C3, Rebuild D2)
-- [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) — Stage 5: Mermaid diagram
-- [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) — Stage 6: neighborhood walk
-- [`references/stage-7-handoffs.md`](references/stage-7-handoffs.md) — Stage 7: cross-domain handoffs
-- [`references/stage-8-9-rules-classification.md`](references/stage-8-9-rules-classification.md) — Stages 8-9: rules + `entity_type` / write-tier
-- [`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md) — Stage 10: W1/W2/W6 scan and the permission step (access level)
-- [`references/decide-access-scope.ts`](references/decide-access-scope.ts) — the deterministic access-level script the permission step runs
-- [`references/stage-11-governance.md`](references/stage-11-governance.md) — Stage 11: persona / §9 governance
-- [`references/stage-13-write.md`](references/stage-13-write.md) — Stage 13: frontmatter + write mechanics
-- [`references/modes-audit-extend-rebuild.md`](references/modes-audit-extend-rebuild.md) — Modes B / C / D (Audit, Extend, Rebuild)
-- [`references/audit-checklist.md`](references/audit-checklist.md) — the shared audit checklist (used by Modes B / C / D)
-- [`./references/semantic-blueprint-template.md`](./references/semantic-blueprint-template.md) — the canonical blueprint template (Stage 13 reads this before writing). Byte-compatible with `ats-candidate-crm-semantic-blueprint.md` (the reference example).
-
-**Shared / cross-skill:**
-
-- [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) — the shared writing conventions (Conventions 1-8). This skill keeps its own fuller copy resident, including the architect-only Conventions 9-10 and the Pre-emit / Narration restraint phrased for blueprint authoring.
-- [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) — environment preflight (shared by all four skills).
-- [`../semantius-admin/references/interaction-flow.md`](../semantius-admin/references/interaction-flow.md): the guided / expert / fast switch: turning it on and off, the questions skipped in guided flow (shared with the analyst and the admin).
-- [`../semantius-admin/references/fast-flow.md`](../semantius-admin/references/fast-flow.md): fast flow (experimental): the go-ahead, the pick procedure after it, the auto-picks log.
-- [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) — Semantius platform reference (entity naming rules, built-in tables, field format rules, relationship rules). Load it to reason about platform constraints during blueprint design.
-- [`../use-semantius/references/entity-families.md`](../use-semantius/references/entity-families.md) — platform facts for `is_a` / `has_a` families (what they allow, limits, vocabulary).
-- [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md) — JsonLogic rule reference: entity-level (`computed_fields`, `validation_rules`) and field-level (`input_type_rule`) rules, extension operators, cross-entity lookups. Mostly analyst territory; load only when reasoning about rule feasibility.
-- [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md) — row-level security (`select_rule`) reference: REPLACE-vs-AND semantics, oversight disjuncts.
-- [`../semantius-analyst/SKILL.md`](../semantius-analyst/SKILL.md) — downstream skill that reconciles the blueprint against live Semantius and produces a `*-semantic-spec.md`. Invoke after the blueprint is written.
-- [`../semantius-modeler/SKILL.md`](../semantius-modeler/SKILL.md) — deploys the spec to live Semantius. The architect doesn't invoke this directly; it's the third link in the chain.
+- [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md): read when a design choice depends on a platform constraint (entity naming rules, built-in tables, field format rules, relationship rules).
+- [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md): read only when judging whether a rule is feasible (`computed_fields`, `validation_rules`, `input_type_rule`, extension operators, cross-entity lookups). Writing the rules is analyst territory.
+- [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md): read when the design restricts who sees which rows (`select_rule`: REPLACE-vs-AND semantics, oversight disjuncts).
 
 The catalog of common systems, vendors, and entity naming conventions lives in your own training knowledge, not in a reference file. That's deliberate: a fixed catalog would go stale, miss vendors, and imply a whitelist. Trust what you know about the product the user named; if you're genuinely unsure (an unfamiliar regional vendor, a very new product), ask the user for two or three example entity names from their system rather than guessing. In guided flow and fast flow, "unsure" has one objective bar: the product fails the four-object test (you can't name at least four of its headline objects, spelled its way; `references/stage-1-capture.md`). In a fast run, don't ask: use modern names and call the design "inspired by" that product at most.

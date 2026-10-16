@@ -27,6 +27,14 @@ Division of responsibility:
 
 ## Writing conventions
 
+**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
+this session's tool list, load
+[`../semantius-admin/references/muse-questions.md`](../semantius-admin/references/muse-questions.md)
+before the first question of the run, and follow it in place of every
+`AskUserQuestion` rule in this skill, for single-select and
+`multiSelect: true` alike. Skip the load when the tool is present. One
+load per run covers every skill active in the same conversation.
+
 The importer's writing conventions apply unchanged ([`../semantius-importer/SKILL.md`](../semantius-importer/SKILL.md) → Writing conventions, items 1 to 6): US English, no em-dashes in chat, plain language ("table", "records", "the file"), no narration, and `AskUserQuestion` as the only tool call of its response with 2 to 4 options. Stage tasks follow [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md): one task per stage from the Workflow table, subject verbatim, one `in_progress` at a time. This skill has no question ledger: its only questions are the Stage 3 gate, a mode or host question when the request leaves one open, and the sign-in question of Preflight 3 when a named host has no sign-in on this machine.
 
 ## Preflight

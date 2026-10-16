@@ -27,12 +27,20 @@ description: >-
 
 - Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
 - Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
-- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation."
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the **Muse chat** paragraph of this skill.
 - An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
 
 **What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.
 
 The orchestrator for the three-skill Semantius pipeline plus administrative operations. Sits in front of `semantius-architect`, `semantius-analyst`, and `semantius-modeler`; routes composite operations to the right sequence of sub-skills; handles inspection and other instance-level admin tasks; backup and restore belong to `semantius-transfer`.
+
+**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
+this session's tool list, load
+[`references/muse-questions.md`](references/muse-questions.md)
+before the first question of the run, and follow it in place of every
+`AskUserQuestion` rule in this skill, for single-select and
+`multiSelect: true` alike. Skip the load when the tool is present. One
+load per run covers every skill active in the same conversation.
 
 ## Writing conventions
 
@@ -742,26 +750,3 @@ When a phrasing is ambiguous, ask one clarifying question (Step 0); do not guess
 - **Write an `org:` field inside `customizations.yaml`.** The folder name is the org; a duplicate field would drift, the folder path cannot.
 - **Create a `history.jsonl` (or any decision log file).** Git on `customizations.yaml` is the audit trail. Provenance comments inside the file carry per-entry dates. (The per-run `$DIAG_LOG` is NOT a decision log — it's gitignored, ephemeral diagnostics, never a source of truth. Allowed. The task list and the no-task-tool fallback checklist file are the same class: they track open questions and progress; answers live only in `customizations.yaml` and the artifacts. Allowed. The fast-flow `auto-picks.md` in the run folder is allowed: a per-run diagnostic, not a policy record; [`references/fast-flow.md`](./references/fast-flow.md), section 5.)
 - **Surface internal mechanics in chat.** Preflight guards, org probes, CLI/`yq` plumbing, stage transitions, and skill-internal vocabulary go to `$DIAG_LOG`, never to the user. See the Output discipline section.
-
----
-
-## Reference material
-
-This skill's own references (load on demand):
-
-- `./references/preflight.md` — shared environment preflight (run by all four skills)
-- `./references/writing-conventions.md` — shared writing conventions (canonical copy)
-- `./references/task-tracking.md` — task tools, stage tracking, and the question ledger (canonical copy)
-- `./references/output-discipline.md` — per-run diagnostic-log mechanics
-- `./references/admin-operations.md` — Step 5 admin-op procedures (status / list / health; backup points to `semantius-transfer`)
-- `./references/plan-shapes.md` — plan-line authoring rules, the four plan patterns, and worked examples
-- `./references/fast-flow.md`: fast flow (experimental): the go-ahead, the pick procedure, the auto-picks log, the "Decided for you" summary (canonical copy)
-- `../../docs/architecture.md` — full architecture spec, failure modes, debugging invariants
-
-Sibling skills:
-
-- `../semantius-architect/SKILL.md` — produces blueprints
-- `../semantius-analyst/SKILL.md` — produces specs (reconciliation logic, AskUserQuestion widgets)
-- `../semantius-modeler/SKILL.md` — deploys specs (idempotent diff & apply)
-- `../use-semantius/SKILL.md` — CLI patterns this skill uses for admin operations
-- `../semantius-transfer/SKILL.md` — backup, restore, and moving modules or tables between hosts

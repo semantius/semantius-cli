@@ -25,7 +25,7 @@ description: >-
 
 - Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
 - Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
-- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation."
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the **Muse chat** paragraph of this skill.
 - An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
 
 **What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.
@@ -59,6 +59,14 @@ These rules apply to every output this skill produces (chat, `AskUserQuestion` w
 The two always-on rules that govern every chat message are kept here verbatim (full context in the shared reference):
 
 **Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. While expert flow is off, two questions are not sent (the first 3d question, 4.N N2); every other question is (see "Expert flow" below). In a fast run after the go-ahead, none is sent (see "Fast flow" below).
+
+**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
+this session's tool list, load
+[`../semantius-admin/references/muse-questions.md`](../semantius-admin/references/muse-questions.md)
+before the first question of the run, and follow it in place of every
+`AskUserQuestion` rule in this skill, for single-select and
+`multiSelect: true` alike. Skip the load when the tool is present. One
+load per run covers every skill active in the same conversation.
 
 **AskUserQuestion mechanics** (not a numbered convention; the tool description is authoritative). Fire `AskUserQuestion` **alone in its own response**: apply edits, re-renders, policy-file reads, and task updates first, in earlier steps, then call it with no other tool call beside it. A sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` **input block** keyed by question text; there is no `user_answers` tool, never call one. Dismiss (`cancelled: true`) and typed replies are handled per the tool description.
 
@@ -450,35 +458,4 @@ Lead with the structured output (tables, JSON, plans). Prose between sections st
 
 ## Reference material
 
-**Per-stage detail (this skill, loaded on demand):**
-
-- [`references/stage-1-parse.md`](references/stage-1-parse.md) - parse the blueprint
-- [`references/stage-2-inspect.md`](references/stage-2-inspect.md) - inspect the live catalog
-- [`references/find-entities.ts`](references/find-entities.ts) - the deterministic keyword search the 2g concept pass runs
-- [`references/stage-3-placement.md`](references/stage-3-placement.md) - role-driven placement
-- [`references/customizations-consultation.md`](references/customizations-consultation.md) - standing-policy consultation protocol
-- [`references/stage-3-collisions.md`](references/stage-3-collisions.md) - optional / collision / link widgets
-- [`references/stage-3-confirm.md`](references/stage-3-confirm.md) - plan render and confirm (3g)
-- [`references/stage-3f-drift.md`](references/stage-3f-drift.md) - adopted-entity drift resolution
-- [`references/stage-4-fields.md`](references/stage-4-fields.md) - field elicitation for owned entities
-- [`references/stage-5-workflow-perms.md`](references/stage-5-workflow-perms.md) - W3/W4/W4n/W5 scan
-- [`references/stage-6-input-type.md`](references/stage-6-input-type.md) - conditional input-type scan
-- [`references/stage-7-select-rule.md`](references/stage-7-select-rule.md) - row-level read-access scan
-- [`references/stage-9-governance.md`](references/stage-9-governance.md) - Stage 9 + 9.5 governance
-- [`references/stage-10-rules.md`](references/stage-10-rules.md) - computed fields and validation rules
-- [`references/stage-11-write.md`](references/stage-11-write.md) - frontmatter, section deltas, close-out
-- [`references/modes-audit-extend-rebuild.md`](references/modes-audit-extend-rebuild.md) - Audit / Extend / Rebuild modes
-- [`./references/semantic-spec-template.md`](./references/semantic-spec-template.md) - the canonical spec format (used by Stage 11 write)
-
-**Shared / cross-skill:**
-
-- [`../semantius-admin/references/writing-conventions.md`](../semantius-admin/references/writing-conventions.md) - the full writing conventions (Conventions 1-8)
-- [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md) - environment preflight (shared by all four skills)
-- [`../semantius-admin/references/interaction-flow.md`](../semantius-admin/references/interaction-flow.md) - the expert flow switch: turning it on and off, the questions skipped while it is off
-- [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md) - field formats, built-in field shapes, FK rules, the Golden Rules
-- [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md) - JsonLogic catalog: `computed_fields`, `validation_rules`, extension operators, cross-entity lookups, `input_type_rule`
-- [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md) - row-level security: `select_rule` REPLACE semantics, oversight disjuncts
-- [`../use-semantius/SKILL.md`](../use-semantius/SKILL.md) - CLI for catalog inspection
-- [`../semantius-architect/SKILL.md`](../semantius-architect/SKILL.md) - produces blueprints (this skill's input)
-- [`../semantius-architect/references/semantic-blueprint-template.md`](../semantius-architect/references/semantic-blueprint-template.md) - the blueprint format
-- [`../semantius-modeler/SKILL.md`](../semantius-modeler/SKILL.md) - deploys specs (this skill's output)
+- [`../semantius-architect/references/semantic-blueprint-template.md`](../semantius-architect/references/semantic-blueprint-template.md): the blueprint format, this skill's input. Read it at Stage 1 when a blueprint section's structure or grammar is in doubt.
