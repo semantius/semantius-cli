@@ -408,9 +408,9 @@ An `enum_values` entry is either a plain value (`"draft"`) or a `{"value", "labe
 semantius call crud create_field '{"data": {
   "table_name": "contracts", "field_name": "contract_type", "title": "Contract Type", "format": "enum",
   "enum_values": [
-    {"value": "msa", "label": "Master services agreement", "color": "#8b5cf6"},
-    {"value": "nda", "label": "Non-disclosure agreement", "color": "#14b8a6", "icon": "lock"},
-    {"value": "sow", "label": "Statement of work", "color": "#ec4899"}
+    {"value": "msa", "label": "Master services agreement", "color": "#3b82f6"},
+    {"value": "nda", "label": "Non-disclosure agreement", "color": "#ec4899", "icon": "lock"},
+    {"value": "sow", "label": "Statement of work", "color": "#14b8a6"}
   ],
   "default_value": "msa", "input_type": "required", "width": "default"
 }}'
@@ -447,16 +447,14 @@ Past the listed shades, a further entry of that meaning gets another shade of th
 
 | # | Color | `color` |
 |---|---|---|
-| 1 | violet | `#8b5cf6` |
-| 2 | teal | `#14b8a6` |
-| 3 | pink | `#ec4899` |
-| 4 | cyan | `#06b6d4` |
-| 5 | indigo | `#6366f1` |
-| 6 | fuchsia | `#d946ef` |
-| 7 | blue | `#3b82f6` |
-| 8 | slate | `#64748b` |
+| 1 | blue | `#3b82f6` |
+| 2 | pink | `#ec4899` |
+| 3 | teal | `#14b8a6` |
+| 4 | slate | `#64748b` |
+| 5 | cyan | `#06b6d4` |
+| 6 | purple | `#a855f7` |
 
-Once the set is used up, each further entry gets a new hex that is not red, amber or green in hue.
+Purple is last because next to blue it is easy to miss; an enum with few entries never gets it. Once the set is used up, each further entry gets a new hex that is not red, amber or green in hue.
 
 ### `cube_type` Values
 

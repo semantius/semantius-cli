@@ -5,9 +5,9 @@
 With the naming convention locked in, draft the entities from your own knowledge of the domain.
 
 - If a template vendor was chosen, start from that vendor's core object model, the entities a fresh-install user of that product would encounter first, and trim to what this user actually needs. Don't include obscure tables just because the vendor ships them.
-- If agent-optimized, start from first principles: what happens in this system? who acts? what do they act on? what gets recorded? Name each entity with a self-describing singular noun.
+- If agent-optimized, start from the records the user confirmed in Stage 2's details step, when there are any; otherwise from first principles: what happens in this system? who acts? what do they act on? what gets recorded? Name each entity with a self-describing singular noun.
 - In either case, weave in any extra entities the user flagged in their Stage 1 requirements, and drop entities that clearly don't apply.
-- Apply the Stage 1 best-practice points; in expert flow, only the points the user picked (and any they typed).
+- Apply the Stage 1 best-practice points, except when the user picked a vendor's design or confirmed a structure of their own in Stage 2.
 
 > **🛑 Template mode: name the vendor object each entity maps to.** When `naming_mode` is `template:<vendor>`, every proposed entity **must** explicitly cite the vendor object it mirrors, in the **<Vendor> object** column of the chat table. That column is chat-only: in the file, write `<Vendor> object: <Name>` at the start of the §3 notes cell, and never add a column to §3. This forces you to check your own confidence. If you can't name a specific vendor object with high confidence, you don't actually know the vendor's schema well enough to claim template-fidelity, say so in one sentence and offer the user either (a) switch to agent-optimized, (b) let them paste the vendor's object list, or (c) proceed but mark the entity as "inspired-by, not canonical". A fast run uses modern names, so this offer does not arise.
 >

@@ -9,7 +9,7 @@ The interaction flow is a **persisted switch**, stored as `.interaction_flow` in
 - **`guided` or absent (the default): guidance.** For users who want help getting it right. The agent leads with the domain's best practices, written for a domain expert. It shows each draft the skills confirm, in plain language, and each architect confirmation is its own turn (the architect names two shared turns); the analyst's question batches (task-tracking.md) are unchanged. It skips only the questions in section 3. One line of why per point, no tutorials. Any saved value other than `expert` or `fast` reads as `guided`.
   - Architect Stage 1 brings domain knowledge up front. When a well-known product matches the request, a short aside names the products the design draws on and a few best-practice points, with no question. When nothing similar is known, a short discovery interview (closest product, who uses it, what it replaces; only what the request leaves open) comes first (`../../semantius-architect/references/stage-1-capture.md`). An unclear category is settled by the interview's "Closest to" question.
   - The questions in section 3 are skipped and answered with a fixed default.
-- **`expert`: control.** For users who know what they want. Everything guided flow asks, plus every question in section 3. Stage 1 gives the guided-flow aside and interview, keeps only products that pass the four-object test, and asks which best-practice points the design follows.
+- **`expert`: control.** For users who know what they want. Everything guided flow asks, plus every question in section 3. Stage 1 gives the guided-flow aside and interview, and keeps only products that pass the four-object test.
 - **`fast` (experimental): autonomy.** For a new build only: a baseline product, a short interview, one go-ahead, then no further questions until the module is deployed and the demo-data question waits. An unclear category is settled by the fast-flow interview. Everything else runs as in guided flow. The rules are in [`fast-flow.md`](./fast-flow.md).
 
 ## 2. Turning it on and off
@@ -31,7 +31,6 @@ The skill that receives the instruction writes the switch (the admin in orchestr
 
 | Skill | Question | Default in guided flow |
 |---|---|---|
-| Architect | Stage 1 best-practice points ("Which of these should the design follow?") | Stated in the guidance aside; all applied |
 | Architect | Stage 1 system name and scope | Taken from the request |
 | Architect | Stage 13 tagline / description / `module_kind` confirmation | The drafts are written |
 | Architect | Access level (Stage 10 permission step) | The script's result |
@@ -49,7 +48,7 @@ Each skipped question opens, in its stage file, with an "Interaction flow" block
 
 ## 4. Telling the user what was picked
 
-- **Architect, close-out:** *"Wrote `<path>`, with a catalog tagline and description written without asking (ask me to change them anytime). Tell me when you want to deploy it."*
+- **Architect:** nothing. The tagline, description and `module_kind` drafts are written silently and never mentioned; the close-out is the plain *"Wrote `<path>`. Tell me when you want to deploy it."*
 - **Analyst, 3g plan summary:** one line after the Fields block for the not-deployed-yet default: *"⚙️ Picked for you: <one plain-English clause per choice, semicolon-separated>. Say "expert flow" to be asked these instead."* Left out when the default was not applied (stage-3-confirm.md, authoring rule 12). The access level is never named: the user is not told which access level was picked. The N2 default is not named: keeping the drafted fields changes nothing.
 - **File names, guided and expert flow:** the architect's and the analyst's close-outs each name the file just written (*"Wrote `<path>`…"*), under the admin too. Hiding the file names is fast flow only.
 - **Fast flow:** no "Picked for you" lines, and no close-out line naming the blueprint or spec file. After the go-ahead every pick goes to the "Decided for you" list at the end ([`fast-flow.md`](./fast-flow.md), section 6).

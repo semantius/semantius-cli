@@ -146,7 +146,7 @@ Both surfaces follow the same ban list and the same "required" list below.
 - Entity Singular / Plural Labels (`Candidate`, `Candidates`), never the raw `table_name`.
 - Plain phrasings:
   - Instead of *"agent-optimized"* → *"self-describing names"* or *"clear, modern naming"*.
-  - Instead of *"mirror the vendor's schema"* → *"use [Vendor]'s naming so data migration to/from [Vendor] is easy"*.
+  - Instead of *"mirror the vendor's schema"* → *"follow [Vendor]'s records and names so data moves to and from [Vendor] easily"*.
   - Instead of *"master cluster hint"* → *"shared concept across modules"*.
   - Instead of *"the blueprint declares"* → *"this design includes"* or *"this module includes"*.
   - Instead of *"users is a §3 row with `_(platform built-in)_` and class `builtin` in the Mermaid"* → *"the design reuses the platform's built-in users (listed with the other entities, marked as built-in)"*.
@@ -172,7 +172,7 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
 
   | Mode | Task subjects, in order |
   |---|---|
-  | Create-Greenfield (Mode A) | `Design › Capture what you are building and pick the naming style` (Stages 1-2) · `Design › Agree the things to track and how they relate` (Stages 3, 5) · `Design › Related modules, rules, and who does what` (Stages 6-11) · `Design › Write the design file` (Stage 13) |
+  | Create-Greenfield (Mode A) | `Design › Capture what you are building and pick the starting design` (Stages 1-2) · `Design › Agree the things to track and how they relate` (Stages 3, 5) · `Design › Related modules, rules, and who does what` (Stages 6-11) · `Design › Write the design file` (Stage 13) |
   | Create-Catalog-Clone (Mode A) | `Design › Clone <source> and adjust it with you` · `Design › Write the design file` |
   | Audit (Mode B) | `Design › Audit the design` |
   | Extend (Mode C) | `Design › Extend the design` |
@@ -180,14 +180,13 @@ The internal value (`naming_mode: template:salesforce`, role classifications, `c
   | Rebuild (Mode D) | `Design › Rebuild the design` |
 
 - **No ledger stages.** Every architect question is standalone (no `Q:` task):
-  - the Stage 2 naming-style question (new blueprints, guided and expert flow; never saved; Rebuild re-asks it);
+  - the Stage 2 design question (new blueprints, guided and expert flow; never saved; Rebuild re-asks it), and its "Build the design on this?" confirmation after a typed answer;
   - the Stage 1 and Stage 3 conversational confirmations (the Stage 1 name and scope question only while expert flow is on);
   - the Stage 3 "Also track" multiSelect;
   - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);
   - the Stage 3 re-confirmation of the entity table, when the "Also track" picks added entities;
   - the Stage 5 relationships, diagram and lifecycles confirmation (`references/stage-5-mermaid.md`);
   - the Stage 1 discovery interview (guided and expert flow, when no well-known product fits; fast flow, "Closest to" and "Must-haves" only);
-  - the Stage 1 best-practice question (expert flow only);
   - the fast-flow go-ahead (fast runs only);
   - the Stage 6 related-modules confirmation (only while expert flow is on);
   - the Stage 7 handoffs confirmation;
@@ -314,13 +313,12 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 
 | Question skipped while expert flow is off | Default |
 |---|---|
-| Stage 1 best-practice question (`references/stage-1-capture.md`) | State the points in the guidance aside and apply all of them. |
 | Stage 1 system name and scope (`references/stage-1-capture.md`) | Take them from the request, without a question. An unclear category is still settled in Stage 1, by the discovery interview's "Closest to" question. |
-| Stage 13 `tagline` / `description` / `module_kind` confirmation (`references/stage-13-write.md`) | Write your drafts and the derived `module_kind` without a confirmation; the close-out line says so. |
+| Stage 13 `tagline` / `description` / `module_kind` confirmation (`references/stage-13-write.md`) | Write your drafts and the derived `module_kind` silently: no confirmation, and no mention of them to the user, the close-out line included. |
 | Stage 10 access-level question (`references/stage-10-workflow-perms.md`, permission step) | The script's result. |
 | Stage 6 related-modules confirmation (`references/stage-6-related-modules.md`) | Build the list and accept it as drafted, without showing it. |
 
-**Every other architect question is asked in guided and expert flow, unchanged:** naming style, the entity list, "Also track", the family question, the entity-table re-confirmation, the relationships, diagram and lifecycles confirmation, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test and asks which best-practice points the design follows (`references/stage-1-capture.md`).
+**Every other architect question is asked in guided and expert flow, unchanged:** the starting design (with its details confirmation for a typed answer), the entity list, "Also track", the family question, the entity-table re-confirmation, the relationships, diagram and lifecycles confirmation, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test (`references/stage-1-capture.md`).
 
 **Switching during a run** writes the switch and applies from the next question on: turned on before Stage 13, the catalog text is confirmed; a name or scope the user wants changed is simply changed.
 
@@ -342,8 +340,8 @@ The Task column is the exact subject of the stage task (Task tracking, above); s
 
 | Stage | Purpose | Task subject | Read first |
 |---|---|---|---|
-| 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | `Design › Capture what you are building and pick the naming style` | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
-| 2. Naming | Legacy-vendor vs agent-optimized naming (the one ledger question); built-in field alignment | (same task) | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
+| 1. Capture | Capture the system; domain category; verbatim `initial_request`; rough scope line | `Design › Capture what you are building and pick the starting design` | [`references/stage-1-capture.md`](references/stage-1-capture.md) |
+| 2. Naming | Starting design: a legacy vendor's records and names vs the modern design (the one ledger question); built-in field alignment | (same task) | [`references/stage-2-naming.md`](references/stage-2-naming.md) |
 | 3. Entities | Propose the entity list; keep each fact once (the mandatory `normalization.md` step inside the stage file); `necessity` rule; §3 catalog-column policy (`data_object` / `catalog code` / `role` / `mastered in` / Key types) | `Design › Agree the things to track and how they relate` | [`references/stage-3-entities.md`](references/stage-3-entities.md) |
 | 5. Mermaid | Build the §2 entity-relationship diagram (build-then-verify) and draft the lifecycles; show relationships, diagram and lifecycles in one message and confirm | (same task) | [`references/stage-5-mermaid.md`](references/stage-5-mermaid.md) |
 | 6. Related modules | Two-axis neighborhood walk → `related_modules` | `Design › Related modules, rules, and who does what` | [`references/stage-6-related-modules.md`](references/stage-6-related-modules.md) |
@@ -415,13 +413,11 @@ bun "<skill-folder>/references/consistency-check.ts" "<path-to-the-written-bluep
 
 It parses the file, treats §3 as the entity registry, and byte-compares every other place each entity's identifier / display name / edge appears. It is **content-agnostic** — it never judges language, casing, or word choice, only that every occurrence agrees (reverse a label in *every* section and it passes; change it in *one* and it fails). Exit 0 = consistent; non-zero prints the exact entity, the differing values, and the disagreeing sections. **If it exits non-zero the save is not complete:** fix every reported line and re-run until exit 0, then emit the success line. The same script validates specs (`artifact: semantic-spec`); the analyst runs it at its own pre-save. Do not hand-wave this — blueprints shipped inconsistent precisely because the check was "done carefully" by reading instead of run.
 
-**On success: write the file, then say one line in plain English, no more.** Template while expert flow is on:
+**On success: write the file, then say one line in plain English, no more.** Template:
 
 > *Wrote `<path>`. Tell me when you want to deploy it.*
 
-Template while expert flow is off (Create and Clone; the catalog-text clause is the only addition):
-
-> *Wrote `<path>`, with a catalog tagline and description written without asking (ask me to change them anytime). Tell me when you want to deploy it.*
+The line never mentions the tagline or description. With expert flow on, the user already confirmed them in Stage 13; with it off, they are written silently.
 
 In guided and expert flow the line is always sent, under the admin too: the file name is the user's record of what was produced, and it is the architect's own result line, not admin hand-off narration. In a fast run there is no close-out line: set the task `completed` and let the admin move straight on to the next step.
 
@@ -462,7 +458,7 @@ Treat this as a real analyst engagement, not a form-filling exercise. Concretely
 - Prefer named examples to abstract descriptions. "An `opportunity` has a `workflow_state` like `prospecting → qualification → proposal → closed_won`" beats "The opportunity tracks its status."
 - Use the user's vocabulary when they've given you specifics. If they say "job" instead of "role", use "job", unless that collides with a vendor template (e.g., Workday uses both `Job` and `Position` distinctly, in that case clarify).
 - Keep each confirmation gate to one clear question. Don't ambush the user with seven questions at once.
-- Use **AskUserQuestion** where a choice has fixed answers: the legacy-vendor-vs-agent-optimized decision (Mode A Stage 2), the Stage 3 "Also track" multiSelect, and the Stage 3 family question (`references/normalization.md`). Elsewhere, prose questions are fine because the answers are open-ended.
+- Use **AskUserQuestion** where a choice has fixed answers: the legacy-vendor-vs-modern-design decision (Mode A Stage 2), the Stage 3 "Also track" multiSelect, and the Stage 3 family question (`references/normalization.md`). Elsewhere, prose questions are fine because the answers are open-ended.
 
 ---
 
