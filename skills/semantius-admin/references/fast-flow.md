@@ -1,27 +1,28 @@
-# Fast flow (experimental, shared across Semantius skills)
+# Fast flow (shared across Semantius skills)
 
 *Canonical copy. `semantius-admin`, `semantius-architect`, `semantius-analyst`, and `semantius-modeler` each keep a resident "Fast flow" section of five lines or fewer that points here, and every question point in their stage files carries its own one-line "Fast flow, after the go-ahead" rule naming its pick. So a gate resolves correctly even when this file was not read; this file holds the detail (the pick procedure, the fixed picks, the log, the summary, the resume rule). Keep the resident sections, the gate lines, and this file in sync.*
 
 ## 1. What it is
 
-Fast flow is the third value of the `.interaction_flow` switch ([`interaction-flow.md`](./interaction-flow.md)). For a new build: a baseline product, a short interview, one go-ahead, then no further questions until the module is deployed and the demo-data question waits.
+Fast flow is the third value of the `.interaction_flow` switch ([`interaction-flow.md`](./interaction-flow.md)). For a new build: a short interview (which design to follow, and the must-haves), one go-ahead, then no further questions until the module is deployed and the demo-data question waits.
 
 ## 2. When a run is a fast run
 
-**The switch.** The user turns it on by saying "fast flow" (`.interaction_flow: fast`); "guided flow" or "expert flow" replaces it. A bare "fast", "just do it", "don't ask me", "quick", or "simple" changes nothing. Switching to it narrates: *"Switched to fast flow (experimental)."*
+**The switch.** Fast flow is the default: with no saved flow, a new build runs in fast flow. The user can also save it by saying "fast flow" (`.interaction_flow: fast`); "guided flow" or "expert flow" replaces it. A bare "fast", "just do it", "don't ask me", "quick", or "simple" changes nothing. Switching to it narrates: *"Switched to fast flow."*
 
 **The scope.** The saved switch is the org's preference, not a per-run fact. The admin decides the flow for each run:
 
 | Run | Flow |
 |---|---|
-| New build from an idea (`Architect mode: create`), switch `fast` | `fast` |
-| Anything that starts from an existing design: clone, deploying a blueprint or spec, customize, extend, audit | `guided`; the admin narrates once: *"Fast flow covers new builds only; this run uses guided flow."* |
+| New build from an idea (`Architect mode: create`), switch `fast` or not set | `fast` |
+| The same, when the request asks to be guided ([`interaction-flow.md`](./interaction-flow.md), section 2) | `guided` for this build only, nothing saved; the admin narrates once: *"Using guided flow for this one."* |
+| Anything that starts from an existing design: clone, deploying a blueprint or spec, customize, extend, audit | `guided`; only when the switch is saved as `fast`, the admin narrates once: *"Fast flow covers new builds only; this run uses guided flow."* |
 | Rebuild | `expert` (reopening every decision is its purpose) |
 
 **The two signals.** A sub-skill is in fast flow only when one of these says so; the saved switch on its own never makes a sub-skill skip a question.
 
 1. **The run context line** `Interaction flow: fast`, passed by the admin to every sub-skill (`semantius-admin/SKILL.md`, Step 7.3).
-2. **The task marker.** The admin writes the state into the description of its pipeline tasks (read it with `TaskGet`): `fast: awaiting go-ahead` when the run starts, `fast: go-ahead given` when the user says yes, `fast: guided flow for this build` when the user picks "Ask me as usual".
+2. **The task marker.** The admin writes the state into the description of its pipeline tasks (read it with `TaskGet`): `fast: awaiting go-ahead` when the run starts, `fast: go-ahead given` when the user says yes, `fast: guided flow for this build` when the user picks "Ask me along the way".
 
 | Skill | Fast flow before the go-ahead | Fast flow after the go-ahead |
 |---|---|---|
@@ -30,7 +31,7 @@ Fast flow is the third value of the `.interaction_flow` switch ([`interaction-fl
 
 Check both signals at Step 0 and again after a context reset. When neither is present, run in guided flow. **That is the safe direction:** a lost signal means the user is asked questions again, never that a question is answered for them by mistake.
 
-**Direct calls.** The architect called directly on a new idea while the switch is `fast` hands the run to `semantius-admin` (load it with the Skill tool, passing the user's request) before it creates any task; the admin re-enters the architect with the run context. The analyst or modeler called directly runs in guided flow, whatever the switch says.
+**Direct calls.** The architect called directly on a new idea while the switch is `fast` or not set, and the request does not ask to be guided, hands the run to `semantius-admin` (load it with the Skill tool, passing the user's request) before it creates any task; the admin re-enters the architect with the run context. The analyst or modeler called directly runs in guided flow, whatever the switch says.
 
 **Questions before the go-ahead still fire:** the admin's Step 0 clarifying question and the Step 1.3 match widget. If the user picks "Deploy the existing…", the run starts from a blueprint and therefore runs in guided flow.
 
@@ -40,10 +41,9 @@ Check both signals at Step 0 and again after a context reset. When neither is pr
 
 The detail lives in the architect's stage files; this is the map.
 
-- **Baseline** (`stage-1-capture.md`). Pick 3 to 4 products whose data model fits the request. With none, there is no baseline: modern names.
-- **Interview** (`stage-1-capture.md`, the interview templates). Zero to two questions: "Closest to" (skipped when the user named a product) and the must-haves question, which replaces Stage 3's "Also track". "Users" and "Replaces" are not asked.
-- **Naming** (`stage-2-naming.md`). Always modern, self-describing names, with or without a baseline: no widget, nothing saved. The baseline shapes the entities, not their names.
-- **Entities** (`stage-3-entities.md`). Drafted from the baseline's object model and trimmed to the interview answers; the family question takes its Recommended option; the entity-list question is not asked (the go-ahead covers it).
+- **Interview** (`stage-1-capture.md`). Zero to two questions, in one message: Stage 2's design question (skipped when the user named a product or no product fits) and the must-haves question, which replaces Stage 3's "Also track". "Users" and "Replaces" are not asked.
+- **Design and naming** (`stage-2-naming.md`). The same design question as guided flow: the modern design (Recommended) or up to 3 products whose data model fits the request. A picked product, or one named in the request, is followed: its records and names. With no product that fits, the design is modern. Nothing is saved.
+- **Entities** (`stage-3-entities.md`). Drafted from the followed product's object model, or from first principles for the modern design, and trimmed to the interview answers; the family question takes its Recommended option; the entity-list question is not asked (the go-ahead covers it).
 - **The go-ahead** (below), at the end of Stage 3.
 
 ### The go-ahead
@@ -52,10 +52,10 @@ The detail lives in the architect's stage files; this is the map.
 
 **The summary**, one message, in plain language (Writing Convention 8):
 
-1. The baseline: *"Based on how <Product> models this, with modern, self-describing names."*
-2. The entity table (Plural Label, one-line purpose).
+1. The design: *"Built on current best practice, with modern, self-describing names."* for the modern design; *"Following <Product>'s records and names."* when following a product.
+2. The entity table (Plural Label, one-line purpose, Shown as: the field each entity appears as in lists; when following a product, also the <Product> object each entity maps to, `stage-3-entities.md`).
 3. The 2 to 4 best-practice points (Stage 1 aside).
-4. The exact matches, one line, left out when there are none: *"Organizations already exist in Sales; I'll use them."*
+4. The exact matches, one line: *"Organizations already exist in Sales; I'll use them."* With no exact match, this item is left out entirely: no sentence saying nothing matched or everything is created fresh, and no mention of built-in tables such as users being reused.
 5. What happens next: *"After your go-ahead I build and deploy without more questions. I only connect to records your instance already has when the name matches exactly, and that may share or reshape them; anything that only looks similar is kept separate. Everything I decide is listed at the end."*
 
 **The question**, one `AskUserQuestion`, alone in its response:
@@ -65,13 +65,13 @@ The detail lives in the architect's stage files; this is the map.
 - options:
   1. `"Yes, build and deploy it (Recommended)"`, description `"I finish the design and deploy it without more questions. You get the list of what I decided at the end."`
   2. `"Change something first"`, description `"Tell me what to change. I update the design and show it to you again."`
-  3. `"Ask me as usual for this build"`, description `"I ask each question as it comes up, like guided flow. Fast flow stays on for later builds."`
+  3. `"Ask me along the way"`, description `"I'll guide you through each piece of the design so we can shape it to how you work."`
 
 **Recording the answer.** Before anything else, the admin updates the marker in its pipeline tasks' descriptions (`TaskList`, then `TaskUpdate` each):
 
 - **Yes:** `fast: go-ahead given`.
 - **Change something first:** stays `fast: awaiting go-ahead`; take the change in prose, update the draft, show the summary again, ask again.
-- **Ask me as usual:** `fast: guided flow for this build`, and the rest of this run is in guided flow (the admin passes `Interaction flow: guided` to the analyst and modeler). The switch stays `fast`.
+- **Ask me along the way:** `fast: guided flow for this build`, and the rest of this run is in guided flow (the admin passes `Interaction flow: guided` to the analyst and modeler). The switch stays `fast`.
 
 ## 4. After the go-ahead
 
@@ -80,7 +80,7 @@ The detail lives in the architect's stage files; this is the map.
 After the go-ahead, only a stop condition (4.2) or the modeler's Closing Contract may end the turn.
 
 - Never call `AskUserQuestion` (the one exception, the architect's keep-or-replace question, is in 4.2; the modeler's closing sample-data question is part of the Closing Contract).
-- Never end a message with a question, and never print a template that ends in one ("Look right?", "Add, drop, or rename any?", "Proceed with execution?"). A message that ends in a question ends the turn, which stops the run exactly as a widget would.
+- Never end a message with a question, and never print a template that ends in one ("Look right?", "Add, drop, or rename any?", "Proceed with deployment?"). A message that ends in a question ends the turn, which stops the run exactly as a widget would.
 - Don't render stage proposals, plan summaries, or "Picked for you" lines. Log one line per decision instead (section 5); the task list shows progress.
 - Don't name the files written. The architect and analyst send no "Wrote `<path>`" close-out, and the admin's close-out leaves out where the files are saved (guided and expert flow name them).
 
@@ -111,7 +111,7 @@ At every other question point, take the first rule that applies:
 | 5 | No option is recommended | Take the option that changes nothing outside this module. |
 | 6 | A multi-select with nothing recommended | Select none. The skills word multi-selects so that choosing none is the safe outcome. |
 | 7 | A question that asks the user for facts ("two or three example entity names") | Take the most conservative assumption and log it. |
-| 8 | A prose gate ("Look right?", "Add or drop any?", the analyst's plan confirmation, the Stage 10 rules scan, "Proceed with execution?") | Accept the draft as proposed. |
+| 8 | A prose gate ("Look right?", "Add or drop any?", the analyst's plan confirmation, the Stage 10 rules scan, "Proceed with deployment?") | Accept the draft as proposed. |
 | 9 | Anything else | Take the first option that isn't Cancel, Stop, or Skip. |
 
 ### 4.4 Fixed picks at known gates
@@ -138,7 +138,7 @@ The concrete pick at the main known gates, from rules 1 to 9. Every gate's own f
 | Analyst | 3f drift questions | The Recommended option; for the multi-select batch, select none (keep the live values). A cross-primitive format change (no widget, normally a 🔴 blocker): keep the live format (never remove). |
 | Analyst | 4.N N7 | The Recommended option. |
 | Analyst | 3g plan confirmation, Stage 10 rules scan | Accept. |
-| Modeler | "Proceed with execution?" | Proceed: the go-ahead was the write gate. |
+| Modeler | "Proceed with deployment?" | Proceed: the go-ahead was the write gate. |
 | Modeler | Ambiguous link target | The exact-name candidate; otherwise "Skip this link". |
 | Modeler | Link proposals (1 to 3 or 4 or more) | Apply all: they are exact matches already. |
 | Modeler | Rule clash on a shared entity (4e) | Keep the live rule (never remove). |

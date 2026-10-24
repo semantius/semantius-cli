@@ -24,7 +24,16 @@ export const fieldSchema = z.looseObject({
   format: z.enum(FIELD_FORMATS).optional()
     .describe('JSON Schema format or primitive type'),
   is_pk: z.boolean().optional().describe('Whether this field is the primary key; cannot change after the field is created'),
-  default_value: z.string().optional().describe('Column default: a literal value or an SQL expression such as CURRENT_TIMESTAMP'),
+  // The column is text. A number or boolean is stored as its text ("1", "true"), an object or array as its JSON.
+  default_value: z.codec(
+    z.union([z.string(), z.number(), z.boolean(), z.array(z.any()), z.record(z.string(), z.any())]),
+    z.string(),
+    {
+      decode: (v) => (typeof v === 'string' ? v : typeof v === 'object' ? JSON.stringify(v) : String(v)),
+      encode: (v) => v,
+    },
+  ).optional()
+    .describe('Column default: a literal value or an SQL expression such as CURRENT_TIMESTAMP. Stored as text; a number, boolean or JSON value is converted ("1", "true", "{}").'),
   field_order: z.number().int().optional().describe('Display order of the field within its entity'),
   input_type: z.enum(['default', 'required', 'readonly', 'disabled', 'hidden']).optional()
     .describe('How the UI presents the field for input; input_type_rule can override it per record'),

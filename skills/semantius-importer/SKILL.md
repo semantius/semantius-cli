@@ -12,8 +12,7 @@ description: >-
   `export_module`), moving modules or tables between hosts, backups or
   restores (semantius-transfer), deploying blueprints or specs
   (semantius-admin / semantius-modeler), designing a multi-entity system
-  (semantius-architect), CSV work with no Semantius target, or
-  webhook-receiver ingestion (see use-semantius references/webhook-import.md).
+  (semantius-architect), or CSV work with no Semantius target.
   For xlsx, ask for a CSV export first; CSV-only.
 ---
 
@@ -36,7 +35,6 @@ Division of responsibility:
 
 - **This skill** owns the workflow: introspect → map → detect → decide → import → verify, and the decision points along the way.
 - **use-semantius** owns every low-level operation (CLI syntax, payload shapes, response contracts, Golden Rules). Loaded at Step 0; it wins on any conflict.
-- **webhook-import.md** (in use-semantius) remains the reference for signed-webhook ingestion — external systems pushing rows one at a time. Not this skill's path.
 
 ## Operating modes
 
@@ -248,7 +246,6 @@ Filters, column selection, and pagination follow the normal PostgREST syntax fro
 
 - deletes anything in the catalog (`delete_entity`, `delete_field`, `delete_module`, ...) — cleanup of test or mistaken imports is the user's explicit call;
 - models multi-entity systems, junction tables, or RBAC beyond the module's two standard permissions — route to `semantius-architect`;
-- creates webhook receivers — that is webhook-import.md's path;
 - writes sample or probe records outside the import itself;
 - edits files it did not create this run (the CSV stays untouched);
 - imports into `users` or other platform built-ins.

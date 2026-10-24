@@ -53,7 +53,5 @@ references/import-script-template.md  run workspace, design rules, mapping.json 
 references/import.template.ts         the import script (copied byte-for-byte as import.ts)
 references/create-fields.ts           bulk create_field runner (one array call per ≤100 fields, fail-fast, --dry-run)
 references/render-plan.ts             renders the mapping table + plan facts from mapping.json
-evals/trigger-eval.json               trigger boundary cases
-evals/quirks.csv, evals/move-mode.csv introspection fixtures (id/enum/bool/email/url/move quirks)
 CHANGELOG.md                          history (not loaded at runtime)
 ```

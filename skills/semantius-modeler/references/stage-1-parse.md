@@ -188,6 +188,8 @@ With both gates passed (version + consistency), extract the rest:
 
 > **Label-column description and provenance (same post-create pass, mandatory):** the auto-created `label_column` field also lands with an empty `description` and an empty `catalog_field_code`, because neither rides `create_entity`. In the same `update_field` that corrects the title, send the §3 row's `description` (when non-empty) and `catalog_field_code` = the label column's `field_name` (write-once, fillable while empty). Skipping this leaves every label field without its description, and without the field-rename join key every other field carries; Stage 5's text-fidelity and field-provenance checks both cover the label column.
 
+> **Label-column input type (same post-create pass, mandatory):** the auto-created `label_column` field lands with `input_type: "required"` whatever the §3 row says. In the same `update_field`, send `input_type: "disabled"` when the label column is named in the entity's `computed_fields` (a `display_name` built from name parts: the platform fills it and overwrites any typed value), otherwise the value derived from the §3 `Required` column whenever it is not `"required"`. Re-runs converge it through the Stage 4d field diff and its computed-field rule.
+
 ### Self-References and forward references
 
 Fields that reference their own entity (e.g., `campaign.parent_campaign_id → campaigns`) or an entity declared later in §3 need no special flag and no second pass: Stage 4c creates **every** entity of the spec (one `create_entity` call) before Stage 4d creates any field, so every in-spec `reference_table` already exists when its field is created. Parse them like any other FK.

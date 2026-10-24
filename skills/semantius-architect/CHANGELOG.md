@@ -8,6 +8,99 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Entity table shows how each entity appears in lists
+
+2026-10-23. A user could approve a design without seeing that Contacts would be listed by first name only. Rules: `references/stage-3-entities.md`, "Present the list as a table" and the template-mode note; `../semantius-admin/references/fast-flow.md`, section 3.
+
+1. **The entity table has a "Shown as" column:** the field each entity appears as in lists ("full name" for Contacts, blank for a link table). It is chat-only and adds no column to §3.
+2. **The fast-flow go-ahead summary's entity table carries the same column.**
+3. **Template mode:** a followed product's composite display name ("First Last") is named in "Shown as" and built by the analyst's display-name rule, never reduced to a first-name-only label.
+
+---
+
+## Fast flow is the default
+
+2026-10-23. A new module ran in guided flow unless the user had said "fast flow", so most people answered every question one at a time without knowing a shorter path existed. Rules: `../semantius-admin/references/interaction-flow.md`, sections 1 and 2; `../semantius-admin/references/fast-flow.md`, section 2.
+
+1. **With no saved flow, a new build runs in fast flow.** A saved `guided` or `expert` still applies; any other saved value reads as not set. The go-ahead's "Ask me along the way" remains the way out for one module.
+2. **A request that asks to be guided runs that one build in guided flow**, saved nowhere, narrated *"Using guided flow for this one."*: "guide me", "walk me through", "step by step", "assist me", "help me design / decide / think through", "ask me as we go". A plain "help me build / set up / get" is not a hint: it is how most people ask for a system they want done.
+3. **Runs that start from an existing design** (clone, deploy, customize, extend, audit) still run in guided flow, or expert when saved. The line *"Fast flow covers new builds only; this run uses guided flow."* is shown only when the user saved fast flow.
+4. **The architect called directly** on a new idea hands the run to the admin when fast flow is saved or nothing is saved, unless the request asks to be guided. The architect and analyst on their own still read no saved flow as guided: a run is fast only when the admin says so.
+
+---
+
+## Go-ahead option "Ask me along the way"
+
+2026-10-23. The fast-flow go-ahead's third option read "Ask me as usual for this build": "build" as a noun is the skills' word, not the user's, and "as usual" made the other two options sound unusual. Rules: `../semantius-admin/references/fast-flow.md`, section 3.
+
+1. **The option is "Ask me along the way"**, description *"I'll guide you through each piece of the design so we can shape it to how you work."* What it does is unchanged: the rest of this run is in guided flow, and fast flow stays on.
+
+---
+
+## A followed product's names are converted by a script
+
+2026-10-23. Following a product converted its record names to `table_name` by hand, and nothing said how to split a run of capitals (`SLAPolicy`), how to make a compound name plural (`OpportunityLineItem`), or what to do with a name already in lowercase or a custom record (`Invoice__c`), so the same product name could convert differently from run to run. The field-naming rule sat in the architect's naming table, but the architect writes no fields. Rules: `references/stage-2-naming.md`, `../use-semantius/references/vendor-names.ts`.
+
+1. **`vendor-names.ts` converts every name of a followed product**, never by hand: `bun vendor-names.ts entity:<Name>… field:<Name>…`, each name singular and spelled the product's way. A run of capitals is one word, a name already in lowercase is kept as written, only the last word of a table name becomes plural, labels keep acronyms in capitals. It answers `skip:` for a custom record or field and for a field the platform creates on every table, `built-in:` for a record name that lands on a platform built-in, and `reserved:` for a forbidden field name. Tests: `bun test` from the repo root (`scripts/vendor-names.test.ts`).
+2. **The naming rules table** points to the script for records and to the analyst (`stage-4-fields.md`, "Fields of a followed product") for fields; Stage 3 converts with the script when it drafts a product's records.
+
+---
+
+## Fast flow asks guided flow's design question; fast flow is no longer experimental
+
+2026-10-23. A fast run of "i need an applicant tracker, use the fast flow" opened with "Which of these is closest to what you need?": Greenhouse, Lever, Workable, and "None of these, design from scratch". That question came from the discovery interview, where it only runs when no product fits. In fast flow it chose the product whose structure was copied, always under modern names, so the modern design, guided flow's recommended default, was reachable only as "design from scratch", and following a product lost the point of following it: data moves to and from a product easily only when the records and the names line up. Rules: `references/stage-1-capture.md`, `references/stage-2-naming.md`, `../semantius-admin/references/fast-flow.md`.
+
+1. **Fast flow asks Stage 2's design question**, the one guided flow asks: "Modern design (Recommended)" first, then up to 3 products as "Follow <Product>". It is fired in the same call as "Must-haves", and the modern option's description names the one or two practices that set it apart, because fast flow shows no guidance aside. It is left out when the request names a product (that product is followed) or no product fits (modern). A typed answer runs the typed-answer step, as in guided flow. Fast flow no longer asks "Closest to"; the guided and expert discovery interview keeps it.
+2. **A followed product brings its records and names** (`naming_mode: template:<product>`), as in guided flow. Fast flow no longer forces modern names. The go-ahead summary opens with *"Following <Product>'s records and names."* or, for the modern design, *"Built on current best practice, with modern, self-describing names."*, and its entity table names the product object each entity maps to.
+3. **An uncertain product object is not asked about in fast flow:** the entity is marked "inspired by <Product>" and named so in the go-ahead summary's entity table.
+4. **The must-haves come from the products on the list**, because both questions are asked before the design is known.
+5. **Fast flow is no longer marked experimental.** The switch line is *"Switched to fast flow."*, and the "Fast flow" sections of the admin, architect, analyst and modeler drop the label.
+
+---
+
+## An unreachable verification host never stops a run
+
+2026-10-18. A standalone guided run ("i want to track leads") ran every stage, wrote the blueprint and passed `consistency-check.ts`, then ended on a note that the icon check could not run because `cdn.jsdelivr.net` was blocked by the sandbox's egress allow list, with no next step. `lucide-icons.ts` downloaded the icon list at run time and exited 2 when it could not, the same code as a usage error, and the `icon_name` gate read any non-zero exit as an unknown icon. The guided close-out assumed an orchestrator moves the run on, which a standalone run does not have.
+
+1. **The icon list is bundled, and the icon tool is two scripts.** `lucide-icons.ts` (with its `check` / `find` subcommands) is replaced by `use-semantius/references/lucide-icon-checker.ts <name…>` (exit 0 valid, 1 unknown name, 2 no arguments) and `lucide-icon-finder.ts <query…>` (exit 0 a query matched, 1 none, 2 no arguments). Both read `lucide-icon-tags.json`, a snapshot of one `lucide-static` release (its `version` key), and need no network. Maintainers refresh the snapshot with `bun run update-icons` from the repo root.
+2. **A blocked host is named, never worked around** (shared preflight, `semantius-admin/references/preflight.md`). A tool install that gets the allow list's `egress denied` 403 stops with the host and "your admin must allow it" (check 2). The same 403 from the Semantius host, which the CLI reports as exit 5, stops with the host instead of starting a sign-in that cannot help (check 3b). No mirror, proxy, other host or retry.
+3. **Guided close-out, standalone** (no `Run context:` block): the one line carries one clause naming the next step (*Wrote `<path>`. Say the word and I'll set it up in Semantius.*). Still no question widget, no second paragraph, no deploy confirmation.
+4. **`circle-question-mark` replaces `circle-help`** as the example icon in the blueprint template and Stage 13: Lucide renamed the icon, and the checker rejects the old name.
+5. **The icon search is one run with a defined end.** The finder takes up to five queries, most specific first (`"user plus" user person "contact card"`; the words of one query must all match), and answers them in that order, one line per query. Stage 13 takes the first icon that fits; when none fits, the module icon is `box`. Before, nothing said when to stop searching or what to use after an empty search.
+
+Minor: no file format change, no change to the blueprint's shape, and no change to any confirmation the user is asked.
+
+---
+
+## No turn without an ask
+
+2026-10-17.
+
+1. **The Stage 1 guidance aside is never a turn of its own.** It opens the turn of the next question: the Stage 2 design question in guided flow, the name and scope question in expert flow, the Stage 3 entity list when Stage 2 skips its question. A turn that asked nothing left the user with nothing to answer.
+2. **The pre-emit check also confirms the turn ends with an ask**: a turn that names a coming question, decision or step contains it. Scan tokens: "next I", "then I", "before we continue", "one decision", "I'll now", "let me know once". The close-out line is the one turn that needs none.
+3. **A "you didn't ask" report is answered with the question**, never with an explanation of why the turn was shaped that way (Narration restraint).
+
+---
+
+## Deploy question after the design is expert-only
+
+2026-10-16.
+
+1. **Guided flow close-out** is *"Wrote `<path>`."* with no deploy question or invitation; under the admin the run goes straight on to the analyst.
+2. **Expert flow close-out** is *"Wrote `<path>`. Deploy it now?"*. Under the admin a yes moves on to the analyst, a no ends the run after the design.
+
+---
+
+## Stage 7 handoffs confirmation is expert-only
+
+2026-10-16.
+
+1. **Guided and fast flow send nothing for Stage 7:** no lead-in line, no proposal, no question. The handoffs are drafted, accepted as drafted, and written to §6 in Stage 13.
+2. **A handoff to a state the source lifecycle lacks** is asked about in expert flow only; guided and fast flow drop it.
+3. **Stage 7 is in the skipped-question tables** (SKILL.md and interaction-flow.md section 3).
+
+---
+
 ## checker: every enum entry gets a label and a color; `label` is a §5 property
 
 2026-10-16. Paired with the analyst entry of the same name.

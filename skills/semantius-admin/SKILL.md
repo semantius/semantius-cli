@@ -282,7 +282,7 @@ Given the request type from Step 0 and the workspace state from Step 1/2, decide
 
 | Request type | Workspace state | Plan |
 |---|---|---|
-| End-to-end build | Empty workspace | `architect (Create-Greenfield)` → analyst → modeler. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask): the architect's interactive Create pass IS the design, and `deploy` is implied by the build request. The created blueprint becomes Step 6's item; the modeler's own pre-write yes/no is the single gate (in a fast run, the go-ahead in the design step). See "Greenfield and clone builds skip scope flags" below and Pattern 4. |
+| End-to-end build | Empty workspace | `architect (Create-Greenfield)` → analyst → modeler. **No scope-flag questions fire** (no `customize`, no `review`, no `deploy` ask): the architect's interactive Create pass IS the design, and `deploy` is implied by the build request (in expert flow, only once the user answers yes to the architect's close-out "Deploy it now?"; a no ends the run after the design). The created blueprint becomes Step 6's item; the modeler's own pre-write yes/no is the single gate (in a fast run, the go-ahead in the design step). See "Greenfield and clone builds skip scope flags" below and Pattern 4. |
 | End-to-end build | Blueprint present, no spec | **First run Step 1.3 match check.** If the blueprint matches the request, the user's choice at 1.3 routes the run (deploy / audit / start-over). If 1.3 found no match (the workspace blueprint is unrelated), hand off to Step 6 with the workspace blueprint as the only item ONLY when the user's request is explicitly about that blueprint; otherwise treat as Empty workspace. **Never silently use a workspace blueprint the user didn't reference.** |
 | End-to-end build | Spec present | **First run Step 1.3 match check.** If the spec matches the request, the user's choice at 1.3 routes the run (deploy / audit / start-over). If 1.3 found no match (unrelated spec), treat as Empty workspace and run greenfield architect. **Never silently use a workspace spec the user didn't reference.** |
 | Clone-and-deploy | Empty workspace | `architect (Create-Catalog-Clone)` → analyst → modeler. Like greenfield, the architect creates the artifact, so **no scope-flag questions fire**; `deploy` is implied. The cloned blueprint becomes Step 6's item. |
@@ -306,17 +306,21 @@ Use the inference-then-ask procedure in Step 6.4 (intent table 6.4.1, exact word
 
 ### Interaction flow switch (no question)
 
-The interaction flow is a persisted switch, `.interaction_flow` in `$CUSTOMIZATIONS_FILE`: `guided` (default), `expert`, or `fast` (rules: [`references/interaction-flow.md`](./references/interaction-flow.md)). Handle it here, before any sub-skill starts:
+The interaction flow is a persisted switch, `.interaction_flow` in `$CUSTOMIZATIONS_FILE`: `guided`, `expert`, or `fast` (the default when nothing is saved; rules: [`references/interaction-flow.md`](./references/interaction-flow.md)). Handle it here, before any sub-skill starts:
 
 1. If the request says "expert flow", "guided flow", or "fast flow", write `.interaction_flow` (`expert` / `guided` / `fast`) with the usual provenance comment (`references/customizations-protocol.md` 7.5, step 4a) and narrate the one line from interaction-flow.md section 2.
 2. Otherwise, if `.interaction_flow` is `expert`, narrate once: *"Running in expert flow."*
-3. **Decide the flow for this run** and pass it to every sub-skill as `Interaction flow:` (Step 7.3): `fast` only for a new build (`Architect mode: create`) while the switch is `fast`; `guided` for any other run that starts from an existing design while the switch is `fast` (Rebuild excepted: it always runs in expert flow, so pass `expert` and narrate nothing), narrating once *"Fast flow covers new builds only; this run uses guided flow."*; otherwise the switch value.
+3. **Decide the flow for this run** and pass it to every sub-skill as `Interaction flow:` (Step 7.3):
+   - Rebuild: `expert`, whatever the switch says; narrate nothing.
+   - Switch `expert` or `guided`: the switch value.
+   - Switch `fast` or not set, new build (`Architect mode: create`): `fast`; but `guided` for this build only when the request asks to be guided (`references/interaction-flow.md`, section 2), narrating once *"Using guided flow for this one."* and writing nothing.
+   - Switch `fast` or not set, any other run (it starts from an existing design): `guided`; only when the switch is saved as `fast`, narrate once *"Fast flow covers new builds only; this run uses guided flow."*
 
 It is not a scope flag: no `Q:` task, no widget.
 
-### Fast flow (experimental)
+### Fast flow
 
-In a fast run, read [`references/fast-flow.md`](./references/fast-flow.md) now and again after a context reset. The design step ends with one go-ahead question; after a yes, no sub-skill asks anything until the modeler's closing sample-data question, because the user approved the whole build at once, every further stop breaks that promise, and the closing summary is their review. When the user answers the go-ahead, write the marker into your pipeline tasks' descriptions (`fast: go-ahead given` / `fast: guided flow for this build`; `references/fast-flow.md`, section 3). Before entering the analyst, and again before the modeler, read the marker in your pipeline task's description (`TaskGet`): `fast: go-ahead given` means pass `Interaction flow: fast`; `fast: guided flow for this build` (the user chose "Ask me as usual") means pass `guided`.
+In a fast run, read [`references/fast-flow.md`](./references/fast-flow.md) now and again after a context reset. The design step ends with one go-ahead question; after a yes, no sub-skill asks anything until the modeler's closing sample-data question, because the user approved the whole build at once, every further stop breaks that promise, and the closing summary is their review. When the user answers the go-ahead, write the marker into your pipeline tasks' descriptions (`fast: go-ahead given` / `fast: guided flow for this build`; `references/fast-flow.md`, section 3). Before entering the analyst, and again before the modeler, read the marker in your pipeline task's description (`TaskGet`): `fast: go-ahead given` means pass `Interaction flow: fast`; `fast: guided flow for this build` (the user chose "Ask me along the way") means pass `guided`.
 
 ### Presenting the plan
 
@@ -450,7 +454,7 @@ The full file goes to the sub-skill by path reference. Do not read the body into
 
 ### 6.4 Resolve scope flags (infer from intent first, then ask remaining)
 
-**Greenfield and clone items skip 6.4 entirely.** When the item is a blueprint this run's architect just created (a greenfield build or a catalog clone), scope flags do NOT apply: the Create pass was the interactive design, `deploy` is implied, and `customize` / `review` are N/A. Route such items straight to analyst → modeler (Step 6.5) without asking anything. Resolve scope flags ONLY for artifacts that pre-existed the run (a workspace file or a URL fetched in Step 2).
+**Greenfield and clone items skip 6.4 entirely.** When the item is a blueprint this run's architect just created (a greenfield build or a catalog clone), scope flags do NOT apply: the Create pass was the interactive design, `deploy` is implied, and `customize` / `review` are N/A. Route such items straight to analyst → modeler (Step 6.5) without asking anything. In expert flow the architect's close-out asks "Deploy it now?"; on a no the run ends after the design, the analyst and modeler tasks stay `pending`, and Step 8 closes out. Resolve scope flags ONLY for artifacts that pre-existed the run (a workspace file or a URL fetched in Step 2).
 
 **Ordering (hard rule) for pre-existing artifacts: scope flags are resolved BEFORE the pipeline tasks are created in 6.6.** For a single identified pre-existing artifact this already happened in Step 3 ("Resolve scope flags BEFORE presenting the plan"); re-read those resolved values here and validate they fit the item's artifact type (a blueprint takes `customize` + `deploy`; a spec takes `review` + `deploy`). For items first enumerated in Step 6.1 (multi-source / glob), resolve them here. These are routing / scope questions, NOT the deploy confirmation, so the "no up-front gate" rule does not suppress them: a bare "deploy this" leaves `customize` at `?` and MUST fire the customize `AskUserQuestion` before the plan and before any sub-skill is entered. The mechanical form of this rule: the flag questions are `Q:` ledger tasks, and 6.6 may not create a pipeline task while `TaskList` shows a `Q:` task pending or in progress.
 
@@ -519,7 +523,7 @@ The classification is lenient on `deploy` (favor inferring) and strict on `custo
 
 #### 6.4.2 Procedure
 
-0. **Greenfield / clone short-circuit.** If the item is a blueprint this run's architect created (greenfield build or catalog clone), STOP: scope flags are N/A, `deploy` is implied, route it straight to analyst → modeler. Do not run the steps below for it.
+0. **Greenfield / clone short-circuit.** If the item is a blueprint this run's architect created (greenfield build or catalog clone), STOP: scope flags are N/A, `deploy` is implied (in expert flow, by a yes to the architect's "Deploy it now?"), route it straight to analyst → modeler. Do not run the steps below for it.
 0a. **Blueprint without an access level.** For a blueprint item run `yq --front-matter=extract '.access_scope' <working copy>`; `null` → `customize = yes` (forced: no `Q:` task and no question, also after "deploy as is" or "just deploy"), then resolve only `deploy` below.
 1. Read the user's full request text (the message that triggered the run).
 2. For each item, pick the half of the table (blueprint or spec) matching the artifact, then walk it top-to-bottom; first match wins.

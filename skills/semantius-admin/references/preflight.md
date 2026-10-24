@@ -26,7 +26,7 @@ The modeler never consults the customizations file (specs already carry every de
 ## Output discipline
 
 - **Orchestrated by admin:** produce **no chat output** for these checks; the admin owns all narration and keeps the machinery invisible.
-- **Standalone:** keep it quiet too. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). A single brief line on the customizations file (check 4) is acceptable standalone. On all-pass with everything already installed and authenticated, say nothing.
+- **Standalone:** keep it quiet too. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). A single brief line on the customizations file (check 4) is shown standalone in expert flow only. On all-pass with everything already installed and authenticated, say nothing.
 
 ---
 
@@ -94,7 +94,7 @@ yq --version    # must report the mikefarah build, e.g. "yq (https://github.com/
 
 If `yq --version` shows anything else (the Python yq, or a version below v4), install Mike Farah's Go binary explicitly via the static-binary fallback above, place it on PATH ahead of the wrong one, and re-check. Do not proceed with a non-mikefarah yq.
 
-If any install fails, surface the verbatim error plus the tool's download page and stop. Do not limp on without a required tool — a missing `jq` silently breaks the org probe and the `adenin` guard in check 3, and a missing or wrong `yq` breaks every customizations write.
+If any install fails, surface the verbatim error, the exact host the install tried to reach, and the tool's download page, and stop. An HTTP 403 whose body says `egress denied: host not in whitelist` means the environment blocks that host and the user or their admin must allow it, not that the install is broken; say so. Never work around a blocked host: no mirror, proxy, other source or retry. Do not limp on without a required tool — a missing `jq` silently breaks the org probe and the `adenin` guard in check 3, and a missing or wrong `yq` breaks every customizations write.
 
 ---
 
@@ -143,6 +143,7 @@ If the probe fails (non-zero exit, or no `semantius_org` in the response), follo
 
 - **CLI not found** (`command not found` / `not recognized` / ENOENT): back to 3a.
 - **Exit `3`:** re-probe once. If it fails again, show the error verbatim and stop: *"The Semantius API isn't reachable right now. Please check connectivity and re-run."* It is not an auth failure; never touch credentials over it.
+- **The error says `egress denied`** (the environment's allow list blocks the Semantius host; the CLI reports this 403 as exit `5`): stop and say *"Your environment blocks `<host>`. Ask your admin to allow it, then run this again."* It is not a sign-in problem: never start a sign-in for it, and never retry or try another host.
 - **`MISSING_ENV_VAR` or exit `5`:** sign the user in with `semantius use <host>` as cli-usage § "Signing the user in" describes: in the background, relaying the link, with `--login-flow device` when the user is not at this machine's screen. Ask for the host unless `whoami` shows it as `current`: *"Which Semantius host should I connect to? (for example `acme.semantius.app`) No instance yet? Sign up at https://app.semantius.com to get yours and the steps to connect."*. Then: *"Open <url> to sign in"* (device grant: *"Open <url> and enter the code <code>"*). Exception: an error naming `SEMANTIUS_API_KEY` or `SEMANTIUS_JWT` in a deliberate key or token setup (CI, a JWT-preauthenticated agent): show it and stop.
 - **Anything else**, including "required audience not found" (a server-side configuration problem): show the error verbatim and stop.
 

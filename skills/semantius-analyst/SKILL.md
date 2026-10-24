@@ -150,7 +150,7 @@ The environment checks are shared across all four Semantius skills and live in o
   When the `Run context:` block is present the admin already ran the preflight; export `CUSTOMIZATIONS_FILE` from the header's path and skip the checks.
 - **Standalone (no `Run context:` block):** run the shared preflight yourself. In brief: stay in the repo root; install the toolchain (Bun, jq, yq) if missing; probe `getCurrentUser` to install/authenticate the CLI and halt if the org is `adenin`; compute `CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"`. The full per-check procedure, install matrix, and exit handling are in the reference file.
 
-After preflight, narrate one short line on first invocation: *"Using customizations from `semantius/<org>/customizations.yaml`"* (if the file exists) or *"No customizations file yet; will create on first decision."* (if absent). The file is created lazily by the first widget answer.
+After preflight, in expert flow only (read the switch as "Expert flow" below describes), narrate one short line on first invocation: *"Using customizations from `semantius/<org>/customizations.yaml`"* (if the file exists) or *"No customizations file yet; will create on first decision."* (if absent). In guided and fast flow, say nothing about the file. The file is created lazily by the first widget answer.
 
 ---
 
@@ -237,7 +237,7 @@ Default to Reconcile unless the user references an existing spec. The rest of th
 
 ---
 
-## Fast flow (experimental)
+## Fast flow
 
 - **When:** a run is a fast run for the analyst only when the run context carries `Interaction flow: fast`, or the admin pipeline task's marker (`TaskGet`) says `fast: go-ahead given` (`fast: guided flow for this build` means guided flow). A saved `fast` in `$CUSTOMIZATIONS_FILE` on its own counts as guided flow, and so does a direct call. Check at Step 0 and after a context reset; in a fast run, read [`../semantius-admin/references/fast-flow.md`](../semantius-admin/references/fast-flow.md) at Step 0 and again after a context reset.
 - **The turn rule** (fast-flow.md 4.1): no `AskUserQuestion`, no message ending in a question, no rendered plan or proposal. Each question point takes the pick its "Fast flow, after the go-ahead" line names and logs one line (fast-flow.md section 5).
@@ -399,7 +399,7 @@ Before writing the file, run these checks. ANY failure halts save and prints a s
 | **JsonLogic permission references resolve** — every `require_permission(<code>)` and every `has_permission(<code>)` argument in JsonLogic resolves to a permission row in §8.1 OR a known platform-level permission | unbound permission code list |
 | **JsonLogic enum-value references resolve** — every literal value compared against an enum-typed field in JsonLogic exists in that field's `enum_values` as a **value**, never a label (after any Stage 3f.2 merge) | unknown enum literals list |
 | **Enum entries well-formed** — every §5 bullet and hint sub-bullet follows the §5 grammar in `semantic-spec-template.md`; every entry carries a label and a color, and labels and hints follow `stage-4-fields.md` ("Enum values, labels and hints"); each Notes `enum_values:` set equals its §5 values; every `default:` is a value, never a label (enforced by `consistency-check.ts`) | enum list (entity, field, issue) |
-| **Icons exist** — every §5 `icon` and the frontmatter `icon_name` pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>` (a URL always passes) | unknown icon list |
+| **Icons exist** — every §5 `icon` and the frontmatter `icon_name` pass `bun "<skill-folder>/../use-semantius/references/lucide-icon-checker.ts" <name…>` (a URL always passes) | unknown icon list |
 | **Label column is text** — the §3 row named by `**Label column:**` (and marked `` `label_column` ``) has Format `string`, never `enum`, `multiline`, a FK or any other format: the platform creates it as text and locks its format (`90219`) (enforced by `consistency-check.ts`) | label list (entity, field, format) |
 | **JsonLogic rename cascade complete** — for every rename recorded in Stage 3f.1 / 3f.3, grep the assembled spec text for the old token; the count must be zero | partial rename list (token, line numbers where stale references remain) |
 | **No enum value would orphan live records** — for every adopted entity, no **value** (compared by value; a label change orphans nothing) in `live_distinct_enum_values_in_use` is missing from the spec's final `enum_values` for that field UNLESS a §7.1 🔴 blocker documents the required pre-deploy data migration | enum drop list (entity, field, dropped value, live record count) |
@@ -436,7 +436,7 @@ One line; no "next step" hint in admin-orchestrated mode (the admin narrates whe
 
 **Stand-alone** (no handoff header):
 
-> *Done. Wrote the design to `semantius/specs/<slug>-semantic-spec.md` (<plain-English summary>). Ask me to deploy it whenever you're ready, or run `/semantius:deploy`.*
+> *Done. Wrote the design to `semantius/specs/<slug>-semantic-spec.md` (<plain-English summary>). When you're ready, ask me to deploy it.*
 
 **Never** emit raw `reconciliation_summary: {...}` curly-brace data, "Tell the admin to invoke the modeler," or any skill-name references. Use the plain-English translation table from §3g (create-new → "new", promote-to-master → "adopted from <module>", reuse-from → "reusing existing from <module>", dropped → "skipped", reuse-from semantius_builtin.* → "reusing platform built-in").
 

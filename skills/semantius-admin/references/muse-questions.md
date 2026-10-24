@@ -18,31 +18,39 @@ and plain chat text. Handle every question a skill routes through
 
 ## Multi-select (multiSelect: true)
 
-- Never put a multi-select question in the tap picker, and never ask for
-  the picks as one free-text list. Both have already failed in practice:
-  the picker records only the first tap, and a text list has no state and
-  no point where the answer is complete.
-- Split the question into one single-select question per option, asked
-  in sequence, in the order listed:
-  1. One intro message lists every option with its description, and says
-     you will ask about each one in turn.
-  2. For each option, ask "Include <Label>? (<i> of <N>)" in chat text
-     with its description, plus a tap picker with exactly two options:
-     "Include <Label>" and "Skip <Label>". One question per turn; wait
-     for the tap or typed reply before asking about the next option.
-  3. Record each verdict as its answer arrives, before moving on. A tap
-     you have not recorded is a pick you may lose.
-- When every option has an answer, open your next message with the full
-  result in one line ("Picked: X, Y. Not picked: Z."), then apply the
-  skill's own recording rules (for example included / excluded verdicts)
-  and continue to the next stage.
-- If the user volunteers several picks in one typed message anyway,
-  accept them, treat every unmentioned option as still unasked, and ask
-  about the remaining ones individually as above.
-- Do not substitute an HTML checkbox widget for this sequence. Its saved
-  state has no submit event that reaches chat, so it is a draft, not an
-  answer. Build one only when the user asks for one, and even then the
-  answers that count are the per-option taps or typed replies in chat.
+- Never put a multi-select question in the tap picker. A tap sends one
+  reply immediately, so the picker records only the first pick and loses
+  the rest.
+- Never split a multi-select question into one single-select question
+  per option, asked in sequence. That is slow, takes one turn per option,
+  and makes the user answer the same question N times.
+- Do not use an HTML checkbox widget for a multi-select question.
+  It has no submit event that reaches chat, so ticking boxes in it
+  never completes the question.
+- Present the whole question in one message:
+  1. The question, in chat text.
+  2. Every option on its own line, lettered in order, A, B, C, D and so
+     on, with its label plus its one-line description. Say each thing
+     once in that list: strip any per-option tail the source question
+     appends to every description (for example "Skip if you don't track
+     this." or "Skip if you don't need this."); one instruction at the
+     end covers all of them.
+  3. One closing instruction, for example: "Type the letters or names
+     you want, for example 'A, C', or 'all', or 'none'."
+- The user's typed reply is the complete answer, and sending it is the
+  point where the answer is complete. Letters, labels, or a mix of both
+  all count. "all" picks every option, "none" picks none.
+- Options the reply does not name are not picked. Do not treat them as
+  still unasked, and do not ask about them again one by one.
+- When the answer arrives, open your next message with the full result
+  in one line ("Picked: X, Y. Not picked: Z."), record every verdict
+  (picked and not picked) before moving on, then apply the skill's own
+  recording rules (for example included / excluded verdicts) and
+  continue to the next stage.
+- If a reply is ambiguous (a letter or name that matches no option, or
+  wording that could pick two different sets), ask one clarifying
+  question that lists only the ambiguous items, in the same lettered
+  form. Do not restart the whole question.
 
 ## Always
 

@@ -158,7 +158,7 @@ The modeler does NOT drive `AskUserQuestion` widgets for cross-module collisions
 
 **The only confirmation the modeler asks** (in guided and expert flow) is the final pre-execute yes/no after the plan summary:
 
-> *"Plan shown above. Proceed with execution?"*
+> *"Plan shown above. Proceed with deployment?"*
 
 > **Fast flow, after the go-ahead:** don't render the plan; the go-ahead was this confirmation. Proceed to Stage 4 and log one line, "Deploy plan applied as prepared", with `log_pick modeler`; don't ask.
 

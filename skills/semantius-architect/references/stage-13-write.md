@@ -30,7 +30,7 @@ The presence or absence of `naming_mode` is the canonical signal for downstream 
 
 - `artifact: semantic-blueprint` (fixed)
 - `version: "3.1"` (the file format version)
-- `system_name`, `system_slug` (lowercase kebab-case, e.g. `it-ops-starter`; the file name is exactly `<system_slug>-semantic-blueprint.md`), `icon_name` (a Lucide icon name in kebab-case (e.g. `briefcase`, `users`, `circle-help`) or an icon URL; find a name with `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" find <word…>`, and the picked name must pass `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name>` before the blueprint is written; `use-semantius/references/data-modeling.md` → "Icons are Lucide icons")
+- `system_name`, `system_slug` (lowercase kebab-case, e.g. `it-ops-starter`; the file name is exactly `<system_slug>-semantic-blueprint.md`), `icon_name` (a Lucide icon name in kebab-case (e.g. `briefcase`, `users`, `circle-question-mark`) or an icon URL; find a name with one run of `bun "<skill-folder>/../use-semantius/references/lucide-icon-finder.ts" <query…>`, up to five queries most specific first, taking the first fitting icon or `box` when none fits, and the picked name must pass `bun "<skill-folder>/../use-semantius/references/lucide-icon-checker.ts" <name>` before the blueprint is written; `use-semantius/references/data-modeling.md` → "Icons are Lucide icons")
 - `tagline` (one-line marketing-voice line; also feeds `modules.description`)
 - `description` (longer marketing-voice prose for the catalog page; YAML literal block fine)
 - `license` (catalog metadata; e.g. `MIT`)
@@ -55,10 +55,10 @@ Concrete table of empty-when-trimmed sections (always kept; placeholder when emp
 |---|---|---|
 | §4 Aliases | Keep; `_(none: …)_` placeholder unless the user supplied vendor / industry aliases | Inherit; trim rows the user dropped; keep the heading with `_(none: …)_` if empty after trim |
 | §5.3 Cross-scope edges | Keep; `_(none: …)_` placeholder (no cross-scope edges to declare) | Inherit; trim; keep the heading with `_(none: …)_` if empty after trim |
-| §6.1 Master consumers | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
-| §6.2 Outbound handoffs | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
-| §6.3 Inbound handoffs | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
-| §6.4 Master providers | Keep; the rows the user accepted in the Stage 7 confirmation, else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.1 Master consumers | Keep; the rows accepted in Stage 7 (confirmed in expert flow, as drafted in guided and fast flow), else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.2 Outbound handoffs | Keep; the rows accepted in Stage 7 (confirmed in expert flow, as drafted in guided and fast flow), else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.3 Inbound handoffs | Keep; the rows accepted in Stage 7 (confirmed in expert flow, as drafted in guided and fast flow), else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
+| §6.4 Master providers | Keep; the rows accepted in Stage 7 (confirmed in expert flow, as drafted in guided and fast flow), else `_(none: …)_` | Inherit; trim; keep with `_(none: …)_` if empty |
 | §6 parent heading | Keep; the four sub-blocks each carry `_(none: …)_` when empty | Keep; sub-blocks carry `_(none: …)_` when empty |
 
 **Always-present sections** (structural anchors; require real content — empty is a 🔴 blocker, not a placeholder case): §1 Overview, §2 Entity summary + Mermaid, §3 Entities catalog, §5.1 Intra-scope edges, §7 Lifecycle states (per master), §8.1 Permissions. §5.2 Built-in edges and §8.2 Business rules are **also always present** but keep-with-placeholder: write `_(none: <short reason>)_` when §5.2 has no built-in `users` / `roles` edges or §8.2 has no flag-derived rules.

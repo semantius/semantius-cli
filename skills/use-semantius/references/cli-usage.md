@@ -479,8 +479,8 @@ fi
 if command -v jq >/dev/null 2>&1; then
     ID=$(echo "$response" | jq -r '.[0].id')
 else
-    # Python fallback (works on most systems)
-    ID=$(echo "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)[0].get('id',''))")
+    # Bun fallback (works on every platform, Windows included)
+    ID=$(echo "$response" | bun -e 'const r = await Bun.stdin.json(); console.log(r[0]?.id ?? "")')
 fi
 ```
 

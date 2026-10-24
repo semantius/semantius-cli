@@ -2,7 +2,7 @@
 
 ### Stage 2: Offer a legacy vendor's design vs the modern design
 
-**The choice is never saved.** The starting design belongs to one blueprint and lives only in its `naming_mode`; nothing is read from or written to `$CUSTOMIZATIONS_FILE` (a `.naming.mode` key there is ignored). A new blueprint asks the question below in guided and expert flow; a fast run takes modern names; Customize, Extend and Audit keep the blueprint's own `naming_mode`; Rebuild re-asks it with the prior value as the default (`modes-audit-extend-rebuild.md`).
+**The choice is never saved.** The starting design belongs to one blueprint and lives only in its `naming_mode`; nothing is read from or written to `$CUSTOMIZATIONS_FILE` (a `.naming.mode` key there is ignored). A new blueprint asks the question below in every flow (fast flow: see the Fast flow note below); Customize, Extend and Audit keep the blueprint's own `naming_mode`; Rebuild re-asks it with the prior value as the default (`modes-audit-extend-rebuild.md`).
 
 **Tool-call description discipline.** The Bash tool's `description` field is user-facing prose (the harness renders it as "Ran <description>" above the tool call). Don't leak internal vocabulary like `naming_mode`, `customizations.yaml`, or `yq insert at .naming` there. Use neutral, plain-English descriptions: *"Saving your choice"* on a write, *"Checking earlier choices"* on a read. Same rule for any other Bash call you fire (frontmatter peeks, file checks): the description is user-facing, hold it to Convention 8.
 
@@ -10,9 +10,15 @@ When the domain is a well-known SaaS category, there is almost always a handful 
 
 Draw on your general knowledge of the market to identify **the top 3 cloud platforms** for the domain, ordered by how widely adopted they are among the kind of organization the user seems to be (check Stage 1 for cues about size, sector, budget). Reuse Stage 1's product list; a product the user named in the Stage 1 interview as the thing this replaces ranks first. **In expert flow**, only products that passed Stage 1's four-object test qualify: don't invent vendors you're unsure about, and if only 2 pass, list 2. For each vendor, know three of its headline entity names, use the vendor's own casing (e.g., Salesforce `Account`/`Opportunity`/`Case`, Zendesk `Ticket`/`User`/`Organization`, ServiceNow `Incident`/`Problem`/`Change`, Workday `Worker`/`Position`, Jira `Issue`/`Project`, HubSpot `Contact`/`Company`/`Deal`, Trello `Board`/`List`/`Card`, Notion `Page`/`Database`/`Block`), and how its core records link (e.g., Lever's opportunity is one candidate's run through the pipeline and can start before any posting). These go **inside the option descriptions** in the AskUserQuestion call below, do not list them in prose first.
 
-> **Fast flow** (a fast run, before the go-ahead; `../../semantius-admin/references/fast-flow.md`, section 3). Always modern, self-describing names (`naming_mode: agent-optimized`), even with a Stage 1 baseline: no widget, no question, nothing saved. Skip the rest of this section up to "Naming rules by choice".
+> **Fast flow** (a fast run, before the go-ahead; `../../semantius-admin/references/fast-flow.md`, section 3). Ask this question as below, and map the answer as below: a followed product brings its records and names, as in guided flow. Four differences:
+> 1. **Left out when the request names a product:** follow that product (`naming_mode: template:<product>`) without asking. With no meaningful incumbents it is left out too (last paragraph of this section), without the one-sentence reason.
+> 2. **Fired in the same `AskUserQuestion` call as Stage 1's "Must-haves" question**, design question first, not alone.
+> 3. **The modern option's description** cannot point to "the practices listed above", because fast flow shows no guidance aside before it: `"Built on current best practice, with names that explain themselves: {entity_1}, {entity_2}, {entity_3}. {structure}. {practice}."`, where `{practice}` is one sentence with the one or two Stage 1 best-practice points that most set it apart from the vendors' designs.
+> 4. **After the answer,** no bold opening sentence of its own: the go-ahead summary names the design (`fast-flow.md`, section 3).
+>
+> A typed answer runs the typed-answer step below, as in guided flow.
 
-**You MUST use the AskUserQuestion tool here** (guided and expert flow, new blueprints only). It is a standalone question (no `Q:` task); fire it alone in its own response. The answer goes only into this blueprint's `naming_mode`, never into `$CUSTOMIZATIONS_FILE`. Do not enumerate the vendors or describe the choices in prose before calling the tool, the option descriptions carry all the information the user needs. The only prose preceding the tool call should be one short framing sentence (e.g. *"{Domain} is a well-established category, here's the choice that shapes the design for the rest of this session."*).
+**You MUST use the AskUserQuestion tool here** (new blueprints only). It is a standalone question (no `Q:` task); fire it alone in its own response. The answer goes only into this blueprint's `naming_mode`, never into `$CUSTOMIZATIONS_FILE`. Do not enumerate the vendors or describe the choices in prose before calling the tool, the option descriptions carry all the information the user needs. The only prose preceding the tool call should be the Stage 1 guidance aside, when this turn carries it (guided flow; `stage-1-capture.md`), then one short framing sentence (e.g. *"{Domain} is a well-established category, here's the choice that shapes the design for the rest of this session."*).
 
 Construct exactly one question with **2 to 4 options**: the modern design first (the recommended default), followed by the named vendors, **at most 3** (so 4 options with 3 vendors, 3 with 2, 2 with 1; never a 5th). The runtime adds its own free-text slot; the question text says what it is for: another product to follow, or a structure of the user's own. Never list "Other" yourself. With zero confident vendors, skip the widget entirely (last paragraph of this section).
 
@@ -29,7 +35,7 @@ Use this exact structure, dropping the vendor rows you do not have (the option c
 
 `{structure}` is one short sentence on how the core records link, in plain words (Convention 8). The modern sample is the design Stage 3 will propose, built on the Stage 1 best-practice points; each vendor sample is that vendor's own model. For an applicant tracker: modern *"Each application links one candidate to one job opening."*; Lever *"An opportunity is one candidate's run through the pipeline and can start before any posting."*
 
-The example entity names inside the descriptions must be in **lowercase plural snake_case**, not the vendor's UI casing, because that's the actual `table_name` form the user will end up with (per the naming rules table below). E.g. Zylo → `applications, subscriptions, contracts` (not `Application, Subscription, Contract`); Salesforce CRM → `accounts, opportunities, cases` (not `Account, Opportunity, Case`). This keeps the comparison apples-to-apples with the modern example.
+The example entity names inside the descriptions must be in **lowercase plural snake_case**, not the vendor's UI casing, because that's the actual `table_name` form the user will end up with (per the naming rules table below; convert a vendor's names with `vendor-names.ts`, below the table). E.g. Zylo → `applications, subscriptions, contracts` (not `Application, Subscription, Contract`); Salesforce CRM → `accounts, opportunities, cases` (not `Account, Opportunity, Case`). This keeps the comparison apples-to-apples with the modern example.
 
 The "(Recommended)" suffix on the modern design is intentional, it's the better default for new builds.
 
@@ -52,16 +58,22 @@ Then map the choice to a `naming_mode` value for the rest of the session (this v
 - Typed, a structure of the user's own or a product's structure under modern names, confirmed → `naming_mode: agent-optimized`; Stage 3 starts from the confirmed records instead of first principles.
 - Anything else (e.g. "blend Salesforce and HubSpot") → settle it in the details step, then commit to one `naming_mode` value before continuing.
 
-If the domain has no meaningful SaaS incumbents (e.g., a niche internal tool; in expert flow, also when no product passed Stage 1's four-object test), skip AskUserQuestion entirely and go straight to the modern design; tell the user in one sentence why.
+If the domain has no meaningful SaaS incumbents (e.g., a niche internal tool; in expert flow, also when no product passed Stage 1's four-object test), skip AskUserQuestion entirely and go straight to the modern design; tell the user in one sentence why, in the same turn as the Stage 3 entity list (with the Stage 1 guidance aside before it, when this turn carries it).
 
 **Naming rules by choice:**
 
 | Choice | Entity naming | Field naming |
 |--------|---------------|--------------|
-| Template vendor | Adopt the vendor's canonical entity names exactly, lowercased to snake_case for `table_name`. E.g. Salesforce helpdesk → `case`, Zendesk → `ticket`, ServiceNow → `incident`. Keep the human-readable Singular/Plural labels in the vendor's own casing (`Case`, `Cases`). Use the vendor's canonical field names, snake_cased (`AccountName` → `account_name`, `CloseDate` → `close_date`). | Same snake_case rule. If the vendor has no name for a field the system needs, add it with an agent-optimized name and mark it as a non-vendor extension in the Notes column. |
+| Template vendor | The vendor's canonical entity names, converted by `vendor-names.ts` (below): its `table_name` and Singular/Plural labels, as printed. E.g. Salesforce helpdesk `Case` → `cases` (Case, Cases), Zendesk `Ticket` → `tickets`, ServiceNow `Incident` → `incidents`. The vendor's own name goes in the §3 notes cell (`<Vendor> object: <Name>`, Stage 3). | The vendor's canonical field names, converted by the same script (`FirstName` → `first_name`). The analyst drafts the fields (`semantius-analyst`, `stage-4-fields.md`, "Fields of a followed product"). |
 | Agent-optimized | Self-describing, singular nouns, verbose over cryptic (`support_request` beats `ticket`, `sales_opportunity` beats `opp`). | Snake_case, descriptive, no abbreviations (`customer_email_address` beats `cust_email`). Include the noun the field describes (`invoice_total_amount` beats `total`). |
 
 In either mode, `table_name` in the model is always **plural** snake_case (e.g., `campaigns`, `leads`, `campaign_members`, never singular). This is a hard Semantius platform requirement.
+
+**Converting a product's names: always `vendor-names.ts`, never by hand.** Run `bun "<skill-folder>/../use-semantius/references/vendor-names.ts" entity:<Name>…` once, with every record name singular and spelled the way the product spells it (`entity:OpportunityLineItem entity:SLAPolicy`), and take each `table_name` and label exactly as printed. Why: the same name must convert the same way in every run, and acronyms and plurals are where hand conversion drifts. The script treats a run of capitals as one word (`SLAPolicy` → `sla_policies`), keeps a name already in lowercase as written, and makes only the last word plural. Its result lines:
+- `skip:` a custom record one company added (Salesforce `Invoice__c`), not part of the product: leave it out.
+- `built-in: <table>`: the name lands on a platform built-in; apply the next paragraph.
+
+The script settles the spelling only. Which records the product has, and their names, is your knowledge of the product.
 
 A vendor object whose name collides with a platform built-in (users, roles, permissions) gets a self-describing name, recorded in §4 Aliases as a vendor alias and called out in the entity table (e.g. Productboard's "User", the customer's contact person, becomes `customers`).
 

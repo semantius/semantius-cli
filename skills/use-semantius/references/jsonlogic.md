@@ -20,7 +20,7 @@ Every entity carries two optional JSON-array properties that let the platform de
 | `computed_fields` | `array` | `[]` | Ordered list of fields whose values are derived from the same record via JsonLogic. |
 | `validation_rules` | `array` | `[]` | Ordered list of record-level invariants that must hold for a write to succeed. |
 
-Both are first-class entity properties: read with `read_entity`, set on `create_entity`, replaced on `update_entity`. The platform compiles them into `BEFORE INSERT / UPDATE` triggers; when both arrays are empty (or the entity is deleted) the trigger is dropped.
+Both are first-class entity properties: read with `read_entity`, set on `create_entity`, replaced on `update_entity`. The platform compiles them into `BEFORE INSERT OR UPDATE OR DELETE` triggers, so a rule can refuse a delete as well as an insert or update; when both arrays are empty (or the entity is deleted) the trigger is dropped.
 
 #### `computed_fields` element shape
 
@@ -57,8 +57,11 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 #### Evaluation semantics (per write)
 
 1. **Compute pass.** Iterate `computed_fields` in array order. For each entry, evaluate `jsonlogic` against the merged record (caller payload + previously-computed values), then write the result into `name`. If the expression throws, the platform surfaces a structured error naming the offending entry's `name` plus the inner error. Caller-supplied values for a computed field are silently overwritten.
-2. **Validate pass.** Iterate `validation_rules` in array order against the post-compute record. A rule passes when the result is truthy. The platform collects *all* failing rules (no short-circuit) and rejects the write with `{ "errors": [ { "code": "...", "message": "..." }, ... ] }`. If `jsonlogic` throws on a rule, the error names the rule's `code` plus the inner error.
+2. **Validate pass.** Iterate `validation_rules` in array order against the post-compute record. A rule passes when the result is truthy. The first rule that fails stops the write; the rules after it are not evaluated. A falsy rule raises its own `code` as the SQLSTATE, with its `message` as the error text. If `jsonlogic` throws instead (`throw_error`, `require_permission`), the caller gets that error's own SQLSTATE and message. Except for platform `90xxx` errors, the error's hint also names the entity (`hint.entity`) and the rule's code (`hint.rule`).
 3. **Atomicity.** Compute and validate run inside the same transaction as the write — either the record lands with all derivations applied and all rules passing, or nothing changes.
+4. **DELETE.** Both passes run against the row being deleted: the record and `$old` are the same row, so `value_changed` is `false` for every field. Computed results are discarded, but a failing rule or a throwing computed field aborts the delete. Every rule therefore also runs on delete unless it is guarded with `$mode` (below): a rule that reads `$today`, `$now` or `$user_id` ("the due date must be in the future") can refuse the delete of an old row.
+
+During an UPDATE, rules run before `updated_at` is refreshed, so `updated_at` still holds the stored value unless the caller sent one.
 
 #### Reserved variables
 
@@ -68,12 +71,21 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 |---|---|---|
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
-| `$user_id` | `uuid` | Authenticated user performing the write (`null` for system writes). |
-| `$old` | `object` or `null` | Previous row as JSON on UPDATE; `null` on INSERT. Use to express transition rules ("the workflow state cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
+| `$user_id` | `integer` | The `users.id` of the authenticated user performing the write (`null` for system writes). |
+| `$old` | `object` or `null` | Stored row as JSON on UPDATE and DELETE; `null` on INSERT. Use to express transition rules ("the workflow state cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
+| `$mode` | `string` | The operation being evaluated: `"insert"`, `"update"` or `"delete"`. Always present. Use it to gate one operation without constraining the others. |
 
 `$old` is the only window into prior state; everything else outside the post-write record (cross-row lookups, aggregates, FK traversal) is out of scope and belongs in cube/views.
 
-**Detecting INSERT vs UPDATE:** `$old` is `null` on INSERT, an object on UPDATE. A rule that should fire only on UPDATE wraps its body in `{"if": [{"!=": [{"var": "$old"}, null]}, <update-only-check>, true]}` so the INSERT path passes trivially. Conversely, transition rules that compare current vs prior values (e.g. `{"var": "release_status"}` against `{"var": "$old.release_status"}`) read `null` from `$old.<field>` on INSERT and naturally pass — no extra guard needed unless the INSERT path needs distinct handling.
+**Detecting the operation.** Test `$mode`; it is the only variable that tells all three operations apart:
+
+| Operation | `$mode` | `$old` | Record under evaluation |
+|---|---|---|---|
+| INSERT | `"insert"` | `null` | the incoming row |
+| UPDATE | `"update"` | the stored row | the stored row merged with the changes |
+| DELETE | `"delete"` | the stored row | the stored row, identical to `$old` |
+
+A rule that should fire only on UPDATE wraps its body in `{"if": [{"==": [{"var": "$mode"}, "update"]}, <update-only-check>, true]}`. Testing `$old != null` instead matches DELETE too, and "nothing changed" is no delete test either, because a no-op save matches it. Transition rules that compare current vs prior values (e.g. `{"var": "release_status"}` against `{"var": "$old.release_status"}`) read `null` from `$old.<field>` on INSERT and naturally pass, and see equal values on DELETE; no extra guard is needed unless one of those paths needs distinct handling.
 
 **Example transition rule** (a release that's reached `released` cannot regress):
 
@@ -92,7 +104,26 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 }
 ```
 
-The rule passes on INSERT (no prior row), passes when the prior status was anything but `released`, and on UPDATE from `released` only passes when the new status is still `released`.
+The rule passes on INSERT (no prior row), passes when the prior status was anything but `released`, and on UPDATE from `released` only passes when the new status is still `released`. A DELETE passes because the status is unchanged.
+
+**Example — delete-only gate.** An entity has only `view_permission` and `edit_permission`, and `edit_permission` gates INSERT, UPDATE and DELETE alike; there is no delete permission column, and `select_rule` applies the same predicate to UPDATE and DELETE (see `select-rule.md`), so neither can separate a delete from an update. To restrict deletes alone, create a permission, grant it only to the roles that may delete, and check it under `$mode`:
+
+```json
+{
+  "code": "99003",
+  "name": "delete_requires_delete_permission",
+  "message": "Only an order manager can delete an order.",
+  "jsonlogic": {
+    "if": [
+      { "==": [{ "var": "$mode" }, "delete"] },
+      { "has_permission": "sales:delete_orders" },
+      true
+    ]
+  }
+}
+```
+
+Inserts and updates pass untouched; a delete passes only for holders of `sales:delete_orders`, and anyone else gets the rule's `code` and `message`. For "the owner or a permission holder", replace the `has_permission` branch with `{"or": [{"==": [{"var": "$old.owner_user_id"}, {"var": "$user_id"}]}, {"has_permission": "sales:delete_orders"}]}`.
 
 #### Platform-extension operators
 
@@ -101,12 +132,12 @@ In addition to standard JsonLogic operators, the platform provides three extensi
 | Operator | Shape | Returns | Use in |
 |---|---|---|---|
 | `{"value_changed": "<field>"}` | unary, takes a field name string | boolean — `true` when the field's value differs from `$old.<field>` (always `true` on INSERT) | `validation_rules`, `computed_fields`. Scope a rule to the moment a specific column changes (e.g. an approval gate fires only on the transition into `approved`, not on every subsequent edit). |
-| `{"require_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — returns `true` when the caller holds the permission, **throws** otherwise (surfacing the throw as a validation failure with the rule's `code` / `message`) | `validation_rules`. Use only inside `if` so the throw is conditional, not unconditional. Wrong shape for `select_rule` (a per-row throw during SELECT would be a disaster) — use `has_permission` there instead. |
+| `{"require_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — returns `true` when the caller holds the permission, **throws** otherwise. The throw is the platform's permission error, not the rule's: SQLSTATE `42501` (HTTP 403), message `Permission denied: ${permission} required`, with `hint.code` `90101` and the permission name in `hint.permission` (plus `hint.entity` and `hint.rule`). The `${permission}` placeholder is a template the client fills from the hint; the server never interpolates it. The rule's own `code` and `message` are not used | `validation_rules`. Use only inside `if` so the throw is conditional, not unconditional. Wrong shape for `select_rule` (a per-row throw during SELECT would be a disaster) — use `has_permission` there instead. |
 | `{"has_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — `true` when the caller holds the permission, `false` otherwise (never throws) | `select_rule` (see `select-rule.md`; primary use — added specifically so `select_rule` can broaden visibility for elevated roles without throwing per row), `input_type_rule`, and `validation_rules` (when a non-throwing check is preferable, e.g. composing with `or` to allow the permission *or* an ownership match). |
 
-**Choosing between `require_permission` and `has_permission` in `validation_rules`.** Both work on the write side. `require_permission` throws on miss, surfacing the rule's `message` to the caller — the right shape when the permission is a hard requirement and the failure message *is* the explanation ("Only an approver can move an offer to `approved`"). `has_permission` returns boolean — the right shape when the permission is one branch of a wider predicate ("the caller is the owner *or* holds the override permission"), because `or([owner_match, require_permission(...)])` would throw on every non-owner, defeating the disjunction; `or([owner_match, has_permission(...)])` correctly returns truthy whenever either branch matches.
+**Choosing between `require_permission` and `has_permission` in `validation_rules`.** Both work on the write side. `require_permission` throws on miss with the platform's generic permission error (above), so the caller learns which permission is missing but never sees the rule's `message`. `has_permission` returns boolean, so a rule that returns it from the gated branch fails with its own `code` and `message`: the right shape whenever the failure text should explain the business rule ("Only an approver can move an offer to `approved`"). `has_permission` is also the right shape when the permission is one branch of a wider predicate ("the caller is the owner *or* holds the override permission"), because `or([owner_match, require_permission(...)])` throws `42501` for a non-owner without the permission, so the rule's own `code` and `message` never surface; `or([owner_match, has_permission(...)])` returns truthy whenever either branch matches and otherwise fails with the rule's own `code` and `message`.
 
-**Example — conditional approval gate (uses `value_changed` + `require_permission`):**
+**Example — conditional approval gate (uses `value_changed` + `has_permission`):**
 
 ```json
 {
@@ -119,12 +150,14 @@ In addition to standard JsonLogic operators, the platform provides three extensi
         { "value_changed": "workflow_state" },
         { "==": [{ "var": "workflow_state" }, "approved"] }
       ]},
-      { "require_permission": "ats:approve_offer" },
+      { "has_permission": "ats:approve_offer" },
       true
     ]
   }
 }
 ```
+
+A caller without `ats:approve_offer` gets `99001` and the rule's message. With `require_permission` in the same place the gate holds just as well, but the caller gets `42501` `Permission denied: ${permission} required` instead.
 
 **Example — owner-or-elevated edit scope (uses `has_permission`):**
 
@@ -185,7 +218,7 @@ Three JsonLogic operators bind values into the data context **before** the rest 
 |---|---|---|
 | `let` | `{"let": ["<name>", <value-expression>, <body-expression>]}` | Evaluates `<value-expression>`, binds it under `<name>` for the duration of `<body-expression>`, returns the body's result. Nest `let` calls to bind several names. Useful for naming a sub-expression you reference more than once. |
 | `set_record` | `{"set_record": ["<name>", "<entity_name>", <id-expression>, <body-expression>]}` | Resolves `<id-expression>` against the data context, calls `get_record_by_id(<entity_name>, <id>)`, binds the resulting row (JSONB object, or `null` when no row matches) under `<name>` for the duration of `<body-expression>`, returns the body's result. Inside the body, `{"var": "<name>.<column>"}` reads any column of the loaded row, exactly like `$old.<column>` for the post-write record. |
-| `throw_error` | `{"throw_error": "<message>"}` | Raises a PostgreSQL exception with SQLSTATE `23514` and the supplied message. The platform surfaces the message back to the caller verbatim, bypassing the rule's static `message` field. Place inside an `if` so the throw is conditional. |
+| `throw_error` | `{"throw_error": "<message>"}` | Raises a PostgreSQL exception with SQLSTATE `99000` and the supplied message. The platform surfaces the message back to the caller verbatim, bypassing the rule's static `message` field. Place inside an `if` so the throw is conditional. |
 
 `let` and `set_record` are evaluated before the bulk argument-evaluation pass inside `evaluate_json_logic`, so the body sees an augmented data context. The bindings disappear when the body returns.
 
@@ -200,9 +233,9 @@ Three JsonLogic operators bind values into the data context **before** the rest 
 
 **`throw_error` vs the rule's `message`.** A `validation_rules` entry that returns falsy is rejected with its `code` and `message` packaged into the standard error response. A `throw_error` raises a SQL exception immediately, so:
 
-- The caller receives the `throw_error` argument verbatim as the error text (Postgres `23514` `check_violation`).
+- The caller receives the `throw_error` argument verbatim as the error text, with SQLSTATE `99000` rather than the rule's `code`.
 - The rule's static `message` is moot when the throw fires — the throw wins.
-- Only one rule's throw surfaces (the platform's collect-all-failures pass stops at the first SQL exception). If you want every failing rule listed, prefer falsy-returns with rule-specific `message`s; reach for `throw_error` when one specific failure must surface a different, hand-tailored message than the rule's default (e.g. a multi-language string, a deep-link to the conflicting record, an actionable instruction).
+- Only one error surfaces either way: the write stops at the first failing rule. Reach for `throw_error` when one specific failure must surface a different, hand-tailored message than the rule's default (e.g. a multi-language string, a deep-link to the conflicting record, an actionable instruction).
 
 **When to reach for these vs leave them off.** The three operators add real expressiveness, but every `set_record` costs one extra `SELECT` per evaluation. Treat them as the right tool for:
 
@@ -341,7 +374,7 @@ That `null` flows through the expression's comparisons and arithmetic naturally 
 }
 ```
 
-A `throw_error` raises a SQL exception, which the platform surfaces back as a check-violation (SQLSTATE `23514`). The error body the caller sees is the message string verbatim, so the message is the user-facing error text — keep it short, actionable, and in the same language conventions as the rule's `message` field.
+A `throw_error` raises a SQL exception, which the platform surfaces back with SQLSTATE `99000`. The error body the caller sees is the message string verbatim, so the message is the user-facing error text — keep it short, actionable, and in the same language conventions as the rule's `message` field.
 
 #### Deploy-time guarantees
 
@@ -356,6 +389,21 @@ When `create_entity` / `update_entity` accepts these properties, the platform ve
 JsonLogic-level column references (`{"var": "<name>"}`) are NOT checked against the entity's field list at parse time when they live under a `set_record` / `let` binding — the binding name is known only at evaluation time. A typo in `{"var": "order.staus"}` (a missing `t`) returns `null` at runtime rather than failing the deploy. Test cross-entity rules end-to-end before relying on them; the platform catches grosser malformations (the operator name itself, the binding name shape) at parse time.
 
 Errors at evaluation time point at the offending entry's index so authoring agents can correct in place.
+
+#### Testing a rule
+
+Test a rule's logic before writing it to an entity with the `evaluate_json_logic` RPC. It runs the same engine and changes nothing:
+
+```bash
+semantius call crud postgrestRequest '{"method": "POST", "path": "/rpc/evaluate_json_logic", "body": {
+  "rule": {"if": [{"==": [{"var": "$mode"}, "delete"]}, {"has_permission": "sales:delete_orders"}, true]},
+  "data": {"$mode": "delete", "status": "open", "$old": {"status": "open"}}
+}}'
+```
+
+- It prints the rule's result (`false` above for a caller without the permission); a truthy result means the write would pass. A throw comes back as the error the write would get, e.g. `(99000) <message>` or `(42501) Permission denied: ${permission} required`.
+- `data` is only what you send. No reserved variable is added, so include every one the rule reads: `$mode`, `$old`, `$today`, `$now`, `$user_id` (your own is `user_id` from `getCurrentUser`). For a DELETE, send the stored row as both the record and `$old`.
+- `has_permission` and `require_permission` check your own permissions, `set_record` reads real rows, and `value_changed` compares against the `$old` you pass.
 
 #### Example: pass both on `create_entity`
 
@@ -419,7 +467,7 @@ Both arrays default to `[]` and may be omitted entirely. To remove a rule or rec
 - Per-field computed expressions (kept entity-level for now).
 - Cross-row aggregates (`Σ child.amount ≤ parent.total`, `≤ 5 high-priority features per release`). `set_record` reads a single row by id; it does not scan, aggregate, or filter. Use a cube view + downstream alert, or a dedicated trigger when synchronous enforcement is required.
 - Per-locale `message`s (single string; i18n binds via `code`). `throw_error` lets the rule body emit one alternate message at runtime, but the static `message` is still single-string.
-- Conditional rule activation (no `when: insert|update|both` yet).
+- A rule-level activation key (no `when: insert|update|delete`); scope a rule to an operation inside its expression with `$mode`.
 
 ---
 
@@ -445,7 +493,7 @@ Every field carries an optional `input_type_rule` property: a JsonLogic object t
 |---|---|---|
 | `$today` | `date` | Client date at evaluation time. |
 | `$now` | `date-time` | Client timestamp at evaluation time. |
-| `$user_id` | `uuid` | The user viewing the form. |
+| `$user_id` | `integer` | The `users.id` of the user viewing the form. |
 
 `$old` is not meaningful here (there's no prior-row context client-side); do not reference it in `input_type_rule`.
 

@@ -37,7 +37,7 @@ Cross-entity primitives: `{"set_record": ["<name>", "<entity>", <id_expr>, <body
 
 ### Validation rules
 
-A JSON array per entity. Each rule must evaluate truthy for the write to succeed. Failures return as `{ "errors": [{ "code", "message" }, ...] }`.
+A JSON array per entity. Each rule must evaluate truthy for the write to succeed. The first failing rule stops the write and returns its `code` as the error code and its `message` as the error text.
 
 ```json
 [

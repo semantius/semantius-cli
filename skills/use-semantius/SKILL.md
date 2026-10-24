@@ -63,8 +63,10 @@ Understanding which layer you're working with determines which tools to use:
 | `references/crud-tools.md` | Layer 1 typed tools + Layer 2 postgrestRequest/sqlToRest reference; § "Bulk operations" (array `data` / `id`, one call per set of records) |
 | `references/cube-queries.md` | Layer 3, CubeJS query DSL, date filtering, analysis modes |
 | `references/cube-tools.md` | Layer 3, discover/validate/load/chart tool signatures |
-| `references/webhook-import.md` | Bulk import of records into Layer 2 via signed webhook |
-| `references/lucide-icons.ts` | Run it (`bun`), don't read it: `find <word…>` finds Lucide icon names, `check <name…>` confirms them before an icon is written; see `data-modeling.md` → "Icons are Lucide icons" |
+| `references/webhooks.md` | Receiving records from external systems through signed webhook receivers: setup, signing, logs |
+| `references/lucide-icon-finder.ts` | Run it (`bun`), don't read it: `<query…>` (one or more words each, most specific first) lists Lucide icon names per query, in that order; see `data-modeling.md` → "Icons are Lucide icons" |
+| `references/lucide-icon-checker.ts` | Run it (`bun`), don't read it: `<name…>` confirms Lucide icon names before an icon is written, exit 1 names the unknown ones; see `data-modeling.md` → "Icons are Lucide icons" |
+| `references/vendor-names.ts` | Run it (`bun`), don't read it: `entity:<Name>…` and `field:<Name>…` convert a followed product's record and field names (singular, spelled the product's way) into `table_name` and labels, or `field_name` and label; never convert them by hand. Used by `semantius-architect` (`stage-2-naming.md`) and `semantius-analyst` (`stage-4-fields.md`) |
 
 ---
 
@@ -78,6 +80,9 @@ Understanding which layer you're working with determines which tools to use:
 
 **Computed fields, validation rules, or conditional field behavior (readonly/hidden/required depending on the record)?**
 → Layer 1, read `references/jsonlogic.md`, entity-level and field-level JsonLogic, operators, cross-entity lookups
+
+**Only some users may do one thing to a record (delete it, close it, approve it, change one field)?**
+→ Layer 1, read `references/jsonlogic.md` § *Detecting the operation*. An entity's `edit_permission` covers insert, update and delete together, so a gate on one operation or transition is a validation rule that tests `$mode` (or the changed field) and then checks who the caller is: an owner match such as `$old.owner_user_id == $user_id` needs no permission, while `has_permission` needs one, created with `references/rbac.md`
 
 **Setting up permissions, roles, users?**
 → Layer 1, read `references/rbac.md`
@@ -98,7 +103,7 @@ Understanding which layer you're working with determines which tools to use:
 → Read `references/cli-usage.md`
 
 **Importing a CSV file?**
-→ The `semantius-importer` skill is the front door: it introspects the file (`utils/get_csvschema`), creates or reuses the entity, and bulk-loads in batches. `references/webhook-import.md` covers the signed-webhook path (external systems pushing rows).
+→ The `semantius-importer` skill is the front door: it introspects the file (`utils/get_csvschema`), creates or reuses the entity, and bulk-loads in batches.
 
 **Moving entities or a module to another host, backing one up, restoring an export?**
 → The `semantius-transfer` skill runs the workflow; `references/cli-usage.md` § "Moving Entities and Modules Between Hosts" has the mechanics.

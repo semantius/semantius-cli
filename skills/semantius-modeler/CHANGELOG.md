@@ -8,6 +8,26 @@ Entries below are newest first.
 
 ---
 
+## Seed data reads plausibly; a computed label column deploys disabled
+
+2026-10-23. A seeded person table had one surname on every row: the Stage 6 example built first + last name pairs with `combine(i, [firstNames, lastNames])`, whose second pool only advances past `i = F`, so at the default 10 rows with 10 first names every row took `lastNames[0]`. The count guard passed, and nothing checked whether the values read sensibly. Rules: `references/stage-6-sample-data.md`; `references/deploy-lib.ts`.
+
+1. **The name-pair examples (first run and re-run) use a coprime stride:** `pick(firstNames, i)` with `pick(lastNames, i * 3)`. `combine` is used only when the target is larger than its first pool's length.
+2. **New `assertSeedDistinct(table, rows, fields, minDistinct?)` in `deploy-lib.ts`:** called after each insert on the human-facing fields generated from pools (name parts, company, city, label column); it prints a per-field receipt and exits non-zero when a field has fewer than `min(rows, 8)` distinct non-empty values. It sees columns only, so name parts that exist only inside one combined field are passed to it as their own values. Listed in `deploy-script-template.md` and imported in the seed-script pattern.
+3. **"Data has to read plausibly, not just hit the count"**, a Stage 6 subsection next to the count contract, names the fields to guard.
+4. **The label column's input type is set after `create_entity`:** the platform creates it as `required`, so the post-create `update_field` sends `"disabled"` when a computed field fills it (a person's `display_name`), otherwise the §3 `Required` value when that is not `required` (`references/stage-1-parse.md`, "Label-column input type"; `references/stage-4-execute.md`, 4d). Checked on a live instance: a computed label column fills on insert, overrides a typed value, recomputes on update and accepts `disabled`.
+5. **The seed report adds label samples:** the first three `_label` values of each seeded table, read with `select=_label` at the end of the seed script. They never fail the seed; a line that looks wrong gets a one-clause note.
+
+---
+
+## Pre-deploy question says "deployment"
+
+2026-10-16.
+
+1. **The pre-write question after the plan** is *"Plan shown above. Proceed with deployment?"*. It is still asked in guided and expert flow; fast flow's go-ahead counts as this confirmation.
+
+---
+
 ## `label` is a §5 property
 
 2026-10-16. Paired with the analyst entry "every enum entry gets a label and a color; `label` is a §5 property".

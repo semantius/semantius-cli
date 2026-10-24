@@ -27,7 +27,7 @@ A non-boolean result is treated as falsy, so the row is hidden — that fails cl
 |---|---|---|
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
-| `$user_id` | `uuid` | Authenticated user performing the read (`null` for system-initiated reads). |
+| `$user_id` | `integer` | The `users.id` of the authenticated user performing the read. |
 | `$old` | `object` or `null` | Not meaningful on reads; present for vocabulary parity with validation_rules. Do not rely on it in `select_rule`. |
 
 **Platform-extension operators usable in `select_rule`.** The `has_permission` operator (documented in `jsonlogic.md` § Platform-extension operators) is the canonical way to broaden row visibility for elevated roles. It returns boolean (never throws), which is essential — a throwing operator like `require_permission` would fail per-row during a SELECT scan and is not the right shape for read context. `value_changed` and `$old` are also available syntactically but are not meaningful for read rules.
@@ -43,7 +43,7 @@ A non-boolean result is treated as falsy, so the row is hidden — that fails cl
 
   Once a rule exists, `view_permission` is **never consulted** for reads: a caller who **lacks `view_permission` but matches the rule sees the row**, and a caller who **holds `view_permission` but fails the rule does not**. (Enforced by `build_select_rule_policy`: `USING (select_rule_<table>(row))` when a rule exists, falling back to `USING (has_permission(view_permission))` only when it doesn't; the DEFINER read helper `get_record_by_id` mirrors this with an explicit mutually-exclusive `IF/ELSE`.)
 
-- **Writes (`UPDATE` / `DELETE`) — AND.** Genuinely layered: `USING (has_permission(edit_permission) AND select_rule(row))`, with `WITH CHECK (has_permission(edit_permission))`. Here `edit_permission` is a real coarse gate **and** the row must pass `select_rule`. `validation_rules` / `require_permission` add per-record gates on top via a separate trigger (see `jsonlogic.md`).
+- **Writes (`UPDATE` / `DELETE`) — AND.** Genuinely layered: `USING (has_permission(edit_permission) AND select_rule(row))`, with `WITH CHECK (has_permission(edit_permission))`. Here `edit_permission` is a real coarse gate **and** the row must pass `select_rule`. `validation_rules` / `require_permission` add per-record gates on top via a separate trigger (see `jsonlogic.md`). UPDATE and DELETE share this predicate, so `select_rule` cannot allow one and refuse the other; a delete-only or update-only gate is a validation rule that tests `$mode` (see `jsonlogic.md`, *Detecting the operation*).
 
 **Authoring consequence (the part that bites).** Because a read rule owns the *entire* read predicate, you cannot rely on `view_permission` to "still let people in." Encode **every** audience that should read the rows *inside* the rule:
 

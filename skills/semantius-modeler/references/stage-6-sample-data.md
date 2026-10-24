@@ -42,6 +42,15 @@ After verification, ask the sample-data question on its own (this is a gate, not
 - **Generate rows by looping to the target — do NOT hand-write a literal array of N rows.** The script pattern below loops `for (let i = 0; i < target(table); i++)` and builds each row from curated value pools via `pick(pool, i)` (from `deploy-lib.ts`). This makes the count **structural**: the loop cannot emit fewer than the target, and `pick` cycles pools and §5 enum values by index so data stays realistic AND every enum value appears. Hand-written literal arrays are exactly where rows get dropped under volume (10 tables × 10 rows = 100 literals), which is why a plain "yes → 10 each" so often came back short. The pools are illustrative; size them to the target and fill from the domain.
 - **The guard is the backstop, not the primary mechanism.** Declare `const COUNT` + `perEntity` + **`const eligibleTables = [...]`** (every newly-created table that must be seeded), tally `counts[table] = rows.length`, and END the script with `assertSeedCounts(counts, COUNT, perEntity, eligibleTables)` (from `deploy-lib.ts`). It prints a per-table receipt and **exits non-zero if any eligible table missed its resolved target — including a table you forgot to seed at all**: the check is driven by `eligibleTables`, so a silently-skipped table reads as 0 and fails, which a counts-only check could not catch. With loop-to-target generation it should never fire; it catches the residual mistakes (a wrong `target()`, an early FK-pool exhaustion, a whole forgotten table) and turns the old silent under-seed into a loud halt. This replaces the "count the inserts by hand" self-check that kept getting skipped (18 vs 50, 2-3 per entity). Tally from the array `postMany` returns (`counts[table] = rows.length`), not from the number of calls (one call per table).
 
+### Data has to read plausibly, not just hit the count
+
+The count is one contract; readability is the other. The user reviews the seeded rows in list views, and a field that is constant across every row reads as a defect even when the count is right. Guard the fields a person would notice first:
+- human name components (a surname repeated across the whole table)
+- a label column whose values are all one word when the entity is a person, an address or an order
+- a company / city / product field that repeats where variety is implied
+
+`assertSeedDistinct(table, rows, fields)` (from `deploy-lib.ts`) is the mechanical form of this. Call it for every human-facing component you generated from a pool, right after `postMany` / `seedEnsureMany`. It sees columns only: when name parts exist only inside one combined field (`lead_name: "Jane Smith"`), the full names stay distinct even with one surname, so pass the parts instead: `assertSeedDistinct("leads", leadRows.map((_, i) => ({ last_name: pick(lastNames, i * 3) })), ["last_name"])`.
+
 ### How sample data gets written (read this before any insert)
 
 **The single Bun seed script is the ONLY way this stage writes records.** Generate it (see below), run it once with `bun run`, done. Do not insert records any other way.
@@ -144,7 +153,7 @@ cp "<skill-folder>/references/deploy-lib.ts" .tmp_deploy/deploy-lib.ts
 
 ```typescript
 // <cwd>/.tmp_deploy/seed_<short>.ts — run with: bun run <path>
-import { postMany, seedEnsureMany, pgRequest, assertSeedCounts, pick, combine, uniq } from "./deploy-lib";
+import { postMany, seedEnsureMany, pgRequest, assertSeedCounts, assertSeedDistinct, pick, combine, uniq } from "./deploy-lib";
 // postMany("/campaigns", rows) inserts ALL of a table's rows in one call and returns them with their ids.
 // The payload field is `body`, NOT `data` — postMany() owns that, so never hand-roll {method, path, data}.
 // Build the rows in the loop, insert once per table; FK pools come from the returned array. For an FK-id
@@ -189,13 +198,17 @@ const campaigns = await postMany("/campaigns", campaignRows);   // ONE call; row
 counts.campaigns = campaigns.length;
 
 // --- leads (FK → campaigns) ---
-// 10 first × 10 last = 100 DISTINCT names via combine() (mixed-radix), not 10 from a lockstep pick+pick.
+// Two 10-name pools at target 10: a coprime stride varies BOTH name parts below the pool length.
+// Do NOT use combine(i, [firstNames, lastNames]) here. Mixed radix cycles its FIRST pool fastest
+// (`[pools[0][i % F], pools[1][floor(i/F) % L]]`), so at target 10 every row gets lastNames[0] and the
+// whole table shares one surname. combine() only reaches its second pool past i = F.
 const firstNames = ["Jane", "Carlos", "Mei", "Tom", "Aisha", "Liam", "Sofia", "Raj", "Nina", "Omar"];
 const lastNames  = ["Smith", "Reyes", "Chen", "Becker", "Khan", "Murphy", "Rossi", "Patel", "Novak", "Haddad"];
 console.log("=== Seeding leads ===");
 const leadRows = [];
 for (let i = 0; i < target("leads"); i++) {
-  const [fn, ln] = combine(i, [firstNames, lastNames]);   // distinct for i < 100
+  const fn = pick(firstNames, i);
+  const ln = pick(lastNames, i * 3);   // 3 is coprime with the 10-entry pool
   leadRows.push({
     lead_name: `${fn} ${ln}`,
     // `email` carries unique_value → MUST be collision-proof: append the row index (uniq), never a bare pick.
@@ -219,7 +232,7 @@ assertSeedCounts(counts, COUNT, perEntity, eligibleTables);
 
 `pick(pool, i)` cycles (`pool[i % len]`), so a flat pool yields at most `pool.length` distinct values — above that it repeats. Do NOT fix that by hand-authoring an N-entry pool; that reintroduces the literal-volume problem the loop removed. Generate uniqueness **compositionally** or **by index**:
 
-- **`combine` for multiplicative distinct values.** `combine(i, [firstNames, lastNames])` walks `i` in mixed radix, so two 10-pools give 100 distinct tuples (F×L), three give F×L×M. Size pools so the product ≥ target. Destructure: `const [fn, ln] = combine(i, [firstNames, lastNames]);`. (Picking both with the same `i` — `pick(first,i)` + `pick(last,i)` — is the lockstep bug: only `max(F,L)` distinct, not `F×L`.)
+- **`combine` for multiplicative distinct values.** `combine(i, [firstNames, lastNames])` walks `i` in mixed radix, so two 10-pools give 100 distinct tuples (F×L), three give F×L×M. Size pools so the product ≥ target. Destructure: `const [fn, ln] = combine(i, [firstNames, lastNames]);`. (Picking both with the same `i` — `pick(first,i)` + `pick(last,i)` — is the lockstep bug: only `max(F,L)` distinct, not `F×L`.) Mixed radix has an ORDER: pool 0 varies fastest and pool n only advances each time every earlier pool wraps, so `combine` yields F×L distinct tuples only past `i = F`. At a target at or below the first pool's length it degenerates to one repeated value in every later component. Two rules follow: use `combine` only when target > the first pool's length, and for human-facing name pairs (first + last) below that use `pick(a, i)` with `pick(b, i * k)` where `k` is coprime with `b.length`. Either way, assert the distinctness with `assertSeedDistinct` (below), do not eyeball it.
 - **`unique_value` / DB-UNIQUE fields are a hard rule (as load-bearing as Enum safety).** Identify every field with `unique_value: true` first (the model's field tables, or `read_field`). A repeat there makes the table's POST fail with **409** — and because `postMany` sends the whole table in one all-or-nothing call, **none of that table's rows land**, `postMany` throws, and the run aborts — **`assertSeedCounts` never runs, so the count guard cannot catch it.** Make these distinct by construction: `account_code: uniq("ACCT-", i)`; `email: uniq(\`${fn}.${ln}\`.toLowerCase(), i, "@example.com")`; or `combine(...)` with product ≥ target. The strictly-increasing `i` guarantees no collision.
 - **Check the pool size before reaching for `uniq()` — do not apply it reflexively to every `unique_value` field.** `uniq(base, i)` is for when the pool is *smaller* than the target and would otherwise repeat. When the pool already has **≥ target** distinct entries, `pick(pool, i)` alone is already collision-free for `i < target` — appending `uniq()`'s index anyway is not just redundant, it actively corrupts the value. This bites hardest on **human-facing label-column fields** (`application_name`, `product_name`, `vendor_name`, anything that is the record's display name): a naive `uniq(\`${pick(appNames, i)} \`, i)` renders as `"Slack 0"`, `"1Password 9"` — a bare trailing digit that reads like a garbled version number or serial, not a real product name, and is immediately visible to the user in every list view. Before adding a suffix to any label field, count the pool: pool.length >= target → drop `uniq()` entirely, use bare `pick(pool, i)`. Only fall through to a suffix when the pool is genuinely smaller than the target (see the next bullet), and even then prefer `combine()` over a bare index so the result still reads as a plausible name.
 - **Plausible-but-distinct middle ground.** For medium-cardinality real-world fields (company / vendor / address) where the target *does* exceed any sensible pool, compose a base with a qualifier that still reads as a name, not a bare index glued onto one: `` `${pick(streets, i)} ${100 + i}` `` (a street address legitimately carries a number), `` `${pick(roots, i)} ${pick(suffixes, Math.floor(i / roots.length))}` `` (two words, no digit), or a parenthetical variant tag (`` `${pick(products, i)} (${pick(["EU", "US", "APAC"], Math.floor(i / products.length))})` ``). Reserve a bare numeric suffix (`uniq(name, i)`) for code-like or machine-facing fields (`account_code`, `email`, `sku`) where a trailing number is expected and normal; never glue a bare index onto a field that is a human display name / label column. Low-cardinality fields (status, category, boolean) stay on `pick` — repeats are fine.
@@ -255,7 +268,8 @@ Two ways to stay safe:
   ```typescript
   const leadRows = [];
   for (let i = 0; i < target("leads"); i++) {
-    const [fn, ln] = combine(i, [firstNames, lastNames]);
+    const fn = pick(firstNames, i);
+    const ln = pick(lastNames, i * 3);
     leadRows.push({
       lead_name: `${fn} ${ln}`,
       email: uniq(`${fn}.${ln}`.toLowerCase(), i, "@example.com"),  // unique_value → the natural key
@@ -285,7 +299,7 @@ bun run <cwd>/.tmp_deploy/seed_<short>.ts
 
 **Nullability safety, `""` not `null` for required text:** Most formats are `NOT NULL` — only `reference`, `date`, and `date-time` accept `null` (data-modeling.md → *`default_value`*). For a non-nullable TEXT column (`string`, `text`, `multiline`, `html`, `code`, `color`, `icon`) that a row should leave empty, send an **empty string `""`**, never `null`: a `null` fails with a NOT NULL violation and aborts the run before `assertSeedCounts`. Only omit a field or pass `null` when its format is `reference` / `date` / `date-time` *and* it is not `input_type: "required"`.
 
-**Display formats:** a `rating` value is an integer from 0 to 5 (from 1 to 5 when the field is required; `0` means not rated); a `color` value is a lowercase hex color (`#3b82f6`); an `icon` value is a Lucide icon name in kebab-case (`circle-check`) that passes `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <name…>`, never a made-up name.
+**Display formats:** a `rating` value is an integer from 0 to 5 (from 1 to 5 when the field is required; `0` means not rated); a `color` value is a lowercase hex color (`#3b82f6`); an `icon` value is a Lucide icon name in kebab-case (`circle-check`) that passes `bun "<skill-folder>/../use-semantius/references/lucide-icon-checker.ts" <name…>`, never a made-up name.
 
 **String safety:** Inside the Bun script, `JSON.stringify` handles every character correctly — Unicode punctuation, apostrophes, backticks, multi-line strings, all pass through to `semantius` unchanged. This is exactly why the seed script is a `.ts` file and not a `.sh` file: a pure-shell seeder using `echo '{...}'` or `$PG '...'` would still break on apostrophes and embedded shell metacharacters, and "fixing" that by stripping characters from seed data is the same correctness bug as truncating descriptions. Generate realistic seed strings (including Unicode where the domain has it); do not pre-strip.
 
@@ -299,6 +313,16 @@ Generate realistic data:
 Run the complete script in one `bun run` call (the only write path; see "How sample data gets written" above, no probe inserts) and report the final output summary. If the `bun run` needs a permission approval, handle it plainly and once per that section, never by hand-running individual inserts and never by narrating the harness permission machinery.
 
 **Report the per-entity count in the summary.** State how many records landed in each entity, e.g. `Asset Contracts: 10, SaaS Subscriptions: 10, ...`. This is both the user's receipt and your own honesty check: if any eligible entity shows fewer than 10 (or fewer than the user's chosen number), the line must carry the reason from "How many records" above (user-chosen count, or FK-id scarcity on a required field). An unexplained low count is a defect to fix, not a summary to ship.
+
+**Sample the labels after the counts.** One line per seeded table with its first three composed labels:
+
+```
+Label samples:
+  contacts:            Marta Klein, Daniel Okafor, Priya Sharma
+  form_submissions:    Marta Klein › Question about pricing, Daniel Okafor › Looking for a demo
+```
+
+The seed script prints them at its end, after `assertSeedCounts`, with one `await pgRequest("GET", "/<table>?select=_label&limit=3")` per seeded table (`_label` is a read-time column, selected by name). For a table with a `label_parent`, `_label` already carries the parent chain, so the same line shows whether the spine reads right. This is the cheapest check that catches a one-word label, a repeated surname and a wrong `label_parent` spine at once, in the report the user already reads. It never fails the seed (sample data is not the model): surface it, and when a line looks wrong, say what in one clause.
 
 ---
 

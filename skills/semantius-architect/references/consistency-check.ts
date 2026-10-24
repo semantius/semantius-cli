@@ -682,6 +682,37 @@ function parseEnumNotes(notes: string): { values: string[] | null; def: string |
   return { values, def: dm ? dm[1] : null };
 }
 
+/**
+ * Why a `default:` value does not fit its field's format, or null when it fits. Formats not listed
+ * take any text. Date and date-time defaults may also be the SQL expressions the platform uses.
+ */
+function defaultProblem(format: string, def: string): string | null {
+  const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
+  switch (format) {
+    case "integer": case "int32": case "int64":
+      return /^-?\d+$/.test(def) ? null : "is not a whole number";
+    case "rating":
+      return /^[0-5]$/.test(def) ? null : "is not a whole number from 0 to 5";
+    case "number": case "float": case "double":
+      return /^-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(def) ? null : "is not a number";
+    case "boolean":
+      return def === "true" || def === "false" ? null : 'is not "true" or "false"';
+    case "json": case "object": case "array": {
+      let v: unknown;
+      try { v = JSON.parse(def); } catch { return "is not valid JSON"; }
+      if (format === "array" && !Array.isArray(v)) return "is not a JSON array";
+      if (format === "object" && (v === null || typeof v !== "object" || Array.isArray(v))) return "is not a JSON object";
+      return null;
+    }
+    case "date":
+      return def === "CURRENT_DATE" || isDate(def) ? null : "is not a date (YYYY-MM-DD) or CURRENT_DATE";
+    case "date-time":
+      return def === "CURRENT_TIMESTAMP" || (isDate(def.slice(0, 10)) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(def) && !Number.isNaN(Date.parse(def)))
+        ? null : "is not an ISO date-time or CURRENT_TIMESTAMP";
+  }
+  return null;
+}
+
 /** The property keys of a §5 entry, in the order they must appear. */
 const ENUM_PROP_KEYS = ["label", "color", "icon", "description"] as const;
 type EnumHintKey = Exclude<(typeof ENUM_PROP_KEYS)[number], "label">;
@@ -995,6 +1026,20 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
           issues.push({ check: "enum default", detail: `\`${id}.${f.name}\`: default "${def}" is not one of its values [${allowed.join(", ")}] (a default is always a value, never a label)` });
         }
       }
+    }
+  }
+
+  // Field defaults: `default:` is quoted, and its value fits the field's format (enum defaults are checked above).
+  for (const [id, e] of ents) {
+    for (const f of e.fields) {
+      if (/\bdefault:\s*[^\s"]/.test(f.notes)) {
+        issues.push({ check: "default value", detail: `\`${id}.${f.name}\`: write the default in double quotes, \`default: "<value>"\`, for every format` });
+        continue;
+      }
+      const { def } = parseEnumNotes(f.notes);
+      if (def === null || f.format === "enum") continue;
+      const problem = defaultProblem(f.format, def);
+      if (problem) issues.push({ check: "default value", detail: `\`${id}.${f.name}\` (${f.format}): default "${def}" ${problem}` });
     }
   }
 

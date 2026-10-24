@@ -384,7 +384,7 @@ Creates an inheritance link: a broader permission includes a narrower one. Reads
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create every edge of a module's chain in one request. Each requires: `including_permission_name` (broader), `included_permission_name` (narrower); optional `origin` (`model` for a deployed module, `model_master`, `user`). `id` is auto-generated as `"<including_permission_name>.<included_permission_name>"` (e.g. `"crm:manage.crm:read"`). Example: `{"data": {"including_permission_name": "crm:manage", "included_permission_name": "crm:read", "origin": "model"}}` |
+| `data` | object \| object[] | yes | One object, or a **non-empty array** to create every edge of a module's chain in one request. Each requires: `including_permission_name` (broader), `included_permission_name` (narrower); optional `origin` (leave unset by hand, defaults to `user`; `model` / `model_master` are set only by a `semantius-modeler` deploy). `id` is auto-generated as `"<including_permission_name>.<included_permission_name>"` (e.g. `"crm:manage.crm:read"`). Example: `{"data": {"including_permission_name": "crm:manage", "included_permission_name": "crm:read"}}` |
 
 ### `read_permission_hierarchy`
 Accepts common read parameters. Filter by `including_permission_name` or `included_permission_name`.
@@ -407,7 +407,7 @@ Accepts common read parameters. Filter by `including_permission_name` or `includ
 ### `create_role`
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create several roles in one request (a module's viewer + manager [+ admin] go in one call). Each requires: `role_name`. Strongly recommended for a scaffold role: `slug` (snake_case `^[a-z0-9_]+$`; auto-derived from `role_name` when omitted — pass it explicitly to control the handle), `module_id` (owning module; omit and the role is an orphan), `origin` (`"model"` for a domain-module scaffold role, `"model_master"` for a master; omit and it defaults to `"user"`). Optional: `description`. **There is no `name` or `label` field** — use `role_name` / `slug`. |
+| `data` | object \| object[] | yes | One object, or a **non-empty array** to create several roles in one request (a module's viewer + manager [+ admin] go in one call). Each requires: `role_name`. Strongly recommended for a scaffold role: `slug` (snake_case `^[a-z0-9_]+$`; auto-derived from `role_name` when omitted — pass it explicitly to control the handle), `module_id` (owning module; omit and the role is an orphan). Optional: `description`, `origin` (leave unset by hand, it defaults to `"user"`; `"model"` for a domain-module role and `"model_master"` for a master-module role are set only by a `semantius-modeler` deploy). **There is no `name` or `label` field** — use `role_name` / `slug`. |
 
 ### `read_role`
 Accepts common read parameters.
@@ -502,7 +502,7 @@ Accepts common read parameters. Filter by `user_id` or `role_id`.
 | `data` | object \| object[] | yes | One object, or a non-empty array to create several receivers in one request. Each requires: `label`, `table_name`, `auth_type` (`"hmac"`), `secret` (random alphanumeric string) |
 
 ### `read_webhook_receiver`
-Accepts common read parameters. Key filter: `"label=eq.Agent Import&table_name=eq.<table>"`.
+Accepts common read parameters. Key filter: `"label=eq.<label>&table_name=eq.<table>"`.
 
 ### `update_webhook_receiver`
 | Parameter | Type | Required | Description |

@@ -30,7 +30,7 @@ Every Stage 3 / authoring-stage widget reads and writes one path in `$CUSTOMIZAT
 | Analyst Stage 3f.2 | Enum drift | `.drift.enum.<entity>.<field>` | scalar |
 | Analyst Stage 3f.3 | Permission drift | `.drift.permission.<entity>.edit_permission` | scalar |
 | Analyst Stage 3f.4 | Format drift | `.drift.format.<entity>.<field>` | scalar |
-| Admin / architect / analyst, when the user says "expert flow", "guided flow", or "fast flow" | Interaction flow switch | `.interaction_flow` | scalar (`guided` \| `expert` \| `fast`; absent = `guided`); org-wide; never written by a widget or by a default ([`interaction-flow.md`](./interaction-flow.md), section 2) |
+| Admin / architect / analyst, when the user says "expert flow", "guided flow", or "fast flow" | Interaction flow switch | `.interaction_flow` | scalar (`guided` \| `expert` \| `fast`; absent = `fast`, the default); org-wide; never written by a widget or by a default ([`interaction-flow.md`](./interaction-flow.md), section 2) |
 | Modeler pre-execute | y/n consent | not cached | n/a (asks per item; in a fast run the go-ahead covers it) |
 
 When extending: prefer fewer, broader keys. The whole point is to deduplicate; over-specific keys defeat that. The cross-scope link path (`.links.<blueprint>.<field>`) is the deliberate exception — link targets often don't generalize across blueprints, so they're keyed by blueprint+field naturally.

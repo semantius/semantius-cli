@@ -8,6 +8,51 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## A person is labelled by full name
+
+2026-10-23. A contact entity got `firstname` as its label column, the only required text field, so lists read "Marta", "Daniel" and child records "Marta › Question about pricing". The label-column rule covered a type or category as the only identifier, but not an identity made of several values. Rules: `references/stage-4-fields.md`, "Composite or non-text identity".
+
+1. **A person entity** (contact, lead, candidate, employee, customer contact) takes a `display_name` string field as its label column (Required `no`, deployed `disabled`), kept current by a Stage 10 computed field from the name parts, which stay ordinary fields.
+2. **An address-like entity** uses the same pattern (street plus number or unit).
+3. **A record numbered by a code** uses the code field as its label column when it is text, otherwise a `display_name` built from it.
+4. **A followed product whose screens show "First Last"** has a composite display name, so the rule applies even when the product keeps no display-name field.
+
+---
+
+## Fields of a followed product take the product's names
+
+2026-10-23. A spec following a product (`naming_mode: template:<vendor>`) got the product's record names from the blueprint, but its fields were named the analyst's own way: the rule to use the product's field names sat only in the architect, which writes no fields. Moving data to and from the product, the reason to follow it, needs both. Rules: `references/stage-4-fields.md`, "Fields of a followed product".
+
+1. **A field the product has takes the product's own name**, converted by `bun "<skill-folder>/../use-semantius/references/vendor-names.ts" field:<Name>…`, never by hand (`FirstName` → `first_name`, `SLAPolicyId` → `sla_policy_id`, HubSpot `firstname` kept as written). A custom field one company added (`Region__c`) and a field the platform creates on every table (`Id`) are left out.
+2. **Its label is the product's own label**, or the script's when that is not known.
+3. **The platform's fixed names win:** the lifecycle state field stays `workflow_state` and a link field `<target_singular>_id`, whatever the product calls them.
+4. **A field the product doesn't have** gets a self-describing name.
+
+---
+
+## Rule failures described as the platform reports them
+
+2026-10-20. The spec template and Stage 10 said a write rejected by validation rules returns every failing rule in an `errors` array, and the template gave `throw_error` SQLSTATE `23514`. The platform stops at the first failing rule and raises its `code` as the error code, and `throw_error` raises `99000`.
+
+1. The semantic-spec template and `stage-10-rules.md` describe one failure per write, returned with the rule's `code` and `message`.
+2. The template gives `throw_error` SQLSTATE `99000`.
+
+Minor: no file format change, no change to the spec's shape, and no change to any confirmation the user is asked.
+
+---
+
+## The icon check needs no network
+
+2026-10-18. In a sandbox whose egress allow list blocks `cdn.jsdelivr.net`, `lucide-icons.ts check` could not download the icon list and exited 2, the same code as a usage error, and the "Icons exist" pre-save row read any non-zero exit as an unknown icon: a Blocker caused by the environment, not the design.
+
+1. **The icon list is bundled, and the icon tool is two scripts.** "Icons exist" runs `use-semantius/references/lucide-icon-checker.ts <name…>` (exit 0 valid, 1 unknown name, 2 no arguments) and Stage 4 finds icons with `lucide-icon-finder.ts <query…>`, replacing `lucide-icons.ts check` / `find`. Both read `lucide-icon-tags.json`, a snapshot of one `lucide-static` release, so "Icons exist" no longer depends on a host.
+2. **`circle-question-mark` replaces `circle-help`** as the example icon in the spec template: Lucide renamed the icon, and the checker rejects the old name.
+3. **The icon search is one run with a defined end.** Stage 4 runs the finder once with up to five queries, most specific first (the words of one query must all match), and takes the first icon that fits; when none fits, the entry gets no icon.
+
+Minor: no file format change, no change to the spec's shape, and no change to any confirmation the user is asked.
+
+---
+
 ## every enum entry gets a label and a color; `label` is a §5 property
 
 2026-10-16. A deployed `workflow_state` showed raw values (`checked_in`) because readable values got no label, and colors were limited to state-like enums while tools like Airtable and SmartSuite color the options of every select field. The label sat inline on the value bullet while every other property was a named sub-bullet.

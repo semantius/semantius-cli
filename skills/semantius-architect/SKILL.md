@@ -153,7 +153,7 @@ Both surfaces follow the same ban list and the same "required" list below.
 
 The internal value (`naming_mode: template:salesforce`, role classifications, `classDef` strings, etc.) still gets stamped on the file by the write stage — only chat and prompt text are plain. Map a user's choice to the internal value *after* they pick, not in the option label.
 
-**Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine. While expert flow is off, the questions in the Expert flow table are not asked; every other question is (see "Expert flow" below). In a fast run nothing is sent after the go-ahead (see "Fast flow" below). Convention 8 controls how a required table or proposal is worded, never whether it is shown. Translate identifiers in a stage template into plain words; never drop the artifact.
+**Pre-emit check** (mandatory): before sending any chat message or firing any `AskUserQuestion`, scan the assembled text for any banned token. Rewrite before sending. The check is mechanical and cheap; running it twice on the same message is fine. While expert flow is off, the questions in the Expert flow table are not asked; every other question is (see "Expert flow" below). In a fast run nothing is sent after the go-ahead (see "Fast flow" below). Convention 8 controls how a required table or proposal is worded, never whether it is shown. Translate identifiers in a stage template into plain words; never drop the artifact. It also confirms the turn ends with an ask (the close-out line under Pre-save verification is the one turn that needs none): the turn must contain the question, decision, or next step it names. Scan tokens: "next I", "then I", "before we continue", "one decision", "I'll now", "let me know once". A turn that names a coming question without asking it is rewritten to ask it, or to drop the mention.
 
 **Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
 this session's tool list, load
@@ -188,16 +188,16 @@ load per run covers every skill active in the same conversation.
   | Rebuild (Mode D) | `Design › Rebuild the design` |
 
 - **No ledger stages.** Every architect question is standalone (no `Q:` task):
-  - the Stage 2 design question (new blueprints, guided and expert flow; never saved; Rebuild re-asks it), and its "Build the design on this?" confirmation after a typed answer;
+  - the Stage 2 design question (new blueprints, every flow; in fast flow left out when the request names a product; never saved; Rebuild re-asks it), and its "Build the design on this?" confirmation after a typed answer;
   - the Stage 1 and Stage 3 conversational confirmations (the Stage 1 name and scope question only while expert flow is on);
   - the Stage 3 "Also track" multiSelect;
   - the Stage 3 family question (`references/normalization.md`, only when the deciding fact is unknown; it goes first in the "Also track" call);
   - the Stage 3 re-confirmation of the entity table, when the "Also track" picks added entities;
   - the Stage 5 relationships, diagram and lifecycles confirmation (`references/stage-5-mermaid.md`);
-  - the Stage 1 discovery interview (guided and expert flow, when no well-known product fits; fast flow, "Closest to" and "Must-haves" only);
+  - the Stage 1 discovery interview (guided and expert flow, when no well-known product fits; fast flow, "Must-haves" only, asked with the Stage 2 design question);
   - the fast-flow go-ahead (fast runs only);
   - the Stage 6 related-modules confirmation (only while expert flow is on);
-  - the Stage 7 handoffs confirmation;
+  - the Stage 7 handoffs confirmation (only while expert flow is on);
   - the Stage 9 classification confirmation;
   - the Stage 10 workflow-permissions confirmation;
   - the access-level question (expert flow only; Stage 10 permission step);
@@ -208,14 +208,15 @@ load per run covers every skill active in the same conversation.
   - the Mode D no-collapsing gates;
   - the tagline and description confirmation (only while expert flow is on).
 
-  The Stage 6 related-modules gate is standalone (no `Q:` task) and fires only in expert flow; in guided and fast flow the list is built and accepted without being shown. The Stage 1 guidance aside (guided and expert flow) is a required turn of its own that asks nothing. Stage 8 asks nothing; Stage 11 asks only the RACI matrix confirmation (only for `raci`).
+  The Stage 6 related-modules gate and the Stage 7 handoffs confirmation are standalone (no `Q:` task) and fire only in expert flow; in guided and fast flow the list and the handoffs are built and accepted without being shown, and the handoffs are still written to §6. The Stage 1 guidance aside (guided and expert flow) is sent in the same turn as the first question after it (the design choice; in expert flow, the name and scope question), so that no turn is left without an ask. Stage 8 asks nothing; Stage 11 asks only the RACI matrix confirmation (only for `raci`).
 
 **Narration restraint.** Plain language is necessary but not sufficient. Volume matters too. The user did not ask for a narrated walkthrough of the skill's internal work; they asked for a result. Hard rules:
 
 - **Do not announce what you're about to do** before doing it. No *"Let me peek at the existing blueprint to verify..."* — just peek. No *"Let me check the conventions..."* — just check. The peek/check itself produces a tool-call line in the transcript; that is enough.
+- **Answer "you didn't ask" with the question.** When the user reports that a turn left them with nothing to answer, the reply must put the question itself to them. Never answer with prose explaining why the turn was shaped that way.
 - **Do not narrate self-corrections.** When you spot a mistake mid-flight and fix it, fix it silently. The previous tool call already shows in the transcript; emitting *"That was the wrong edit. Spelling out properly."* on top adds zero information.
 - **Do not enumerate verification results on success.** "Pre-save verification" runs silently; the only user-facing output is the success or failure of the save itself.
-- **Do not list counts and section breakdowns after writing.** The post-write message is one sentence: *"Wrote `<path>`. Tell me when you want to deploy it."* (while expert flow is off, the close-out template under Pre-save verification that adds one clause about the catalog text; in a fast run, no line). The user knows from the conversation what was built; the file's own contents are the source of truth.
+- **Do not list counts and section breakdowns after writing.** The post-write message is the one line under Pre-save verification: *"Wrote `<path>`."* in guided flow (standalone, with one clause naming the next step), *"Wrote `<path>`. Deploy it now?"* in expert flow, no line in a fast run. The user knows from the conversation what was built; the file's own contents are the source of truth.
 - **Do not announce the next skill in the pipeline as boilerplate.** A one-clause hint at the end of the close-out line is fine; a separate paragraph titled "Next step:" is not. Trust the user (or the admin orchestrator) to know what comes next.
 
 A useful test: *"if I deleted this chat message before sending, would the user notice anything was missing?"* If the answer is "no, the work still got done", delete the message.
@@ -257,13 +258,13 @@ The environment checks are shared across all four Semantius skills and live in o
 - **Orchestrated by `semantius-admin` (a `Run context:` block is present in your input, see Step 0 below):** the admin already ran the preflight. Read `Customizations file:` from the header (export it as `CUSTOMIZATIONS_FILE`) and skip the checks.
 - **Standalone (no `Run context:` block):** run the shared preflight yourself. In brief: stay in the repo root; install the toolchain (Bun, jq, yq) if missing; probe `getCurrentUser` to install/authenticate the CLI and halt if the org is `adenin`; compute `CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"`. The full per-check procedure, install matrix, and exit handling are in the reference file.
 
-After preflight, narrate one short line on first invocation: *"Using customizations from `semantius/<org>/customizations.yaml`"* (if the file exists) or *"No customizations file yet; will create on first decision."* (if absent). The file is created lazily by the first widget answer.
+After preflight, in expert flow only (read the switch as "Expert flow" below describes), narrate one short line on first invocation: *"Using customizations from `semantius/<org>/customizations.yaml`"* (if the file exists) or *"No customizations file yet; will create on first decision."* (if absent). In guided and fast flow, say nothing about the file. The file is created lazily by the first widget answer.
 
 ---
 
 ## Step 0: Determine the mode
 
-**Fast-flow hand-off (check this first).** When there is no `Run context:` block, the request is a new build (Create-Greenfield by the detection below), and `.interaction_flow` in `$CUSTOMIZATIONS_FILE` is `fast` (or this same request says "fast flow"): before creating any task, load `semantius-admin` with the Skill tool, passing the user's request verbatim, and follow it instead. It runs the build end to end and re-enters this skill with a run context. A fast-flow build needs the admin because the analyst and modeler must run straight after the design, without the user starting them.
+**Fast-flow hand-off (check this first).** When there is no `Run context:` block, the request is a new build (Create-Greenfield by the detection below), and `.interaction_flow` in `$CUSTOMIZATIONS_FILE` is `fast` or not set (or this same request says "fast flow"), and the request does not ask to be guided (`../semantius-admin/references/interaction-flow.md`, section 2): before creating any task, load `semantius-admin` with the Skill tool, passing the user's request verbatim, and follow it instead. It runs the build end to end and re-enters this skill with a run context. A fast-flow build needs the admin because the analyst and modeler must run straight after the design, without the user starting them.
 
 **Header override (admin-orchestrated runs).** When this architect is invoked by `semantius-admin`, the input carries a handoff header with an explicit mode line:
 
@@ -292,7 +293,7 @@ The header's `Input artifact:` line tells you which file to load. Read it before
 
 | Mode | When to use |
 |---|---|
-| **Create-Greenfield** | User wants a brand-new blueprint from scratch. No existing file, no catalog source. §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the user did not ask for cross-domain context — never omit a canonical section, never leave a bare empty heading. Stage 7 drafts and shows the handoffs; the rows the user accepts in the Stage 7 confirmation count as requested and are written, and rows never shown are not written (their sub-block keeps the placeholder). §9 carries baseline roles + permission hierarchy always; RACI realization / Processes wired / functional ownership only under the `raci` access level (drafted and confirmed in Stage 11). |
+| **Create-Greenfield** | User wants a brand-new blueprint from scratch. No existing file, no catalog source. §5.3 and §6 are **kept (heading present) and carry the canonical `_(none: <short reason>)_` placeholder** when the user did not ask for cross-domain context — never omit a canonical section, never leave a bare empty heading. Stage 7 drafts the handoffs (shown for confirmation in expert flow only); the rows accepted in Stage 7 count as requested and are written, and a sub-block left without rows keeps the placeholder. §9 carries baseline roles + permission hierarchy always; RACI realization / Processes wired / functional ownership only under the `raci` access level (drafted and confirmed in Stage 11). |
 | **Create-Catalog-Clone** | User wants to start from an existing curated blueprint (an uber-model slice from the catalog of ~100 reference blueprints) and customize. Workflow: ask the user for the source blueprint (file path or URL), load it, present §1 summary + §2 entity table + §3 catalog, then ask what to change. §5.3, §6, §9 (RACI realization + Processes wired + functional ownership), the optional `## Additional Requirements Specification` section, and `related_modules` are **inherited from the source and preserved** — trim only what the customize conversation explicitly removes. Never drop the source's uber-model governance just because the blueprint is being customized. **On inherit, flatten any `<details>` / `<summary>` collapsibles to plain markdown tables; when the customize conversation trims a canonical section empty, keep its heading and write the canonical `_(none: <short reason>)_` placeholder — never copy the source's raw HTML or old-form free-text stub strings verbatim (catalog sources carry both; they must not survive into the clone), and never omit the section.** After the "what to change" edits and before Stage 13, run the Stage 10 permission step ([`references/stage-10-workflow-perms.md`](references/stage-10-workflow-perms.md)) with the `--has-*` flags from the adjusted draft. |
 | **Audit** | User has an existing `*-semantic-blueprint.md` and wants it checked for quality, completeness, or correctness. |
 | **Extend** | User has an existing blueprint and wants to add entities, edges, lifecycle states, or permissions. **First, when the frontmatter has no `access_scope`:** run the Stage 10 permission step and write the file before anything else ([`references/modes-audit-extend-rebuild.md`](references/modes-audit-extend-rebuild.md) Step C1). |
@@ -325,14 +326,15 @@ When in Audit, Extend, Customize, or Rebuild mode, read the file before doing an
 | Stage 13 `tagline` / `description` / `module_kind` confirmation (`references/stage-13-write.md`) | Write your drafts and the derived `module_kind` silently: no confirmation, and no mention of them to the user, the close-out line included. |
 | Stage 10 access-level question (`references/stage-10-workflow-perms.md`, permission step) | The script's result. |
 | Stage 6 related-modules confirmation (`references/stage-6-related-modules.md`) | Build the list and accept it as drafted, without showing it. |
+| Stage 7 handoffs confirmation (`references/stage-7-handoffs.md`) | Draft the handoffs and accept them as drafted, without any output; they are written to §6. A handoff to a state the source lifecycle lacks is dropped. |
 
-**Every other architect question is asked in guided and expert flow, unchanged:** the starting design (with its details confirmation for a typed answer), the entity list, "Also track", the family question, the entity-table re-confirmation, the relationships, diagram and lifecycles confirmation, handoffs, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test (`references/stage-1-capture.md`).
+**Every other architect question is asked in guided and expert flow, unchanged:** the starting design (with its details confirmation for a typed answer), the entity list, "Also track", the family question, the entity-table re-confirmation, the relationships, diagram and lifecycles confirmation, classification, workflow gates, the keep-or-replace question, the RACI matrix confirmation (only for `raci`), Clone "what to change", Extend / Customize C3 and C5, and the pre-save failure prompts. Both flows bring the Stage 1 guidance: the aside naming well-known products and best-practice points, preceded by the discovery interview when none fits. Expert flow adds the four-object test (`references/stage-1-capture.md`).
 
 **Switching during a run** writes the switch and applies from the next question on: turned on before Stage 13, the catalog text is confirmed; a name or scope the user wants changed is simply changed.
 
 ---
 
-## Fast flow (experimental)
+## Fast flow
 
 A run is a fast run when the run context says `Interaction flow: fast` (the admin sets it only for a new build) or the admin pipeline task's marker (`TaskGet`) says `fast: awaiting go-ahead` or `fast: go-ahead given`; read [`../semantius-admin/references/fast-flow.md`](../semantius-admin/references/fast-flow.md) at Step 0 and after a context reset. **Before the go-ahead:** baseline, short interview, and naming (Stages 1-3), then the go-ahead at the end of Stage 3. **After the go-ahead** (the admin pipeline task's marker says `fast: go-ahead given`): no `AskUserQuestion`, no message ending in a question, no rendered proposals; each gate's "Fast flow" line names its pick, which you log with `log_pick` (fast-flow.md, section 5). The one exception is the Stage 10 permission step's keep-or-replace question for a live module whose permissions were set up by hand: it pauses the run, is asked, and the run continues (`references/stage-10-workflow-perms.md`). Why: the user approved the whole build at once, and every further stop breaks that promise; the "Decided for you" list at the end is their review.
 
@@ -342,7 +344,7 @@ A run is a fast run when the run context says `Interaction flow: fast` (the admi
 
 Follow these stages in order. Do not skip ahead: each stage produces input the next one relies on, and each stage that asks something ends with the user confirming before you move on (Stage 8 asks nothing; Stage 11 asks only the RACI matrix confirmation, only for `raci`; while expert flow is off, the questions in the Expert flow table are not asked, see "Expert flow" above; in a fast run nothing is asked after the go-ahead, see "Fast flow" above).
 
-**Each confirmation in the standalone-question list (Task tracking, above) is its own turn, in stage order.** The only shared turns are the family question inside the "Also track" call, and the one relationships, diagram and lifecycles confirmation. In guided and expert flow, use the stage template's wording and headings, and ask nothing that neither the list nor a stage file names: the file is written after the last confirmation, without a separate "write it up?" question. Guided flow skips exactly the questions in the Expert flow table. One "anything to change?" covering several stages is a bug in every flow. Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
+**Each confirmation in the standalone-question list (Task tracking, above) is its own turn, in stage order.** The only shared turns are the Stage 1 guidance aside with the question after it, the family question inside the "Also track" call, the one relationships, diagram and lifecycles confirmation, and the expert-flow close-out line with its "Deploy it now?" question. In guided and expert flow, use the stage template's wording and headings, and ask nothing that neither the list nor a stage file names: the file is written after the last confirmation, without a separate "write it up?" question. Guided flow skips exactly the questions in the Expert flow table. One "anything to change?" covering several stages is a bug in every flow. Each stage's authoring detail lives in a `references/` file; load that file when you reach the stage. The resident writing conventions, the version contract, Step 0 routing, and the Pre-save verification gate (below) apply across every stage.
 
 The Task column is the exact subject of the stage task (Task tracking, above); stages sharing a subject are one task.
 
@@ -376,7 +378,7 @@ If a helper writes the file, brief it with the confirmed decisions and the skill
 | Check | If it fails |
 |---|---|
 | `version` is `"3.1"` | halt; print plain-English failure |
-| `icon_name` passes `bun "<skill-folder>/../use-semantius/references/lucide-icons.ts" check <icon_name>` (a URL always passes) | halt; name the unknown icon |
+| `icon_name` passes `bun "<skill-folder>/../use-semantius/references/lucide-icon-checker.ts" <icon_name>` (a URL always passes) | halt; name the unknown icon |
 | No field-level content anywhere (no Format/Required/Label columns in entities catalog; no JSON sub-blocks for computed_fields/validation_rules/input_type_rules/select_rule). **The optional `## Additional Requirements Specification` section is exempt** — it is free prose and MAY name fields (see "The one exception" near the top of this skill). | halt; tell the user *"This file has field-level detail; that work belongs to the next step (reconciliation)."* |
 | Every `master` entity that has lifecycle states has a §7 sub-section (an entity without a state machine, reference data or a plain operational record, has none; see the template §7 rule) | halt; name the missing masters in plain English |
 | Every §7 row with `requires_permission? = ✓` has a `derived gate` per the access level: under `raci` the gate's own code with a matching §8.1 `workflow-gate (lifecycle)` row; under every other access level `<slug>:admin` | halt; name the unbound gates by their lifecycle name |
@@ -421,9 +423,11 @@ bun "<skill-folder>/references/consistency-check.ts" "<path-to-the-written-bluep
 
 It parses the file, treats §3 as the entity registry, and byte-compares every other place each entity's identifier / display name / edge appears. It is **content-agnostic** — it never judges language, casing, or word choice, only that every occurrence agrees (reverse a label in *every* section and it passes; change it in *one* and it fails). Exit 0 = consistent; non-zero prints the exact entity, the differing values, and the disagreeing sections. **If it exits non-zero the save is not complete:** fix every reported line and re-run until exit 0, then emit the success line. The same script validates specs (`artifact: semantic-spec`); the analyst runs it at its own pre-save. Do not hand-wave this — blueprints shipped inconsistent precisely because the check was "done carefully" by reading instead of run.
 
-**On success: write the file, then say one line in plain English, no more.** Template:
+**On success: write the file, then say one line in plain English, no more.** Templates:
 
-> *Wrote `<path>`. Tell me when you want to deploy it.*
+- Guided flow: *Wrote `<path>`.* No deploy question and no invitation to deploy. Set the task `completed` and, under the admin, let it move straight on to the analyst without waiting for the user.
+  - **Standalone exception** (no `Run context:` block): no orchestrator moves the run on, so the line carries one clause naming the next step: *Wrote `<path>`. When you're ready, ask me to set it up in Semantius.* Still no question widget, no second paragraph, no deploy confirmation question.
+- Expert flow: *Wrote `<path>`. Deploy it now?* This is the deploy confirmation, asked in expert flow only. Under the admin, a yes moves on to the analyst; a no ends the run after the design.
 
 The line never mentions the tagline or description. With expert flow on, the user already confirmed them in Stage 13; with it off, they are written silently.
 
@@ -477,5 +481,4 @@ Platform references in `use-semantius`; read one when the step at hand needs it:
 - [`../use-semantius/references/data-modeling.md`](../use-semantius/references/data-modeling.md): read when a design choice depends on a platform constraint (entity naming rules, built-in tables, field format rules, relationship rules).
 - [`../use-semantius/references/jsonlogic.md`](../use-semantius/references/jsonlogic.md): read only when judging whether a rule is feasible (`computed_fields`, `validation_rules`, `input_type_rule`, extension operators, cross-entity lookups). Writing the rules is analyst territory.
 - [`../use-semantius/references/select-rule.md`](../use-semantius/references/select-rule.md): read when the design restricts who sees which rows (`select_rule`: REPLACE-vs-AND semantics, oversight disjuncts).
-
 The catalog of common systems, vendors, and entity naming conventions lives in your own training knowledge, not in a reference file. That's deliberate: a fixed catalog would go stale, miss vendors, and imply a whitelist. Trust what you know about the product the user named; if you're genuinely unsure (an unfamiliar regional vendor, a very new product), ask the user for two or three example entity names from their system rather than guessing. In guided flow and fast flow, "unsure" has one objective bar: the product fails the four-object test (you can't name at least four of its headline objects, spelled its way; `references/stage-1-capture.md`). In a fast run, don't ask: use modern names and call the design "inspired by" that product at most.

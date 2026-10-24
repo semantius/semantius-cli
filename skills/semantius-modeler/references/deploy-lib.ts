@@ -693,6 +693,48 @@ export function assertSeedCounts(
 }
 
 /**
+ * Seed-distinctness guard: the readability counterpart of `assertSeedCounts`.
+ *
+ * A count guard proves the table is full; it cannot see that every row carries the same surname, the
+ * same company or a one-word label. `assertSeedDistinct("contacts", rows, ["lastname"])` fails loudly
+ * when a human-facing component degenerates to a handful of values across the table, which is what
+ * happens when a mixed-radix helper is used below its first pool's length (`combine`) or when a
+ * component is picked with a lockstep index.
+ *
+ * - `fields` names one or more columns of the rows just inserted (human name parts, company, city,
+ *   label column). Empty strings and nulls are excluded from the count: an optional field may
+ *   legitimately repeat.
+ * - `minDistinct` defaults to `min(rows.length, 8)`: on a 10-row table that demands 8 distinct values,
+ *   which is enough to catch a constant column without punishing genuinely low-cardinality data
+ *   (call it only on fields where variety IS expected).
+ * - Prints a per-field receipt on success and exits non-zero (halting the seed script) on failure,
+ *   exactly like `assertSeedCounts`, so a degenerate column can never ship behind a green count line.
+ */
+export function assertSeedDistinct(
+  table: string,
+  rows: ReadonlyArray<Record<string, unknown>>,
+  fields: ReadonlyArray<string>,
+  minDistinct = Math.min(rows.length, 8),
+): void {
+  const fails: string[] = [];
+  for (const f of fields) {
+    const values = rows.map((r) => r[f]).filter((v) => v !== "" && v !== null && v !== undefined);
+    const distinct = new Set(values.map((v) => String(v))).size;
+    if (distinct >= Math.min(minDistinct, values.length)) {
+      console.log(`  ✓ ${table}.${f}: ${distinct} distinct`);
+    } else {
+      fails.push(`${table}.${f}: ${distinct} distinct value(s) across ${rows.length} row(s), expected >= ${minDistinct}`);
+    }
+  }
+  if (fails.length) {
+    console.error(`\nSEED DISTINCTNESS FAILURE — ${fails.length} problem(s):`);
+    for (const m of fails) console.error(`  🛑 ${m}`);
+    console.error("Vary the pool (coprime stride, or combine only past the first pool's length), then re-run.");
+    process.exit(1);
+  }
+}
+
+/**
  * Halting harness. Run the bespoke orchestration inside this; it OWNS the
  * try/catch so the agent's script can't add a swallow-and-continue one. On
  * success: a summary line plus a reminder that the "model is live" line waits

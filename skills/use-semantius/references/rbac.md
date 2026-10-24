@@ -13,6 +13,7 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 | **Role** | Named bundle of permissions (e.g., `crm_viewer`, `crm_manager`) |
 | **Role Permission** | M:N join: grants a permission to a role |
 | **User Role** | M:N join: assigns a role to a user |
+| **Entity gates** | `view_permission` gates reads of an entity (an entity with a `select_rule` uses the rule instead; see `select-rule.md`); `edit_permission` gates insert, update **and** delete together. There is no delete-permission column. To let only some users delete, close or approve a record, add a validation rule that tests `$mode` (or the changed field) and then an owner match or `has_permission`; see `jsonlogic.md` § *Detecting the operation* |
 
 ---
 
@@ -60,18 +61,16 @@ Make `crm:manage` implicitly include `crm:read`, so assigning `manage` is suffic
 semantius call crud create_permission_hierarchy '{
   "data": {
     "including_permission_name": "crm:manage",
-    "included_permission_name": "crm:read",
-    "origin": "model"
+    "included_permission_name": "crm:read"
   }
 }'
 ```
 
 ### 3. Create Roles
 
-The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$` — **underscores only, NO hyphens**, unlike a `module_slug`, which DOES allow hyphens; the two formats differ, so when you build a role slug from a hyphenated module slug you must convert `-`→`_`, e.g. module `hvac-svc-mgmt` → role `hvac_svc_mgmt_viewer`, never `hvac-svc-mgmt_viewer`. A hyphen in the slug fails the regex. Auto-derived from `role_name` if omitted, but pass it explicitly so the handle is deploy-controlled and not left to slugify). There is **no `name` and no `label` field** — those are a common mistake. For a role a module scaffold owns you MUST also pass:
+The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$` — **underscores only, NO hyphens**, unlike a `module_slug`, which DOES allow hyphens; the two formats differ, so when you build a role slug from a hyphenated module slug you must convert `-`→`_`, e.g. module `hvac-svc-mgmt` → role `hvac_svc_mgmt_viewer`, never `hvac-svc-mgmt_viewer`. A hyphen in the slug fails the regex. Auto-derived from `role_name` if omitted, but pass it explicitly so the handle is deploy-controlled and not left to slugify). There is **no `name` and no `label` field** — those are a common mistake. For a role that belongs to a module you MUST also pass **`module_id`**, the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and unlinked from the module record's `default_*_role_id`.
 
-- **`module_id`** — the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and unlinked from the module record's `default_*_role_id`.
-- **`origin: "model"`** — marks it deployer-provisioned. Omit it and the role defaults to **`origin: "user"`** (admin-created), the wrong provenance for a deployed role. (`model_master` for a master-module scaffold; see the modeler skill.)
+**`origin`** records who provisioned a role or hierarchy edge, and it cannot change after creation. Leave it unset when you create RBAC by hand; it defaults to `"user"`. `"model"` and `"model_master"` are set only by a `semantius-modeler` deploy (a domain module and a master module respectively), and `"system"` only by the platform.
 
 ```bash
 # Viewer (read only) and manager (full access) roles — in ONE call
@@ -81,15 +80,13 @@ semantius call crud create_role '{
       "role_name": "CRM Viewer",
       "slug": "crm_viewer",
       "description": "Can view CRM data",
-      "module_id": 3,
-      "origin": "model"
+      "module_id": 3
     },
     {
       "role_name": "CRM Manager",
       "slug": "crm_manager",
       "description": "Can manage all CRM data",
-      "module_id": 3,
-      "origin": "model"
+      "module_id": 3
     }
   ]
 }'
@@ -221,3 +218,5 @@ semantius call crud update_entity '{
   }
 }'
 ```
+
+`edit_permission` covers insert, update and delete alike. A gate on one operation (only some roles may delete) is a validation rule on the entity, not a third permission column; see `jsonlogic.md` § *Detecting the operation*.

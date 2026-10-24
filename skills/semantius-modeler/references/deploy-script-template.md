@@ -42,6 +42,7 @@ bun run .tmp_deploy/deploy_<slug>.ts
 | `ensurePairs(readTool, colA, colB, writeTool, rows)` | create-if-missing for link rows keyed by a pair (`permission_hierarchy` by `including_permission_name` + `included_permission_name`, `role_permissions` by `role_id` + `permission_name`, `user_roles` by `role_id` + `user_id`) | reads by `colA=in.(…)`, matches pairs locally, ONE `create_*` call for the missing pairs, re-reads |
 | `updateEntity(tableName, data)` | the update half of create-or-diff (entity column patches: `select_rule`, `computed_fields`, `module_id`, `label_parent`, …) | **owns the `update_entity` envelope** so you never hand-roll it: `table_name` is TOP-LEVEL, the changed columns go under `data`. Pass just the table name + the partial patch (`updateEntity("tickets", { select_rule })`); never write `{ table_name, data: {...} }` by hand and never bury `table_name` inside the patch. Blind PATCH — pair with a `read1`/`readMany` diff. |
 | `postMany(path, rows)` / `seedEnsureMany(path, rows, keyField)` | Layer-2 seed inserts: ONE `postgrestRequest` POST per ≤100 rows (re-run-safe variant reads the keys first) | every row must carry the SAME key set (asserted); returns the rows WITH ids; never `--single`. See `stage-6-sample-data.md`. |
+| `assertSeedDistinct(table, rows, fields, minDistinct?)` | the readability guard after a seed insert: human name parts, company, city, label column | prints a per-field receipt and exits non-zero when a human-facing component degenerates (fewer than `min(rows, 8)` distinct non-empty values by default). See `stage-6-sample-data.md`. |
 | `runDeploy(fn)` | wrap the whole orchestration | owns the `try/catch`; loud non-zero halt on any throw; success line only on clean resolve |
 
 `scaffold-lib.ts` adds the schema-coupled layer (version-stamped; bumped with the platform):
@@ -152,7 +153,8 @@ runDeploy(async () => {
   // 4. FIELDS — per entity, only after step 3: one read_field dump (the diff source), the missing set in ONE
   //    create_field call, one update_field per drifted field (each patch differs), verified by re-read.
   //    fieldRows[t] already has the reserved-name guard, the presence-conditional FK skip and the computed-field
-  //    `disabled` override applied (4d).
+  //    `disabled` override applied (4d). `default_value` is the spec's quoted `default:` value, copied verbatim
+  //    (`default: "1"` → `default_value: "1"`).
   for (const t of Object.keys(fieldRows)) {
     const live = await readMany("read_field", `table_name=eq.${t}`);
     const liveBy = new Map(live.map((f) => [f.field_name, f]));

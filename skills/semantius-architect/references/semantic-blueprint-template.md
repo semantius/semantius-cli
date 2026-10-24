@@ -17,7 +17,7 @@ version: "3.1"
 naming_mode: {{template:<vendor> | agent-optimized — greenfield only; omit in catalog-clone files}}
 license: {{license slug, e.g. MIT}}
 system_name: {{System display name shown to the user AND used as the module name — keep acronyms as acronyms (CRM, ITSM, CMDB)}}
-icon_name: {{Module icon: a Lucide icon name in kebab-case or an icon URL, e.g. briefcase, users, circle-help}}
+icon_name: {{Module icon: a Lucide icon name in kebab-case or an icon URL, e.g. briefcase, users, circle-question-mark}}
 tagline: {{One-line marketing-voice line for catalog / card surfaces, ALSO used as the module record's short description (modules.description) shown beside the name in the selector. Elevator pitch — keep it concise enough for the chip.}}
 description: {{Longer marketing-voice prose for the catalog page (1-3 paragraphs). Reads to a buyer, not to the analyst. Multi-line YAML block (|) is fine.}}
 system_slug: {{system_slug_kebab_case}}
@@ -457,7 +457,7 @@ _Market-level RACI: which business function OWNS / CONTRIBUTES-TO / CONSUMES thi
 - **`version: "3.1"`** — the file format version, the same in blueprint and spec files. It changes only when the file format changes, and only with the user's approval. Downstream parsers read §3 **by header name, not column position**.
 - **`license`** — catalog metadata (e.g. `MIT`). Passes through to the spec; not provisioned to the module record today (follow-up when the platform exposes a `modules.license` column).
 - **`system_name`** — the display name shown to the user; also the module name (maps to `modules.module_name`). Acronyms stay as acronyms (ATS, CRM, ITSM).
-- **`icon_name`** — the module's UI icon: a Lucide icon name in kebab-case (e.g. `briefcase`, `users`, `circle-help`) or an icon URL; find a name as `use-semantius/references/data-modeling.md` → "Icons are Lucide icons" describes. Maps to `modules.icon_name`.
+- **`icon_name`** — the module's UI icon: a Lucide icon name in kebab-case (e.g. `briefcase`, `users`, `circle-question-mark`) or an icon URL; find a name as `use-semantius/references/data-modeling.md` → "Icons are Lucide icons" describes. Maps to `modules.icon_name`.
 - **`tagline`** — one-line marketing-voice line for catalog / card surfaces (the elevator pitch). Also used by the deployer as the module record's `description` column (`modules.description`), shown beside the name in the selector — so keep it concise enough for the chip. Distinct from §1 Overview (analyst-voice narrative).
 - **`description`** — longer marketing-voice prose for the catalog page. Multi-line YAML block (`|`) is fine. Reads to a buyer, not to the analyst. Distinct from §1 Overview which is analyst-voice; not provisioned today (follow-up when the platform exposes a `modules.long_description` column).
 - **`system_slug`** — lowercase kebab-case identifier (`it-ops-starter`). Equals the module slug the deployer creates. The file name is exactly `<system_slug>-semantic-blueprint.md`. **Never** appears as another name in §8.
@@ -481,7 +481,7 @@ _Market-level RACI: which business function OWNS / CONTRIBUTES-TO / CONSUMES thi
 
 ### Mode handling
 
-- **Greenfield**: §5.3 and §6 (all four sub-sections) are **kept (headings present) with the canonical `_(none: <short reason>)_` placeholder** unless the user explicitly requested cross-scope edges or cross-domain handoffs; the §6 rows the user accepts in the Stage 7 confirmation count as requested. No bare empty headings, no free-text stubs — every canonical heading is present and either populated or placeholdered.
+- **Greenfield**: §5.3 and §6 (all four sub-sections) are **kept (headings present) with the canonical `_(none: <short reason>)_` placeholder** unless the user explicitly requested cross-scope edges or cross-domain handoffs; the §6 rows accepted in Stage 7 (confirmed in expert flow, as drafted in guided and fast flow) count as requested. No bare empty headings, no free-text stubs — every canonical heading is present and either populated or placeholdered.
 - **Catalog-clone**: inherit §5.3 and §6 from the source blueprint. Let the user trim or extend during the customize conversation. After trim: any sub-section that ends up empty **keeps its heading and carries the `_(none: <short reason>)_` placeholder** — never omit the heading.
 - **Customize**: load the source blueprint, present its §1 + §3 table to the user, ask what to change; the rest of the file is preserved unless the change requires it. Apply the same keep-with-placeholder rule after any trim.
 - **`## Additional Requirements Specification` (all modes)**: OPTIONAL and omit-when-unused. Greenfield authors it only when a non-derivable requirement exists; catalog-clone and customize **preserve and adjust** it like any inherited section, never silently drop it. It is not a canonical section, so its absence is never a placeholder case and is never flagged.
