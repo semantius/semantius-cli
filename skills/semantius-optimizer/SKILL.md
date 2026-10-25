@@ -8,13 +8,13 @@ description: >-
   deploys. Deterministic, with an optional audit pass after saving. Trigger
   when the user wants to extract / export / optimize / snapshot /
   reverse-engineer / pull / regenerate a spec from a live Semantius module,
-  build a spec for a module created without one, or bring a customized live
-  module back in sync with a markdown spec. Example phrases: "generate a spec
-  from the `{slug}` module", "reverse-engineer the `{slug}` module into a
-  spec", "someone built a module in the UI, get me a spec", "pull `{slug}`
-  down to a semantic spec". Do NOT trigger for moving a module with its data
-  between hosts, or backing it up as a restorable file: that is
-  semantius-transfer; this skill produces a markdown spec.
+  build a spec for a module created without one, bring a customized live
+  module back in sync with a markdown spec, or see a diagram of a deployed
+  module. Example phrases: "generate a spec from the `{slug}` module",
+  "reverse-engineer the `{slug}` module into a spec", "someone built a
+  module in the UI, get me a spec", "draw a diagram of the `{slug}` module".
+  Do NOT trigger for moving a module with its data between hosts, or
+  backing it up as a restorable file: that is semantius-transfer.
 ---
 
 # semantius-optimizer Skill
@@ -101,6 +101,9 @@ Read first:
 ```
 1. Pick module  →  2. Pre-flight the output path, then run the extractor  →  3. Present + verify  →  (4. Audit, only if the user later asks)
 ```
+
+A request for only a diagram of the module runs the shorter
+[Diagram-only run](#diagram-only-run) instead, which writes no file.
 
 ### Communicating during the run — work quietly; the report is the deliverable
 
@@ -282,6 +285,33 @@ separately and plainly. Observed on `it-ops-starter`: the modeler dropping the
 label-field title and some `field.description` values; a malformed hyphen/underscore
 role slug from the architect. A plain generate run has no source to diff, so this note
 does not apply to it.
+
+## Diagram-only run
+
+When the user asks only for a picture of a deployed module ("draw a diagram of the
+`{slug}` module", "show how the `{slug}` entities relate"), no spec is written, so
+Stage 2a and Stage 3 do not apply:
+
+1. Pick the module as in Stage 1.
+2. Run the extractor in diagram mode:
+
+   ```bash
+   bun run references/spec-extract-lib.ts <module_slug> --diagram
+   ```
+
+   It prints the §2 Mermaid block a full run would write, built from live state with
+   the conventions of `semantius-architect/references/stage-5-mermaid.md`: one node per
+   entity (related entities of other modules and built-ins included), each edge labeled
+   with its link field's `relationship_label`, dotted edges for entity families,
+   built-ins and shared masters shaded green. Never draw the diagram by hand, and never
+   as an `erDiagram` listing columns.
+3. Show the printed block unchanged in a `mermaid` fence, after one line naming the
+   module and its entity count. Only when a relationship edge (`-->`) has no label, add
+   one line naming those edges (`<from> → <to>`): their link fields carry no
+   relationship label in the live module, so the arrow has no text until one is set.
+
+Work quietly, as in a full run: the user sees the module picker when it is needed,
+then the diagram.
 
 ## Stage 4: Audit the extracted spec for live-model defects (only when the user asks)
 

@@ -8,6 +8,49 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Entity table: technical name always, product column never dropped, no "Shown as"
+
+2026-10-25. A fast-flow go-ahead for a design following ServiceNow (16 entities) showed only Entity, What it holds and Shown as: the required ServiceNow API object column was missing, and no column showed the table names, so the user approved a design without seeing a single identifier. The "Shown as" column mostly repeated the entity's name ("Control Name" for Controls) or guessed ("Risk Number or Title"), and nothing reads it: it was chat-only, and the analyst picks the field that names each record on its own in its field stage. Rules: `references/stage-3-entities.md`, the template-mode note and "Present the list as a table"; SKILL.md, Writing Convention 8 (banned and required lists, Pre-emit check); `../semantius-admin/references/fast-flow.md`, section 3; `../semantius-admin/references/writing-conventions.md`, Convention 8.
+
+1. **Columns, in order:** Name, Technical name, <Vendor> API object (only when following a product), What it holds. The fast-flow go-ahead summary uses the same columns and order.
+2. **Technical name is always shown:** the table name in backticks, byte-for-byte the §3 `data_object`.
+3. **The <Vendor> API object column is never dropped when following a product.** An API object that can't be named reads "not confirmed", even when every cell does. The modern design has no such column.
+4. **Writing Convention 8 exception:** these two columns are the one place identifiers appear in chat. The Pre-emit check verifies the table's header and cells before sending.
+5. **No "Shown as" column.** A followed product's composite display name ("First Last") is still built by the analyst's display-name rule.
+
+---
+
+## Product knowledge the model lacks is looked up on the web
+
+2026-10-25. Every vendor fallback asked the user or dropped the product as soon as training knowledge ran out (an unfamiliar regional vendor, a very new product, a niche category), and every skill banned `WebFetch` outright, so the web was never consulted. Rules: SKILL.md, "Reference material" and Step 0 "Catalog source"; `references/stage-1-capture.md`, "Products that fit" and the four-object test; `references/stage-2-naming.md`; `references/stage-3-entities.md`, the template-mode note; `../semantius-admin/SKILL.md`, core invariants.
+
+1. **Knowledge first, then the web.** When training knowledge does not give the products in a category, a product's headline objects, or its API object names, search with `WebSearch` and read the product's own documentation, API reference or data-export reference with `WebFetch` before asking the user or falling back. Only what the pages confirm is used, spelled their way.
+2. **The four-object test counts looked-up objects.** A product passes when four headline objects are named from knowledge or the lookup.
+3. **The existing fallbacks apply only after the lookup:** the one-sentence "can't name its records" answer, the API object choice (switch, paste, or leave empty), the no-incumbents skip, and in a fast run modern names with "inspired by" at most.
+4. **`curl` stays the only way to fetch an artifact.** The web tools serve product knowledge only; a blueprint or spec at a URL is fetched with `curl`.
+
+---
+
+## Entity table: "Shown as" gives field titles, the product column gives API names
+
+2026-10-24. A fast-flow go-ahead for a design following Sine showed "Shown as" values as loose lowercase phrases ("expected visitor and date"), and its "Sine object" column only repeated each entity's name in the singular: in template mode the entity names are made from the product's display names, so a display name in that column checks nothing. Rules: `references/stage-3-entities.md`, the template-mode note and "Present the list as a table"; `references/stage-2-naming.md`, naming rules table; `../semantius-admin/references/fast-flow.md`, section 3.
+
+1. **"Shown as" gives the title of the field that names each record, in Title Case**, as the user will see it ("Full Name"). A name built from several fields lists their titles joined by " + " ("First Name + Last Name").
+2. **The product column is "<Vendor> API object":** the name the product's API or data export uses, in its own casing (Salesforce `Opportunity`, ServiceNow `incident`). The display name does not count. The §3 notes cell carries `<Vendor> API object: <Name>`.
+3. **An API object that can't be named** (also for a product with no API or data export) leaves that entity's cell empty, with no note in §3: guided and expert flow ask first (switch to the modern design, paste the product's list of records, or go on with the cell empty); fast flow goes on without asking. No "inspired by <Vendor>" text is written.
+
+---
+
+## A direct new build with no saved flow reaches fast flow; free-text replies are answered and re-asked
+
+2026-10-24. A direct call with no customizations file ran as guided flow ("the default when you have not picked one") and created its tasks before the fast-flow hand-off: two rules still read no saved flow as guided without naming the hand-off. In the same run, a question written into the "Also track" free-text slot got a long answer with the options as a prose list, and the question was never asked again. Rules: SKILL.md, Step 0, "Task tracking", "Expert flow" and "AskUserQuestion mechanics"; `../semantius-admin/references/interaction-flow.md`, section 2.
+
+1. **No saved flow is read as guided only after the hand-off check.** A direct new build whose request does not ask to be guided goes to the admin, and a missing customizations file counts as no saved flow.
+2. **Stage tasks are created only once the hand-off has not applied.**
+3. **A free-text reply that does not answer the question** gets a short answer, and the same question is fired again in that response, its options changed only where the reply changed them. The options are never turned into a prose list.
+
+---
+
 ## Entity table shows how each entity appears in lists
 
 2026-10-23. A user could approve a design without seeing that Contacts would be listed by first name only. Rules: `references/stage-3-entities.md`, "Present the list as a table" and the template-mode note; `../semantius-admin/references/fast-flow.md`, section 3.

@@ -143,7 +143,7 @@ No host-module or manager-scope follow-up — the host is determined by B's blue
 - **question**: `"Where should the shared <Plural Label> live?"`
 - **header**: `"Where to host"`
 - **multiSelect**: `false`
-- **options** depend on existing master modules. Every case yields 2 to 4 options (a 1-option question is rejected by the tool); the user can always type another name into the tool's free-text slot, so no `"Other"` option is listed:
+- **options** depend on existing master modules. Every case yields 2 to 4 options (a 1-option question is rejected by the tool); the user can always write another name into the tool's free-text slot, so no `"Other"` option is listed:
   - *Case A* (no shared modules exist, no cluster hint): 2 options: `"New shared module called <plural_label_snake_case> (Recommended)"`, then `"Stop, I want to think about it"` (halts the run, no changes).
   - *Case B* (no shared modules, cluster hint `<cluster>`): 3 options: `"New shared module called <cluster> (Recommended)"`, `"New shared module called <plural_label_snake_case>"`, then `"Stop, I want to think about it"`.
   - *Case C* (shared modules exist, cluster hint matches one): 3 options: `"Existing <Master Display Name> module (Recommended)"`, `"New shared module called <cluster>"`, then `"Stop, I want to think about it"`.

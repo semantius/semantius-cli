@@ -16,7 +16,7 @@ Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
 ...
 ```
 
-- **Orchestrated (a `Run context:` block is present):** the admin has already run this preflight (CLI installed + authenticated, toolchain present, `adenin` guard passed, customizations path resolved). **Do NOT re-run the checks.** Read `Customizations file:` from the header and proceed. (Re-running is harmless but redundant; skip it.)
+- **Orchestrated (a `Run context:` block is present):** the admin has already run this preflight (CLI installed + authenticated, toolchain present, customizations path resolved). **Do NOT re-run the checks.** Read `Customizations file:` from the header and proceed. (Re-running is harmless but redundant; skip it.)
 - **Standalone (no `Run context:` block):** run all four checks below yourself, in order.
 
 The modeler never consults the customizations file (specs already carry every decision), so when the modeler runs this standalone it executes checks 1-3 and ignores the check-4 output. Bun is the tool the modeler critically needs (its deploy and sample-data scripts run with `bun run`).
@@ -26,7 +26,7 @@ The modeler never consults the customizations file (specs already carry every de
 ## Output discipline
 
 - **Orchestrated by admin:** produce **no chat output** for these checks; the admin owns all narration and keeps the machinery invisible.
-- **Standalone:** keep it quiet too. The only user-facing output is a halt message (the active org is `adenin`, or a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). A single brief line on the customizations file (check 4) is shown standalone in expert flow only. On all-pass with everything already installed and authenticated, say nothing.
+- **Standalone:** keep it quiet too. The only user-facing output is a halt message (a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). Never mention the checks themselves, whether the skill runs under the admin or on its own, the org, or the customizations path. A single brief line on the customizations file (check 4) is shown standalone in expert flow only. On all-pass with everything already installed and authenticated, say nothing.
 
 ---
 
@@ -94,11 +94,11 @@ yq --version    # must report the mikefarah build, e.g. "yq (https://github.com/
 
 If `yq --version` shows anything else (the Python yq, or a version below v4), install Mike Farah's Go binary explicitly via the static-binary fallback above, place it on PATH ahead of the wrong one, and re-check. Do not proceed with a non-mikefarah yq.
 
-If any install fails, surface the verbatim error, the exact host the install tried to reach, and the tool's download page, and stop. An HTTP 403 whose body says `egress denied: host not in whitelist` means the environment blocks that host and the user or their admin must allow it, not that the install is broken; say so. Never work around a blocked host: no mirror, proxy, other source or retry. Do not limp on without a required tool — a missing `jq` silently breaks the org probe and the `adenin` guard in check 3, and a missing or wrong `yq` breaks every customizations write.
+If any install fails, surface the verbatim error, the exact host the install tried to reach, and the tool's download page, and stop. An HTTP 403 whose body says `egress denied: host not in whitelist` means the environment blocks that host and the user or their admin must allow it, not that the install is broken; say so. Never work around a blocked host: no mirror, proxy, other source or retry. Do not limp on without a required tool — a missing `jq` silently breaks the org probe in check 3, and a missing or wrong `yq` breaks every customizations write.
 
 ---
 
-## Check 3: Ensure the `semantius` CLI is installed and authenticated, then halt if the active org is `adenin`
+## Check 3: Ensure the `semantius` CLI is installed and authenticated
 
 This is the front door for every Semantius call, so it self-heals a missing binary and routes a missing host or credential to the user instead of letting a raw CLI error surface later. One probe (`getCurrentUser`) folds the install check, the auth check, and the org/UI-base read into a single call. Probe once at the top of every invocation.
 
@@ -151,15 +151,11 @@ Never run `logout`, never pick a host yourself, never ask for a base URL or an A
 
 **If the setup uses an API key, never carry it forward inline.** The CLI reads `SEMANTIUS_API_KEY` from the environment or a `.env` on every call, so never hardcode it or re-emit it in an inline `export SEMANTIUS_API_KEY=...` in a later command. A key pasted into chat can carry invisible corruption — most commonly a literal `…` (U+2026 horizontal ellipsis) or `...` where a console truncated a long token for display, plus stray whitespace or smart quotes — and an inline copy bypasses the value the probe validated. If a probe ever fails with an auth error *after* a successful one, suspect a stale inline copy first.
 
-### 3c. Halt if `org` is `adenin`
-
-Once the probe succeeds, if `org` is `adenin`, stop immediately. Do not classify the request, do not inspect the workspace, do not dispatch any sub-skill. Tell the user: *"This workspace is pointed at the `adenin` instance. Switch workspace before continuing."* The check is purely operational — writes against `adenin` fail with permission errors that read like CLI bugs and waste debugging time; halting up front avoids the noise.
-
 ---
 
 ## Check 4: Compute the customizations file path
 
-(The modeler skips this; it does not consult the customizations file.) After the adenin halt passes, derive the per-org file location and export it for every downstream call. The folder name is the org; never duplicate the org inside the file body.
+(The modeler skips this; it does not consult the customizations file.) After the probe succeeds, derive the per-org file location and export it for every downstream call. The folder name is the org; never duplicate the org inside the file body.
 
 ```bash
 CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"
@@ -175,6 +171,6 @@ If the file does not exist yet, that is fine: treat as "no policies set." The fi
 
 After a successful preflight these values are resolved and reused for the rest of the run:
 
-- `org` — the active Semantius org (already confirmed not `adenin`).
+- `org` — the active Semantius org.
 - `ui_baseurl` — the web UI base for building deep-links.
 - `CUSTOMIZATIONS_FILE` — per-org customizations path (unused by the modeler).

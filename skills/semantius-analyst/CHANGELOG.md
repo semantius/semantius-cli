@@ -8,6 +8,15 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## A followed product's fields are looked up on the web when not known
+
+2026-10-25. Drafting the fields of a followed product relied on training knowledge alone, so an unfamiliar or very new product got guessed field names. Rules: `references/stage-4-fields.md`, "Fields of a followed product".
+
+1. **When knowledge of the product's fields falls short,** search with `WebSearch` and read the product's own API or data-export reference with `WebFetch` before drafting; only field names the pages confirm are used, spelled their way.
+2. **`curl` stays the only way to fetch a blueprint at a URL.** The web tools serve product knowledge only.
+
+---
+
 ## A person is labelled by full name
 
 2026-10-23. A contact entity got `firstname` as its label column, the only required text field, so lists read "Marta", "Daniel" and child records "Marta › Question about pricing". The label-column rule covered a type or category as the only identifier, but not an identity made of several values. Rules: `references/stage-4-fields.md`, "Composite or non-text identity".

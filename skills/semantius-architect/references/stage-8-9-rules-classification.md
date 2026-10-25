@@ -90,7 +90,7 @@ The hint is **optional and per-entity**; omit it when the entity is not a master
 
 The mapping is not closed; coin a new cluster name when the entity is a recognizable master concept that doesn't fit one of the above (e.g. `pricing` for `price_lists`, `pricing_tiers`; `geo` for `countries`, `regions`, `time_zones`). Use snake_case. Prefer a domain noun the user would recognize at the prompt over an entity-name suffix.
 
-The hint never overrides the user — the deployer surfaces it as a recommendation at Stage 2d follow-up 1, and the user can always pick a different host module or type a custom name at the prompt. **Authors review the cluster classification at confirmation time, same as the `entity_type` classification.** It fills the "Could be shared with other tools" column of the same Stage 9 table, in plain words:
+The hint never overrides the user — the deployer surfaces it as a recommendation at Stage 2d follow-up 1, and the user can always pick a different host module or write a custom name at the prompt. **Authors review the cluster classification at confirmation time, same as the `entity_type` classification.** It fills the "Could be shared with other tools" column of the same Stage 9 table, in plain words:
 
 > | What's tracked | Kind | Kind of editing | Why | Could be shared with other tools |
 > |---|---|---|---|---|

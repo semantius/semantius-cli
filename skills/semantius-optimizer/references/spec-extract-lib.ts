@@ -8,6 +8,10 @@
  *
  * Usage:  bun run spec-extract-lib.ts <module_slug> [outfile] [--force]
  *         bun run spec-extract-lib.ts --from-fixture <fixture.json> [outfile] [--force]
+ *         bun run spec-extract-lib.ts <module_slug> --diagram
+ *
+ * `--diagram` prints only the §2 Mermaid block to stdout and writes no file. It is
+ * cut from the same render as a full run, so it equals that run's §2 diagram.
  *
  * `--from-fixture` renders the same markdown from a JSON snapshot of the live
  * reads (shape documented at `loadLive()` / the round-trip eval under
@@ -989,17 +993,21 @@ function render(data: LiveData): string {
 
 async function main() {
   // Arg parse: positional <module_slug> [outfile] (or --from-fixture <json> [outfile]),
-  // plus an optional order-independent --force flag. --force is the ONLY way to
-  // overwrite an existing outfile.
+  // plus optional order-independent --force and --diagram flags. --force is the ONLY
+  // way to overwrite an existing outfile; --diagram writes no file at all.
   const rawArgs = Bun.argv.slice(2);
   const force = rawArgs.includes("--force");
+  const diagramOnly = rawArgs.includes("--diagram");
   const fixtureIdx = rawArgs.indexOf("--from-fixture");
   const fixturePath = fixtureIdx >= 0 ? rawArgs[fixtureIdx + 1] : null;
   // Drop the fixture path only when --from-fixture is present (fixtureIdx -1 would otherwise drop argv[0], the slug).
-  const positional = rawArgs.filter((a, i) => a !== "--force" && a !== "--from-fixture" && (fixtureIdx < 0 || i !== fixtureIdx + 1));
+  const positional = rawArgs.filter(
+    (a, i) => a !== "--force" && a !== "--diagram" && a !== "--from-fixture" && (fixtureIdx < 0 || i !== fixtureIdx + 1),
+  );
   const usage =
     "usage: bun run spec-extract-lib.ts <module_slug> [outfile] [--force]\n" +
-    "       bun run spec-extract-lib.ts --from-fixture <fixture.json> [outfile] [--force]";
+    "       bun run spec-extract-lib.ts --from-fixture <fixture.json> [outfile] [--force]\n" +
+    "       bun run spec-extract-lib.ts <module_slug> --diagram";
   if (fixtureIdx >= 0 && !fixturePath) throw new Error(usage);
   const slug = fixturePath ? null : positional[0];
   if (!fixturePath && !slug) throw new Error(usage);
@@ -1009,7 +1017,7 @@ async function main() {
   // script never spends a run's worth of network work and then clobbers a file.
   // Refuse unless --force; the skill's Stage 2a asks the user first and passes --force
   // only on an explicit "replace" (or passes a different, non-colliding outfile).
-  if (!force && (await Bun.file(outfile).exists())) {
+  if (!diagramOnly && !force && (await Bun.file(outfile).exists())) {
     console.error(
       `refusing to overwrite existing file: ${outfile}\n` +
         `Choose a different output path, or pass --force to replace it.`,
@@ -1032,6 +1040,12 @@ async function main() {
   }
 
   const md = render(data);
+  if (diagramOnly) {
+    const block = md.match(/^```mermaid\n[\s\S]*?\n```$/m);
+    if (!block) throw new Error("render produced no Mermaid block");
+    console.log(block[0]);
+    return;
+  }
   await Bun.write(outfile, md);
   console.log(
     `Wrote ${outfile}: ${data.ownedRaw.length} owned entities, ${data.related.length} related, ${data.perms.length} permissions.`,

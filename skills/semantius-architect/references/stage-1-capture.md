@@ -13,9 +13,9 @@ Ask the user what system they want to model. Two shapes are common:
 
 > **Interaction flow** (the `.interaction_flow` switch, read at Step 0; `../../semantius-admin/references/interaction-flow.md`). **Guided flow:** think of the products that fit, then give the guidance aside (a product fits) or run the discovery interview first (none fits). **Expert flow:** as in guided flow, plus one step: apply the four-object test before deciding whether a product fits. **Fast flow:** think of the products that fit, then run the fast-flow interview (the last part of this stage). In every flow, an unclear category (e.g., the user says "a system for my coaches") is settled by the interview's "Closest to" question; in fast flow, by Stage 2's design question (`stage-2-naming.md`).
 
-**Products that fit.** Think of the 3 to 4 well-known products (point solutions or cloud platforms) whose data model best fits the request. Keep the list: Stage 2 uses it for its vendor options.
+**Products that fit.** Think of the 3 to 4 well-known products (point solutions or cloud platforms) whose data model best fits the request. When your knowledge names none, search the web for the category's leading products before deciding that none fits (SKILL.md → Reference material). Keep the list: Stage 2 uses it for its vendor options.
 
-**The four-object test (expert flow; also Stage 2's typed-answer step).** A product stays on the list only when you can name at least four of its headline objects, spelled the way the product spells them. Run it before deciding whether a product fits: in expert flow, a product fits only when it passed. Why an objective test: a product whose objects you can't name is a product whose model you would be guessing, and a guessed model presented as "how X does it" misleads the user and ends up in the design. Guided and fast flow keep every product on the list. Stage 2's typed-answer step runs the same test, in every flow, on a product the user types in (`stage-2-naming.md`).
+**The four-object test (expert flow; also Stage 2's free-text-answer step).** A product stays on the list only when you can name at least four of its headline objects, spelled the way the product spells them. When your knowledge names fewer than four, look them up in the product's own documentation before deciding (SKILL.md → Reference material); objects the pages confirm count. Run it before deciding whether a product fits: in expert flow, a product fits only when it passed. Why an objective test: a product whose objects you can't name is a product whose model you would be guessing, and a guessed model presented as "how X does it" misleads the user and ends up in the design. Guided and fast flow keep every product on the list. Stage 2's free-text-answer step runs the same test, in every flow, on a product the user writes in (`stage-2-naming.md`).
 
 **None fits: the discovery interview (guided and expert flow).** Only when no product fits the request. One `AskUserQuestion` call, fired alone in its response, with the questions from the templates below that the request leaves open:
 
@@ -30,7 +30,7 @@ When nothing is open, ask nothing. It is a standalone question (no `Q:` task), a
 - One line per product on the list (the user's "Closest to" pick first): the modeling pattern it is known for, for example *"Salesforce keeps Leads apart from Contacts until they qualify"*. Describe how each models the domain; never rank them or suggest buying one. With no product on the list, leave these lines out.
 - Two to four best-practice points for this domain's data model: the modern design that Stage 2 offers. Introduce them with one line, e.g. *"The modern design follows these:"*, then one point per bullet line. Never compress multiple points into a single line or sentence; each point gets its own line so the user can push back on them individually.
 
-These points are the assumptions Stage 3 applies when the user picks the modern design ("Make assumptions explicit", SKILL.md → Tone and collaboration style); a vendor's design follows that vendor's structure, and a structure the user typed and confirmed in Stage 2 follows theirs. The aside is carried in the same turn as the next question: Stage 2's design question; in expert flow, the name and scope question below; when Stage 2 skips its question, the Stage 3 entity list. The user can push back on any point there, or at the entity list.
+These points are the assumptions Stage 3 applies when the user picks the modern design ("Make assumptions explicit", SKILL.md → Tone and collaboration style); a vendor's design follows that vendor's structure, and a structure the user wrote in and confirmed in Stage 2 follows theirs. The aside is carried in the same turn as the next question: Stage 2's design question; in expert flow, the name and scope question below; when Stage 2 skips its question, the Stage 3 entity list. The user can push back on any point there, or at the entity list.
 
 **Interview templates.** Every question holds 2 to 4 options (SKILL.md → AskUserQuestion mechanics); the tool adds its own free-text slot, so never list "Other".
 
@@ -44,7 +44,7 @@ These points are the assumptions Stage 3 applies when the user picks the modern 
 **Where the answers go.**
 
 - The scope line below.
-- Stage 2's vendor ranking: a product the user typed into "Replaces" is ranked first.
+- Stage 2's vendor ranking: a product the user wrote into the free-text slot of "Replaces" is ranked first.
 - Stage 11 personas: the "Users" answer names who acts.
 - The §1 Overview: what is in and out of scope.
 

@@ -53,7 +53,7 @@ The detail lives in the architect's stage files; this is the map.
 **The summary**, one message, in plain language (Writing Convention 8):
 
 1. The design: *"Built on current best practice, with modern, self-describing names."* for the modern design; *"Following <Product>'s records and names."* when following a product.
-2. The entity table (Plural Label, one-line purpose, Shown as: the field each entity appears as in lists; when following a product, also the <Product> object each entity maps to, `stage-3-entities.md`).
+2. The entity table, with the columns and order of guided flow (`stage-3-entities.md`, "Present the list as a table"): Plural Label; Technical name (the table name in backticks), always; the <Product> API object only when following a product, never dropped then (a cell that can't be named reads "not confirmed") and left out for the modern design; a one-line purpose.
 3. The 2 to 4 best-practice points (Stage 1 aside).
 4. The exact matches, one line: *"Organizations already exist in Sales; I'll use them."* With no exact match, this item is left out entirely: no sentence saying nothing matched or everything is created fresh, and no mention of built-in tables such as users being reused.
 5. What happens next: *"After your go-ahead I build and deploy without more questions. I only connect to records your instance already has when the name matches exactly, and that may share or reshape them; anything that only looks similar is kept separate. Everything I decide is listed at the end."*

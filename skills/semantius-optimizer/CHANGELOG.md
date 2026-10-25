@@ -8,6 +8,15 @@ Entries below are newest first.
 
 ---
 
+## Diagram-only run
+
+2026-10-24. A request for only a diagram of a deployed module now has a route; without one, an agent drew its own `erDiagram` listing every column instead of the blueprint-style flowchart.
+
+1. **`spec-extract-lib.ts`** takes `--diagram`: it renders as usual, prints only the §2 Mermaid block to stdout, and writes no file (the overwrite guard is skipped). The block is cut from the same render, so it equals a full run's §2.
+2. **SKILL.md** gains the "Diagram-only run" section and the diagram trigger in the description (the "pull `{slug}` down" example phrase and the closing "produces a markdown spec" clause dropped to stay under the 1024-character limit).
+
+---
+
 ## `label` is a §5 property
 
 2026-10-16. Paired with the analyst entry "every enum entry gets a label and a color; `label` is a §5 property".
