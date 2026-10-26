@@ -35,6 +35,7 @@ import {
   getHostCachePath,
   getHostMode,
   getHostSource,
+  hostAliasNote,
   hostBaseUrl,
   normalizeHost,
   propagateOrg,
@@ -154,6 +155,19 @@ describe('host resolution', () => {
       );
       expect(normalizeHost('acme.semantius.ai')).toBe('acme.semantius.cloud');
       expect(normalizeHost('acme.semantius.io')).toBe('acme.semantius.cloud');
+    });
+
+    test('a login names the cloud API host an org alias maps to, and only then', () => {
+      expect(hostAliasNote('https://Tests.semantius.app/')).toBe(
+        'tests.semantius.app is the Semantius web app; the CLI uses its API host, tests.semantius.cloud.',
+      );
+      expect(hostAliasNote('acme.semantius.ai')).toBe(
+        'acme.semantius.ai is the Semantius cloud MCP server; the CLI uses its API host, acme.semantius.cloud.',
+      );
+      expect(hostAliasNote('acme.semantius.cloud')).toBeNull();
+      expect(hostAliasNote('semantius.example.com')).toBeNull();
+      expect(hostAliasNote('localhost:3000')).toBeNull();
+      expect(hostAliasNote('https://acme.semantius.app/api')).toBeNull();
     });
 
     test('rejects other schemes, paths, queries and credentials', () => {

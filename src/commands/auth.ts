@@ -9,9 +9,10 @@ import {
   logout,
   newLoginReach,
 } from '../auth/session.js';
+import { getHostFlag } from '../config.js';
 import { stopAllDaemons } from '../daemon-client.js';
 import { ErrorCode } from '../errors.js';
-import { resolveHost } from '../host.js';
+import { hostAliasNote, resolveHost } from '../host.js';
 import { recordHost, removeHost } from '../hosts-index.js';
 
 /**
@@ -39,6 +40,9 @@ export async function loginCommand(
   // One reach for the whole login, so the control-plane request is announced
   // and given the login's limit too (see src/auth/reach.ts).
   const reach = newLoginReach();
+  const flag = getHostFlag();
+  const note = flag ? hostAliasNote(flag) : null;
+  if (note) reach.note(note);
   const host = await resolveHost({ reach }).catch(markTransient);
   await login(host, { ...opts, reach }).catch(markTransient);
   recordHost(

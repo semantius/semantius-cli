@@ -836,16 +836,20 @@ async function loginWithDeviceCode(
       startTimer(
         `the code was not approved within ${describeDuration(approvalMs)}`,
       );
+      // Named by its web address: a cloud org's API host (<org>.semantius.cloud)
+      // is not the name its people know it by. One link, never two: the one
+      // that carries the code when the server sends it, with the code still
+      // shown so the person can check it against the page (RFC 8628 §3.3.1).
+      const where = hostOf(facts.uiBaseUrl);
       showUser(
-        `\nTo sign in to ${facts.host}, open this URL on any device:\n\n` +
-          `  ${verificationUri}\n\n` +
-          `and enter the code:  ${userCode}\n`,
+        verificationUriComplete
+          ? `\nTo sign in to ${where}, open this link on any device:\n\n` +
+              `  ${verificationUriComplete}\n\n` +
+              `and check that it shows the code:  ${userCode}\n`
+          : `\nTo sign in to ${where}, open this URL on any device:\n\n` +
+              `  ${verificationUri}\n\n` +
+              `and enter the code:  ${userCode}\n`,
       );
-      if (verificationUriComplete) {
-        showUser(
-          `Or open this, which carries the code:\n  ${verificationUriComplete}\n`,
-        );
-      }
       showUser('Waiting for approval...');
     },
   });

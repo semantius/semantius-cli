@@ -131,6 +131,8 @@ interface ProviderConfig {
    * 'cross-origin' advertises one on another origin, which discovery refuses.
    */
   deviceGrant: boolean | 'cross-origin';
+  /** Send verification_uri_complete with the device code (RFC 8628 makes it optional). */
+  deviceUriComplete: boolean;
   /** Answer every refresh_token grant with invalid_grant: a spent session. */
   refuseRefresh: boolean;
   /** When set, answers every refresh_token grant instead (refuseRefresh aside). */
@@ -158,6 +160,7 @@ function startProvider(): ProviderState {
     platformDoc: null,
     entraCrossOrigin: false,
     deviceGrant: false,
+    deviceUriComplete: true,
     refuseRefresh: false,
     refreshReply: null,
     hold: {},
@@ -316,7 +319,11 @@ function startProvider(): ProviderState {
           device_code: 'device-code-1',
           user_code: 'WDJB-MJHT',
           verification_uri: `${origin}/device`,
-          verification_uri_complete: `${origin}/device?user_code=WDJB-MJHT`,
+          ...(cfg.deviceUriComplete
+            ? {
+                verification_uri_complete: `${origin}/device?user_code=WDJB-MJHT`,
+              }
+            : {}),
           expires_in: 1800,
           interval: cfg.deviceInterval,
         });
@@ -387,6 +394,7 @@ function startProvider(): ProviderState {
       cfg.platformDoc = null;
       cfg.entraCrossOrigin = false;
       cfg.deviceGrant = false;
+      cfg.deviceUriComplete = true;
       cfg.refuseRefresh = false;
       cfg.refreshReply = null;
       cfg.hold = {};
@@ -1098,7 +1106,33 @@ describe('oauth login', () => {
         `Requesting a sign-in code from ${hostname()}...`,
       );
       expect(lineOf(lines, 'Contacting ')).toBeLessThan(request);
-      expect(request).toBeLessThan(lineOf(lines, 'enter the code:  WDJB-MJHT'));
+      expect(request).toBeLessThan(
+        lineOf(lines, 'check that it shows the code:  WDJB-MJHT'),
+      );
+    });
+
+    test('shows the one link that carries the code, and the code to check it by', async () => {
+      const { lines, error } = await shown(() => login(host));
+
+      expect(error).toBeUndefined();
+      const prompt = lines.join('\n');
+      expect(prompt).toContain(`To sign in to ${hostname()}, open this link`);
+      expect(prompt).toContain(`  ${provider.origin}/device?user_code=WDJB-MJHT`);
+      expect(prompt).not.toContain(`  ${provider.origin}/device\n`);
+      expect(prompt).not.toContain('enter the code');
+    });
+
+    test('without a link that carries the code, shows the URL and the code to enter', async () => {
+      provider.cfg.deviceUriComplete = false;
+
+      const { lines, error } = await shown(() => login(host));
+
+      expect(error).toBeUndefined();
+      const prompt = lines.join('\n');
+      expect(prompt).toContain(`To sign in to ${hostname()}, open this URL`);
+      expect(prompt).toContain(`  ${provider.origin}/device\n`);
+      expect(prompt).toContain('and enter the code:  WDJB-MJHT');
+      expect(prompt).not.toContain('user_code=');
     });
 
     test('a held discovery request is nudged, and the login goes on once it is answered', async () => {
@@ -1168,7 +1202,7 @@ describe('oauth login', () => {
       expect(
         lineOf(lines, `Requesting a sign-in code from ${hostname()}...`),
       ).toBeGreaterThanOrEqual(0);
-      expect(lineOf(lines, 'enter the code')).toBe(-1);
+      expect(lineOf(lines, 'the code:')).toBe(-1);
     });
 
     test('the approval window counts from when the code is shown', async () => {

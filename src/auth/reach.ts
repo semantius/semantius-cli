@@ -138,6 +138,11 @@ export class LoginReach {
 
   constructor(private readonly write: (line: string) => void) {}
 
+  /** A line for the person signing in, where the login's own lines go. */
+  note(line: string): void {
+    this.write(line);
+  }
+
   /**
    * fetch, announced, nudged and limited. `announce` replaces the
    * "Contacting <host>..." line, for a step worth naming on its own.

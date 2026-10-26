@@ -281,14 +281,12 @@ export function normalizeHost(value: string): string {
       'must be a hostname with an optional port, without a path, credentials, a query or a fragment',
     );
   }
-  for (const [suffix, what] of OTHER_CLOUD_HOSTS) {
-    if (url.hostname.endsWith(suffix) && url.hostname.length > suffix.length) {
-      const host = `${url.hostname.split('.')[0]}${CLOUD_SUFFIX}`;
-      debug(
-        `${url.hostname} is ${what}; using the organization's host ${host}`,
-      );
-      return host;
-    }
+  const alias = cloudAlias(url.hostname);
+  if (alias) {
+    debug(
+      `${url.hostname} is ${alias.what}; using the organization's host ${alias.host}`,
+    );
+    return alias.host;
   }
   return url.host;
 }
@@ -302,6 +300,38 @@ const OTHER_CLOUD_HOSTS: ReadonlyArray<[suffix: string, what: string]> = [
   ['.semantius.ai', 'the Semantius cloud MCP server'],
   ['.semantius.io', 'the Semantius analytics (cube) server'],
 ];
+
+function cloudAlias(hostname: string): { host: string; what: string } | null {
+  for (const [suffix, what] of OTHER_CLOUD_HOSTS) {
+    if (hostname.endsWith(suffix) && hostname.length > suffix.length) {
+      return { host: `${hostname.split('.')[0]}${CLOUD_SUFFIX}`, what };
+    }
+  }
+  return null;
+}
+
+/**
+ * The line a login command prints when the host it was given is one of an
+ * org's other names: everything after it — the hosts it contacts, the host it
+ * stores the session for — names <org>.semantius.cloud, which would otherwise
+ * look like a host the person never typed. Null for any other value, and for
+ * one normalizeHost would reject (it is about to say so itself).
+ */
+export function hostAliasNote(value: string): string | null {
+  try {
+    normalizeHost(value);
+  } catch {
+    return null;
+  }
+  const raw = value.trim().replace(/\/+$/, '');
+  const { hostname } = new URL(
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`,
+  );
+  const alias = cloudAlias(hostname);
+  return alias
+    ? `${hostname} is ${alias.what}; the CLI uses its API host, ${alias.host}.`
+    : null;
+}
 
 function invalidHostError(value: string, reason: string): Error {
   return new Error(

@@ -823,8 +823,10 @@ semantius use <host> --login-flow device      # or: semantius login --login-flow
 ```
 
 That covers always-on agents, servers, containers, SSH sessions, remote VMs
-and CI-like runners. The CLI prints a URL and a short code (on stderr); open
-the URL on any device — your phone, your laptop — enter the code and sign in.
+and CI-like runners. The CLI prints a link and a short code (on stderr); open
+the link on any device — your phone, your laptop — check that the page shows
+the same code, and sign in. (A server that sends no link with the code built
+in gets a plain URL instead, where you type the code.)
 It waits up to 10 minutes from when the code is shown, and before that up to
 3 minutes for each request it makes (`SEMANTIUS_CONNECT_TIMEOUT` sets a
 different limit). To make it the default on such a machine, put

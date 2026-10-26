@@ -27,6 +27,7 @@ import {
   type HostSource,
   getHost,
   getHostSource,
+  hostAliasNote,
   isCloudHost,
   normalizeHost,
   orgFromHost,
@@ -224,6 +225,8 @@ export async function useCommand(opts: UseOptions): Promise<void> {
   // Created before the host is resolved, so the control-plane request is
   // announced and given a login's limit too (see src/auth/reach.ts).
   const reach = newLoginReach();
+  const note = hostAliasNote(opts.host);
+  if (note) reach.note(note);
   try {
     const facts = await resolveHostFacts(host, { reach });
 
