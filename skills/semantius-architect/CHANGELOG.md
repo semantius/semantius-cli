@@ -8,6 +8,15 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## API object column keeps the vendor's API name unchanged
+
+2026-10-26. The <Vendor> API object column of the entity table kept showing wrong names. Stage 3 said to convert the vendor's names with `vendor-names.ts` with no exception for that column, the script needs singular input, so a plural API name (HubSpot `leads`) was changed before conversion, and the stage-3 examples themselves showed names not spelled the vendor's way (ServiceNow `Incident` for `incident`). Rules: `references/stage-3-entities.md`, the template vendor bullet, the template-mode note and the ambiguity traps; `references/stage-2-naming.md`, the naming rules table and "Converting a product's names".
+
+1. **The <Vendor> API object column is never converted.** Only the Technical name comes from `vendor-names.ts` (lowercase, snake_case, plural).
+2. **The cell and the §3 note copy the vendor's API name unchanged:** same casing, same singular or plural (ServiceNow `incident`, HubSpot `leads`, Salesforce `Opportunity`).
+3. **The singular given to the script is only its input;** it never goes in the cell.
+4. **The ambiguity-trap examples spell each vendor's objects the way its API does** (HubSpot `leads`/`contacts`/`deals`, Pipedrive `leads`/`persons`, Zendesk Sell `leads`/`contacts`, Zendesk `tickets`, ServiceNow `incident`/`problem`/`change_request`, Jira `issue`, MS Dynamics `opportunity`).
+
 ## Entity table: technical name always, product column never dropped, no "Shown as"
 
 2026-10-25. A fast-flow go-ahead for a design following ServiceNow (16 entities) showed only Entity, What it holds and Shown as: the required ServiceNow API object column was missing, and no column showed the table names, so the user approved a design without seeing a single identifier. The "Shown as" column mostly repeated the entity's name ("Control Name" for Controls) or guessed ("Risk Number or Title"), and nothing reads it: it was chat-only, and the analyst picks the field that names each record on its own in its field stage. Rules: `references/stage-3-entities.md`, the template-mode note and "Present the list as a table"; SKILL.md, Writing Convention 8 (banned and required lists, Pre-emit check); `../semantius-admin/references/fast-flow.md`, section 3; `../semantius-admin/references/writing-conventions.md`, Convention 8.
