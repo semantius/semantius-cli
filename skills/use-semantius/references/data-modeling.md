@@ -79,7 +79,7 @@ The `description` field is a compact tagline (≤40 chars) shown beside `module_
 
 Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
 
-- **`icon_name`** — the module's UI icon: a Lucide icon name or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference); distinct from the entity-level `icon_url` and the module `logo_url`. The module's `logo_color` has format `color`.
+- **`icon_name`** — the module's UI icon: a Lucide icon name or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference), like an entity's `icon_name`; distinct from the module `logo_url`. The module's `logo_color` has format `color`.
 - **`domain_code`** — short uppercase business-domain code the module belongs to (`ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`.
 - **`access_scope`** — the permission structure of the module (its access level, decided by `semantius-architect`). `enum_values`: `custom` ("Custom permission structure"), `basic` ("Two permissions: view and edit"), `advanced` ("Three permissions: view, edit and admin."), `gated` ("Three permissions: view, edit and admin and process gates"), `raci` ("Three permissions: view, edit and admin and enforced process gates."); default `custom`.
 
@@ -104,7 +104,7 @@ semantius call crud create_entity '{
     "module_id": 3,
     "view_permission": "catalog:read",
     "edit_permission": "catalog:manage",
-    "icon_url": "https://example.com/icon.svg",
+    "icon_name": "package",
     "audit_log": false
   }
 }'
@@ -205,7 +205,8 @@ Platform meta-schema. **Never declare in a domain model.** The deployer manages 
 | `id_type` | Optional key type, **set on create and locked afterwards**: changing it is refused with `90233`, so omit it on `update_entity`. `auto_increment` (default when omitted): a 64-bit number the database assigns. `bigint`: a 64-bit number the caller supplies on every insert. `text`: a text key the caller supplies. `uuid`: a time-ordered UUIDv7 the database assigns. `typeid`: a prefixed, sortable TypeID such as `acct_01h455vb4pex5vsknk084sn02q`, assigned by the database; requires `id_prefix`. `is_a` / `has_a`: a subtype or an optional extension of another entity, sharing its key; requires `id_refentity` (and `id_prefix` for `is_a`); see `entity-families.md` before choosing either. `computed`: system tables only, refused for a new entity (`90234`). A key type missed at create means rebuilding the entity, so decide it up front: `typeid` suits ids that users or other systems see, `auto_increment` internal tables. |
 | `id_prefix` | TypeID prefix: required when `id_type` is `typeid` or `is_a`, empty otherwise. Up to 63 lowercase letters and underscores, starting and ending with a letter (e.g. `acct`), **unique among entities**. A `typeid` prefix may be changed later: new ids take the new prefix, existing ids keep theirs, and an id with a former prefix can no longer be inserted. An `is_a` prefix never changes (`90245`). |
 | `id_refentity` | Only with `id_type` `is_a` / `has_a`, and then required: the `table_name` of the base this entity is based on. `is_a` needs a managed `typeid` or `is_a` base; `has_a` a managed `typeid` base (`90240`). Set on create only; never send it on `update_entity` (`90241`). See `entity-families.md`. |
-| `icon_url` | Optional, URL to an icon representing this entity in the UI |
+| `icon_name` | Optional. The icon shown for the entity in the UI: a Lucide icon name in kebab-case or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference). Leave it unset unless the user asks for a specific icon. |
+| `name_sort` | Optional text sort key that orders entities in navigation. Leave it unset unless the user wants a specific navigation order. |
 | `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
 | `cube_mode` | Optional. OLAP cube generation: `auto` (default, include in cube) or `disabled`. Set to `disabled` to exclude the entity from cube queries. |
 | `audit_log` | Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value. |
@@ -302,7 +303,7 @@ Choose `format` carefully. Format **can** be changed after creation, but **only 
 
 > ℹ️ **Colors are written as hex.** A `color` field, the `color` of an enum entry and a module's `logo_color` accept any HTML color; write lowercase `#rrggbb` (e.g. `#22c55e`). A value read back from the platform is kept as it is.
 
-> ℹ️ **Icons are Lucide icons.** An `icon` field, the `icon` of an enum entry and a module's `icon_name` take a Lucide icon name in kebab-case (e.g. `circle-check`, `users`, `shopping-cart`; never the PascalCase React component name `CircleCheck`), or an icon URL. The UI always uses the latest Lucide release, so every current icon is available. Find a name by running `bun "<skill-folder>/references/lucide-icon-finder.ts" <query…>` once, with up to five queries for the meaning, most specific first (`"user plus" user person "contact card"`; a query of several words matches only icons that have them all), and take the first icon, in that order, that fits the meaning. If none fits, an enum entry gets no icon and a module icon is `box`. Confirm names with `bun "<skill-folder>/references/lucide-icon-checker.ts" <name…>` (exit 1 names the unknown ones; a URL always passes). Every icon a skill writes passes the checker. From another skill the folder is `"<skill-folder>/../use-semantius/references/"`. Both scripts need no network: they read `lucide-icon-tags.json`, a snapshot of a Lucide release bundled next to them, so an icon added to Lucide after that release is reported unknown; pick another name.
+> ℹ️ **Icons are Lucide icons.** An `icon` field, the `icon` of an enum entry and the `icon_name` of a module or entity take a Lucide icon name in kebab-case (e.g. `circle-check`, `users`, `shopping-cart`; never the PascalCase React component name `CircleCheck`), or an icon URL. The UI always uses the latest Lucide release, so every current icon is available. Find a name by running `bun "<skill-folder>/references/lucide-icon-finder.ts" <query…>` once, with up to five queries for the meaning, most specific first (`"user plus" user person "contact card"`; a query of several words matches only icons that have them all), and take the first icon, in that order, that fits the meaning. If none fits, an enum entry and an entity get no icon and a module icon is `box`. Confirm names with `bun "<skill-folder>/references/lucide-icon-checker.ts" <name…>` (exit 1 names the unknown ones; a URL always passes). Every icon a skill writes passes the checker. From another skill the folder is `"<skill-folder>/../use-semantius/references/"`. Both scripts need no network: they read `lucide-icon-tags.json`, a snapshot of a Lucide release bundled next to them, so an icon added to Lucide after that release is reported unknown; pick another name.
 
 > 🛑 **Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. Never combine `reference_table` with scalar formats (`integer`, `uuid`, `string`, etc.). This will always fail.**
 
@@ -663,7 +664,7 @@ This rule — **gates and overrides follow the ENTITY's current owning module, n
 
 ### ✅ Low-Risk (do freely)
 - Add new fields
-- Update descriptions, labels, UI hints (`width`, `field_order`, `icon_url`)
+- Update descriptions, labels, UI hints (`width`, `field_order`, `icon_name`, `name_sort`)
 - Add `searchable: true` to fields
 - Create new entities in new or existing modules
 - Add new permissions/roles/assignments

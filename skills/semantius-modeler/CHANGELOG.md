@@ -8,6 +8,58 @@ Entries below are newest first.
 
 ---
 
+## No invalid icon name is ever deployed
+
+2026-10-27. The modeler sent every icon name the spec carried without checking it, so a hand-edited spec, one saved before the analyst's icon gate, or a copied `none` would deploy a name that is not an icon. The analyst now also writes `  - icon: none <!-- finder: …: no fit -->` where no icon fits. Rules: `references/scaffold-lib.ts`, `checkEnumIcons`, `iconFindings` and the module icon; `references/deploy-script-template.md`, the copy step and steps 4 to 6; `references/stage-1-parse.md`, "Enum values from §5"; `references/stage-4-execute.md`, 4a and 4d; `references/stage-5-verify.md`, checks 1 and 5 and the "Icons not deployed" block.
+
+1. **Icons are checked at deploy time against the bundled Lucide list** (`lucide-icon-tags.json`, copied into `.tmp_deploy/` next to the libs), on every enum field, new or existing, and on the module's `icon_name`.
+2. **`icon: none` deploys as no icon** (`""`, never the text "none"), and on a live field it removes the live icon.
+3. **An unknown enum icon deploys as no icon; an unknown module icon deploys as `box`.** Each is listed as a 🟡 in the Stage 5 report's "Icons not deployed" block.
+4. **Each enum field is merged with live once,** on the create path too, so a cleared icon never comes back from a second merge.
+
+---
+
+## Label column reaches the live table
+
+2026-10-27. The 4c ✨ New rule did not list `label_column` among the `create_entity` payload keys, and Stage 5 only checked that `label_column` was set, not that it named the spec's field. Rules: `references/stage-4-execute.md`, 4c "✨ New"; `references/deploy-script-template.md`, steps 0 and 3; `references/stage-5-verify.md`, check 5.
+
+1. **The 4c ✨ New rule names `label_column`** as a key of the `create_entity` payload, from the `**Label column:**` line. The platform stores it on create and auto-creates that field. Based entities and junctions without the line omit it.
+2. **Preflight lists `label_column`** among the `create_entity` keys.
+3. **Verify compares the value:** live `label_column` must equal the spec's for each owned table; a different value is a 🛑, re-pointed with `update_entity`.
+
+---
+
+## Fast run: the spec download links a top-level copy; clean writes are not errors
+
+2026-10-27. The download route serves flat names only, from the top level of `/workspace`, so the link to `semantius/specs/<system_slug>-semantic-spec.md` never resolved. Separately, a run called a file saved cleanly through a shell heredoc "a file write error". Rules: `SKILL.md`, "Closing Contract: clean and sticky" and "Narration restraint"; `references/stage-6-sample-data.md`; `../semantius-admin/references/fast-flow.md`, section 6.
+
+1. **Copy, then link:** after the Stage 5b stamp, in the response that completes the Verify task, the deployed spec is copied byte-for-byte with `cp` to `/workspace/<system_slug>-semantic-spec.md`; the closing block links that copy.
+2. **The link form is `[Download the <System Name> spec](/workspace/{sessionId}/<file name>)`,** with `{sessionId}` written literally (the client fills it in) and spaces and parentheses percent-encoded in the file name only. A file in a subfolder is never linked.
+3. **A write is an error only when a tool call failed.** A clean write is not narrated; a failed one is reported with the tool's error verbatim, and the run stops.
+
+---
+
+## Fast run: the closing block links the deployed spec
+
+2026-10-27. A fast run names none of the files it writes, so after the deploy the user had no way to get the spec that was deployed. Rules: `SKILL.md`, "Closing Contract: clean and sticky"; `../semantius-admin/references/fast-flow.md`, sections 4.1 and 6.
+
+1. **In a fast run the closing block has four lines:** the status line, the "Open in UI" link, `[Download the <System Name> spec](<spec path>)`, then the sample-data question. The path is the deployed spec (the `Input artifact:` path, after the Stage 5b stamp), relative to the workspace root.
+2. **The link re-attaches with the sticky footer** while the sample-data question is unanswered.
+3. **Guided and expert runs are unchanged:** three lines, no download link.
+
+---
+
+## Verification report: one fixed shape, in plain language
+
+2026-10-26. A fast-run report dropped the Roles and Permission hierarchy blocks, wrote the handoffs and skipped links as prose paragraphs, put them before Counters, and added facts the template has no place for (record-id prefixes, lifecycle states, "a kind of", shared-module hints). The template allowed it: it was an example, not a contract, and it used tokens the Writing Conventions ban (`module_type`, `origin=`, `lineage`, slugs, permission names), so a run kept some of them and paraphrased the rest. Rules: `references/stage-5-verify.md`, "Structured Stage 5 report".
+
+1. **The shape is required:** one code block, the blocks in a fixed order under fixed headings, each line in one of the listed forms, no other facts and no prose, lines of at most 80 characters. Two tables say when each block is rendered and what its lines hold.
+2. **Plain language:** modules, tables, fields and roles by display name; permissions by level (view, edit, admin) or by action; no slugs, column names, `origin` or `module_type`. Block names: Tables, Access inclusions, Rules on shared tables, Ownership, Business roles, Handoffs to other modules, Links not added, Steps skipped, Business process rules. Counters lose the `origin` breakdown.
+3. **New Checks block:** one ✓ or 🛑 line per check area (module setup, tables and fields, names and descriptions, choice lists, visibility and field display rules), with one indented line per problem. The verdict line reads `🛑 Verification failed: <N> problems, listed under Checks.` when any remain.
+4. **Closing lines in a fixed order:** read-visibility callouts, verdict, access level, then the summary line, reworded in plain language.
+
+---
+
 ## Seed data reads plausibly; a computed label column deploys disabled
 
 2026-10-23. A seeded person table had one surname on every row: the Stage 6 example built first + last name pairs with `combine(i, [firstNames, lastNames])`, whose second pool only advances past `i = F`, so at the default 10 rows with 10 first names every row took `lastNames[0]`. The count guard passed, and nothing checked whether the values read sensibly. Rules: `references/stage-6-sample-data.md`; `references/deploy-lib.ts`.

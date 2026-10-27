@@ -1,4 +1,4 @@
-*Reference for `semantius-architect`. Loaded on demand; the resident SKILL.md stage index points here.*
+*Reference for `semantius-architect`. Read before this stage's first output in a run (mandatory load, SKILL.md stage index).*
 
 ### Stage 7 — Cross-domain handoffs and link hints
 

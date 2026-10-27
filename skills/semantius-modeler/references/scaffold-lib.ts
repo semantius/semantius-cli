@@ -45,7 +45,8 @@
  *
  * Import it next to deploy-lib.ts:
  *   import { read1, write, runDeploy } from "./deploy-lib";
- *   import { scaffoldModule, verifyScaffold, preflightSchemas } from "./scaffold-lib";
+ *   import { scaffoldModule, verifyScaffold, preflightSchemas, checkEnumIcons, iconFindings } from "./scaffold-lib";
+ * and copy `lucide-icon-tags.json` next to it (the icon check reads it).
  *
  * `verifyScaffold(cfg)` is the executable self-audit: pass the SAME config back
  * after the deploy and it re-reads the live catalog, asserts the Stage 5 scaffold
@@ -53,6 +54,8 @@
  * `runDeploy` so "model is live" can never print over a broken scaffold.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { read1, write, ensureMany, ensurePairs } from "./deploy-lib";
 
 /**
@@ -207,6 +210,44 @@ export const roleSlug = (s: string): string => s.toLowerCase().replace(/-/g, "_"
 
 const isEmpty = (v: unknown): boolean => v === "" || v === null || v === undefined;
 
+// ─── Icons: never deploy a name that is not a Lucide icon ────────────────────
+// The names come from `lucide-icon-tags.json`, copied next to this file from
+// use-semantius/references (deploy-script-template.md), the same list the
+// authoring skills check against. An http(s):// URL always passes.
+let lucideNames: Set<string> | null = null;
+export function isIcon(v: string): boolean {
+  if (/^https?:\/\//i.test(v)) return true;
+  lucideNames ??= new Set(Object.keys(JSON.parse(readFileSync(join(import.meta.dir, "lucide-icon-tags.json"), "utf8")).icons));
+  return lucideNames.has(v);
+}
+
+/** Every icon the deploy did not send because it is not a Lucide icon; the Stage 5 report lists them. */
+export const iconFindings: Finding[] = [];
+
+type EnumEntryIn = string | { value: string; label?: string; icon?: string; [k: string]: unknown };
+/**
+ * Check every enum entry's icon. `none` (the spec's "checked, no icon fits") and an
+ * unknown name become "" (no icon, which also clears a live icon in `mergeEnumEntries`);
+ * an unknown name is also recorded in `iconFindings`. Run it on every enum field before
+ * `mergeEnumEntries`, on the create path and the update path alike.
+ */
+export function checkEnumIcons(table: string, field: string, entries: EnumEntryIn[]): EnumEntryIn[] {
+  return entries.map((e) => {
+    if (typeof e === "string" || !e.icon || isIcon(e.icon)) return e;
+    if (e.icon !== "none") {
+      iconFindings.push({ severity: "warn", check: "icon", detail: `${table}.${field} \`${e.value}\`: \`${e.icon}\` is not a Lucide icon; deployed with no icon` });
+    }
+    return { ...e, icon: "" };
+  });
+}
+
+/** The module's `icon_name`: an unknown name becomes `box` (the "no module icon fits" icon), recorded in `iconFindings`. */
+function moduleIcon(slug: string, name: string): string {
+  if (isIcon(name)) return name;
+  iconFindings.push({ severity: "warn", check: "icon", detail: `module ${slug}: \`${name}\` is not a Lucide icon; deployed as \`box\`` });
+  return "box";
+}
+
 /**
  * Ensure the baseline permissions exist with `module_id` — as ONE set: one
  * `in.()` read, ONE `create_permission` call for the missing rows, one re-read,
@@ -290,7 +331,7 @@ async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
         module_type: m.module_type ?? "domain",
         catalog_module_code: m.catalog_module_code,
         domain_code: m.domain_code,
-        icon_name: m.icon_name,
+        icon_name: moduleIcon(m.module_slug, m.icon_name),
         // home_page / logo_color: top-level columns, written only when the frontmatter provided a
         // non-empty value (omitted otherwise → platform default ""). logo_color's random-fill
         // fallback for an empty value stays in the bespoke script, per the file header.
@@ -312,7 +353,7 @@ async function ensureModule(m: ModulePayload, scope: Scope): Promise<number> {
   };
   if (isEmpty(live.catalog_module_code)) data.catalog_module_code = m.catalog_module_code;  // write-once
   if (isEmpty(live.domain_code)) data.domain_code = m.domain_code;
-  if (isEmpty(live.icon_name)) data.icon_name = m.icon_name;
+  if (isEmpty(live.icon_name)) data.icon_name = moduleIcon(m.module_slug, m.icon_name);
   // home_page / logo_color: a frontmatter-provided value is authoritative on re-deploy too, so write it
   // whenever the spec carries a non-empty value (not fill-only-empty). When the frontmatter omits it,
   // leave the live value alone; logo_color's empty-live case is handled by the script's cosmetic fallback.

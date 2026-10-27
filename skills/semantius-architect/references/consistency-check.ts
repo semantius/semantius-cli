@@ -15,13 +15,18 @@
  * 1 = at least one inconsistency (or a parse/usage error). Warnings (`⚠`) are
  * printed but never fail a file.
  *
- * Usage:  bun consistency-check.ts <file.md> [<file2.md> ...]
+ * Usage:  bun consistency-check.ts [--require-icons] <file.md> [<file2.md> ...]
  *         bun consistency-check.ts --emit-mermaid <file.md>
+ *
+ * `--require-icons` (the analyst's pre-save run) also fails a spec §5 entry with no
+ * icon line: its icon check has not run. Without it a missing icon line is accepted,
+ * as in a spec extracted from live or one deployed by the modeler.
  */
 
 import { readFileSync } from "node:fs";
 
 type Issue = { check: string; detail: string; warn?: boolean };
+type CheckOpts = { requireIcons: boolean };
 
 const BUILTINS = new Set(["users", "roles", "permissions"]);
 // A valid Semantius data_object / table_name: lower snake_case, starts with a letter, only [a-z0-9_].
@@ -716,13 +721,15 @@ function defaultProblem(format: string, def: string): string | null {
 /** The property keys of a §5 entry, in the order they must appear. */
 const ENUM_PROP_KEYS = ["label", "color", "icon", "description"] as const;
 type EnumHintKey = Exclude<(typeof ENUM_PROP_KEYS)[number], "label">;
-type SpecEnumEntry = { value: string; label: string | null; hints: Partial<Record<EnumHintKey, string>> };
-const ENUM_PROP_FORM = 'property sub-bullets go directly under their entry, indented exactly two spaces, in this order and each at most once: "  - label: text", "  - color: `#rrggbb`", "  - icon: `lucide-name`", "  - description: text"';
+// `iconNone` holds the finder queries of an `icon: none` decision; null when the entry has none.
+type SpecEnumEntry = { value: string; label: string | null; hints: Partial<Record<EnumHintKey, string>>; iconNone: string | null };
+const ENUM_PROP_FORM = 'property sub-bullets go directly under their entry, indented exactly two spaces, in this order and each at most once: "  - label: text", "  - color: `#rrggbb`", "  - icon: `lucide-name`" or "  - icon: none <!-- finder: <query>, <query>: no fit -->", "  - description: text"';
+const ICON_NONE = /^none <!-- finder: (\S.*?): no fit -->$/;
 
 /**
  * §5 blocks: ``### `table.field` `` then one bullet per entry, `` - `value` ``, followed by
- * property sub-bullets (`  - label: …`, `  - color: `…``, `  - icon: `…``, `  - description: …`,
- * in that order). Returns value lists, the parsed entries, and every line that breaks the grammar.
+ * property sub-bullets (`  - label: …`, `  - color: `…``, `  - icon: `…`` or `  - icon: none <!-- finder: …: no fit -->`,
+ * `  - description: …`, in that order). Returns value lists, the parsed entries, and every line that breaks the grammar.
  */
 function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entries: Map<string, SpecEnumEntry[]>; bad: string[] } {
   const blocks = new Map<string, string[]>();
@@ -734,7 +741,7 @@ function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entri
   let lastHint = -1;
   let key = "";
   const flagUnlabeled = () => {
-    if (last && last.label === null && Object.keys(last.hints).length) {
+    if (last && last.label === null && (Object.keys(last.hints).length || last.iconNone !== null)) {
       bad.push(`\`${key}\`: entry \`${last.value}\` has hints but no label; add "  - label: <Label>" as its first sub-bullet`);
     }
   };
@@ -749,7 +756,7 @@ function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entri
     if (b) {
       flagUnlabeled();
       if (b[2]) bad.push(`\`${key}\`: "${l.trim()}" puts the label on the value bullet; write "- \`${b[1]}\`" with "  - label: ${b[2].trim()}" under it`);
-      last = { value: b[1], label: b[2] ? b[2].trim() : null, hints: {} };
+      last = { value: b[1], label: b[2] ? b[2].trim() : null, hints: {}, iconNone: null };
       lastHint = b[2] ? 0 : -1;
       cur.push(b[1]);
       curEntries.push(last);
@@ -762,10 +769,17 @@ function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entri
     }
     const hk = s[1], idx = (ENUM_PROP_KEYS as readonly string[]).indexOf(hk);
     if (idx < 0) { bad.push(`\`${key}\`: entry \`${last.value}\` has unknown property \`${hk}\` (${ENUM_PROP_FORM})`); continue; }
-    if (hk === "label" ? last.label !== null : hk in last.hints) { bad.push(`\`${key}\`: entry \`${last.value}\` repeats \`${hk}\` (${ENUM_PROP_FORM})`); continue; }
+    const seen = hk === "label" ? last.label !== null : hk in last.hints || (hk === "icon" && last.iconNone !== null);
+    if (seen) { bad.push(`\`${key}\`: entry \`${last.value}\` repeats \`${hk}\` (${ENUM_PROP_FORM})`); continue; }
     if (idx < lastHint) { bad.push(`\`${key}\`: entry \`${last.value}\` has \`${hk}\` out of order (${ENUM_PROP_FORM})`); continue; }
     lastHint = idx;
     let v = s[2].trim();
+    if (hk === "icon" && /^none\b/.test(v)) {
+      const n = v.match(ICON_NONE);
+      if (!n) { bad.push(`\`${key}\`: entry \`${last.value}\` "icon: none" must name the finder queries tried: "  - icon: none <!-- finder: <query>, <query>: no fit -->"`); continue; }
+      last.iconNone = n[1].trim();
+      continue;
+    }
     if (hk === "color" || hk === "icon") {
       const bt = v.match(/^`([^`]+)`$/);
       if (!bt) { bad.push(`\`${key}\`: entry \`${last.value}\` ${hk} must be backticked: "  - ${hk}: \`${v.replace(/`/g, "")}\`"`); continue; }
@@ -776,6 +790,21 @@ function parseSpecEnums(lines: string[]): { blocks: Map<string, string[]>; entri
   }
   flagUnlabeled();
   return { blocks, entries, bad };
+}
+
+/**
+ * `--require-icons` (the analyst's pre-save run): every §5 entry records its icon check, as
+ * `icon: `name`` or `icon: none <!-- finder: …: no fit -->`. No icon line means not checked yet.
+ */
+function uncheckedIcons(entries: Map<string, SpecEnumEntry[]>): Issue[] {
+  const out: Issue[] = [];
+  for (const [key, list] of entries) {
+    const unchecked = list.filter((e) => !e.hints.icon && e.iconNone === null).map((e) => `\`${e.value}\``);
+    if (unchecked.length) {
+      out.push({ check: "§5 enum icons", detail: `\`${key}\`: ${unchecked.join(", ")} carry no icon line, so their icon check has not run; run it (stage-4-fields.md, "Enum values, labels and hints") and write "  - icon: \`<name>\`" or "  - icon: none <!-- finder: <query>, <query>: no fit -->"` });
+    }
+  }
+  return out;
 }
 
 /** Warnings on §5 labels and hints: the drafting rules of the analyst's stage-4-fields.md. */
@@ -830,7 +859,7 @@ function parseProcessGateEntities(lines: string[]): string[] {
     .filter(Boolean);
 }
 
-function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmatter>): Issue[] {
+function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmatter>, opts: CheckOpts): Issue[] {
   const issues: Issue[] = [];
 
   // §2 entity summary: | # | `table` | Singular | Purpose |
@@ -1012,6 +1041,7 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
     const { blocks, entries, bad } = parseSpecEnums(lines);
     for (const b of bad) issues.push({ check: "§5 enum entries", detail: b });
     issues.push(...enumHintWarnings(entries));
+    if (opts.requireIcons) issues.push(...uncheckedIcons(entries));
     for (const [id, e] of ents) {
       for (const f of e.fields) {
         if (f.format !== "enum") continue;
@@ -1290,14 +1320,14 @@ function checkVersion(fm: ReturnType<typeof frontmatter>): Issue[] {
   return [{ check: "version", detail: `not in the current file format (\`version\` must be \`3.x\`, found \`${v ?? "(none)"}\`)` }];
 }
 
-function checkFile(path: string): { issues: Issue[]; artifact: string } {
+function checkFile(path: string, opts: CheckOpts): { issues: Issue[]; artifact: string } {
   // Normalize BOM + CRLF/CR so the checker is line-ending agnostic (Windows files are often CRLF).
   const text = readFileSync(path, "utf8").replace(/^﻿/, "").replace(/\r\n?/g, "\n");
   const lines = text.split("\n");
   const fm = frontmatter(text);
   const artifact = fm.get("artifact") ?? "(unknown)";
   if (artifact === "semantic-blueprint") return { issues: [...checkVersion(fm), ...checkBlueprint(text, lines)], artifact };
-  if (artifact === "semantic-spec") return { issues: [...checkVersion(fm), ...checkSpec(text, lines, fm)], artifact };
+  if (artifact === "semantic-spec") return { issues: [...checkVersion(fm), ...checkSpec(text, lines, fm, opts)], artifact };
   return { issues: [{ check: "artifact", detail: `unrecognized or missing \`artifact:\` (got "${artifact}"); expected semantic-blueprint or semantic-spec` }], artifact };
 }
 
@@ -1341,16 +1371,17 @@ function main() {
     emitMermaidMode(args[1]);
     return;
   }
-  const files = args;
+  const opts: CheckOpts = { requireIcons: args.includes("--require-icons") };
+  const files = args.filter((a) => a !== "--require-icons");
   if (files.length === 0) {
-    console.error("usage: bun consistency-check.ts <file.md> [<file2.md> ...]\n       bun consistency-check.ts --emit-mermaid <file.md>");
+    console.error("usage: bun consistency-check.ts [--require-icons] <file.md> [<file2.md> ...]\n       bun consistency-check.ts --emit-mermaid <file.md>");
     process.exit(2);
   }
   let failed = 0;
   for (const path of files) {
     let res;
     try {
-      res = checkFile(path);
+      res = checkFile(path, opts);
     } catch (err) {
       console.log(`\n${path}\n  [ERROR] ${(err as Error).message}`);
       failed++;

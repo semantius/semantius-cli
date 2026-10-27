@@ -4,9 +4,9 @@ _Read this when the workflow reaches Stage 5. The stage map is in SKILL.md._
 
 ## Stage 5: Verify
 
-After all creates are done, emit a **structured verification report** with explicit counts and FK consistency checks, not a single ✓. The report groups facts by category so any drift between intended and actual deploy is visible at a glance.
+After all creates are done, emit the **structured verification report** ("Structured Stage 5 report" below, a fixed shape) with explicit counts and the result of every check, not a single ✓. The report groups facts by category so any drift between intended and actual deploy is visible at a glance.
 
-**Narration (per the Narration-restraint rules in SKILL.md (Writing conventions)).** The per-area checks below run **silently**: no *"verifying X..."* trail, no narrated re-run when a check has to be re-issued (fix any tooling hiccup quietly), no machinery named in chat. Only the final report is surfaced, and it reads in plain language, counts and **natural keys** (module slugs, entity Plural Labels, `permission_name`s), never internal vocabulary or bare numeric ids. The report is a result the user cares about (what is now live); the work that produces it is not.
+**Narration (per the Narration-restraint rules in SKILL.md (Writing conventions)).** The per-area checks below run **silently**: no *"verifying X..."* trail, no narrated re-run when a check has to be re-issued (fix any tooling hiccup quietly), no machinery named in chat. Only the final report is surfaced, and it reads in plain language, counts and **display names** (module names, table Plural Labels, role names), never internal vocabulary, slugs, column names or bare numeric ids. The checks themselves still compare by natural key. The report is a result the user cares about (what is now live); the work that produces it is not.
 
 ### Per-area checks
 
@@ -18,11 +18,11 @@ After all creates are done, emit a **structured verification report** with expli
    - **Every permission row declared by this model has `module_id = <module.id>`.** For each `<slug>:*` row from the §8.1 Permissions catalog, `read_permission --single` by `permission_name` and assert `.module_id == <module.id>`. A NULL or mismatched `module_id` is a 🛑 — the permission resolves by name (so hierarchy and role-permission joins still work, masking the defect from a casual smoke test), but module-scoped queries (`?module_id=eq.<id>`) silently miss it, and per-module RBAC audits report drift. Stage 4's scaffold step 2 backfills this column on **every** deploy (both on create and on the exit-0 converge path), so a Stage 5 hit means that backfill did not land — re-issue the `update_permission` to set the column and halt if it still will not take, rather than reporting the deploy as clean.
    - `module.default_viewer_role_id` dereferences to the role whose `slug` is the viewer row in the spec's §9.1 baseline-roles table (read verbatim, not reconstructed as `<slug>_viewer` from the module slug), with `module_id == <module.id>` (a role carrying the right slug but a NULL or mismatched `module_id` is an orphan — invisible in the module's governance panel; the role-side analog of the permission `module_id` check above), `origin ∈ {"model", "model_master"}` matching the module's type (a role left at the default `origin = "user"` was created without the provenance stamp — a 🛑), and a `role_permissions` row linking it to `<slug>:read` (verify via `read_role_permission` filtered on the resolved `role_id` + `permission_name`).
    - Same for manager and admin roles.
-   - If any reference is null where the model expected a value, or if a non-null reference holds (or dereferences to) the wrong natural key, surface as 🛑. Quote the row in the report by natural key — never as a bare `id=N` — so the user can recognize what failed without cross-referencing.
+   - If any reference is null where the model expected a value, or if a non-null reference holds (or dereferences to) the wrong natural key, surface as 🛑. Name what failed in the report's Checks block by display name — never as a bare `id=N` — so the user can recognize it without cross-referencing.
    - **Provenance round-trip (catalog lineage, every module touched).** The FK checks above confirm the *scaffold* landed; this confirms the *lineage stamp* landed. Read the module row and compare its provenance against the spec front-matter (the same keys Stage 4a stamps):
      - `module.catalog_module_code` is **non-empty** and equals the spec source (the catalog blueprint code, else `system_slug`).
      - `module.domain_code` == front-matter `domain_code` (top-level column).
-     - `module.icon_name` == front-matter `icon_name` (top-level column).
+     - `module.icon_name` == front-matter `icon_name` (top-level column), or `box` when the deploy reported the front-matter name as not a Lucide icon.
      - `module.settings.module_kind` == front-matter `module_kind` **when** the front-matter carried a non-empty, non-null value (not required otherwise — the key is optional and informational; a spec without it must not produce a `settings.module_kind` stamp, and its absence live is not a finding).
      - `module.settings.naming_mode` == front-matter `naming_mode`.
      - `module.settings.catalog_snapshot` == front-matter `reconciled_against_catalog_snapshot` (note the key rename: front-matter `reconciled_against_catalog_snapshot` lands in `settings.catalog_snapshot`).
@@ -50,7 +50,7 @@ After all creates are done, emit a **structured verification report** with expli
    - Pre-merge entries from non-current sources are still present (preserved across re-runs per 4e-merge rule 4).
 
 5. **Per-entity field counts and labels:**
-   - `read_entity` on each custom entity, confirm `label_column` is set — **except** a based entity (`**Based on:**`: its `label_column` is set from its base by the platform, so confirm it equals the base's) and an `entity_type: junction` entity whose spec omitted the `**Label column:**` line (valid: the platform composes its `_label` from the parent legs; a null live `label_column` there is expected, not a finding).
+   - `read_entity` on each owned entity, confirm live `label_column` equals the spec's `**Label column:**` value; being set is not enough. A different value is a 🛑, not a pass: re-point it with `updateEntity(t, { label_column })`, which makes the spec's existing column the label without renaming the current one, and halt if it will not take. Exceptions: a based entity (`**Based on:**`: its `label_column` is set from its base by the platform, so confirm it equals the base's) and an `entity_type: junction` entity whose spec omitted the `**Label column:**` line (valid: the platform composes its `_label` from the parent legs; a null live `label_column` there is expected, not a finding).
    - **Owning `module_id`.** For every entity this deploy owns (`create-new` / `rename-incoming-from` → this module; `promote-to-master` → the master module), assert live `entities.module_id` equals the expected module id. A NULL or mismatched value is a 🛑 — the platform is documented to reject a null `module_id` on create, so a live NULL means the create either omitted it or it was nulled later; the entity then belongs to no module and is invisible to module-scoped queries. Stage 4c sets this on create and converges it on the same-module path, so a Stage 5 hit means that did not land — re-issue the `update_entity` and halt if it still will not take. (Reused/built-in entities are out of scope: they keep their source module's id.)
    - `read_field` per entity, confirm field count matches the model (minus auto-generated).
    - Spot-check that `reference_table` targets exist for FK fields (including any that point at built-ins like `users`).
@@ -58,7 +58,7 @@ After all creates are done, emit a **structured verification report** with expli
    - **Lifecycle state field name (`workflow_state`).** For every entity that has a lifecycle (carries a `workflow-gate (lifecycle)` permission or a `process_gates` row), confirm the live entity has a field named exactly `workflow_state`. A lifecycle state stored under any other field name is a 🛑 — the Stage 1 parse gate should have caught it pre-write, so a Stage 5 hit means the gate was bypassed.
    - **`label_parent` round-trips.** For every owned entity whose spec carries a `**Label parent:**` line, confirm live `entities.label_parent` equals the named FK field; for every owned entity without the line, confirm live `label_parent` is null/absent. A mismatch is a 🛑 — the composed `_label` would fold on the wrong spine, or not at all. While here, confirm the deploy did **not** materialize `_label` / `<fk>_label` as real `fields` rows (a `read_field` hit on a `_`-prefixed or `*_id_label` name means the reserved-name guard was bypassed).
    - **Key type round-trips.** For every entity this deploy created whose spec carries `**Key type:**`, confirm live `entities.id_type` equals it (and `id_prefix` equals `**Key prefix:**` for `typeid` / `is_a`, and `id_refentity` equals `**Based on:**` for `is_a` / `has_a`); for every entity it created without the line, confirm live `id_type` is `auto_increment` and `id_refentity` is null. A based entity's fields read back as its own only (`read_field table_name=eq.<entity>`); its base's fields stay on the base. A mismatch is a 🛑 that no re-run can repair (the key type is locked once the table exists): report it plainly and route the user to the analyst, since fixing it means rebuilding the entity. For an existing `typeid` entity whose prefix Stage 4c synced, confirm live `id_prefix` equals the spec's.
-   - **Enum round-trip (by value).** For each enum field, live `enum_values` holds the spec's §5 entries: compare values in order, and for a bullet with a label or hints compare only the keys the spec states (`label`, and each stated `color`, `icon`, `description`) key by key, never as JSON (jsonb reorders object keys on read-back). A hint the spec does not state is not checked: it is kept from live (`mergeEnumEntries`). A value mismatch is a 🛑; a label or hint mismatch is re-synced by `update_field` with the `mergeEnumEntries` result (cosmetic, records store values).
+   - **Enum round-trip (by value).** For each enum field, live `enum_values` holds the spec's §5 entries: compare values in order, and for a bullet with a label or hints compare only the keys the spec states (`label`, and each stated `color`, `icon`, `description`) key by key, never as JSON (jsonb reorders object keys on read-back). An icon stated as `none`, or reported by the deploy as not a Lucide icon, is compared as no icon. A hint the spec does not state is not checked: it is kept from live (`mergeEnumEntries`). A value mismatch is a 🛑; a label or hint mismatch is re-synced by `update_field` with the `mergeEnumEntries` result (cosmetic, records store values).
    - **Entity provenance round-trip (every owned entity).** Beyond `module_id` and `label_parent` above, assert the lineage/class stamp landed (the entity analog of the module provenance check in §1): `catalog_entity_code` is **non-empty** (the catalog code, default `table_name`); `entity_type` matches the spec's `**Entity type:**` and is one of the 6 CHECK values (`unclassified` only when the spec omitted it, never `''`); `catalog_owner_module` matches the spec's `**Catalog owner:**` line (or `''` when the line is absent / the entity was promoted into its catalog home). An empty `catalog_entity_code` or an out-of-set `entity_type` is a 🛑 — the entity deployed but its catalog identity did not, breaking the analyst's re-reconcile and the `use-*` discovery skills exactly as a missing module stamp does. Re-issue `create_entity` (or `update_entity` for the value-only columns; `catalog_entity_code` is write-once, settable only while still empty) and halt if it will not take. Built-in / `reuse-from` entities are out of scope — they keep their own stamp.
    - **Field provenance round-trip (every field this deploy created).** For each field Stage 4d / 4g / 4h created via `create_field` in this run, plus the `label_column` field of every entity this run created (stamped in the post-create pass, see Stage 1 "Label-column description and provenance"), assert live `fields.catalog_field_code` is **non-empty** and equals the spec's `field_name`. Other platform-generated columns (`id`, `label`, `created_at`, `updated_at`) are out of scope. An empty value is a 🛑: the field deployed without its design-time identity, so a later field rename cannot be joined back to the blueprint. `catalog_field_code` is write-once but settable while still empty, so re-issue `update_field` with the value and halt if it will not take. Fields that existed before this deploy are out of scope (their stamp, or its absence, predates this run; never overwrite a non-empty value).
 
@@ -74,111 +74,140 @@ After all creates are done, emit a **structured verification report** with expli
    - For each `raci_assignments[]` row: a live assignment exists for the resolved `(process_id, role_id, raci)` with `consult_mode` matching. **Assert at most one `accountable` per process** (the platform's partial unique index `idx_raci_one_accountable` also enforces this; a Stage 5 catch means the Stage 4k pre-check was skipped).
    - For each `process_gates[]` row: a live gate exists for `(process_id, entity, gate_kind, to_state)` with `emits_events` matching — a C-notify / I gate that lost `emits_events = true` silently breaks the `raci_events` → `raci_notify` queue.
    - Each `enforcement_rules[]` entry landed as the expected `validation_rule` (A-gate `is_raci_actor`, C-block `has_consultation`) or `select_rule` on its entity — round-trip the JsonLogic as in checks 4 and 6.
-   - Any missing or drifted artifact is a 🛑, quoted by natural key (`process_key`, role `slug`): a half-materialized matrix enforces partial governance (e.g. an A-gate present but its `accountable` assignment missing locks the transition for everyone). In `documentation` mode this whole check is skipped — the grant compilation is already covered by the persona-grant round-trip.
+   - Any missing or drifted artifact is a 🛑, named in the report by process name and role name: a half-materialized matrix enforces partial governance (e.g. an A-gate present but its `accountable` assignment missing locks the transition for everyone). In `documentation` mode this whole check is skipped — the grant compilation is already covered by the persona-grant round-trip.
 
 ### Structured Stage 5 report
+
+The report has one fixed shape. Render it exactly as specified here, every run:
+
+- **One fenced code block**, opening with `=== Verification report ===`. Nothing of the report goes outside it; the "Decided for you after your go-ahead" section (fast runs) follows it.
+- **The blocks below, in the order listed, under their headings verbatim.** A block is left out only where its row in the tables says so; no block not listed here is ever added.
+- **Each line takes one of the forms shown, and nothing else.** No other fact goes on a line (no record-id prefixes, lifecycle states, "a kind of", shared-module hints, rule counts), and no prose paragraph goes anywhere in the report. Anything the forms have no place for stays out.
+- **Plain words only.** Modules by display name (`module_name`), tables by Plural Label, fields by their title, roles by `role_name`. Never a module slug, `table_name`, `permission_name`, numeric id, `origin`, `module_type` or any other column name; the Writing Conventions ban list in SKILL.md applies to every line. A permission is named by its level (view, edit, admin) or, for any other permission, by the action its description names (*retire assets*).
+- **Lines of at most 80 characters.** A longer line wraps onto an indented continuation line, so the report never scrolls sideways.
 
 ```
 === Verification report ===
 
-Modules:
-  itsm                       ✓ module_type=domain   lineage✓   permissions=2/2  default_roles=2/2
-  vendors_master  (NEW)      ✓ module_type=master   lineage✓   permissions=2/2  default_roles=2/2
+Modules
+  IT Service Management            ✓ updated
+  Parties                          ✓ new, shared by several modules
 
-Roles (deployer-managed, origin ∈ {model, model_master}):
-  itsm_viewer                ✓ origin=model         12 members   carries itsm:read
-  itsm_manager               ✓ origin=model         3 members    carries itsm:manage
-  vendors_master_viewer      ✓ origin=model_master  0 members    carries vendors_master:read
-  vendors_master_manager     ✓ origin=model_master  3 members    carries vendors_master:manage  [seeded from itsm_manager]
+Roles
+  IT Service Management Viewer     ✓ 12 people   view
+  IT Service Management Manager    ✓ 3 people    edit
+  Parties Viewer                   ✓ new, 0 people   view
+  Parties Manager                  ✓ new, 3 people   edit
+                                     (people copied from IT Service
+                                     Management Manager)
 
-Entities:
-  vendors                    ✓ moved itsm → vendors_master   247 records intact   12 FKs repointed
-  incidents                  ✓ 8 fields added                 no drift
+Tables (2)
+  Vendors                          ✓ moved to Parties, 247 records kept,
+                                     12 links updated
+  Incidents                        ✓ 8 fields added
 
-Permission hierarchy:
-  itsm:admin → itsm:manage           ✓ origin=model
-  itsm:manage → itsm:read            ✓ origin=model
-  itsm:read → vendors_master:read    ✓ origin=model_master    (NEW)
+Access inclusions
+  IT Service Management: admin includes edit       ✓
+  IT Service Management: edit includes view        ✓
+  IT Service Management view includes Parties view ✓ new
 
-Merged JSON arrays:
-  vendors.computed_fields:    4 entries  (3 from itsm, 1 from itam, 0 conflicts)
-  vendors.validation_rules:   7 entries  (5 from itsm, 2 from itam, 1 conflict resolved)
-  conflicts:
-    - validation_rules name 'email_required' had two source models;
-      kept itsm version, renamed itam version to 'email_required_itam'
+Rules on shared tables
+  Vendors: 4 calculated fields, 7 save checks
+    two modules had a save check named 'email_required': kept the
+    IT Service Management one, renamed the other 'email_required_itam'
 
-Counters:
-  modules created:    1
-  modules updated:    1
-  entities moved:     1
-  entities updated:   1
-  fields added:       8
-  permissions added:  2  (origin=model)
-  roles added:        2  (1 origin=model, 1 origin=model_master)
-  hierarchy added:    3  (2 origin=model, 1 origin=model_master)
-  warnings (🟡):      0
-  blockers (🛑):      0
+Checks
+  Module setup                     ✓
+  Tables and fields                ✓
+  Names and descriptions           ✓
+  Choice lists                     ✓
 
-✓ Verification passed.
-```
-
-Counters at the bottom break down by `origin` so any drift between what the deployer was supposed to create and what actually landed is visible in one place. No orphan section; the deployer does not detect or report orphans (per Stage 4 "No auto-deletion").
-
-**Additional report sections** (rendered immediately after Counters, before the final ✓ line):
-
-```
-Functional ownership grants (4l):  applied N rows
-  owner = Recruiting.admin (granted hiring-starter:admin)
-  contributor = Legal.manage (granted hiring-starter:manage)
-
-Personas provisioned (4k):  M personas, K total grants
-  recruiting_recruiter        ✓ created   carries [hiring-starter:hire_candidate, hiring-starter:manage]
-  hiring_manager              ✓ existed   carries [hiring-starter:approve_offer, hiring-starter:manage]
-  recruiting_sourcer          ✓ created   carries [hiring-starter:publish_posting, hiring-starter:manage]
-  ...
-
-Re-prefixed permissions (Stage 4a-scaffold):  N permissions
-  hiring-starter:hire_candidate        (catalog ats-recruitment-pipeline not installed)
-  hiring-starter:approve_offer         (catalog ats-offers not installed)
-  hiring-starter:view_all_candidates   (catalog ats-candidate-crm not installed)
-  ...
-
-Master-install reconciliation (Stage 4n):  P entities reconciled, Q permissions renamed, R grants re-pointed
-  candidates: hiring-starter:view_all_candidates → ats-candidate-crm:view_all_candidates (3 grants → 3 siblings)
-  candidates: hiring-starter:hire_candidate → ats-candidate-crm:hire_candidate (2 grants → 2 siblings)
-  ...
-
-Boundary-crossing handoffs (Stage 4m):  S wired, T unwired (no trigger registry)
-  ✓ hiring-starter.candidates.hired (lifecycle) → hcm-lifecycle-workflows
-  🟡 hiring-starter.job_applications.rejected (state_change) → ats-talent-pools (no trigger registry)
-
-Skipped FKs (presence-conditional):  U skips
-  💤 job_offers.background_check_id → background_checks (target not installed)
-  💤 job_offers.offer_version_id → offer_versions (target not installed)
-  💤 job_offers.onboarding_journey_id → onboarding_journeys (target not installed)
-
-Skipped on ⚠ flag:  V skips
-  ⚠️ <entity>.<state> — <verbatim reason>
-
-Live RACI engine (Stage 4k living mode):  W processes, X assignments, Y gates, Z enforcement rules
-  raci_mode = living          ✓
-  processes:                  offer_approval ✓   onboarding ✓
-  raci_assignments:           8  (2 A / 3 R / 2 C / 1 I)   ✓ one accountable per process
-  process_gates:              3  (2 emit_events)            ✓
-  enforcement rules:          offer_approval A-gate ✓   onboarding C-block ✓
+Counts
+  modules: 1 created, 1 updated
+  tables: 1 updated, 1 moved
+  fields added: 8
+  permissions added: 2   roles added: 2   access inclusions added: 1
+  warnings (🟡): 0   problems (🛑): 0
 
 ✓ Verification passed.
+🔐 Access level: view, edit and admin.
+✅ Done. 1 module created, 1 updated; 2 permissions, 1 access inclusion
+   and 8 fields added.
 ```
 
-Each block is rendered only when it has non-zero content. Personas, functional ownership, and re-prefixed permissions are the most common new lines (most deploys carry §9). Master-install reconciliation and boundary-crossing handoff wiring fire only when their stages execute. Skipped FKs and ⚠ flags are situational. The Live RACI engine block renders only for `living`-mode deploys (in `documentation` mode the persona-grant lines above are the whole RACI realization).
+| Block | Rendered | Line forms |
+|---|---|---|
+| Modules | always | `<Module>  ✓ new` / `✓ updated` / `✓ no changes`; a module whose `module_type` is `master` adds `, shared by several modules`. |
+| Roles | every module the deploy wrote roles for; left out under `access_scope: custom` | `<role_name>  ✓ <N> people  <level>`; a role created in this run starts its status with `new, `; a shared module's manager role seeded from another role adds the continuation `(people copied from <role_name>)`. |
+| Tables (N) | always | `<Plural Label>  ✓` then one of: `new, <N> fields` / `<N> fields added` / `<N> fields added, <M> changed` / `no changes` / `moved to <Module>, <N> records kept, <M> links updated`. |
+| Access inclusions | every inclusion this run checked; left out under `access_scope: custom` | `<Module>: <level> includes <level>` inside one module; `<Module> <level> includes <Module> <level>` across modules; status `✓`, plus ` new` when this run created it. A failed check 3 shows `🛑` on the line, with one indented line saying what is wrong. |
+| Rules on shared tables | only when a shared module's table carries merged rules | `<Plural Label>: <N> calculated fields, <M> save checks`; each name clash settled adds one indented line saying what was kept and what was renamed. A failed check 4 shows `🛑` on the table's line, with one indented line per problem. |
+| Checks | always | The fixed lines `Module setup` (check 1), `Tables and fields` (checks 2 and 5, keys and uniqueness included), `Names and descriptions` (5a), `Choice lists` (the enum round-trip in 5), and `Visibility and field display rules` (6, only when the design has any). Each is `✓` or `🛑`; a `🛑` line is followed by one indented line per problem, naming the table and field by label and saying what is wrong (*Assets: Serial Number should not repeat, but it can*). |
+| Counts | always | `modules`, `tables` (created, updated, moved), `fields added`, then `permissions added`, `roles added`, `access inclusions added` on one line, then `warnings (🟡)` and `problems (🛑)`. A count of zero is left off the first three lines; the two on the last line always show. |
 
-**Compact summary line** (still emitted, for backwards-compatibility with existing logs): *"✅ Done. Created 1 module, 3 permissions, 2 hierarchy rows, 5 entities (2 admin-tier, 3 operational), 47 fields. Reused built-ins: users. Additive fields on built-ins: 2. Applied 2 `select_rule`(s) and 7 `input_type_rule`(s)."*
+After Counts come these blocks, each rendered only when it has at least one line, in this order:
 
-Under `access_scope: basic` (no admin level), the summary reads "2 permissions, 1 hierarchy row, N entities (all operational)". The admin-tier breakdown is omitted when there are no admin-tier entities. The read-side-rule counts are omitted when both totals are zero (the common case for models that don't use the read-side surfaces).
+```
+Ownership
+  Recruiting Admin                 owns this module, given admin access
+  Legal Manager                    helps run it, given edit access
 
-**Access-level callout (mandatory).** The verification summary names the spec's access level on its own line, in the same plain words as the Stage 3 plan line: *"🔐 Access level: <plain words>."* (`basic` "view and edit"; `advanced` "view, edit and admin"; `gated` "the admin takes the restricted steps"; `raci` "business roles take the restricted steps"; `custom` "permissions set up by hand, left as they are").
+Business roles (3)
+  Recruiter                        ✓ new   hire candidates, edit
+  Hiring Manager                   ✓ existed   approve offers, edit
+  Sourcer                          ✓ new   publish postings, edit
 
-**Read-visibility callout (mandatory when any `select_rule` was created or modified).** Any Stage 4f write that created, changed, or removed an entity's `select_rule` deserves its own one-line callout in the verification summary, separate from the bulk counts: *"⚠️ Applied `select_rule` on `<table_name>`. Callers will now see only rows where `<short-description-of-rule>`. Confirm rollout is the intent."* This mirrors how `edit_permission` tier flips get their own callout (a real RBAC change); read-visibility changes have the same "user noticing 'why can't I see X anymore'" failure mode and benefit from being named in the summary the user reads.
+Permissions kept here until their home module is installed (3)
+  hire candidates
+  approve offers
+  view all candidates
+
+Permissions moved to their home module (2)
+  Candidates: hire candidates → ATS Candidate CRM, 3 role grants kept
+  Candidates: view all candidates → ATS Candidate CRM, 2 role grants kept
+
+Handoffs to other modules (1 connected, 1 recorded only)
+  ✓ Candidates: hired → HCM Lifecycle Workflows
+  🟡 Job Applications: rejected → ATS Talent Pools
+     recorded, not connected: the platform cannot start it yet
+
+Links not added, other table not installed (2)
+  💤 Job Offers → Background Checks
+  💤 Job Offers → Offer Versions
+
+Steps skipped (1)
+  ⚠️ Job Offers: approved: <the reason, verbatim>
+
+Icons not deployed (2)
+  🟡 Job Applications, Stage: Screening: "filter-funel" is not an icon, shown with none
+  🟡 Module icon: "brief-case" is not an icon, shown as box
+
+Business process rules (2)
+  Offer Approval                   ✓
+  Onboarding                       ✓
+  assignments: 8 (2 accountable, 3 responsible, 2 consulted, 1 informed)
+  one accountable role per process ✓
+  gated steps: 3 (2 send notices)
+```
+
+| Block | Rendered when | Line forms |
+|---|---|---|
+| Ownership | Stage 4l applied grants | one line per functional-ownership row: the role, `owns this module` or `helps run it`, the level granted |
+| Business roles | Stage 4k provisioned personas | one line per persona: `new` or `existed`, then the actions and levels it carries |
+| Permissions kept here until their home module is installed | Stage 4a-scaffold re-prefixed permissions | one line per permission, by action |
+| Permissions moved to their home module | Stage 4n ran | one line per permission: table, action, the module it moved to, grants kept |
+| Handoffs to other modules | Stage 4m ran | `✓` per connected handoff; `🟡` per one recorded only, with the continuation line shown |
+| Links not added, other table not installed | a presence-conditional link was skipped | `💤 <table> → <other table>` |
+| Steps skipped | a ⚠-flagged lifecycle row was skipped | `⚠️ <table>: <state>: <reason>` |
+| Icons not deployed | the deploy script printed `iconFindings` lines (an icon not in the bundled Lucide list) | `🟡 <Plural Label>, <Field Label>: <Entry Label>: "<name>" is not an icon, shown with none`; `🟡 Module icon: "<name>" is not an icon, shown as box`. Each counts as a warning (🟡) in Counts |
+| Business process rules | Stage 4k ran in `living` mode (check 7) | one line per process by name, then the assignment, accountable and gated-step lines; any failure is `🛑` with one indented line naming the process and role |
+
+**Closing lines**, at the end of the code block, in this order:
+
+1. **Read-visibility callout**, one line per table whose `select_rule` this deploy created, changed or removed: *"⚠️ <Plural Label>: from now on people see only rows where <the rule in plain words>. Check that this is intended."* It mirrors how a change to who can edit a table is called out: a visibility change has the same "why can't I see X anymore" failure mode.
+2. **Verdict:** `✓ Verification passed.` when the problem count is 0; otherwise `🛑 Verification failed: <N> problems, listed under Checks.`
+3. **Access level (mandatory):** *"🔐 Access level: <plain words>."*, in the same words as the Stage 3 plan line (`basic` "view and edit"; `advanced` "view, edit and admin"; `gated` "the admin takes the restricted steps"; `raci` "business roles take the restricted steps"; `custom` "permissions set up by hand, left as they are").
+4. **Summary line**, for anyone reading the run log: *"✅ Done. <N> modules created, <N> updated; <N> permissions, <N> access inclusions, <N> tables and <N> fields added."*, leaving off any count of zero, followed, when they apply, by *"Built-in tables used: Users."*, *"Fields added to built-in tables: <N>."* and *"Visibility rules: <N>. Field display rules: <N>."* Wrapped at 80 characters like every other line.
 
 ### "Decided for you after your go-ahead" (fast runs only)
 
@@ -198,7 +227,7 @@ In this module:
 Say "change" and what you want different to revisit any of these.
 ```
 
-"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a guided-flow or expert-flow run. The Closing Contract that follows is unchanged: the `---`, then the status line, the link, and the sample-data question.
+"Changes to other modules" comes first and holds only the lines whose `touches:` names another module; leave the group out when it is empty. A missing or empty log leaves the whole section out. Never render this section in a guided-flow or expert-flow run. The Closing Contract follows: the `---`, then the status line, the link, the spec download link, and the sample-data question.
 
 ## Stage 5b: Stamp the deploy version into the spec
 
@@ -226,7 +255,7 @@ Because every Stage 4 write has now settled and Stage 5 is read-only, the value 
 
 **Graceful degradation.** If `read_module` returns no `version` / `version_date` (the platform predates these columns), skip the stamp silently — do not fail the deploy and do not invent a value. The analyst's gate treats an absent `deployed_version` as *"unknown, inspect fully"*, so an un-stamped spec stays correct, just not optimized.
 
-**Narration.** None. This is internal bookkeeping; the front-matter change (visible in the user's `git diff`) is the receipt. Do **not** add a line to the closing block — the Closing Contract is exactly three things and the version stamp is not one of them.
+**Narration.** None. This is internal bookkeeping; the front-matter change (visible in the user's `git diff`) is the receipt. Do **not** add a line to the closing block — the Closing Contract's lines are fixed (SKILL.md) and the version stamp is not one of them.
 
 ### Gates
 

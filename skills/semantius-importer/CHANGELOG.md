@@ -2,6 +2,12 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## A clean file write is never narrated as an error
+
+2026-10-27. Paired with the architect and analyst entries of the same name and the modeler's entry of the same date.
+
+- `SKILL.md`, writing convention 4: a write is an error only when a tool call failed; a file saved cleanly through a shell heredoc or a script is not one. On success nothing is said about how it was written; on a real failure the tool's error is quoted verbatim and the run stops.
+
 ## enum entries get a label and a color
 
 2026-10-15. Paired with the analyst entry of the same name.

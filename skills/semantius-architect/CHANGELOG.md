@@ -8,6 +8,24 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Checker: `icon: none` with finder evidence, and `--require-icons`
+
+2026-10-27. The analyst now records every enum entry's icon check, so the §5 grammar needs a "checked, none fits" state and the analyst's pre-save run needs to refuse an unchecked entry. Rules: `references/consistency-check.ts`, `parseSpecEnums` and `uncheckedIcons`.
+
+1. **`  - icon: none <!-- finder: <query>, <query>: no fit -->`** is a valid §5 icon sub-bullet. `icon: none` without the finder queries is an error.
+2. **`--require-icons`** fails every §5 entry with no icon line. Without the flag a missing icon line is accepted, so the modeler's pre-deploy run and the optimizer's round-trip check are unchanged.
+
+---
+
+## A clean file write is never narrated as an error
+
+2026-10-27. A run told the user it "hit a file write error" after a file saved cleanly through a shell heredoc. Rules: `SKILL.md`, "Narration restraint".
+
+1. **A write is an error only when a tool call failed,** whatever method wrote the file.
+2. **On success, nothing is said about how the file was written;** on a real failure, the tool's error is quoted verbatim and the run stops.
+
+---
+
 ## API object column keeps the vendor's API name unchanged
 
 2026-10-26. The <Vendor> API object column of the entity table kept showing wrong names. Stage 3 said to convert the vendor's names with `vendor-names.ts` with no exception for that column, the script needs singular input, so a plural API name (HubSpot `leads`) was changed before conversion, and the stage-3 examples themselves showed names not spelled the vendor's way (ServiceNow `Incident` for `incident`). Rules: `references/stage-3-entities.md`, the template vendor bullet, the template-mode note and the ambiguity traps; `references/stage-2-naming.md`, the naming rules table and "Converting a product's names".

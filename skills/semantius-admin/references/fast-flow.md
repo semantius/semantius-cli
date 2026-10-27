@@ -82,7 +82,7 @@ After the go-ahead, only a stop condition (4.2) or the modeler's Closing Contrac
 - Never call `AskUserQuestion` (the one exception, the architect's keep-or-replace question, is in 4.2; the modeler's closing sample-data question is part of the Closing Contract).
 - Never end a message with a question, and never print a template that ends in one ("Look right?", "Add, drop, or rename any?", "Proceed with deployment?"). A message that ends in a question ends the turn, which stops the run exactly as a widget would.
 - Don't render stage proposals, plan summaries, or "Picked for you" lines. Log one line per decision instead (section 5); the task list shows progress.
-- Don't name the files written. The architect and analyst send no "Wrote `<path>`" close-out, and the admin's close-out leaves out where the files are saved (guided and expert flow name them).
+- Don't name the files written. The architect and analyst send no "Wrote `<path>`" close-out, and the admin's close-out leaves out where the files are saved (guided and expert flow name them). The one exception is the modeler's closing block, which links the deployed spec for download (section 6).
 
 ### 4.2 What still stops the run
 
@@ -183,7 +183,7 @@ The modeler's Stage 5 verification report ends with this section, **before** the
 >
 > Say "change" and what you want different to revisit any of these.
 
-Lines that touch other modules come first, then the rest grouped by skill. Leave out the "Changes to other modules" group when it is empty, and the whole section when the log is missing or empty. The Closing Contract that follows is unchanged: the status line, the link, and the demo-data question, which is asked and waits.
+Lines that touch other modules come first, then the rest grouped by skill. Leave out the "Changes to other modules" group when it is empty, and the whole section when the log is missing or empty. The Closing Contract follows: the status line, the link, a download link to the deployed spec (`[Download the <System Name> spec](/workspace/{sessionId}/<system_slug>-semantic-spec.md)`, fast runs only; it links a copy of the spec at the top level of `/workspace`, never the file under `semantius/specs/`, per the modeler's Closing Contract), and the demo-data question, which is asked and waits.
 
 On a halt, the admin's failure report (Step 6.8) adds one line after the halt message: *"Before it stopped, I decided N things for you; they're listed in the run folder."* (the run-folder path is already printed on a failed run).
 

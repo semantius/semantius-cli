@@ -104,4 +104,4 @@ Use when the blueprint has materially changed (entities added/removed, role clas
 2. Drive a fresh Stage 1-10 pass with the current blueprint as input.
 3. **Carry forward** the preserved decisions where they still apply (e.g. a `promote-to-master` decision for an entity that's still in the blueprint).
 4. Show the user a diff summary: what's new, what's changed, what's removed.
-5. Stamp `version: "3.1"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready.
+5. Stamp `version: "3.1"`, write a fresh file at **`semantius/specs/<system_slug>-semantic-spec.md`** (create the folder if missing). If the input spec sits at the workspace root, leave that file untouched; the `semantius/specs/` path is the canonical location. Git tracks both files; the user can `git mv` or delete the root copy when ready. Run the pre-save verification block from Stage 11.

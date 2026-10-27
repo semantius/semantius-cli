@@ -55,7 +55,7 @@ Self-contained — no other skill file needs to be read for these. They govern c
 1. **US English spellings, always**: optimize, behavior, customize, organization, analyze — never the British forms.
 2. **No em-dashes (`—`) in chat output.** Use a comma, parentheses, a semicolon, or two sentences instead. (Skill and reference files may use them; the ban is on what the user reads in chat.)
 3. **Plain language.** Say "table", "field", "row", "the file" — never internal jargon (csvschema verdict, disposition, mapping artifact) without a plain-English gloss.
-4. **Narration restraint.** Never announce what you are about to do ("Let me read...", "Now let me check..."). Do the work; render only the decision points and the final report. Play-by-play between tool calls is noise.
+4. **Narration restraint.** Never announce what you are about to do ("Let me read...", "Now let me check..."). Do the work; render only the decision points and the final report. Play-by-play between tool calls is noise. A file write is an error only when a tool call failed: a file saved cleanly through a shell heredoc or a script is not one. On success, say nothing about how the file was written; on a real failure, quote the tool's error verbatim and stop.
 5. **Data is sacred.** CSV values travel into Semantius byte-for-byte except for the coercions the mapping explicitly declares; house style (spelling, dash policy) is never applied to payloads, titles, or enum values derived from the file.
 
 **Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in

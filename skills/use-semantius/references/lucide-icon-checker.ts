@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * lucide-icon-checker.ts — confirms that values are valid Semantius icons (an
- * `icon` field value, an enum entry's `icon`, a module's `icon_name`): a Lucide
+ * `icon` field value, an enum entry's `icon`, a module's or entity's `icon_name`): a Lucide
  * icon name, or an http(s):// URL, which always passes.
  *
  * Source: `lucide-icon-tags.json` next to this script, a snapshot of the

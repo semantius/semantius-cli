@@ -11,7 +11,8 @@ export const entitySchema = z.looseObject({
   plural: z.string().optional().describe('Plural form of table name, auto-assigned to table_name'),
   singular_label: z.string().describe('Human-readable singular label for UI/reports (e.g. Customer)'),
   plural_label: z.string().optional().describe('Human-readable plural label for UI/reports (e.g. Customers)'),
-  icon_url: z.string().optional().describe('Optional URL or path to icon for this table'),
+  icon_name: z.string().optional().describe('Icon shown for the entity: a Lucide icon name in kebab-case (e.g. "users"; latest Lucide release, names searchable in https://cdn.jsdelivr.net/npm/lucide-static/tags.json) or an icon URL'),
+  name_sort: z.string().optional().describe('Sort key that orders entities in navigation'),
   description: z.string().optional().describe('What the entity represents'),
   module_id: z.number().int().describe('Module this entity belongs to'),
   view_permission: z

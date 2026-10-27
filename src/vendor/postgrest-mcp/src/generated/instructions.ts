@@ -23,7 +23,7 @@ export const instructions = `   ---
    ### 1. Semantic Meaning (Labels & Documentation)
    - **Entities:** \`singular_label\`, \`plural_label\`, \`description\` define *what the concept means*
    - **Fields:** \`title\`, \`description\` explain *what each attribute represents*
-   - **UI hints:** \`icon_url\`, \`width\`, \`field_order\` control *how concepts appear*
+   - **UI hints:** \`icon_name\`, \`name_sort\`, \`width\`, \`field_order\` control *how concepts appear*
 
    ### 2. Relationships
    Fields reference other entities via \`reference_table\`. There are two relationship formats:
@@ -146,7 +146,8 @@ export const instructions = `   ---
       - \`label_column\` – the snake_case **field name** whose value identifies a record (e.g., \`service_name\`, \`company_name\`). This must be a snake_case identifier, not a human-readable title. Omit it for an \`is_a\` or \`has_a\` entity: it comes from the base (\`90242\`).
       - \`module_id\` (required — use resolved module)
       - \`view_permission\` and \`edit_permission\` (required)
-      - Optional: \`icon_url\`
+      - Optional: \`icon_name\` — the icon to show for the entity: a Lucide icon name (see Field Format Quick Reference) or an icon URL; leave unset unless the user requests a specific icon.
+      - Optional: \`name_sort\` — sort key that orders entities in navigation; leave unset unless the user wants a specific navigation order.
       - Optional: \`edit_mode\` — controls how records open for editing: \`auto\` (default, system decides), \`sidebar\`, \`modal\`, or \`page\`
       - Optional: \`cube_mode\` — OLAP cube generation: \`disabled\` (default) or \`auto\` (include in cube)
       - \`audit_log\`: Optional boolean, default \`false\`. When \`true\`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value.
@@ -616,7 +617,7 @@ export const instructions = `   ---
    | **Structured** | \`json\`, \`jsonlogic\`, \`object\`, \`array\` |
    | **Identifiers** | \`uuid\`, \`email\`, \`uri\`, \`url\` |
 
-   > ℹ️ **Icons are Lucide icons.** An \`icon\` field, the \`icon\` of an enum entry and a module's \`icon_name\` take a Lucide icon name in kebab-case (e.g. \`circle-check\`, \`users\`, \`shopping-cart\`; never the PascalCase React component name \`CircleCheck\`), or an icon URL. The UI always uses the latest Lucide release, so every current icon is available. To find a name, search https://cdn.jsdelivr.net/npm/lucide-static/tags.json (icon name → search tags, ~1,900 icons): look a name up by key, or an idea up by its tags; search it, don't load it whole.
+   > ℹ️ **Icons are Lucide icons.** An \`icon\` field, the \`icon\` of an enum entry and the \`icon_name\` of a module or entity take a Lucide icon name in kebab-case (e.g. \`circle-check\`, \`users\`, \`shopping-cart\`; never the PascalCase React component name \`CircleCheck\`), or an icon URL. The UI always uses the latest Lucide release, so every current icon is available. To find a name, search https://cdn.jsdelivr.net/npm/lucide-static/tags.json (icon name → search tags, ~1,900 icons): look a name up by key, or an idea up by its tags; search it, don't load it whole.
 
    > ℹ️ **An enum record stores the value, never the label.** \`enum_values\`, and the \`enum\` list of an enum property in \`get_schema\` output, hold the entries as defined: an entry may be a \`{"value", "label"}\` object, with any \`description\`, \`color\` and \`icon\` it carries, so write its \`value\`. \`get_schema\` also lists \`""\` for an enum that is not required.
 

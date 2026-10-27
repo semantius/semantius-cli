@@ -150,7 +150,7 @@ promotion_decisions:
 - `{{value}}`
   - label: {{Label}}
   - color: `{{color}}`
-  - icon: `{{icon?}}`
+  - icon: {{`icon` | none <!-- finder: <query>, <query>: no fit -->}}
   - description: {{description?}}
 
 ## 6. Cross-model link suggestions
@@ -411,7 +411,7 @@ Collect every `enum` field's allowed values here, one sub-section per enum, **so
   - description: Waiting for the counterparty to countersign
 ```
 
-`label` and `description` are plain text to the end of the line; `color` (lowercase hex) and `icon` (a Lucide icon name or URL) are backticked. An entry with any other property must carry `label`. A bullet with no `label` (a spec extracted from a module whose entries carry none) still parses and draws a warning. The modeler sends an entry with properties as a `{"value", "label", …}` object (meaning of the keys: "Enum values and labels" in `use-semantius/references/data-modeling.md`; which label and hints each entry gets: `stage-4-fields.md`). The Notes `enum_values:` hold the same values, without properties; `consistency-check.ts` checks the bullet grammar and that both agree. If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
+`label` and `description` are plain text to the end of the line; `color` (lowercase hex) and `icon` (a Lucide icon name or URL) are backticked. The `icon` line records the icon check (`stage-4-fields.md`, "Enum values, labels and hints") in one of two states: `` - icon: `<name>` `` (the icon passed the checker) or `- icon: none <!-- finder: <query>, <query>: no fit -->` (no icon clearly fit; the comment names every finder query tried; the modeler deploys no icon and removes a live one). A missing `icon` line means the entry has not been checked yet: the analyst's pre-save run (`consistency-check.ts --require-icons`) refuses it. An entry with any other property must carry `label`. A bullet with no `label` (a spec extracted from a module whose entries carry none) still parses and draws a warning. The modeler sends an entry with properties as a `{"value", "label", …}` object (meaning of the keys: "Enum values and labels" in `use-semantius/references/data-modeling.md`; which label and hints each entry gets: `stage-4-fields.md`). The Notes `enum_values:` hold the same values, without properties; `consistency-check.ts` checks the bullet grammar and that both agree. If the model has no enums, **keep this heading** and write the canonical empty-section placeholder `_(none: <short reason>)_` (bare `_(none)_` allowed) — do not omit §5. See "Empty-section convention" below.
 
 ### §6 Cross-model link suggestions and handoffs
 

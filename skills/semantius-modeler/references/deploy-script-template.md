@@ -18,6 +18,7 @@ mkdir -p .tmp_deploy
 # <skill-folder> = the directory this skill's SKILL.md was read from (absolute path; works for plugin and workspace installs alike)
 cp "<skill-folder>/references/deploy-lib.ts"   .tmp_deploy/deploy-lib.ts
 cp "<skill-folder>/references/scaffold-lib.ts" .tmp_deploy/scaffold-lib.ts
+cp "<skill-folder>/../use-semantius/references/lucide-icon-tags.json" .tmp_deploy/lucide-icon-tags.json   # scaffold-lib's icon check
 # author .tmp_deploy/deploy_<slug>.ts (below), then:
 bun run .tmp_deploy/deploy_<slug>.ts
 ```
@@ -51,6 +52,7 @@ bun run .tmp_deploy/deploy_<slug>.ts
 |---|---|---|
 | `scaffoldModule(cfg)` | the entire baseline scaffold (module + permissions + hierarchy + roles + the six module-record references + provenance) in one idempotent call | self-preflights its tools' field names (every create it issues plus the `update_module` reference keys); returns `{moduleId, permissionNames: {read, manage, admin?}, roleIds}` (permissions are keyed by name, so there are no permission ids); `scope: "basic"` skips the admin tier. Stamped `SCAFFOLD_LIB_MAJOR = 6` |
 | `preflightSchemas({tool: [keys]})` | assert your hand-authored payloads' field names against the LIVE tool schema before writing | throws naming the available keys (kills the `name`-vs-`role_name` class) |
+| `checkEnumIcons(table, field, entries)` / `iconFindings` | the icon check on every enum field the script creates or updates, before `mergeEnumEntries` | against the bundled Lucide list (`lucide-icon-tags.json`, copied next to it): `none` and an unknown name become `""`, so no invalid name is ever sent; each unknown name is recorded in `iconFindings`. `scaffoldModule` checks the module's `icon_name` the same way: an unknown name is deployed as `box` and recorded |
 | `verifyScaffold(cfg)` | the executable self-audit — re-reads live and asserts the Stage 5 scaffold checks as code | returns findings for the report; **throws on any drift**, so run as the last step inside `runDeploy` and a failed audit halts the deploy |
 
 ## Orchestration skeleton (the bespoke part you author)
@@ -58,12 +60,13 @@ bun run .tmp_deploy/deploy_<slug>.ts
 ```typescript
 // .tmp_deploy/deploy_<slug>.ts
 import { read1, readMany, readIn, write, ensure, ensureMany, ensureEntitiesByLevel, ensurePairs, updateEntity, runDeploy } from "./deploy-lib";
-import { scaffoldModule, verifyScaffold, preflightSchemas } from "./scaffold-lib";
+import { scaffoldModule, verifyScaffold, preflightSchemas, checkEnumIcons, iconFindings } from "./scaffold-lib";
 
 // enum_values: merge the spec's §5 entries with the live entries BY VALUE before diffing or sending (diffField
 // uses it for every existing enum field). The spec's order, values, labels and stated hints win; a hint the spec
 // does not state (a description / color / icon set in the UI) is kept from live, and the live label is kept when
-// a kept hint needs the object form. Live values the spec omits are not here: removals are Stage 2 / 3's job.
+// a kept hint needs the object form. A hint stated as "" (an icon after checkEnumIcons: `none` or not a Lucide
+// icon) is left out, which also removes it from live. Live values the spec omits are not here: removals are Stage 2 / 3's job.
 type EnumEntry = string | { value: string; label: string; description?: string; color?: string; icon?: string };
 const HINTS = ["color", "icon", "description"] as const;
 function mergeEnumEntries(spec: EnumEntry[], live: EnumEntry[] = []): EnumEntry[] {
@@ -98,7 +101,7 @@ runDeploy(async () => {
   //    composite-`id` rule, and `update_entity` keys `table_name` at the TOP level (not under `data`), so
   //    listing it here would false-fail against the tool's `data` schema.
   await preflightSchemas({
-    create_entity: ["table_name", "singular_label", "module_id", "view_permission", "edit_permission",
+    create_entity: ["table_name", "singular_label", "label_column", "module_id", "view_permission", "edit_permission",
                     "edit_mode", "cube_mode", "order_column", "id_column", "icon_url", "id_type", "id_prefix",
                     "id_refentity"],
     create_field:  ["table_name", "field_name", "format", "reference_table", "width", "searchable",
@@ -138,7 +141,7 @@ runDeploy(async () => {
   //    all extra hierarchy edges in one ensurePairs(...), all persona grants in one ensurePairs(...).
 
   // 3. ENTITIES FIRST — every ✨-new / rename-incoming / promote-create payload (4c checklist: module_id from the
-  //    scaffold, provenance stamped, computed_fields/validation_rules [] for now, NO label_parent) goes into ONE
+  //    scaffold, label_column from §3, provenance stamped, computed_fields/validation_rules [] for now, NO label_parent) goes into ONE
   //    create_entity call — or, when the spec has is_a / has_a entities, one call per level, bases first
   //    (a based row carries id_type + id_refentity, id_prefix for is_a, and NO label_column / label_parent /
   //    order_column). Nothing below creates a field until this resolves, so every reference_table already
@@ -158,13 +161,19 @@ runDeploy(async () => {
   for (const t of Object.keys(fieldRows)) {
     const live = await readMany("read_field", `table_name=eq.${t}`);
     const liveBy = new Map(live.map((f) => [f.field_name, f]));
+    // Every enum field, new or existing: check its icons (no invalid name is ever sent; `none` and an unknown
+    // name become "", which drops the key and clears a live icon), then merge with live once. A new field
+    // merges with [] (nothing live), so "" never reaches create_field.
+    for (const f of fieldRows[t]) if (f.enum_values) {
+      f.enum_values = mergeEnumEntries(checkEnumIcons(t, f.field_name, f.enum_values), liveBy.get(f.field_name)?.enum_values);
+    }
     const missing = fieldRows[t].filter((f) => !liveBy.has(f.field_name));
     await ensureMany("read_field", "field_name", (f) => f.field_name, "create_field", missing, `table_name=eq.${t}`);
     for (const f of fieldRows[t]) {
       const l = liveBy.get(f.field_name); if (!l) continue;
-      const patch = diffField(f, l);                                   // the 4d property list; for enum_values:
-      //   const merged = mergeEnumEntries(f.enum_values, l.enum_values);
-      //   if (!sameEnumEntries(merged, l.enum_values)) patch.enum_values = merged;
+      const patch = diffField(f, l);                                   // the 4d property list; for enum_values
+      //   (already checked and merged above; never merge a second time, that would bring a cleared icon back):
+      //   if (!sameEnumEntries(f.enum_values, l.enum_values)) patch.enum_values = f.enum_values;
       if (Object.keys(patch).length) await write("update_field", { id: `${t}.${f.field_name}`, data: patch });
     }
   }
@@ -180,12 +189,15 @@ runDeploy(async () => {
   //    updateEntity(t, { label_parent }) when live differs — all after their fields exist. 4g built-in extensions
   //    and 4h §6 links: one create_field call each, keyed by the composite id:
   //    ensureMany("read_field", "id", (f) => `${f.table_name}.${f.field_name}`, "create_field", rows).
+  //    An enum field among them goes through checkEnumIcons + mergeEnumEntries first, as in step 4.
 
   // 6. Self-audit (un-skippable, the last step). Re-reads live and asserts the scaffold matches cfg;
   //    THROWS on any drift, so runDeploy halts and the success line cannot print over a broken scaffold.
   //    The returned findings feed the Stage 5 report (entities/fields stay Stage 5's manual check).
   const audit = await verifyScaffold(cfg);
   for (const x of audit) console.log(`${x.severity === "warn" ? "🟡" : "✓"} ${x.check} — ${x.detail}`);
+  //    Icons not sent because they are not Lucide icons: the Stage 5 report's "Icons not deployed" block.
+  for (const x of iconFindings) console.log(`🟡 ${x.check} — ${x.detail}`);
 });
 ```
 
