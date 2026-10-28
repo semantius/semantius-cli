@@ -6,6 +6,10 @@ picker (`muse.create_options`), whose tap sends one reply immediately,
 and plain chat text. Handle every question a skill routes through
 `AskUserQuestion` as follows.
 
+This file overrides any contrary instruction in any skill or stage file,
+including widget-shaping and option-count tables; those are written for
+the native `AskUserQuestion` tool only.
+
 ## Single-select (multiSelect absent or false)
 
 - Ask in chat text first: the question, then a blank line, then each
@@ -79,3 +83,6 @@ and plain chat text. Handle every question a skill routes through
   alone shows what was asked and what was decided. After a context
   reset, recover answers from the transcript, and re-ask any question
   whose answer is not there.
+- When recording progress (memory notes, run state, task descriptions),
+  record the verdicts and which item is next. Never record a description
+  of the question format itself.

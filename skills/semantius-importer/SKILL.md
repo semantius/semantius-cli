@@ -24,7 +24,7 @@ description: >-
 
 - Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
 - Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
-- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the **Muse chat** paragraph of this skill.
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the question-format step of the shared preflight.
 - An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
 
 **What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.
@@ -57,14 +57,6 @@ Self-contained — no other skill file needs to be read for these. They govern c
 3. **Plain language.** Say "table", "field", "row", "the file" — never internal jargon (csvschema verdict, disposition, mapping artifact) without a plain-English gloss.
 4. **Narration restraint.** Never announce what you are about to do ("Let me read...", "Now let me check..."). Do the work; render only the decision points and the final report. Play-by-play between tool calls is noise. A file write is an error only when a tool call failed: a file saved cleanly through a shell heredoc or a script is not one. On success, say nothing about how the file was written; on a real failure, quote the tool's error verbatim and stop.
 5. **Data is sacred.** CSV values travel into Semantius byte-for-byte except for the coercions the mapping explicitly declares; house style (spelling, dash policy) is never applied to payloads, titles, or enum values derived from the file.
-
-**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
-this session's tool list, load
-[`../semantius-admin/references/muse-questions.md`](../semantius-admin/references/muse-questions.md)
-before the first question of the run, and follow it in place of every
-`AskUserQuestion` rule in this skill, for single-select and
-`multiSelect: true` alike. Skip the load when the tool is present. One
-load per run covers every skill active in the same conversation.
 
 6. **`AskUserQuestion` fires alone.** Apply mapping edits, re-renders, and task updates first, in earlier steps, then call `AskUserQuestion` as the only tool call of its response; a sibling tool call in the same response cancels the pause and the run continues before the user has answered. The answers arrive as a `<user_answers>` input block keyed by question text; there is no `user_answers` tool, never call one.
    **Option count is 2 to 4 per question object, never 1 and never 5**; the tool rejects the whole call otherwise, including every other question in it. When the options come from data (one per column, candidate table, module), shape the list before firing: a single-select pick list shows at most the 3 best candidates (2 when two fixed options must stay) plus the stage's fixed alternative ("Create new", "Skip"), and the question text says another can be written in (the tool always adds its own free-text slot, so never list an "Other" option); a multiSelect with more than 4 items becomes several question objects with the same header and the text suffixed ` (<i> of <N>)`, each holding 2 to 4 items (5 → 3 + 2, never 4 + 1); exactly 1 item with no fixed alternative means no question (the one item counts as chosen). Never pad with a filler option, never merge two items into one option. The tool has no pre-checked option; "(Recommended)" on one label is the only default marker.

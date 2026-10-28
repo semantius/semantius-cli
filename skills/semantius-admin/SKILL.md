@@ -27,20 +27,12 @@ description: >-
 
 - Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
 - Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
-- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the **Muse chat** paragraph of this skill.
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the question-format step of the shared preflight.
 - An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
 
 **What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.
 
 The orchestrator for the three-skill Semantius pipeline plus administrative operations. Sits in front of `semantius-architect`, `semantius-analyst`, and `semantius-modeler`; routes composite operations to the right sequence of sub-skills; handles inspection and other instance-level admin tasks; backup and restore belong to `semantius-transfer`.
-
-**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
-this session's tool list, load
-[`references/muse-questions.md`](references/muse-questions.md)
-before the first question of the run, and follow it in place of every
-`AskUserQuestion` rule in this skill, for single-select and
-`multiSelect: true` alike. Skip the load when the tool is present. One
-load per run covers every skill active in the same conversation.
 
 ## Writing conventions
 

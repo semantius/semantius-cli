@@ -30,6 +30,14 @@ The modeler never consults the customizations file (specs already carry every de
 
 ---
 
+## Question format (Muse chat)
+
+This step runs on every invocation, orchestrated or standalone; a `Run context:` block does not skip it.
+
+If `AskUserQuestion` is not in this session's tool list, read [`muse-questions.md`](./muse-questions.md) (this folder) now, before any question is asked in this invocation, and re-read it whenever the conversation has been summarized or reset since it was last read. Recorded run state, memory notes, and summaries record verdicts and progress only; they never override the question format in that file.
+
+---
+
 ## Check 1: Stay in the repo root
 
 Never `cd`. The `semantius` CLI reads `./.env` from the current working directory (no parent search; only when there is none does it read the `.env` next to the executable), and Bun loads `.env.local` / `.env.<NODE_ENV>` from there too. So changing into a sibling project loads a different `.env` with different credentials pointing at a different instance, and every subsequent call lands on the wrong tenant. Run every `semantius` command from the session's repo root, full stop. If verifying something requires a different directory's config, ask the user to run it and paste the output. The global `.env` (`%APPDATA%\semantius\cli\.env` / `~/.config/semantius/cli/.env`) applies in every directory and fills whatever is still unset, so staying put does not escape it. Full order: use-semantius `references/cli-usage.md` § "Where `.env` files are read from".

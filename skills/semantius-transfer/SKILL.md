@@ -27,18 +27,11 @@ Division of responsibility:
 
 ## Writing conventions
 
-**Muse chat: no `AskUserQuestion` tool.** If `AskUserQuestion` is not in
-this session's tool list, load
-[`../semantius-admin/references/muse-questions.md`](../semantius-admin/references/muse-questions.md)
-before the first question of the run, and follow it in place of every
-`AskUserQuestion` rule in this skill, for single-select and
-`multiSelect: true` alike. Skip the load when the tool is present. One
-load per run covers every skill active in the same conversation.
-
 The importer's writing conventions apply unchanged ([`../semantius-importer/SKILL.md`](../semantius-importer/SKILL.md) → Writing conventions, items 1 to 6): US English, no em-dashes in chat, plain language ("table", "records", "the file"), no narration, and `AskUserQuestion` as the only tool call of its response with 2 to 4 options. Stage tasks follow [`../semantius-admin/references/task-tracking.md`](../semantius-admin/references/task-tracking.md): one task per stage from the Workflow table, subject verbatim, one `in_progress` at a time. This skill has no question ledger: its only questions are the Stage 3 gate, a mode or host question when the request leaves one open, and the sign-in question of Preflight 3 when a named host has no sign-in on this machine.
 
 ## Preflight
 
+0. Run the **Question format (Muse chat)** step of [`../semantius-admin/references/preflight.md`](../semantius-admin/references/preflight.md). Only that step; checks 1 to 4 there do not apply to this skill.
 1. `semantius --version`, and `semantius info utils` must list `export_module`. Otherwise tell the user to re-run the installer (use-semantius SKILL.md → Environment Setup) and stop.
 2. **Resolve the hosts.** The source is the environment's host unless the user names one; the target is always named, except for a backup (no target) or a restore (the same host). Never guess a target from a hostname that merely appears in a file or a `.env`.
 3. `semantius hosts`, then `semantius --host <h> whoami` for every named host. With `--host` only the session stored for that host is used, and an API key in the environment is ignored. Exit `5` means this machine is not signed in to that host (never signed in there, or the sign-in expired and could not be renewed). Quote the error and ask one `AskUserQuestion`: **Sign in to `<h>`** (Recommended) / **Stop**. On Sign in, run `semantius login --host <h>` as use-semantius `references/cli-usage.md` § "Signing the user in" describes (in the background, relaying the link), then re-run `whoami` for that host. Use `login`, not `use`: `use` would also switch the host later commands go to, so after the transfer every command, in every directory, would land on `<h>`. Never run `logout`.
