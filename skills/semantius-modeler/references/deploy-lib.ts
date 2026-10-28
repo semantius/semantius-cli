@@ -501,7 +501,7 @@ export async function seedEnsure(
  * from a failed call landed. Bare INSERT: a re-run appends a second set — use
  * `seedEnsureMany` when a re-run is plausible.
  *
- *   const campaigns = await postMany("/campaigns", campaignRows);   // rows built in a loop, one call
+ *   const accounts = await postMany("/accounts", accountRows);   // rows built in a loop, one call
  */
 export async function postMany(
   path: string, rows: ReadonlyArray<Record<string, unknown>>, size = BATCH_SIZE,
@@ -541,7 +541,7 @@ export async function postMany(
  * the missing rows, and return ALL rows WITH ids in INPUT order (so FK capture
  * and per-table counts work exactly like `postMany`). `keyField` must be a
  * unique, stable-across-runs column present on every row (a `unique_value`
- * field built with `uniq(base, i)` / `combine(...)`); empty or duplicate keys are
+ * field: the fixed-seed `rng` regenerates it on every run); empty or duplicate keys are
  * rejected. Same uniform-keys rule as `postMany`. It never upserts (no
  * `on_conflict`, no `merge-duplicates`): existing rows are returned unchanged,
  * which is what `is_a` / `has_a` entities require (an upsert on them fails 42P10).
@@ -556,7 +556,7 @@ export async function postMany(
  *     only the extension's own fields plus `id` (a differing base value is refused,
  *     90246). Change base values afterwards with `patchById(<base table>, id, …)`.
  *
- *   const leads = await seedEnsureMany("/leads", leadRows, "email");
+ *   const contacts = await seedEnsureMany("/contacts", contactRows, "email");
  */
 export async function seedEnsureMany(
   path: string, rows: ReadonlyArray<Record<string, unknown>>, keyField: string,
@@ -568,7 +568,7 @@ export async function seedEnsureMany(
     return String(k);
   });
   if (new Set(keys).size !== keys.length) {
-    throw new Error(`seedEnsureMany ${table}: duplicate "${keyField}" values in the input — build the key with uniq() / combine()`);
+    throw new Error(`seedEnsureMany ${table}: duplicate "${keyField}" values in the input — build the key from r.deal / r.tuples parts, or uniq() for a code`);
   }
   const byKey = new Map<string, any>();
   for (const part of chunk(keys)) {
@@ -603,34 +603,118 @@ export async function patchById(
 }
 
 /**
- * Index-cycling pick: `pool[i % pool.length]`. The seed-factory primitive — drive each row's values
- * off the row index so a `for (let i = 0; i < target; i++)` loop both hits the count STRUCTURALLY and
- * gives even coverage (every §5 enum value and every pool entry appears in turn). Prefer this over
- * `Math.random()` picking, which can miss enum values and makes coverage non-deterministic.
+ * Seeded random generator for sample data, one per table: `const r = rng("contacts")`. The seed is fixed
+ * (42) and the table name gives each table its own sequence, so a re-run of the UNCHANGED script writes
+ * the same rows and `seedEnsureMany` converges. Any edit to the script (a table's count, a pool, the
+ * order of draws) can change that table's rows and the rows of every table that draws parents from it.
+ * Never `Math.random()`.
+ *   - `r.pick(pool)`         one random entry; repeats are fine (job title, email local part)
+ *   - `r.int(min, max)`      an integer in [min, max] (house number, quantity, amount, day offset)
+ *   - `r.chance(p)`          true with probability p (booleans with a realistic mix)
+ *   - `r.deal(pool, n)`      n entries, every pool entry once before any repeats, shuffled: enum values
+ *                            (each value appears once n >= the value count; repeat a value in the pool
+ *                            to weight it), FK parents, places, street names
+ *   - `r.distinct(pool, n)`  n DIFFERENT entries; throws when the pool has fewer than n (names, labels)
+ *   - `r.tuples(n, pools)`   n DISTINCT combinations, each part dealt (first + last name, two-word names);
+ *                            throws when the pools cannot give n combinations
  */
-export const pick = <T>(pool: T[], i: number): T => pool[i % pool.length];
+export function rng(stream: string, seed = 42) {
+  let s = seed >>> 0;
+  for (let k = 0; k < stream.length; k++) s = Math.imul(s ^ stream.charCodeAt(k), 0x01000193) >>> 0;
+  const next = (): number => {   // mulberry32
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const nonEmpty = (pool: readonly unknown[], what: string) => {
+    if (!pool.length) throw new Error(`rng("${stream}").${what}: empty pool`);
+  };
+  const int = (min: number, max: number): number => min + Math.floor(next() * (max - min + 1));
+  const chance = (p: number): boolean => next() < p;
+  const pick = <T>(pool: readonly T[]): T => {
+    nonEmpty(pool, "pick");
+    return pool[Math.floor(next() * pool.length)];
+  };
+  const deal = <T>(pool: readonly T[], n: number): T[] => {
+    nonEmpty(pool, "deal");
+    const out: T[] = [];
+    while (out.length < n) {
+      const round = [...pool];
+      for (let k = round.length - 1; k > 0; k--) {
+        const j = Math.floor(next() * (k + 1));
+        [round[k], round[j]] = [round[j], round[k]];
+      }
+      out.push(...round);
+    }
+    return out.slice(0, n);
+  };
+  const distinct = <T>(pool: readonly T[], n: number): T[] => {
+    const values = [...new Set(pool)];
+    if (values.length < n) {
+      throw new Error(`rng("${stream}").distinct: ${n} different entries asked, the pool has ${values.length}; build them with r.tuples`);
+    }
+    return deal(values, n);
+  };
+  const tuples = <T>(n: number, pools: ReadonlyArray<readonly T[]>): T[][] => {
+    pools.forEach((p) => nonEmpty(p, "tuples"));
+    const sets = pools.map((p) => [...new Set(p)]);   // a repeated pool entry is not a second value
+    const space = sets.reduce((acc, p) => acc * p.length, 1);
+    if (space < n) {
+      throw new Error(`rng("${stream}").tuples: ${n} distinct combinations asked, the pools give only ${space}; add pool entries`);
+    }
+    const key = (t: T[]) => JSON.stringify(t);
+    const seen = new Set<string>();
+    const firstFree = (): T[] => {   // near exhaustion: walk the combinations in order
+      for (let idx = 0; ; idx++) {
+        let q = idx;
+        const t = sets.map((p) => { const v = p[q % p.length]; q = Math.floor(q / p.length); return v; });
+        if (!seen.has(key(t))) return t;
+      }
+    };
+    const columns = sets.map((p) => deal(p, n));
+    const out: T[][] = [];
+    for (let k = 0; k < n; k++) {
+      let t = columns.map((c) => c[k]);
+      for (let tries = 0; seen.has(key(t)) && tries < 100; tries++) t = sets.map((p) => pick(p));
+      if (seen.has(key(t))) t = firstFree();
+      seen.add(key(t));
+      out.push(t);
+    }
+    return out;
+  };
+  return { next, int, chance, pick, deal, distinct, tuples };
+}
+
+const LATIN: Record<string, string> = { "ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "ł": "l", "đ": "d", "ð": "d", "þ": "th", "ı": "i" };
 
 /**
- * Mixed-radix pick across several pools so the row index visits every COMBINATION, not lockstep.
- * `combine(i, [firstNames, lastNames])` → `[ firstNames[i % F], lastNames[⌊i/F⌋ % L] ]`, giving F×L
- * distinct tuples from two small pools (vs. only max(F,L) when both share the same `i`). Compose enough
- * pools that the product of their lengths >= target, and every row's tuple is distinct. Destructure the
- * result: `const [fn, ln] = combine(i, [firstNames, lastNames]);`.
+ * Lowercase ASCII token for email local parts and domains: letters without a decomposed form
+ * transliterated (ø → o, æ → ae, ß → ss, ł → l, đ → d), accents stripped, everything but a-z / 0-9
+ * dropped. `slugify("Søren Østergaard")` → "sorenostergaard". Throws when nothing Latin is left
+ * (`李伟`, `Иван`): such a name carries a Latin form for its email.
  */
-export const combine = <T>(i: number, pools: T[][]): T[] => {
-  const out: T[] = [];
-  let q = i;
-  for (const p of pools) { out.push(p[q % p.length]); q = Math.floor(q / p.length); }
+export function slugify(s: string): string {
+  const out = s.toLowerCase()
+    .replace(/[øæœßłđðþı]/g, (c) => LATIN[c])
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (!out) throw new Error(`slugify("${s}"): no Latin letters left; give the name a Latin form for its email`);
   return out;
-};
+}
 
 /**
- * Collision-proof token for a `unique_value` / DB-UNIQUE field (email, code, external id): a base string
- * plus the strictly-increasing row index (and optional suffix). `uniq("ACCT-", i)` → "ACCT-0", "ACCT-1", …;
- * `uniq("ava.chen", i, "@example.com")` → "ava.chen0@example.com", … Never collides because `i` is unique
- * per row. A repeat in a `unique_value` field makes the insert fail with 409 and ABORTS the seed run before
- * the count guard runs — so compose such fields with `uniq` (or `combine` with product >= target), never a
- * bare `pick`.
+ * Sample-data email / web domain for an invented company: `exampleDomain("Beacon Foods")` →
+ * "beaconfoods.example.com". Subdomains of example.com are reserved (RFC 2606, RFC 6761) and never
+ * receive mail, so a seeded address reads as real and cannot deliver.
+ */
+export const exampleDomain = (companyName: string): string => `${slugify(companyName)}.example.com`;
+
+/**
+ * Collision-proof token for a CODE-LIKE `unique_value` field (account code, SKU, invoice number): a base
+ * string plus the strictly-increasing row index (and optional suffix). `uniq("ACCT-", i)` → "ACCT-0",
+ * "ACCT-1", … Never collides because `i` is unique per row. Never on a field a person reads as a name.
  */
 export const uniq = (base: string, i: number, suffix = ""): string => `${base}${i}${suffix}`;
 
@@ -698,12 +782,12 @@ export function assertSeedCounts(
  * A count guard proves the table is full; it cannot see that every row carries the same surname, the
  * same company or a one-word label. `assertSeedDistinct("contacts", rows, ["lastname"])` fails loudly
  * when a human-facing component degenerates to a handful of values across the table, which is what
- * happens when a mixed-radix helper is used below its first pool's length (`combine`) or when a
- * component is picked with a lockstep index.
+ * happens when a component comes from a too-small pool or from one literal.
  *
  * - `fields` names one or more columns of the rows just inserted (human name parts, company, city,
- *   label column). Empty strings and nulls are excluded from the count: an optional field may
- *   legitimately repeat.
+ *   street name, label column). A part that lives inside a combined value (a surname inside a full
+ *   name, a street name behind its house number) is passed as its own column. Empty strings and nulls
+ *   are excluded from the count: an optional field may legitimately repeat.
  * - `minDistinct` defaults to `min(rows.length, 8)`: on a 10-row table that demands 8 distinct values,
  *   which is enough to catch a constant column without punishing genuinely low-cardinality data
  *   (call it only on fields where variety IS expected).
@@ -729,7 +813,7 @@ export function assertSeedDistinct(
   if (fails.length) {
     console.error(`\nSEED DISTINCTNESS FAILURE — ${fails.length} problem(s):`);
     for (const m of fails) console.error(`  🛑 ${m}`);
-    console.error("Vary the pool (coprime stride, or combine only past the first pool's length), then re-run.");
+    console.error("Deal the field from a pool of at least 8 entries (r.deal / r.tuples), then re-run.");
     process.exit(1);
   }
 }

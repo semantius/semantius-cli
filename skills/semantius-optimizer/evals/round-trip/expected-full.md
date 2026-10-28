@@ -82,7 +82,7 @@ flowchart LR
 **Key prefix:** asset
 **Audit log:** yes
 **Edit mode:** sidebar
-**Icon URL:** https://example.invalid/asset.svg
+**Icon:** https://example.invalid/asset.svg
 **Catalog entity code:** `assets`
 **Entity type:** operational_workflow
 **Label parent:** `vendor_id`

@@ -8,6 +8,17 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Fast-flow go-ahead: summary and question in one response
+
+2026-10-28. A fast run sent the go-ahead summary as a response of its own; a response with no tool call ends the turn, so the go-ahead question was never asked and the run stopped with nothing open to answer. Rules: `references/stage-3-entities.md` (Fast flow), SKILL.md Turn-end check, `../semantius-admin/references/fast-flow.md` sections 3 and 7.
+
+1. **The go-ahead is one response:** the summary is its text, the Go-ahead `AskUserQuestion` its only tool call. The deployed-tables read, the must-haves writes and task updates happen in earlier responses.
+2. **The summary's closing sentence** ("After your go-ahead I build and deploy…") is not an ask; the Turn-end check names it.
+3. **A user message while the go-ahead is open** that is not an answer to it gets a short reply, then the summary and the question again, in the same response.
+4. **The diagnostic log records the go-ahead:** `go-ahead: asking` in the response before the question, `go-ahead: answered <option>` when the answer arrives. A log with the first line and no second is a run that stopped before the user saw the question.
+
+---
+
 ## Checker: `icon: none` with finder evidence, and `--require-icons`
 
 2026-10-27. The analyst now records every enum entry's icon check, so the §5 grammar needs a "checked, none fits" state and the analyst's pre-save run needs to refuse an unchecked entry. Rules: `references/consistency-check.ts`, `parseSpecEnums` and `uncheckedIcons`.

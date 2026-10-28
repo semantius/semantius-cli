@@ -542,7 +542,6 @@ Three separate `create_field` calls for the three fields would be three round tr
 | `singular_label_parent` | string | Optional override for the parent entity's singular label, used by `parent` fields only. Useful when one entity has multiple `parent` fields pointing at the same table (e.g. `billing_address_id` vs `shipping_address_id`, both → `addresses`) and the default labels are ambiguous. |
 | `plural_label_parent` | string | Optional override for the parent entity's plural label, used by `parent` fields only. Pair with `singular_label_parent`. |
 | `cube_type` | string | OLAP cube participation: `disabled`, `auto` (default), `dimension`, `measure`. See `### cube_type Values` above. |
-| `icon_url` | string | Optional icon URL for this field in the UI |
 | `catalog_field_code` | string | Core provenance column: stable design-time field identity (the blueprint field name, e.g. `status`), the field-rename join key. Write-once: set on create or filled once while empty, then never changed. Empty = not generated from a catalog spec. See "Platform provenance / meta columns" above. |
 
 ---

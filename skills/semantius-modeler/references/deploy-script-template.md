@@ -43,7 +43,8 @@ bun run .tmp_deploy/deploy_<slug>.ts
 | `ensurePairs(readTool, colA, colB, writeTool, rows)` | create-if-missing for link rows keyed by a pair (`permission_hierarchy` by `including_permission_name` + `included_permission_name`, `role_permissions` by `role_id` + `permission_name`, `user_roles` by `role_id` + `user_id`) | reads by `colA=in.(…)`, matches pairs locally, ONE `create_*` call for the missing pairs, re-reads |
 | `updateEntity(tableName, data)` | the update half of create-or-diff (entity column patches: `select_rule`, `computed_fields`, `module_id`, `label_parent`, …) | **owns the `update_entity` envelope** so you never hand-roll it: `table_name` is TOP-LEVEL, the changed columns go under `data`. Pass just the table name + the partial patch (`updateEntity("tickets", { select_rule })`); never write `{ table_name, data: {...} }` by hand and never bury `table_name` inside the patch. Blind PATCH — pair with a `read1`/`readMany` diff. |
 | `postMany(path, rows)` / `seedEnsureMany(path, rows, keyField)` | Layer-2 seed inserts: ONE `postgrestRequest` POST per ≤100 rows (re-run-safe variant reads the keys first) | every row must carry the SAME key set (asserted); returns the rows WITH ids; never `--single`. See `stage-6-sample-data.md`. |
-| `assertSeedDistinct(table, rows, fields, minDistinct?)` | the readability guard after a seed insert: human name parts, company, city, label column | prints a per-field receipt and exits non-zero when a human-facing component degenerates (fewer than `min(rows, 8)` distinct non-empty values by default). See `stage-6-sample-data.md`. |
+| `rng(table)` / `uniq(base, i)` / `slugify(s)` / `exampleDomain(name)` | building seed rows: `rng(table)` is the table's fixed-seed generator (`pick`, `int`, `chance`, `deal` for enums, FK parents and places, `distinct`, `tuples`); `uniq` composes code-like unique values; `exampleDomain` gives an invented company its `<name>.example.com` domain | never `Math.random()`; never a base + index in a value a person reads. See `stage-6-sample-data.md`, "Records, not fields". |
+| `assertSeedDistinct(table, rows, fields, minDistinct?)` | the readability guard after a seed insert: human name parts, company, city, street name (without its house number), label column | prints a per-field receipt and exits non-zero when a human-facing component degenerates (fewer than `min(rows, 8)` distinct non-empty values by default). See `stage-6-sample-data.md`. |
 | `runDeploy(fn)` | wrap the whole orchestration | owns the `try/catch`; loud non-zero halt on any throw; success line only on clean resolve |
 
 `scaffold-lib.ts` adds the schema-coupled layer (version-stamped; bumped with the platform):
@@ -102,7 +103,7 @@ runDeploy(async () => {
   //    listing it here would false-fail against the tool's `data` schema.
   await preflightSchemas({
     create_entity: ["table_name", "singular_label", "label_column", "module_id", "view_permission", "edit_permission",
-                    "edit_mode", "cube_mode", "order_column", "id_column", "icon_url", "id_type", "id_prefix",
+                    "edit_mode", "cube_mode", "order_column", "id_column", "icon_name", "id_type", "id_prefix",
                     "id_refentity"],
     create_field:  ["table_name", "field_name", "format", "reference_table", "width", "searchable",
                     "input_type", "default_value", "precision", "cube_type", "singular_label_parent",

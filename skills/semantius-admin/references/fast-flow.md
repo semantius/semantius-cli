@@ -50,7 +50,9 @@ The detail lives in the architect's stage files; this is the map.
 
 **Exact matches first.** Read the deployed tables once (read-only): `semantius call crud read_entity '{}' | jq -r '.[] | "\(.table_name)\t\(.module_name)"'`. An **exact match** is a drafted table whose table name equals a deployed table's name. This is the same definition the analyst uses for "exact" (`../../semantius-analyst/references/stage-2-inspect.md`, cross-module exact match and the link-target exact match).
 
-**The summary**, one message, in plain language (Writing Convention 8):
+**The summary and the question are one response.** The summary is the response's text, and the question below is its only tool call. The table read above, the must-haves writes and every task update happen in earlier responses; the last of them also writes `log_diag "go-ahead: asking"` (`output-discipline.md`). Never send the summary on its own: a response with no tool call ends the turn, so the question is never asked and the run waits with nothing open to answer. The summary's last sentence (item 5) says what follows the go-ahead; it is not the question.
+
+**The summary**, in plain language (Writing Convention 8):
 
 1. The design: *"Built on current best practice, with modern, self-describing names."* for the modern design; *"Following <Product>'s records and names."* when following a product.
 2. The entity table, with the columns and order of guided flow (`stage-3-entities.md`, "Present the list as a table"): Plural Label; Technical name (the table name in backticks), always; the <Product> API object only when following a product, never dropped then (a cell that can't be named reads "not confirmed") and left out for the modern design; a one-line purpose.
@@ -58,7 +60,7 @@ The detail lives in the architect's stage files; this is the map.
 4. The exact matches, one line: *"Organizations already exist in Sales; I'll use them."* With no exact match, this item is left out entirely: no sentence saying nothing matched or everything is created fresh, and no mention of built-in tables such as users being reused.
 5. What happens next: *"After your go-ahead I build and deploy without more questions. I only connect to records your instance already has when the name matches exactly, and that may share or reshape them; anything that only looks similar is kept separate. Everything I decide is listed at the end."*
 
-**The question**, one `AskUserQuestion`, alone in its response:
+**The question**, one `AskUserQuestion`, after the summary in the same response and with no other tool call beside it:
 
 - question: `"Build and deploy it now?"`
 - header: `"Go-ahead"`
@@ -67,7 +69,7 @@ The detail lives in the architect's stage files; this is the map.
   2. `"Change something first"`, description `"Tell me what to change. I update the design and show it to you again."`
   3. `"Ask me along the way"`, description `"I'll guide you through each piece of the design so we can shape it to how you work."`
 
-**Recording the answer.** Before anything else, the admin updates the marker in its pipeline tasks' descriptions (`TaskList`, then `TaskUpdate` each):
+**Recording the answer.** Before anything else, the admin writes `log_diag "go-ahead: answered <option label>"` and updates the marker in its pipeline tasks' descriptions (`TaskList`, then `TaskUpdate` each). A diagnostic log with `go-ahead: asking` and no `answered` line is a run that stopped before the user saw the question.
 
 - **Yes:** `fast: go-ahead given`.
 - **Change something first:** stays `fast: awaiting go-ahead`; take the change in prose, update the draft, show the summary again, ask again.
@@ -187,6 +189,6 @@ Lines that touch other modules come first, then the rest grouped by skill. Leave
 
 On a halt, the admin's failure report (Step 6.8) adds one line after the halt message: *"Before it stopped, I decided N things for you; they're listed in the run folder."* (the run-folder path is already printed on a failed run).
 
-## 7. Resuming after a context reset
+## 7. Resuming
 
-`TaskList` first, as always, then `TaskGet` the admin pipeline task to read the marker. `fast: go-ahead given`: re-read this file and continue from the current stage without asking anything, and never ask the go-ahead again. `fast: awaiting go-ahead`: show the go-ahead summary again and ask it. `fast: guided flow for this build`, or no marker: the run is in guided flow.
+After a context reset, and on every user message that arrives while the marker says `fast: awaiting go-ahead`: `TaskList` first, as always, then `TaskGet` the admin pipeline task to read the marker. `fast: go-ahead given`: re-read this file and continue from the current stage without asking anything, and never ask the go-ahead again. `fast: awaiting go-ahead`: a message that picks a go-ahead option, or asks for a change in words ("Change something first"), is the answer (section 3). Any other message ("continue", a question, a remark) means the go-ahead is still open: answer it in a sentence when it asks something, then send the go-ahead summary again with the question in the same response (section 3). `fast: guided flow for this build`, or no marker: the run is in guided flow.

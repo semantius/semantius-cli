@@ -66,7 +66,7 @@ Use the existing spec template at `./semantic-spec-template.md` for the section 
    - **`**Id column:** `<field_name>``** — after `**Order column:**`. Backticked `field_name`. Omit when `id` (the platform default) or empty. → `entities.id_column`.
    - **`**Edit mode:** <edit_mode>`** — after `**Edit permission:**`. Bare enum value, NO backticks. Omit when the platform default (`auto`). → `entities.edit_mode`.
    - **`**Cube mode:** <cube_mode>`** — after `**Edit mode:**`. Bare enum value, NO backticks. Omit when the platform default. → `entities.cube_mode`.
-   - **`**Icon URL:** <icon_url>`** — after `**Cube mode:**`, before `**Catalog entity code:**`. Plain URL value, NO backticks. Omit when empty/null. → `entities.icon_url`.
+   - **`**Icon:** <icon_name>`** — after `**Cube mode:**`, before `**Catalog entity code:**`. A Lucide icon name or an icon URL, NO backticks. Omit when empty/null. → `entities.icon_name`.
 
    A `reuse-from` / built-in entity carries none of these (referenced, not provisioned). The modeler parses and stamps each when present, and does not fail when they are absent.
 

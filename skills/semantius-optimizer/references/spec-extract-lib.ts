@@ -380,11 +380,11 @@ function entityDetail(e: any, fields: any[]): string {
   if (editSuffix !== "manage") out.push(`**Edit permission:** ${editSuffix}`);
   // UI/cube/icon lines (canonical spec §1), pinned right after **Edit permission:**.
   // Edit mode / Cube mode: bare enum value, no backticks; omit at the platform default
-  // `auto` (verified via `create_*` schema + every live row reads back "auto"). Icon URL:
-  // plain URL value, NO backticks; omit when empty/null.
+  // `auto` (verified via `create_*` schema + every live row reads back "auto"). Icon:
+  // a Lucide icon name or an icon URL, NO backticks; omit when empty/null.
   if (e.edit_mode && e.edit_mode !== "auto") out.push(`**Edit mode:** ${e.edit_mode}`);
   if (e.cube_mode && e.cube_mode !== "auto") out.push(`**Cube mode:** ${e.cube_mode}`);
-  if (e.icon_url) out.push(`**Icon URL:** ${e.icon_url}`);
+  if (e.icon_name) out.push(`**Icon:** ${e.icon_name}`);
   out.push(`**Catalog entity code:** \`${e.catalog_entity_code || e.table_name}\``);
   out.push(`**Entity type:** ${e.entity_type}`);
   if (e.catalog_owner_module) out.push(`**Catalog owner:** ${e.catalog_owner_module}`);

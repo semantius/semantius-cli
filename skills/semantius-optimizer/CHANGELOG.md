@@ -8,6 +8,15 @@ Entries below are newest first.
 
 ---
 
+## Entity icon is read from `icon_name`
+
+2026-10-27. Paired with the analyst entry "Entity icon is `**Icon:**`, stored in `entities.icon_name`".
+
+1. **`spec-extract-lib.ts`** emits `**Icon:** <icon_name>` from the live `entities.icon_name`, omitted when empty.
+2. **The round-trip fixtures** carry `icon_name`, and `expected-full.md` has the `**Icon:**` line.
+
+---
+
 ## Diagram-only run
 
 2026-10-24. A request for only a diagram of a deployed module now has a route; without one, an agent drew its own `erDiagram` listing every column instead of the blueprint-style flowchart.

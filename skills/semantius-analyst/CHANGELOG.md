@@ -8,6 +8,15 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## Entity icon is `**Icon:**`, stored in `entities.icon_name`
+
+2026-10-27. The platform renamed `entities.icon_url` to `icon_name`, which now takes a Lucide icon name or an icon URL like the module's `icon_name`. The file format version is unchanged. Rules: `references/semantic-spec-template.md`, §3 skeleton and the `**Icon:**` note; `references/stage-11-write.md`, delta 10; `references/stage-2-inspect.md`, the adopted entity index and the drift axes; `references/stage-3f-drift.md`, the drift axes and the cosmetic tier.
+
+1. **The §3 line is `**Icon:** <icon_name>`,** a Lucide icon name or an icon URL, no backticks, after `**Cube mode:**`. It is omitted when empty.
+2. **Drift compares `icon_name`,** in the cosmetic tier.
+
+---
+
 ## Every enum entry gets an icon check; the icon itself is optional
 
 2026-10-27. Icons were optional ("an entry gets an icon when a fitting icon exists"), so under time pressure the finder step was skipped and every entry shipped with a label and a color only. A wrong icon is worse than no icon, so the gate enforces that the check ran, never that an icon was set. Rules: `references/stage-4-fields.md`, "Enum values, labels and hints" rule 3; `references/semantic-spec-template.md`, §5 Enumerations; `references/stage-11-write.md`, deltas 13 and 14; `SKILL.md`, "Verification gates".
