@@ -29,9 +29,9 @@ import {
 import { hasHost, recordHost } from '../hosts-index.js';
 import { logTokenEvent } from '../logger.js';
 import {
-  canShowUser,
   hasLocalBrowser,
   isCi,
+  outputIsCaptured,
   promptStream,
 } from './environment.js';
 import {
@@ -604,14 +604,20 @@ function cacheKey(resource: string | undefined): string {
  *
  *   1. --login-flow browser   loopback, unconditionally (the override/test path)
  *   2. --login-flow device    device code; refused if the server advertises none
- *   3. isCi()                 nothing interactive completes in a pipeline
- *   4. hasLocalBrowser()      loopback. Does NOT consult canShowUser(): the
- *                             browser drives the user, so `login 2>log` on a
- *                             desktop must still work
- *   5. device + canShowUser() device code. Both conjuncts: an advertised
- *                             endpoint is necessary, not sufficient — somebody
- *                             has to read the code before it expires
- *   6. otherwise              refuse, naming which of the three reasons applies
+ *   3. isCi()                 nothing interactive completes in a pipeline; a
+ *                             fast refusal beats a device code nobody approves
+ *   4. device +               device code. An agent or script drives us and
+ *      outputIsCaptured()     may relay the code, but need not be at this
+ *                             machine — and on Windows and macOS step 5 always
+ *                             says yes. Whoever captures the output is the
+ *                             one who reads the code
+ *   5. hasLocalBrowser()      loopback. Only stdout was consulted: the browser
+ *                             drives the user, so `login 2>log` on a desktop
+ *                             must still work. Also where step 4 lands on a
+ *                             host without the device grant
+ *   6. device                 device code. stdout is a terminal by now (step
+ *                             4), so somebody can read the code in time
+ *   7. otherwise              refuse: no browser, and no device grant
  *
  * Selection is on the advertised endpoint, never on idp_type, which AGENTS.md
  * defines as advisory.
@@ -621,7 +627,7 @@ type GrantChoice =
   | { grant: 'device' }
   | {
       grant: 'refuse';
-      because: 'ci' | 'no-endpoint' | 'cannot-show';
+      because: 'ci' | 'no-endpoint';
       /** Whether the host advertises the device grant (see noInteractiveLogin). */
       deviceOffered?: boolean;
     };
@@ -638,12 +644,10 @@ function chooseGrant(metadata: OAuthMetadata): GrantChoice {
   if (isCi()) {
     return { grant: 'refuse', because: 'ci', deviceOffered: advertised };
   }
+  if (advertised && outputIsCaptured()) return { grant: 'device' };
   if (hasLocalBrowser()) return { grant: 'browser' };
-  if (advertised && canShowUser()) return { grant: 'device' };
-  return {
-    grant: 'refuse',
-    because: advertised ? 'cannot-show' : 'no-endpoint',
-  };
+  if (advertised) return { grant: 'device' };
+  return { grant: 'refuse', because: 'no-endpoint' };
 }
 
 /**
@@ -892,7 +896,7 @@ function withRefusalHint(
 }
 
 /**
- * No interactive login can complete here. Says which of the three reasons
+ * No interactive login can complete here. Says which of the two reasons
  * applies, and — the part that is easy to get wrong — advice that actually
  * works on *this* host: with --host or a current host, an API key in the
  * environment is ignored outright (isSessionOnlyHost / ignoreEnvCredentials),
@@ -903,12 +907,12 @@ function withRefusalHint(
  * exit 5.
  *
  * `deviceOffered` says whether the host advertises the device grant. It is
- * implied for 'cannot-show' and ruled out for 'no-endpoint'; only a 'ci'
- * refusal can go either way, so only there must the caller say.
+ * ruled out for 'no-endpoint'; only a 'ci' refusal can go either way, so only
+ * there must the caller say.
  */
 export function noInteractiveLogin(
   host: string,
-  because: 'ci' | 'no-endpoint' | 'cannot-show',
+  because: 'ci' | 'no-endpoint',
   opts: { deviceOffered?: boolean } = {},
 ): Error {
   // The no-endpoint case is reached two ways — auto, having already found no
@@ -918,11 +922,9 @@ export function noInteractiveLogin(
   const reason =
     because === 'ci'
       ? 'this looks like a CI environment, where nobody can complete a sign-in'
-      : because === 'cannot-show'
-        ? 'there is no terminal to display a device code on'
-        : forcedDevice
-          ? `${host} does not offer the device code grant`
-          : `no browser is available and ${host} does not offer the device code grant`;
+      : forcedDevice
+        ? `${host} does not offer the device code grant`
+        : `no browser is available and ${host} does not offer the device code grant`;
 
   const key = prefixedEnvName('API_KEY');
   const hostVar = prefixedEnvName('HOST');
@@ -933,12 +935,9 @@ export function noInteractiveLogin(
         ? `Drop --host and set ${hostVar}=${host} with ${key} instead.`
         : `Set ${key} (or ${prefixedEnvName('JWT')}).`;
   // The host offers the device grant, and only the automatic choice stands in
-  // the way: no terminal to show its code on, or a CI environment. Forcing the
-  // grant skips both checks, which is the way in for an agent, a service or a
-  // pipeline whose output reaches a person some other way.
-  const deviceOffered =
-    because === 'cannot-show' ||
-    (because === 'ci' && opts.deviceOffered === true);
+  // the way: a CI environment. Forcing the grant skips that check, which is
+  // the way in for a pipeline whose output reaches a person some other way.
+  const deviceOffered = because === 'ci' && opts.deviceOffered === true;
   const device = deviceOffered
     ? [
         `  Or force the device code grant with "--login-flow device": it prints a URL and a code (on stderr) to enter on any other device, and waits up to ${DEVICE_LOGIN_TIMEOUT_MS / 60_000} minutes.`,

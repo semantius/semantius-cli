@@ -21,13 +21,13 @@ _Read this when the workflow reaches Stage 6. The stage map is in SKILL.md._
 
 After verification, ask the sample-data question on its own (this is a gate, not a footer; see the consent gate above):
 
-> **Fast flow, after the go-ahead:** asked in every flow, fast flow included ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4.4): it is the one question a fast run asks, at the end, and it waits for the answer; the consent rules above are unchanged, and the go-ahead is never consent to sample data. A fast run shows the spec download line below before the question, linking the copy of the spec at the top level of `/workspace`, never the file under `semantius/specs/`; guided and expert runs leave it out (SKILL.md → Closing Contract).
+> **Fast flow, after the go-ahead:** asked in every flow, fast flow included ([fast-flow.md](../../semantius-admin/references/fast-flow.md), section 4.4): it is the one question a fast run asks, at the end, and it waits for the answer; the consent rules above are unchanged, and the go-ahead is never consent to sample data. A fast run shows the spec download line below before the question, a download link to the deployed spec in the form this agent's environment offers for downloads; guided and expert runs leave it out (SKILL.md → Closing Contract).
 
 > The `<System Name>` model is live in Semantius ✅
 >
 > [Open `<System Name>` in Semantius →](<ui_baseurl>/<module_slug>)
 >
-> [Download the `<System Name>` spec](/workspace/{sessionId}/<system_slug>-semantic-spec.md) *(fast run only)*
+> [Download the `<System Name>` spec](<download link to the deployed spec>) *(fast run only)*
 >
 > Would you like me to seed sample data? **10 records × \<N\> tables = \<M\> records**, across: \<Plural Labels of the newly-created tables\>. (yes / no)
 

@@ -822,16 +822,19 @@ export function assertSeedDistinct(
  * Halting harness. Run the bespoke orchestration inside this; it OWNS the
  * try/catch so the agent's script can't add a swallow-and-continue one. On
  * success: a summary line plus a reminder that the "model is live" line waits
- * for Stage 5 verification. On any thrown error: the loud halt message and a
- * NON-ZERO process exit, so the operator sees the failure and re-runs. Never
- * prints a success-shaped result over a partial deploy.
+ * for Stage 5 verification and is followed by the modeler's Closing Contract
+ * (a reused or adapted script never skips it). On any thrown error: the loud
+ * halt message and a NON-ZERO process exit, so the operator sees the failure
+ * and re-runs. Never prints a success-shaped result over a partial deploy.
  */
 export async function runDeploy(orchestration: () => Promise<void>): Promise<void> {
   try {
     await orchestration();
     console.log(
       `\n${writeCount} write call(s) applied with no errors (a bulk call counts once). ` +
-      "Run Stage 5 verification before reporting the model live.",
+      "Run Stage 5 verification before reporting the model live, then send the modeler's Closing Contract " +
+      "(semantius-modeler SKILL.md, \"Closing Contract: clean and sticky\"): the Open link " +
+      "(getCurrentUser → ui_baseurl), the spec download link in a fast run, and the sample-data question.",
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

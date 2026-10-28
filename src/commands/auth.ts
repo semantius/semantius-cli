@@ -33,9 +33,11 @@ function markTransient(error: unknown): never {
  * changes the current host; `semantius use <host>` is the one command that
  * does that (see commands/hosts.ts), for first-time users too.
  * `openUrl` is passed through to login() so tests never open a real browser.
+ * `beforeCommand` is --login's: stdout then belongs to the command that runs
+ * next, so the confirmation goes to stderr instead.
  */
 export async function loginCommand(
-  opts: { openUrl?: (url: string) => void } = {},
+  opts: { openUrl?: (url: string) => void; beforeCommand?: boolean } = {},
 ): Promise<void> {
   // One reach for the whole login, so the control-plane request is announced
   // and given the login's limit too (see src/auth/reach.ts).
@@ -50,9 +52,9 @@ export async function loginCommand(
     { mode: host.mode, org: host.org },
     { loggedInAt: new Date().toISOString() },
   );
-  console.log(
-    `Logged in to ${host.host}. The session is stored for this host.`,
-  );
+  const done = `Logged in to ${host.host}. The session is stored for this host.`;
+  if (opts.beforeCommand) console.error(done);
+  else console.log(done);
 }
 
 /** Revoke and delete the stored session for the resolved host. */

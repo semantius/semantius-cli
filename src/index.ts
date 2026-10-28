@@ -850,16 +850,18 @@ Options:
                            visible in the shell history and process list — prefer "-" or
                            --token-file. Not with --host, --auth apikey/oauth, or --login
   --token-file <path>      Same as --token, read from a file (org:jwt, trimmed)
-  --login                  Sign in with the browser first, then run the command with that session
-                           (needs an interactive terminal)
+  --login                  Sign in first (see --login-flow), then run the command with that session
   --login-flow <mode>      Which grant an interactive login uses: auto (default), browser or
-                           device. auto picks the browser when this machine has one, and the
-                           device code grant (RFC 8628 — a code you enter on another device) when
-                           it does not and the host offers it; it refuses in CI, where nobody can
-                           complete a sign-in. browser and device force one and both bypass that
-                           CI check. Use device whenever the person signing in is not at this
-                           machine (a server, container, SSH session or always-on agent): on
-                           Windows and macOS auto always opens a local browser.
+                           device. auto refuses in CI, where nobody can complete a sign-in. When
+                           stdout is not a terminal (an agent or a script) it picks the device
+                           code grant (RFC 8628 — a URL and a code you enter on any device) if the
+                           host offers it. Otherwise it picks the browser when this machine has
+                           one, the device code grant when it does not and the host offers it,
+                           and refuses when neither is possible. browser and device force one
+                           and both bypass the CI check. Use device whenever the person signing
+                           in is not at this machine (a server, container or SSH session): on
+                           Windows and macOS auto opens a local browser whenever stdout is a
+                           terminal, and also when it is not if the host offers no device grant.
                            Also: ${prefixedEnvName('LOGIN_FLOW')}
   --crud-mcp               Route the crud server through the Semantius cloud MCP server instead of the
                            local PostgREST layer (cloud only). Also: SEMANTIUS_CRUD_MCP=1
@@ -1178,8 +1180,8 @@ async function main(): Promise<void> {
     process.exit(ErrorCode.CLIENT_ERROR);
   }
 
-  // --login runs the browser flow now and uses that session for this
-  // invocation, even when a JWT / API key is configured.
+  // --login signs in now (the grant is chosen as for `login`) and uses that
+  // session for this invocation, even when a JWT / API key is configured.
   if (args.login && args.auth && args.auth !== 'oauth') {
     console.error(
       formatCliError({
@@ -1339,22 +1341,15 @@ async function main(): Promise<void> {
     }
   }
 
-  // A browser login before the actual command: never implicit, always an
-  // interactive terminal (there is nobody to complete the flow otherwise).
+  // A login before the actual command: never implicit. Not gated on stdin
+  // either, as it once was: login() chooses the grant once discovery has
+  // answered, and its CI and captured-output checks are what decide whether
+  // anybody can complete one — the same as for bare `semantius login`. The
+  // device grant needs no stdin at all (the code is typed into a browser on
+  // another device), so a stdin check would refuse the one path that works for
+  // an agent or on a headless box.
   if (args.login && args.command !== 'login') {
-    // stdin is a rough proxy for "a human is here", kept because the browser
-    // flow has no better one. An explicit --login-flow overrides it: the
-    // device grant needs no stdin at all (the code is typed into a browser on
-    // another device), so this check would otherwise refuse the one path that
-    // works on a headless box. Bare `semantius login` is not gated here at
-    // all — login() itself chooses the grant, once discovery has answered.
-    if (!process.stdin.isTTY && !getLoginFlow()) {
-      console.error(
-        'Error [LOGIN_FAILED]: --login needs an interactive terminal (or an explicit --login-flow)',
-      );
-      process.exit(ErrorCode.CLIENT_ERROR);
-    }
-    await loginCommand();
+    await loginCommand({ beforeCommand: true });
   }
 
   switch (args.command) {

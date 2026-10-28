@@ -1,5 +1,5 @@
 /**
- * The three environment predicates that decide whether an interactive login
+ * The four environment predicates that decide whether an interactive login
  * can happen, and with which grant (auth/environment.ts).
  *
  * Every one reads process.env at call time, and `bun test` runs in-band, so
@@ -10,9 +10,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
-  canShowUser,
   hasLocalBrowser,
   isCi,
+  outputIsCaptured,
   promptStream,
 } from '../src/auth/environment';
 
@@ -96,26 +96,7 @@ describe('isCi', () => {
   });
 });
 
-describe('canShowUser / promptStream', () => {
-  test('either stream being a terminal is enough', () => {
-    // Under `bun test` both are pipes, so this asserts the contract on stubs
-    // rather than on the harness's own streams.
-    const cases: [boolean, boolean, boolean][] = [
-      [true, true, true],
-      [true, false, true],
-      [false, true, true],
-      [false, false, false],
-    ];
-    for (const [out, err, expected] of cases) {
-      const restore = stubTty(out, err);
-      try {
-        expect(canShowUser()).toBe(expected);
-      } finally {
-        restore();
-      }
-    }
-  });
-
+describe('promptStream', () => {
   test('a prompt goes to stderr unless only stdout is a terminal', () => {
     let restore = stubTty(false, true);
     expect(promptStream()).toBe('stderr');
@@ -130,6 +111,29 @@ describe('canShowUser / promptStream', () => {
     restore = stubTty(false, false);
     expect(promptStream()).toBe('stderr');
     restore();
+  });
+});
+
+describe('outputIsCaptured', () => {
+  test('stdout alone decides: a redirected stderr is a person at a desktop', () => {
+    // Under `bun test` both are pipes, so this asserts the contract on stubs
+    // rather than on the harness's own streams.
+    const cases: [boolean, boolean, boolean][] = [
+      [true, true, false],
+      // `login 2>log`: still a terminal on stdout, still nobody's pipe.
+      [true, false, false],
+      // An agent's shell tool, or `login | tee`.
+      [false, true, true],
+      [false, false, true],
+    ];
+    for (const [out, err, expected] of cases) {
+      const restore = stubTty(out, err);
+      try {
+        expect(outputIsCaptured()).toBe(expected);
+      } finally {
+        restore();
+      }
+    }
   });
 });
 

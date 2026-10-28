@@ -153,12 +153,15 @@ Notes for an agent that follows the steps above for its user:
   sign in to find the address on the dashboard's Get Started card. Never ask
   for the address without the link, and never guess one.
 - **Step 4.** Start `semantius use <address>` as a **background** command,
-  read its output and give the user the sign-in URL; on Windows and macOS a
-  browser tab opens on this machine as well. Whenever the user is not at this
-  machine's screen — a cloud or always-on agent, a remote or SSH session, a
-  container, headless Linux — add `--login-flow device` and give the user the
-  URL and code it prints; it waits up to 10 minutes from when the code is
-  shown, and before that up to 3 minutes for each request it makes. Don't run
+  read its output and give the user the sign-in URL it prints. When your shell
+  tool captures its output (most do; one that runs a terminal does not) and the
+  host offers the device flow, it prints a URL and a code and opens nothing;
+  otherwise a browser tab opens on this machine as well. Whenever the user is not at this machine's screen — a cloud or
+  always-on agent, a remote or SSH session, a container, headless Linux — add
+  `--login-flow device` anyway, so that it never falls back to a browser, and
+  give the user the URL and code it prints; it waits up to 10 minutes from
+  when the code is shown, and before that up to 3 minutes for each request it
+  makes. Don't run
   it in the foreground: you can show the user nothing until it ends, and a
   tool timeout can kill the sign-in. If a usable session is already stored,
   it finishes at once, without a browser.
@@ -215,7 +218,7 @@ semantius use --clear                           Unset the current host (session 
 | `--auth <source>` | Use exactly one credential source: `jwt`, `apikey` or `oauth` (the stored browser session). Not combinable with `--host` for `jwt`/`apikey` |
 | `--token <org:jwt \| ->` | A JWT for just this invocation, binding it to `<org>.semantius.cloud` — wins over the current host and any `SEMANTIUS_HOST`/`SEMANTIUS_ORG` from the environment or `.env`. `-` reads it from stdin; a literal value is visible in the shell history and process list, so prefer `-` or `--token-file`. Not combinable with `--host`, `--auth apikey`/`oauth`, or `--login` |
 | `--token-file <path>` | Same as `--token`, read from a file (`org:jwt`, trimmed) |
-| `--login` | Sign in with the browser first, then run the command with that session (needs an interactive terminal). On `cube` and with `--crud-mcp`, an API key or JWT from the environment still takes precedence over the session |
+| `--login` | Sign in first, then run the command with that session (the sign-in is chosen as for `login`, see `--login-flow`). On `cube` and with `--crud-mcp`, an API key or JWT from the environment still takes precedence over the session |
 | `--login-flow <mode>` | How an interactive sign-in happens: `auto` (default), `browser` or `device` (a URL and a code to enter on another device). Use `device` whenever the person signing in is not at this machine — see [Signing in on a headless or always-on machine](#signing-in-on-a-headless-or-always-on-machine). Also `SEMANTIUS_LOGIN_FLOW` |
 | `--crud-mcp` | Route the `crud` server through the Semantius cloud MCP server instead of the local PostgREST layer (cloud only). Also `SEMANTIUS_CRUD_MCP=1` |
 | `--stream` | (`call crud postgrestRequest` only) Pipe the PostgREST response body to stdout unchanged — see [Streaming large reads](#streaming-large-reads---stream). Also `SEMANTIUS_STREAM=1` |
@@ -766,7 +769,7 @@ try again rather than signing in.
 
 `--login` signs in first and then runs the command with that session, even when
 an API key or JWT is configured (except on `cube` and with `--crud-mcp`, where
-an API key or JWT still wins); it needs an interactive terminal. Besides
+an API key or JWT still wins); it picks the sign-in the way `login` does. Besides
 `login` and `use` (see [Hosts](#hosts-managed-cloud-and-self-hosted)), nothing
 else opens a browser on its own: without credentials a command exits `5`.
 
@@ -833,16 +836,32 @@ different limit). To make it the default on such a machine, put
 `SEMANTIUS_LOGIN_FLOW=device` in its global `.env` or in the `.env` next to
 the executable.
 
-Automatic mode (`--login-flow auto`, the default) is not enough there:
+Automatic mode (`--login-flow auto`, the default) takes the first that
+applies:
 
-- On Windows and macOS it always opens a browser on the machine itself, even
-  when nobody is in front of it.
-- On Linux it picks the device flow only when there is no display *and* a
-  terminal to show the code on; under an agent or a service, whose output is
-  not a terminal, it refuses instead.
-- In CI it refuses outright; when the host offers the device grant, the
-  refusal names `--login-flow device`. A forced `device` (or `browser`)
-  skips that check.
+1. In CI it refuses outright, since nobody would approve a code in time; when
+   the host offers the device grant, the refusal names `--login-flow device`.
+   A forced `device` (or `browser`) skips that check.
+2. When stdout is not a terminal (an agent, a script, a service) and the host
+   offers the device grant, it uses the device flow. Git Bash under mintty
+   counts as "not a terminal" too, so a person there gets a code as well.
+3. When this machine has a browser, it opens it. On Windows and macOS that is
+   always assumed, even when nobody is in front of the machine; on Linux it
+   takes a display (or `$BROWSER`).
+4. When the host offers the device grant, it uses the device flow. Otherwise
+   it refuses.
+
+So it is not enough:
+
+- in an interactive SSH session to a Windows or macOS machine, where stdout
+  is a terminal and step 3 opens a browser nobody sees;
+- under an agent on Windows or macOS whose host offers no device grant, where
+  step 3 does the same;
+- in CI.
+
+A job nobody watches (cron, a systemd unit, output sent to `/dev/null`) looks
+like an agent to step 2: it waits for a code nobody approves, up to 10 minutes,
+before it fails. Give such a job an API key instead of a session.
 
 The host must offer the device grant: the managed cloud does, and a
 self-hosted instance does if its identity provider does — otherwise the CLI

@@ -88,7 +88,7 @@ The current host outranks `SEMANTIUS_HOST` / `SEMANTIUS_ORG` and every `.env`, a
 `semantius login --host <host>` stores a sign-in and changes nothing else. `semantius use <host>` also makes the host the one every later command goes to, in every directory. Run `login` whenever a host needs a sign-in (for example a second host for a transfer); run `use` only for the host the user named to work against. Never run `logout`.
 
 - **Run it in the background** (in Claude Code, `run_in_background`), read its output as it arrives, and relay the sign-in URL (device grant: the URL and the code) to the user. In the foreground nothing reaches the user until the command ends, and its wait (browser 5 minutes, device grant 10) outlasts a 2-minute tool timeout. The wait is not a hang.
-- **Add `--login-flow device` whenever the user is not at this machine's screen**, on any OS: a cloud or always-on agent, an SSH session, a container, a remote VM, Server Core. Without it, Windows and macOS open a browser on this machine (`--login-flow` under "Sessions").
+- **Add `--login-flow device` whenever the user is not at this machine's screen**, on any OS: a cloud or always-on agent, an SSH session, a container, a remote VM, Server Core. Without it, `auto` picks the device grant under an agent only when the host offers it; otherwise, and whenever your shell tool is a terminal, Windows and macOS open a browser on this machine (`--login-flow` under "Sessions").
 - **When it ends:** exit `0`, probe again. Exit `5` with "cannot sign in to <host> interactively": run it again with `--login-flow device`, which the error suggests when the host offers the device grant. Exit `1` with `LOGIN_FAILED`: nobody finished in time; ask the user before running it again. Exit `3`: the host was unreachable.
 
 ### Host, first match wins
@@ -127,11 +127,12 @@ So "connected" means naming the host, its `host_source` and the `auth_method`, n
 `--login-flow auto|browser|device` (also `SEMANTIUS_LOGIN_FLOW`) picks the grant a sign-in uses. `auto` takes the first that applies:
 
 1. `CI` is set (any OS): refuse, exit `5`.
-2. This machine has a browser: open it. Windows and macOS always count as having one; elsewhere it takes `BROWSER`, `DISPLAY` or `WAYLAND_DISPLAY`.
-3. The host offers the **device code grant** (a code the user enters on another device) and stdout or stderr is a terminal: use it.
-4. Otherwise refuse, exit `5`. An agent's output streams are pipes, not a terminal, so on a machine without a browser `auto` refuses under an agent.
+2. stdout is not a terminal (an agent's shell tool, a script) and the host offers the **device code grant** (a URL and a code the user enters on any device): use it. The URL and code go to stderr; nothing is opened.
+3. This machine has a browser: open it. Windows and macOS always count as having one; elsewhere it takes `BROWSER`, `DISPLAY` or `WAYLAND_DISPLAY`.
+4. The host offers the device code grant: use it.
+5. Otherwise refuse, exit `5`.
 
-When the host offers the device grant, a refusal suggests `--login-flow device`; with that flag the device grant runs even under an agent or in CI:
+When the host offers the device grant, a CI refusal suggests `--login-flow device`; with that flag the device grant runs even in CI, and a host without it is refused rather than given a browser:
 
 ```bash
 semantius use acme.semantius.app --login-flow device
@@ -221,7 +222,7 @@ The ten forms fall into three tiers:
 | `--auth <source>` | Force one credential source: `jwt`, `apikey` or `oauth`. Not with `--host` for `jwt`/`apikey` (exit 1) |
 | `--token <org:jwt \| ->` | A JWT for this invocation, bound to `<org>.semantius.cloud`; `-` reads it from stdin. Not with `--host`, `--auth apikey`/`oauth` or `--login` |
 | `--token-file <path>` | Same as `--token`, read from a file (`org:jwt`, trimmed) |
-| `--login` | Sign in first, then run the command with that session (interactive terminal, unless `--login-flow` is given). Not for agents |
+| `--login` | Sign in first (the grant is chosen as for `login`), then run the command with that session. Not for agents: the sign-in waits in the foreground, where its URL cannot reach the user. Run `login` in the background first |
 | `--login-flow <mode>` | Grant a sign-in uses: `auto` (default), `browser` or `device` (see Credentials Setup). Also `SEMANTIUS_LOGIN_FLOW` |
 | `-c, --config <path>` | Config file to use instead of the default search. Also `SEMANTIUS_CONFIG_PATH` |
 | `--env <prefix>` | Read `<PREFIX>_API_KEY`, `<PREFIX>_ORG`, … instead of `SEMANTIUS_*` |

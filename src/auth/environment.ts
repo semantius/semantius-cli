@@ -1,7 +1,7 @@
 /**
  * What the environment can tell us about completing an interactive login.
  *
- * Three independent facts, no grant logic — the choice between the loopback
+ * Four independent facts, no grant logic — the choice between the loopback
  * browser flow and the device code grant also depends on what the IdP
  * advertises, and is made in session.ts once discovery has run.
  *
@@ -52,21 +52,21 @@ export function isCi(): boolean {
 }
 
 /**
- * Whether a human can read something we print — the requirement the device
- * code grant has and the loopback flow does not (there, the browser drives the
- * user and our output is incidental).
+ * Whether something other than a person is reading our output: an agent's
+ * shell tool, a script, a service. That caller may well relay a device code to
+ * a human, but cannot be trusted to be at this machine, so a browser opened
+ * here would wait for nobody — on Windows and macOS hasLocalBrowser() cannot
+ * tell.
  *
- * Either stream counts, and the caller prints to whichever is a terminal.
- * stderr alone would be wrong: it carries every diagnostic this CLI emits, so
- * redirecting it is ordinary practice, and it is not a TTY under MSYS/mintty.
- *
- * Deliberately not stdin: the user types the code into a browser on another
- * device, never into us. stdin is also a poor signal in its own right — an
- * inherited, open-but-idle pipe is not a TTY yet never reaches EOF (see
- * readStdin in commands/call.ts).
+ * stdout only. stderr carries every diagnostic this CLI emits, so redirecting
+ * it alone (`login 2>log`) is ordinary on a desktop. Under MSYS/mintty neither
+ * stream is a TTY, so a person in Git Bash there gets the device code too:
+ * more friction than a browser, but it completes. Deliberately not stdin: the user types a device code into a
+ * browser on another device, never into us, and an inherited, open-but-idle
+ * pipe is not a TTY yet never reaches EOF (see readStdin in commands/call.ts).
  */
-export function canShowUser(): boolean {
-  return Boolean(process.stdout.isTTY || process.stderr.isTTY);
+export function outputIsCaptured(): boolean {
+  return !process.stdout.isTTY;
 }
 
 /** The stream a user-facing prompt should go to. stderr keeps stdout clean. */

@@ -185,7 +185,7 @@ The modeler's Stage 5 verification report ends with this section, **before** the
 >
 > Say "change" and what you want different to revisit any of these.
 
-Lines that touch other modules come first, then the rest grouped by skill. Leave out the "Changes to other modules" group when it is empty, and the whole section when the log is missing or empty. The Closing Contract follows: the status line, the link, a download link to the deployed spec (`[Download the <System Name> spec](/workspace/{sessionId}/<system_slug>-semantic-spec.md)`, fast runs only; it links a copy of the spec at the top level of `/workspace`, never the file under `semantius/specs/`, per the modeler's Closing Contract), and the demo-data question, which is asked and waits.
+Lines that touch other modules come first, then the rest grouped by skill. Leave out the "Changes to other modules" group when it is empty, and the whole section when the log is missing or empty. The Closing Contract follows: the status line, the link, a download link to the deployed spec (fast runs only, in the form this agent's environment offers for downloads, per the modeler's Closing Contract), and the demo-data question, which is asked and waits. Before that message goes out, the admin checks it for the link, the spec download link and the demo-data question (unless it was already answered), adds any that are missing, and logs `fast: close-out verified` (exit check, [`../SKILL.md`](../SKILL.md), "Fast flow").
 
 On a halt, the admin's failure report (Step 6.8) adds one line after the halt message: *"Before it stopped, I decided N things for you; they're listed in the run folder."* (the run-folder path is already printed on a failed run).
 

@@ -1030,13 +1030,77 @@ describe('oauth login', () => {
       }
     });
 
-    // The refusal is built directly: automatic mode only reaches 'cannot-show'
+    describe('auto when stdout is captured (an agent or a script)', () => {
+      // CI is set on a runner and would refuse first; BROWSER makes this
+      // machine "have a browser" on every platform, so each case below is a
+      // choice between the two grants rather than a refusal on headless Linux.
+      let savedCi: string | undefined;
+      let savedBrowser: string | undefined;
+      let savedTty: boolean | undefined;
+      const stdoutIsTty = (value: boolean) => {
+        (process.stdout as { isTTY?: boolean }).isTTY = value;
+      };
+      beforeEach(() => {
+        savedCi = process.env.CI;
+        savedBrowser = process.env.BROWSER;
+        savedTty = process.stdout.isTTY;
+        delete process.env.CI;
+        process.env.BROWSER = 'test-browser';
+        process.env.SEMANTIUS_LOGIN_FLOW = 'auto';
+      });
+      afterEach(() => {
+        (process.stdout as { isTTY?: boolean }).isTTY = savedTty;
+        if (savedCi === undefined) delete process.env.CI;
+        else process.env.CI = savedCi;
+        if (savedBrowser === undefined) delete process.env.BROWSER;
+        else process.env.BROWSER = savedBrowser;
+      });
+
+      test('picks the device grant over a browser this machine has', async () => {
+        provider.cfg.deviceGrant = true;
+        stdoutIsTty(false);
+
+        // Reaching the browser flow is the failure. The stub stops it there:
+        // the real opener would launch a browser on Windows and macOS.
+        await login(host, {
+          openUrl: () => {
+            throw new Error('the browser flow was reached');
+          },
+        });
+
+        expect(provider.tokenGrants).toContain(
+          'urn:ietf:params:oauth:grant-type:device_code',
+        );
+        expect(provider.redirectUris).toEqual([]);
+      });
+
+      test('falls back to the browser when the host offers no device grant', async () => {
+        provider.cfg.deviceGrant = false;
+        stdoutIsTty(false);
+
+        await login(host, { openUrl });
+
+        expect(provider.tokenGrants).toContain('authorization_code');
+        expect(await hasStoredSession(host)).toBe(true);
+      });
+
+      test('a terminal on stdout still gets the browser, device grant or not', async () => {
+        provider.cfg.deviceGrant = true;
+        stdoutIsTty(true);
+
+        await login(host, { openUrl });
+
+        expect(provider.tokenGrants).toContain('authorization_code');
+        expect(provider.tokenGrants).not.toContain(
+          'urn:ietf:params:oauth:grant-type:device_code',
+        );
+      });
+    });
+
+    // The refusal is built directly: automatic mode only reaches 'no-endpoint'
     // on Linux with no display, and hasLocalBrowser() is true on Windows and
     // macOS. What matters is what the message offers the reader.
-    test('refused for want of a terminal: names --login-flow device as the way in', () => {
-      expect(noInteractiveLogin(host.host, 'cannot-show').message).toContain(
-        '--login-flow device',
-      );
+    test('names --login-flow device only where the host offers it', () => {
       // Not where the device grant is the very thing missing.
       expect(noInteractiveLogin(host.host, 'no-endpoint').message).not.toContain(
         '--login-flow device',
@@ -2143,19 +2207,46 @@ describe('oauth login', () => {
       });
     };
 
-    test('needs an interactive terminal', async () => {
-      const proc = spawnLogin({});
+    test('auto is not gated on stdin: the grant chooser decides', async () => {
+      // stdin is null and stdout a pipe, as under an agent. CI makes the
+      // chooser refuse on every platform. Without it, this provider (which
+      // offers no device grant unless a test turns it on) would send Windows
+      // and macOS to a real browser, with no openUrl stub to catch it.
+      const proc = spawnLogin({ CI: 'true' });
       const stderr = await new Response(proc.stderr).text();
 
-      expect(await proc.exited).toBe(1);
-      expect(stderr).toContain(
-        'Error [LOGIN_FAILED]: --login needs an interactive terminal',
-      );
+      expect(stderr).not.toContain('needs an interactive terminal');
+      expect(stderr).toContain('this looks like a CI environment');
+      expect(await proc.exited).toBe(5);
     });
 
-    test('an explicit --login-flow gets past it: the device grant needs no stdin', async () => {
-      // Without this the stdin proxy would refuse the one grant that works on
-      // a headless box, where stdin is routinely not a TTY.
+    test('auto under an agent takes the device grant, and keeps its prompt off stdout', async () => {
+      // The path this exists for: stdout captured, the host offering the
+      // grant, no CI. It opens nothing, so the missing openUrl stub is safe;
+      // the mock provider approves the code at once.
+      provider.cfg.deviceGrant = true;
+      const proc = spawnLogin({ CI: '' });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      await proc.exited;
+
+      expect(provider.tokenGrants).toContain(
+        'urn:ietf:params:oauth:grant-type:device_code',
+      );
+      expect(provider.redirectUris).toEqual([]);
+      expect(stderr).toContain('Waiting for approval...');
+      expect(stderr).toContain('Logged in to');
+      // stdout is the command's: nothing the login prints may land there.
+      expect(stdout).not.toContain('Waiting for approval');
+      expect(stdout).not.toContain('on any device');
+      expect(stdout).not.toContain('Logged in to');
+    });
+
+    test('a forced device grant needs no stdin', async () => {
+      // stdin is routinely not a TTY on a headless box, and the device grant
+      // never reads it: the code is typed into a browser on another device.
       const proc = spawnLogin({ SEMANTIUS_LOGIN_FLOW: 'device' });
       const stderr = await new Response(proc.stderr).text();
 
