@@ -50,11 +50,7 @@ import {
   hostOf,
   refusedHint,
 } from './reach.js';
-import {
-  createSecretStorage,
-  expireStoredAccessTokens,
-  sessionName,
-} from './storage.js';
+import { createSecretStorage, sessionName } from './storage.js';
 import { SessionRefreshFailedError } from './token.js';
 
 /** Where the browser sends the authorization code back to. */
@@ -165,15 +161,26 @@ function storageFor(host: string, opts: { quiet?: boolean } = {}) {
   return createSecretStorage(sessionName(host), undefined, opts);
 }
 
+/**
+ * Whether a stored token set can still produce a token: an access token, or a
+ * refresh token alone. The second is a session too — the storage drops access
+ * tokens that have expired whenever it saves (see prune), and cli-auth refreshes
+ * from such a set without complaint.
+ */
+function isUsableSession(stored: TokenSet | undefined): stored is TokenSet {
+  return (
+    stored !== undefined &&
+    (Object.keys(stored.tokens ?? {}).length > 0 || !!stored.refresh_token)
+  );
+}
+
 /** The stored token set for this host name, or undefined when never logged in. */
 async function loadSessionFor(
   host: string,
   opts: { quiet?: boolean } = {},
 ): Promise<TokenSet | undefined> {
   const stored = await storageFor(host, opts).load();
-  return stored && Object.keys(stored.tokens ?? {}).length > 0
-    ? stored
-    : undefined;
+  return isUsableSession(stored) ? stored : undefined;
 }
 
 /**
@@ -232,8 +239,10 @@ export async function getSessionExpiry(
  * entry, it was two HTTP round trips per command whose result was discarded.
  *
  * cli-auth refreshes on its own TOKEN_REFRESH_THRESHOLD_S before expiry;
- * `forceRefresh` expires the cached access token first so the refresh token is
- * spent immediately.
+ * `forceRefresh` spends the refresh token immediately, whatever the cached
+ * access token's expiry says. Nothing is written for it before the refresh
+ * succeeds: a forced refresh that fails leaves the stored session exactly as
+ * it was (see tokenUnderLock).
  */
 export async function getSessionToken(
   host: HostFacts,
@@ -241,7 +250,7 @@ export async function getSessionToken(
 ): Promise<string | null> {
   const storage = storageFor(host.host);
   const stored = await storage.load();
-  if (!stored || Object.keys(stored.tokens ?? {}).length === 0) return null;
+  if (!isUsableSession(stored)) return null;
 
   // Self-heal the host index: a session found here was stored by a login
   // this machine's index may predate (an older CLI version, or a keyring
@@ -252,9 +261,7 @@ export async function getSessionToken(
   }
 
   const docUrl = platformDocUrl(host);
-  if (opts.forceRefresh) {
-    await expireStoredAccessTokens(storage);
-  } else {
+  if (!opts.forceRefresh) {
     // Cache only, so a fresh token still costs no network.
     const cached = docUrl ? readCachedPlatformConfig(host.host) : null;
     if (resourceIsKnown(host, docUrl, cached, stored)) {
@@ -277,7 +284,13 @@ export async function getSessionToken(
   const resource = resourceIndicator(host, platform);
   const metadata = await getOAuthMetadata(host, { platform });
   debug(`Using the OAuth session stored for ${host.host}`);
-  return tokenUnderLock(host, storage, resource, { metadata, platform });
+  return tokenUnderLock(
+    host,
+    storage,
+    resource,
+    { metadata, platform },
+    !!opts.forceRefresh,
+  );
 }
 
 /**
@@ -293,6 +306,13 @@ export async function getSessionToken(
  * session without the stale token: it then refreshes straight away, with no
  * lock and no finally, and this function holds the lock and awaits the result.
  *
+ * `forced` refreshes even when the cached token is still in date — the server
+ * has just rejected it. It is hidden from cli-auth in memory only, never by
+ * writing the session: a write made before the refresh would outlive a refresh
+ * that fails, and one made outside the lock could put back a refresh token
+ * another process has since rotated. The refresh token spent is the one
+ * reloaded under the lock, so a rotation that happened meanwhile is honoured.
+ *
  * A refresh that fails is sorted here, once, for both callers: a refused
  * refresh token is rethrown as cli-auth raised it (refreshWasRefused says so),
  * and every other failure of the refresh itself — the endpoint unreachable, or
@@ -303,15 +323,18 @@ async function tokenUnderLock(
   storage: ReturnType<typeof storageFor>,
   resource: string | undefined,
   resolved: ResolvedHost,
+  forced: boolean,
 ): Promise<string> {
   const release = await storage.lock?.();
   // The status of the token endpoint's answer, for withTokenStatus below.
   let tokenStatus: number | undefined;
   try {
     // Another process may have refreshed while this one waited for the lock.
-    const current = await storage.load();
-    const fresh = current ? freshAccessToken(resource, current) : null;
-    if (fresh) return fresh;
+    if (!forced) {
+      const current = await storage.load();
+      const fresh = current ? freshAccessToken(resource, current) : null;
+      if (fresh) return fresh;
+    }
     const view = withoutAccessToken(storage, cacheKey(resource));
     const auth = createAuth(host, view, resolved, {
       onTokenStatus: (status) => {
@@ -522,6 +545,12 @@ function hasResourceKey(stored: TokenSet): boolean {
  *
  * Reached only when the document resolved to a clean absence, which is why the
  * message blames the document not being served rather than its contents.
+ *
+ * It recognises such a session by its keys, so a session holding a refresh
+ * token alone (every access token expired and dropped on a save) slips past
+ * it, and is refreshed with no resource. That is a session already in an odd
+ * state on a host that has also withdrawn its document; nothing else knows
+ * the audience it was minted for.
  * Cloud hosts are excluded: theirs comes from the control plane, which fails
  * loudly on its own.
  */

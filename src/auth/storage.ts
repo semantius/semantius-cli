@@ -342,19 +342,3 @@ function prune(credential: TokenSet): TokenSet {
     ? { refresh_token: credential.refresh_token, tokens }
     : { tokens };
 }
-
-/**
- * Mark every cached access token in the stored set as expired, so the next
- * getToken() spends the refresh token instead of serving the cached one.
- * cli-auth has no forceRefresh; clearing would drop the refresh token too.
- */
-export async function expireStoredAccessTokens(
-  storage: Storage<TokenSet>,
-): Promise<void> {
-  const stored = await storage.load();
-  if (!stored?.tokens) return;
-  for (const token of Object.values(stored.tokens)) {
-    token.expires_at = 0;
-  }
-  await storage.save(stored);
-}

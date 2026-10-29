@@ -1355,9 +1355,9 @@ describe('oauth login', () => {
     // and exited 1 even though the error also reached getAccessToken. bun test
     // fails a test on such a rejection, so this one passing is the check.
     //
-    // The token is made due for renewal rather than forced: forceRefresh
-    // expires it, the storage then drops it on save, and cli-auth takes its
-    // refresh-only path, which never had the problem.
+    // The token is made due for renewal rather than forced: the cached token
+    // is then still in the session cli-auth could have been shown, which is
+    // the case that had the problem. A forced refresh never had it.
     test('a refused refresh is SessionExpiredError, with no stray rejection', async () => {
       await login(host, { openUrl });
       const storage = createSecretStorage(`SEMANTIUS:${host.host}`);
@@ -1465,6 +1465,40 @@ describe('oauth login', () => {
       const token = await getSessionToken(host, { forceRefresh: true });
 
       expect(token).not.toBe('access-1');
+      expect(provider.tokenGrants.slice(before)).toEqual(['refresh_token']);
+    });
+
+    // Regression: forceRefresh used to expire the stored access tokens on disk
+    // before refreshing. The storage drops expired tokens on save, so a refresh
+    // that then failed left a session of a refresh token alone — reported by
+    // every later command as no credentials at all.
+    test('a forced refresh that fails leaves the stored session as it was', async () => {
+      await login(host, { openUrl });
+      const before = await storedSession(host.host);
+      provider.cfg.refreshReply = () =>
+        new Response('<html>Bad Gateway</html>', { status: 502 });
+
+      await expect(
+        getSessionToken(host, { forceRefresh: true }),
+      ).rejects.toThrow(SessionRefreshFailedError);
+
+      expect(await storedSession(host.host)).toEqual(before);
+      expect(await getSessionToken(host)).toBe('access-1');
+    });
+
+    // What that regression left on disk, and what a migrated session whose
+    // access token had expired still looks like (see migrateLegacy).
+    test('a session holding only a refresh token is refreshed, not reported missing', async () => {
+      await login(host, { openUrl });
+      const session = (await storedSession(host.host)) as TokenSet;
+      await storeSession(host.host, {
+        refresh_token: session.refresh_token,
+        tokens: {},
+      });
+      const before = provider.tokenGrants.length;
+
+      expect(await hasStoredSessionFor(host.host)).toBe(true);
+      expect(await getSessionToken(host)).toBe('access-2');
       expect(provider.tokenGrants.slice(before)).toEqual(['refresh_token']);
     });
 
@@ -2102,11 +2136,14 @@ describe('oauth login', () => {
       await expect(getSessionToken(probe)).rejects.toThrow(
         /no longer serves .*semantius\.json/,
       );
-      // And the same on the refreshing path.
+      // And the same on the refreshing path, which writes nothing on its way
+      // to the refusal.
+      const stored = await storedSession(probe.host);
       await expect(
         getSessionToken(probe, { forceRefresh: true }),
       ).rejects.toThrow(/no longer serves .*semantius\.json/);
       expect(provider.tokenGrants.length).toBe(before);
+      expect(await storedSession(probe.host)).toEqual(stored);
     });
 
     test('logging in again clears a token keyed for an audience that is gone', async () => {
