@@ -43,6 +43,121 @@ let writeCount = 0;
 /** Count of successful mutating write CALLS so far (a bulk call counts once; feeds the halt / success summary). */
 export const writes = (): number => writeCount;
 
+// ───────────────────────────────── check run ────────────────────────────────────
+//
+// `DEPLOY_CHECK=1 bun run .tmp_deploy/deploy_<slug>.ts` runs the whole script with
+// every write checked and recorded but NEVER sent: reads still go to live, and the
+// rows a create would have added are kept in memory and returned by later reads
+// that match them (`eq.`, `in.()` and `is.null` filters), so `ensure*` re-reads,
+// FK ids and the next stage behave as on a real run. A script error (an undefined
+// helper, a wrong payload shape, a field row without `table_name`) halts the dry
+// run before anything reached the platform. Updates to rows that already exist
+// live are not reflected in later reads, and `verifyScaffold` /
+// `stampDeployedVersion` are skipped: a check run checks the script, not the result.
+
+export const CHECK_RUN = process.env.DEPLOY_CHECK === "1";
+const dryRows = new Map<string, any[]>();   // read tool (or `pg:/<table>`) → rows a check-run create added
+let dryId = 0;
+const dryWarned = new Set<string>();
+
+/** `col=op.value` triples of a PostgREST filter / query string (`select`, `order`, `limit`, `offset` dropped); `null` when a part is not of that form. */
+function parseFilters(filters: string): Array<[string, string, string]> | null {
+  const out: Array<[string, string, string]> = [];
+  for (const part of filters.split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    if (eq < 0) return null;
+    const col = part.slice(0, eq);
+    if (["select", "order", "limit", "offset"].includes(col)) continue;
+    const rest = part.slice(eq + 1);
+    const dot = rest.indexOf(".");
+    if (dot < 0) return null;
+    out.push([col, rest.slice(0, dot), rest.slice(dot + 1)]);
+  }
+  return out;
+}
+
+const decode = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
+const unquote = (s: string): string => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1).replace(/\\(.)/g, "$1") : s);
+
+/** Rows of the check-run store under `key` that match `filters`. An unsupported operator matches nothing (warned once). */
+function dryMatch(key: string, filters: string): any[] {
+  const rows = dryRows.get(key) ?? [];
+  if (!rows.length) return [];
+  const triples = parseFilters(filters);
+  const warn = (what: string): any[] => {
+    if (!dryWarned.has(what)) { dryWarned.add(what); console.warn(`  [check run] ${what}: rows this check run created are not matched`); }
+    return [];
+  };
+  if (!triples) return warn(`unparsed filter "${filters}"`);
+  const tests: Array<(r: any) => boolean> = [];
+  for (const [col, op, raw] of triples) {
+    if (op === "eq") { const v = unquote(decode(raw)); tests.push((r) => String(r[col]) === v); }
+    else if (op === "in") {
+      const set = new Set(raw.replace(/^\(|\)$/g, "").split(",").map((v) => unquote(decode(v))));
+      tests.push((r) => set.has(String(r[col])));
+    } else if (op === "is" && raw === "null") tests.push((r) => r[col] === null || r[col] === undefined);
+    else return warn(`operator ${op}. on ${col}`);
+  }
+  return rows.filter((r) => tests.every((t) => t(r)));
+}
+
+/** The shape checks a check run applies before recording a write; each problem is one line of the halt. */
+function dryProblems(tool: string, p: any): string[] {
+  const problems: string[] = [];
+  if (tool.startsWith("create_")) {
+    const rows = Array.isArray(p?.data) ? p.data : p?.data && typeof p.data === "object" ? [p.data] : null;
+    if (!rows || !rows.length) return [`${tool}: data must be an object or a non-empty array`];
+    rows.forEach((r: any, i: number) => {
+      const name = r.field_name ?? r.table_name ?? r.permission_name ?? r.module_slug ?? r.slug ?? `row ${i}`;
+      if ("data" in r) problems.push(`${tool} ${name}: payload wrapped twice ({data: {data: …}}); pass raw rows`);
+      if (tool === "create_field") {
+        for (const k of ["table_name", "field_name", "format"]) if (typeof r[k] !== "string" || !r[k]) problems.push(`create_field ${name}: no ${k}`);
+        if ("is_nullable" in r) problems.push(`create_field ${name}: is_nullable is platform-computed; leave it out`);
+        if ("required" in r) problems.push(`create_field ${name}: there is no required column; mandatory is input_type: "required"`);
+      }
+      if (tool === "create_entity") {
+        if (typeof r.table_name !== "string" || !r.table_name) problems.push(`create_entity ${name}: no table_name`);
+        if (typeof r.module_id !== "number") problems.push(`create_entity ${name}: module_id must be an integer id`);
+      }
+    });
+  } else if (tool === "update_entity") {
+    if (p?.table_name === undefined) problems.push("update_entity: table_name goes at the top level (use updateEntity)");
+    if (!p?.data || typeof p.data !== "object") problems.push("update_entity: no data");
+  } else if (tool === "update_field" || tool === "delete_field") {
+    if (p?.id === undefined) problems.push(`${tool}: needs id "<table_name>.<field_name>"`);
+  } else if (tool.startsWith("update_") || tool.startsWith("delete_")) {
+    if (p?.id === undefined && p?.permission_name === undefined && p?.table_name === undefined) problems.push(`${tool}: no id`);
+  }
+  return problems;
+}
+
+/** The check-run `write`: check, record in the store, return what the platform would. Counts like a real write. */
+function dryWrite(tool: string, payload: any, label: string): any {
+  const problems = dryProblems(tool, payload);
+  if (problems.length) throw new Error(`write ${label} refused by the check run:\n  - ${problems.join("\n  - ")}`);
+  const key = `read_${tool.replace(/^(create|update|delete)_/, "")}`;
+  const store = dryRows.get(key) ?? [];
+  dryRows.set(key, store);
+  let out: any[] = [];
+  if (tool.startsWith("create_")) {
+    out = (Array.isArray(payload.data) ? payload.data : [payload.data]).map((r: any) => ({
+      ...r, id: r.id ?? (tool === "create_field" ? `${r.table_name}.${r.field_name}` : -(++dryId)),
+    }));
+    store.push(...out);
+  } else {
+    const keyCol = payload.permission_name !== undefined ? "permission_name" : payload.id !== undefined ? "id" : "table_name";
+    const keys = new Set([payload[keyCol]].flat().map(String));
+    const hit = (r: any) => keys.has(String(r[keyCol]));
+    out = store.filter(hit);
+    if (tool.startsWith("update_")) for (const r of out) Object.assign(r, payload.data);
+    else dryRows.set(key, store.filter((r) => !hit(r)));
+  }
+  writeCount++;
+  console.log(`  [check run] ${label}: ${tool.startsWith("create_") ? `${out.length} row(s)` : "checked"}, not sent`);
+  return out;
+}
+
 /**
  * Loud mutating call (`create_*` / `update_*` / `delete_*` / `postgrestRequest`
  * POST/PATCH/DELETE). The payload goes over stdin, so no shell quoting layer
@@ -54,6 +169,7 @@ export const writes = (): number => writeCount;
  * `--single` for them.
  */
 export async function write(tool: string, payload: unknown, label = tool): Promise<any> {
+  if (CHECK_RUN) return dryWrite(tool, payload, label);
   const proc = Bun.spawn(["semantius", "call", "crud", tool], {
     stdin: "pipe", stdout: "pipe", stderr: "pipe",
   });
@@ -90,9 +206,12 @@ export async function read1(tool: string, filters: string): Promise<any | null> 
     new Response(proc.stderr).text(),
   ]);
   const code = await proc.exited;
-  if (code === 0) return JSON.parse(out);   // exactly one row
-  if (code === 1) return null;              // not found — the normal create branch
-  throw new Error(`read1 ${tool} failed (exit ${code}): ${err}`);  // 2/3/4/5 — halt
+  if (code !== 0 && code !== 1) throw new Error(`read1 ${tool} failed (exit ${code}): ${err}`);  // 2/3/4/5 — halt
+  const live = code === 0 ? JSON.parse(out) : null;   // 0 → exactly one row; 1 → not found, the normal create branch
+  if (!CHECK_RUN) return live;
+  const rows = [...(live ? [live] : []), ...dryMatch(tool, filters)];
+  if (rows.length > 1) throw new Error(`read1 ${tool} (${filters}): ${rows.length} rows match in the check run (ambiguous, exit 2 on a real run)`);
+  return rows[0] ?? null;
 }
 
 /**
@@ -172,7 +291,8 @@ export async function readMany(tool: string, filters: string): Promise<any[]> {
   const code = await proc.exited;
   if (code !== 0) throw new Error(`readMany ${tool} failed (exit ${code}): ${err}`);
   const parsed = JSON.parse(out);
-  return Array.isArray(parsed) ? parsed : [parsed];
+  const live = Array.isArray(parsed) ? parsed : [parsed];
+  return CHECK_RUN ? [...live, ...dryMatch(tool, filters)] : live;
 }
 
 // ───────────────────────────── bulk (array) primitives ────────────────────────
@@ -314,6 +434,33 @@ export async function ensureMany(
   return live;
 }
 
+/**
+ * The fields pass of ONE entity: create-if-missing for its field rows → `Map<field_name, liveRow>`.
+ * Stamps what every `create_field` item needs and a hand-built row most often lacks: `table_name`
+ * (the `table_name=eq.<t>` read filter does not put it on the rows) and `catalog_field_code` (the
+ * spec `field_name`, when the row carries none). Refuses before writing a row without `field_name`
+ * or `format`, a row naming another table, and the two from-memory columns (`required`, `is_nullable`).
+ * Then one `ensureMany`: one read, ONE `create_field` call for the missing rows, one re-read.
+ *
+ *   const live = await ensureFields("tickets", fieldRows.tickets.filter((f) => !liveBy.has(f.field_name)));
+ */
+export async function ensureFields(
+  table: string, rows: ReadonlyArray<Record<string, unknown>>,
+): Promise<Map<string, any>> {
+  const problems: string[] = [];
+  const stamped = rows.map((r, i) => {
+    const name = typeof r.field_name === "string" && r.field_name ? r.field_name : `row ${i}`;
+    if (name === `row ${i}`) problems.push(`row ${i}: no field_name`);
+    if (typeof r.format !== "string" || !r.format) problems.push(`${name}: no format`);
+    if (r.table_name !== undefined && r.table_name !== table) problems.push(`${name}: table_name ${r.table_name} is not ${table}`);
+    if ("required" in r) problems.push(`${name}: there is no required column; mandatory is input_type: "required"`);
+    if ("is_nullable" in r) problems.push(`${name}: is_nullable is platform-computed; leave it out`);
+    return { ...r, table_name: table, catalog_field_code: r.catalog_field_code || r.field_name };
+  });
+  if (problems.length) throw new Error(`ensureFields ${table}: refusing to write:\n  - ${problems.join("\n  - ")}`);
+  return ensureMany("read_field", "field_name", (f) => f.field_name, "create_field", stamped, `table_name=eq.${table}`);
+}
+
 const BASED_KEY_TYPES = new Set(["is_a", "has_a"]);
 
 /**
@@ -433,6 +580,24 @@ export async function pgRequest(
       `(the CLI rejects it, SINGLE_ARRAY_INPUT); use postMany() for a bulk insert`,
     );
   }
+  const [table, query = ""] = path.split("?");
+  const key = `pg:${table}`;
+  if (CHECK_RUN && method !== "GET") {
+    let out: any[] = [];
+    if (method === "POST") {
+      out = (Array.isArray(body) ? body : [body]).map((r: any) => ({ ...r, id: r?.id ?? -(++dryId) }));
+      dryRows.set(key, [...(dryRows.get(key) ?? []), ...out]);
+    } else {
+      out = dryMatch(key, query);
+      if (method === "PATCH") {
+        for (const r of out) Object.assign(r, body);
+        const id = parseFilters(query)?.find(([c, op]) => c === "id" && op === "eq")?.[2];
+        if (!out.length && id !== undefined) out = [{ ...(body as object), id: decode(id) }];   // a live row
+      } else dryRows.set(key, (dryRows.get(key) ?? []).filter((r) => !out.includes(r)));
+    }
+    console.log(`  [check run] ${method} ${table}: ${out.length} row(s), not sent`);
+    return single ? out[0] ?? null : out;
+  }
   const argv = single
     ? ["semantius", "--single", "call", "crud", "postgrestRequest"]
     : ["semantius", "call", "crud", "postgrestRequest"];
@@ -446,6 +611,13 @@ export async function pgRequest(
     new Response(proc.stderr).text(),
   ]);
   const code = await proc.exited;
+  if (CHECK_RUN) {   // a GET: live rows plus the rows this check run inserted; a table the check run would create is not live yet
+    const created = dryMatch(key, query);
+    const dryTable = dryRows.has(key) || (dryRows.get("read_entity") ?? []).some((e) => `/${e.table_name}` === table);
+    if (code !== 0 && !dryTable) throw new Error(`pgRequest ${method} ${path} failed (exit ${code}): ${err}`);
+    const live = code === 0 && out.trim() ? JSON.parse(out) : [];
+    return [...(Array.isArray(live) ? live : [live]), ...created];
+  }
   if (code !== 0) throw new Error(`pgRequest ${method} ${path} failed (exit ${code}): ${err}`);
   return out.trim() ? JSON.parse(out) : null;
 }
@@ -828,6 +1000,17 @@ export function assertSeedDistinct(
  * and re-runs. Never prints a success-shaped result over a partial deploy.
  */
 export async function runDeploy(orchestration: () => Promise<void>): Promise<void> {
+  if (CHECK_RUN) {
+    try {
+      await orchestration();
+      console.log(`\nCHECK RUN passed: ${writeCount} write call(s) checked, none sent. Nothing changed live. Run the same script without DEPLOY_CHECK to deploy.`);
+    } catch (err) {
+      console.error(`\nCHECK RUN HALTED after ${writeCount} checked write call(s): ${err instanceof Error ? err.message : String(err)}`);
+      console.error("Nothing was sent. Fix the script and check-run it again before deploying.");
+      process.exit(1);
+    }
+    return;
+  }
   try {
     await orchestration();
     console.log(

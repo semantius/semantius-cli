@@ -215,7 +215,7 @@ Every blueprint §6.2 / §6.3 handoff row is carried verbatim into the spec's §
 
 Build a `link_proposals` list for Stage 3.
 
-**FK shape consumption:** §5.1 / §5.2 / §5.3a carry `delete_mode` and `fk_format` per row. The analyst **consumes verbatim** — do NOT re-derive at spec-write time. If the live catalog's field for the resolved edge has a different `format` or `reference_delete_mode`, flag as drift in Stage 3f.4. Cross-primitive `fk_format` flip (`parent ↔ reference`) is a 🔴 blocker (same posture as cross-primitive format drift).
+**FK shape consumption:** §5.1 / §5.2 / §5.3a carry `delete_mode` and `fk_format` per row. The analyst **consumes verbatim** — do NOT re-derive at spec-write time, except rows changed by the analyst's Stage 8 FK scope fix (it never changes a field that is already live as `parent`). If the live catalog's field for the resolved edge has a different `format` or `reference_delete_mode`, flag as drift in Stage 3f.4. Cross-primitive `fk_format` flip (`parent ↔ reference`) is a 🔴 blocker (same posture as cross-primitive format drift).
 
 ### 2h. Deep-inspect adopted entities (for 3b.0 / 3b.1 / 3b.2 paths)
 

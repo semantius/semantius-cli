@@ -142,7 +142,7 @@ Why both: `mastered in` is the slug the analyst uses for cross-module FK resolut
 - `none (required-if-present)` — the catalog owner declares the edge required, but this scope treats it as presence-conditional: target installed → FK is mandatory; target absent → edge is dormant (no FK column, no constraint).
 - `⚠ audit: <reason>` — a required-composed-child-out-of-scope flag (see Writing Convention 9). The architect surfaces; the analyst expects the source data fixed.
 
-For §5.3a (this scope's masters point outbound at sibling targets), the `delete_mode` vocabulary is the normal Semantius set (`restrict` / `clear` / `cascade`). For §5.3b (context edges driven by the catalog owner, shown for informational completeness when the in-scope endpoint is `embedded_master` / `consumer` / `derived`), the vocabulary expands as above. The architect emits the resolved `delete_mode` and `fk_format` directly into the §5 row so the analyst consumes verbatim.
+For §5.3a (this scope's masters point outbound at sibling targets), the `delete_mode` vocabulary is the normal Semantius set (`restrict` / `clear` / `cascade`). For §5.3b (context edges driven by the catalog owner, shown for informational completeness when the in-scope endpoint is `embedded_master` / `consumer` / `derived`), the vocabulary expands as above. The architect emits the resolved `delete_mode` and `fk_format` directly into the §5 row so the analyst consumes verbatim, except rows changed by the analyst's Stage 8 FK scope fix.
 
 #### Key type (the optional §3 `**Key types:**` sub-block)
 

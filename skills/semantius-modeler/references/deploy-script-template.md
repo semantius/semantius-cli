@@ -10,7 +10,7 @@ _Read this when Stage 4 needs a script — i.e. any deploy with prose-bearing pa
 
 There are **two committed resources** — copy both into the scratch dir and import them; re-typing either per deploy is the transcription step that shipped the `intgov-inventory` regression:
 
-- [`deploy-lib.ts`](./deploy-lib.ts) — the schema-AGNOSTIC primitives (loud `write`, exit-code-aware `read1` / `readMany` / `readIn`, the create-or-read `ensure` and its bulk twins `ensureMany` / `ensurePairs` / `createMany`, the Layer-2 `postMany` / `seedEnsureMany`, the halting `runDeploy`). Knows no column names, so it never changes.
+- [`deploy-lib.ts`](./deploy-lib.ts) — the schema-AGNOSTIC primitives (loud `write`, exit-code-aware `read1` / `readMany` / `readIn`, the create-or-read `ensure` and its bulk twins `ensureMany` / `ensureFields` / `ensurePairs` / `createMany`, the Layer-2 `postMany` / `seedEnsureMany`, the halting `runDeploy`, and the `DEPLOY_CHECK=1` check run). Knows no column names, so it never changes.
 - [`scaffold-lib.ts`](./scaffold-lib.ts) — the schema-COUPLED, version-stamped baseline-scaffold builder (`scaffoldModule`, one array call per row kind) + a live-schema `preflightSchemas` guard. Bakes in module / permission / role column names, so it is bumped in lockstep with the platform.
 
 ```bash
@@ -19,9 +19,11 @@ mkdir -p .tmp_deploy
 cp "<skill-folder>/references/deploy-lib.ts"   .tmp_deploy/deploy-lib.ts
 cp "<skill-folder>/references/scaffold-lib.ts" .tmp_deploy/scaffold-lib.ts
 cp "<skill-folder>/../use-semantius/references/lucide-icon-tags.json" .tmp_deploy/lucide-icon-tags.json   # scaffold-lib's icon check
-# author .tmp_deploy/deploy_<slug>.ts (below), then:
-bun run .tmp_deploy/deploy_<slug>.ts
+# author .tmp_deploy/deploy_<slug>.ts (below), then check-run it and deploy in ONE command:
+DEPLOY_CHECK=1 bun run .tmp_deploy/deploy_<slug>.ts && bun run .tmp_deploy/deploy_<slug>.ts
 ```
+
+> **Check run first, in the same command.** With `DEPLOY_CHECK=1` the script runs end to end against live reads, but every write is checked and recorded instead of sent; later reads see the rows it would have created, so ids and re-reads behave as on a real run. A script error (an undefined helper, a field row without `table_name`, a double-wrapped payload, `required` / `is_nullable` on a field) halts the check run with `CHECK RUN HALTED` and nothing written, and the `&&` keeps the real run from starting. Fix the script and run the same command again. A passing check run does not prove the platform accepts every value (constraint checks run only on a real write), so a real run can still halt; the recovery is the usual re-run.
 
 > **Large deploys: run in the background, and re-run if it's killed — there is no progress file because none is needed.** Writes are batched (ALL entities in one `create_entity` call, or one per level when the spec has `is_a` / `has_a` entities, all of an entity's fields in one `create_field` call, the baseline scaffold as one call per row kind), so a ~12-entity model is roughly 1 `create_entity` + ~12 `create_field` calls plus the read-before-write sweeps and per-field drift updates — on the order of 60-80 CLI calls at ~1-3s each, i.e. a couple of minutes, not the "hundreds of sequential writes" of the one-record-per-call era. That can still exceed a default 2-3 minute tool timeout. Two operational rules:
 > 1. **Run `bun run` as a background process** (or with a generously raised tool timeout) so the harness does not kill it mid-deploy. The per-call latency is not the lever — the CLI's own `SEMANTIUS_TIMEOUT` defaults to 30 minutes; the wrapping *tool* timeout is what cuts a foreground run short.
@@ -40,12 +42,13 @@ bun run .tmp_deploy/deploy_<slug>.ts
 | `ensureEntitiesByLevel(entityRows)` | the entities pass of a spec → `Map<table_name, liveRow>` | groups by `id_refentity` depth and runs one `ensureMany` per level, bases first (one level = one call when the spec has no family). Throws before writing on a cycle, a missing base, `id_refentity` without `is_a` / `has_a`, or `label_column` / `label_parent` / `order_column` on a based row. |
 | `patchById(table, id, body)` | one Layer-2 record update | the insert-then-update path for `is_a` / `has_a` rows (never upsert them, 42P10). Throws unless one row comes back. |
 | `ensureMany(readTool, keyColumn, keyOf, writeTool, rows, extraFilter?)` | create-if-missing for a whole SET of one kind (all fields of an entity, all §6 links; the entities of a spec go through `ensureEntitiesByLevel`) → `Map<key, liveRow>` | one `in.()` read → ONE `create_*` call for the missing rows only → one re-read for the ids (never off the create response). Same **raw rows** rule as `ensure`. Rejects duplicate keys; throws if a created key still reads back missing. |
+| `ensureFields(table, rows)` | the fields pass of ONE entity → `Map<field_name, liveRow>` | stamps `table_name` and `catalog_field_code` (= `field_name` when absent) on every row, refuses a row without `field_name` / `format`, naming another table, or carrying `required` / `is_nullable`, then one `ensureMany`. Use it for every entity's fields; never build `create_field` rows for `ensureMany` by hand. |
 | `ensurePairs(readTool, colA, colB, writeTool, rows)` | create-if-missing for link rows keyed by a pair (`permission_hierarchy` by `including_permission_name` + `included_permission_name`, `role_permissions` by `role_id` + `permission_name`, `user_roles` by `role_id` + `user_id`) | reads by `colA=in.(…)`, matches pairs locally, ONE `create_*` call for the missing pairs, re-reads |
 | `updateEntity(tableName, data)` | the update half of create-or-diff (entity column patches: `select_rule`, `computed_fields`, `module_id`, `label_parent`, …) | **owns the `update_entity` envelope** so you never hand-roll it: `table_name` is TOP-LEVEL, the changed columns go under `data`. Pass just the table name + the partial patch (`updateEntity("tickets", { select_rule })`); never write `{ table_name, data: {...} }` by hand and never bury `table_name` inside the patch. Blind PATCH — pair with a `read1`/`readMany` diff. |
 | `postMany(path, rows)` / `seedEnsureMany(path, rows, keyField)` | Layer-2 seed inserts: ONE `postgrestRequest` POST per ≤100 rows (re-run-safe variant reads the keys first) | every row must carry the SAME key set (asserted); returns the rows WITH ids; never `--single`. See `stage-6-sample-data.md`. |
 | `rng(table)` / `uniq(base, i)` / `slugify(s)` / `exampleDomain(name)` | building seed rows: `rng(table)` is the table's fixed-seed generator (`pick`, `int`, `chance`, `deal` for enums, FK parents and places, `distinct`, `tuples`); `uniq` composes code-like unique values; `exampleDomain` gives an invented company its `<name>.example.com` domain | never `Math.random()`; never a base + index in a value a person reads. See `stage-6-sample-data.md`, "Records, not fields". |
 | `assertSeedDistinct(table, rows, fields, minDistinct?)` | the readability guard after a seed insert: human name parts, company, city, street name (without its house number), label column | prints a per-field receipt and exits non-zero when a human-facing component degenerates (fewer than `min(rows, 8)` distinct non-empty values by default). See `stage-6-sample-data.md`. |
-| `runDeploy(fn)` | wrap the whole orchestration | owns the `try/catch`; loud non-zero halt on any throw; success line only on clean resolve |
+| `runDeploy(fn)` | wrap the whole orchestration | owns the `try/catch`; loud non-zero halt on any throw; success line only on clean resolve. Under `DEPLOY_CHECK=1` it prints `CHECK RUN passed` / `CHECK RUN HALTED` instead, and `verifyScaffold` / `stampDeployedVersion` are skipped |
 
 `scaffold-lib.ts` adds the schema-coupled layer (version-stamped; bumped with the platform):
 
@@ -55,13 +58,14 @@ bun run .tmp_deploy/deploy_<slug>.ts
 | `preflightSchemas({tool: [keys]})` | assert your hand-authored payloads' field names against the LIVE tool schema before writing | throws naming the available keys (kills the `name`-vs-`role_name` class) |
 | `checkEnumIcons(table, field, entries)` / `iconFindings` | the icon check on every enum field the script creates or updates, before `mergeEnumEntries` | against the bundled Lucide list (`lucide-icon-tags.json`, copied next to it): `none` and an unknown name become `""`, so no invalid name is ever sent; each unknown name is recorded in `iconFindings`. `scaffoldModule` checks the module's `icon_name` the same way: an unknown name is deployed as `box` and recorded |
 | `verifyScaffold(cfg)` | the executable self-audit — re-reads live and asserts the Stage 5 scaffold checks as code | returns findings for the report; **throws on any drift**, so run as the last step inside `runDeploy` and a failed audit halts the deploy |
+| `verifyEntities(entityExpect, fieldExpect)` | the executable Stage 5 areas 5, 5a and 6 for the entities and fields: label column, owning module, label parent, key type, provenance, `unique_value`, enum entries, FK targets, reserved names, byte-for-byte labels / titles / descriptions, `select_rule` / `input_type_rule` | three reads in all; returns findings for the report and **throws on any mismatch** (a `select_rule` / `input_type_rule` mismatch is a warning: Stage 5 offers a retry); run it right after `verifyScaffold`. A halt here gets one silent re-run of the same command before it is reported (`stage-5-verify.md`, area 5). Pass the entity rows plus the `label_parent` / `select_rule` set later, and per table the field rows as sent plus the label column's §3 title and description, `created: true` on the rows this run created |
 
 ## Orchestration skeleton (the bespoke part you author)
 
 ```typescript
 // .tmp_deploy/deploy_<slug>.ts
-import { read1, readMany, readIn, write, ensure, ensureMany, ensureEntitiesByLevel, ensurePairs, updateEntity, runDeploy } from "./deploy-lib";
-import { scaffoldModule, verifyScaffold, preflightSchemas, checkEnumIcons, iconFindings } from "./scaffold-lib";
+import { read1, readMany, readIn, write, ensure, ensureMany, ensureFields, ensureEntitiesByLevel, ensurePairs, updateEntity, runDeploy } from "./deploy-lib";
+import { scaffoldModule, verifyScaffold, verifyEntities, preflightSchemas, checkEnumIcons, iconFindings } from "./scaffold-lib";
 
 // enum_values: merge the spec's §5 entries with the live entries BY VALUE before diffing or sending (diffField
 // uses it for every existing enum field). The spec's order, values, labels and stated hints win; a hint the spec
@@ -169,7 +173,7 @@ runDeploy(async () => {
       f.enum_values = mergeEnumEntries(checkEnumIcons(t, f.field_name, f.enum_values), liveBy.get(f.field_name)?.enum_values);
     }
     const missing = fieldRows[t].filter((f) => !liveBy.has(f.field_name));
-    await ensureMany("read_field", "field_name", (f) => f.field_name, "create_field", missing, `table_name=eq.${t}`);
+    await ensureFields(t, missing);                                   // stamps table_name + catalog_field_code; ONE create_field call
     for (const f of fieldRows[t]) {
       const l = liveBy.get(f.field_name); if (!l) continue;
       const patch = diffField(f, l);                                   // the 4d property list; for enum_values
@@ -192,10 +196,12 @@ runDeploy(async () => {
   //    ensureMany("read_field", "id", (f) => `${f.table_name}.${f.field_name}`, "create_field", rows).
   //    An enum field among them goes through checkEnumIcons + mergeEnumEntries first, as in step 4.
 
-  // 6. Self-audit (un-skippable, the last step). Re-reads live and asserts the scaffold matches cfg;
-  //    THROWS on any drift, so runDeploy halts and the success line cannot print over a broken scaffold.
-  //    The returned findings feed the Stage 5 report (entities/fields stay Stage 5's manual check).
-  const audit = await verifyScaffold(cfg);
+  // 6. Self-audit (un-skippable, the last step). Re-reads live and asserts the scaffold matches cfg, then the
+  //    entities and fields match what this script sent; each THROWS on any drift, so runDeploy halts and the
+  //    success line cannot print over a broken deploy. The returned findings feed the Stage 5 report.
+  //    entityExpect: entityRows with the label_parent / select_rule set in step 5; fieldExpect[t]: fieldRows[t]
+  //    as sent (created: true on the missing ones) plus the label column's §3 title and description.
+  const audit = [...await verifyScaffold(cfg), ...await verifyEntities(entityExpect, fieldExpect)];
   for (const x of audit) console.log(`${x.severity === "warn" ? "🟡" : "✓"} ${x.check} — ${x.detail}`);
   //    Icons not sent because they are not Lucide icons: the Stage 5 report's "Icons not deployed" block.
   for (const x of iconFindings) console.log(`🟡 ${x.check} — ${x.detail}`);
@@ -246,8 +252,9 @@ Reserve `catch` for one deliberate, narrow case: a single retry of a known-trans
 5. **Provenance on every create** — module per the 4a checklist, entity per the 4c checklist, and `catalog_field_code` (the spec `field_name`) on every `create_field` item per 4d.
 6. **Fields and entities are diffed, not skipped** when they already exist (4d).
 7. **Use `scaffoldModule()` for the baseline scaffold** — it builds the module, permissions, hierarchy, roles, and (the step most often hand-dropped) the six module-record references + `access_scope` (under `custom`: only the module's provenance, no references or `access_scope`) in one idempotent call, and self-preflights its field names. Hand-rolling §2a-scaffold steps 1-5 is what produced orphan roles (`origin: "user"`, null `module_id`) and a `user:read` module header across past deploys. Stage 5 still verifies the result.
-8. **End with `verifyScaffold(cfg)`** — the mechanized self-audit re-reads live and asserts the scaffold, and **throws on drift so a failed audit halts the deploy exactly like a failed write**. This is what makes "finished" contingent on the scaffold actually being correct, instead of a Stage 5 spot-check that gets skipped. (It is a mechanical check; it does not catch "built the wrong thing" — that needs an independent reviewer.)
+8. **End with `verifyScaffold(cfg)` and `verifyEntities(...)`** — the mechanized self-audit re-reads live and asserts the scaffold, the entities and the fields, and **throws on drift so a failed audit halts the deploy exactly like a failed write**. This is what makes "finished" contingent on the scaffold actually being correct, instead of a Stage 5 spot-check that gets skipped. (It is a mechanical check; it does not catch "built the wrong thing" — that needs an independent reviewer.)
 9. **Batch every set of records of one kind, and create every entity before any field.** All entities of the spec go out in ONE `create_entity` call (`ensureEntitiesByLevel`; one call per level, bases first, when the spec has `is_a` / `has_a` entities), all of an entity's fields in ONE `create_field` call, the baseline scaffold as one call per row kind (`scaffoldModule` does this), same-data updates as one key-array call. No field is created until every entity of the deploy (every level) exists — that is what lets a field reference an entity declared later in the spec, a self-reference, or a promote-create row resolve immediately (there is no second pass). A loop of single-record creates is a defect, not a style choice.
+10. **Check-run before every real run, in one command:** `DEPLOY_CHECK=1 bun run <script> && bun run <script>`. The check run halts on a script error before anything is written; a real-run halt after a passing check run is a platform refusal, fixed and re-run as usual.
 
 ## Where the script lives, and cleanup
 

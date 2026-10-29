@@ -8,6 +8,29 @@ The entries below are written in reverse chronological order (newest first). Eac
 
 ---
 
+## Checker: write-time refusals on specs
+
+2026-10-29. Three spec mistakes reached deploy and halted it there, where each costs a fix and a re-run instead of one edit before saving. Rules: `references/consistency-check.ts` (spec checks `reserved field name`, `label parent`, `validation rules`); the analyst's pre-save table.
+
+1. **`reserved field name`:** a §3 field named `_…` or `…_id_label` fails; the platform keeps those names for its composed label columns.
+2. **`label parent`:** a `**Label parent:**` that does not name one of the entity's own `reference` / `parent` fields fails (`23514`).
+3. **`validation rules`:** a rules block that is not a JSON array, a model rule whose `code` is not class 99 (`99000`-`99999`, `90905`), or a rule name repeated within an entity fails. Platform rules (`source_module: "platform"`) are skipped.
+
+Reused and dropped entities are not checked. Blueprints are unaffected.
+
+---
+
+## Checker: FK scope on specs
+
+2026-10-29. The analyst's Stage 8 FK scope fix turns a `parent` + `cascade` link into `reference` + `restrict` when the child has its own permissions, or an audit log and a lifecycle, and the checker now enforces it. Rules: `references/consistency-check.ts`, `parseSpecEntities` and the `FK scope` check in `checkSpec`; `references/semantic-blueprint-template.md` (`delete_mode`) and `references/stage-3-entities.md`, where the analyst consumes §5 shapes verbatim except for the fix.
+
+1. **The spec parser reads three more facts:** `**Edit permission:**` (absent = `manage`), `**Audit log:**` (absent = `no`), and the `require_permission` codes inside each entity's `**Validation rules**` JSON.
+2. **A §4 row with `Kind` `parent` and `cascade`** whose `To` has fields is reported when the child's edit permission differs from the parent's, or the child has a code the parent lacks, or the child is audit-logged and has a `workflow_state` field.
+3. **It is an error with `--require-icons`** (the analyst's pre-save run) and a warning otherwise, so the modeler and optimizer runs still pass existing specs.
+4. **Blueprints are not checked:** they carry none of these facts.
+
+---
+
 ## Fast-flow go-ahead: summary and question in one response
 
 2026-10-28. A fast run sent the go-ahead summary as a response of its own; a response with no tool call ends the turn, so the go-ahead question was never asked and the run stopped with nothing open to answer. Rules: `references/stage-3-entities.md` (Fast flow), SKILL.md Turn-end check, `../semantius-admin/references/fast-flow.md` sections 3 and 7.

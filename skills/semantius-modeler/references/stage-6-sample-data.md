@@ -103,7 +103,7 @@ Create records in dependency order (entities with no parent FKs first, junction 
 
 **Key type decides who supplies `id`.** For an entity whose spec carries `**Key type:** bigint` or `**Key type:** text`, the database assigns no id: every sample row must carry its own unique `id` (a number, or a short text key), and FK values into it are those ids. For the default key and `uuid` / `typeid`, never send `id`; take it from the insert response. FK columns into a `uuid` / `typeid` / `text` entity hold that id as given, never a number.
 
-**Generate a single Bun (TypeScript) script** for all sample data rather than making individual CLI calls. This avoids context bloat from dozens of sequential tool invocations. Write the script under `<cwd>/.tmp_deploy/seed_<short>.ts`, run it once with `bun run`, check the output, and delete it. **Never write generated scripts into the skill folder or the working directory root.** They are ephemeral one-shots; persisting them across runs accumulates as catalog drift, mixes throw-away artifacts with skill source, and survives session boundaries. See the "Generated artifacts" section above for the full rule.
+**Generate a single Bun (TypeScript) script** for all sample data rather than making individual CLI calls. This avoids context bloat from dozens of sequential tool invocations. Write the script under `<cwd>/.tmp_deploy/seed_<short>.ts`, run it once (check run first, in the same command, below), check the output, and delete it. **Never write generated scripts into the skill folder or the working directory root.** They are ephemeral one-shots; persisting them across runs accumulates as catalog drift, mixes throw-away artifacts with skill source, and survives session boundaries. See the "Generated artifacts" section above for the full rule.
 
 A Bun script is preferred over a `.sh` script for seeding because it keeps JSON construction, response-envelope unwrapping, and FK-id capture in one cross-platform runtime — no `python3 -c` extractors, no shell-quoting puzzles for record bodies containing apostrophes or Unicode, no Windows-vs-Git-Bash subprocess-piping surprises. The script builds each table's rows in a loop and inserts them with **one `postgrestRequest` POST per table** (an array `body`; `postMany` / `seedEnsureMany` in `deploy-lib.ts`, ≤100 rows per call), capturing the inserted ids from the returned array for use in FK fields of the next table. Never one call per record: 10 rows × 6 tables is 6 calls, not 60.
 
@@ -146,7 +146,7 @@ A `GET` on the base of a family also returns every `is_a` descendant's records (
 
 ### Script pattern
 
-Seed scripts reuse the committed [`deploy-lib.ts`](./deploy-lib.ts) for the loud Layer-2 transport — **`postMany(path, rows)` inserts a whole table's rows in ONE `postgrestRequest` POST (array `body`, ≤100 rows per call) and returns them WITH their ids**; `seedEnsureMany(path, rows, keyField)` is the re-run-safe variant. Copy that one file in first; a seed script needs **only** `deploy-lib.ts` — do NOT import `scaffold-lib.ts` (the scaffold is already deployed):
+Seed scripts reuse the committed [`deploy-lib.ts`](./deploy-lib.ts) for the loud Layer-2 transport — **`postMany(path, rows)` inserts a whole table's rows in ONE `postgrestRequest` POST (array `body`, ≤100 rows per call) and returns them WITH their ids**; `seedEnsureMany(path, rows, keyField)` is the re-run-safe variant and **the default for every table that has a unique field** ("Re-running the seed" below). Copy that one file in first; a seed script needs **only** `deploy-lib.ts` — do NOT import `scaffold-lib.ts` (the scaffold is already deployed):
 
 ```bash
 mkdir -p .tmp_deploy
@@ -165,8 +165,8 @@ import { postMany, seedEnsureMany, pgRequest, assertSeedCounts, assertSeedDistin
 // key set — `null` for a nullable column (reference / date / date-time), "" / 0 for a NOT NULL text /
 // number; never omit a key on some rows and never a conditional spread. postMany asserts this up front.
 // seedEnsureMany("/contacts", rows, "email") is the re-run-safe variant: it reads the keys first (`in.()`)
-// and inserts only the missing rows. Use it over postMany() when the script might run more than once —
-// see "Re-running the seed (idempotency)" below. post() / seedEnsure() remain for a genuine single row;
+// and inserts only the missing rows. It is the DEFAULT for every table with a unique field (keyed by that
+// field); postMany() only for a table with none — see "Re-running the seed (idempotency)" below. post() / seedEnsure() remain for a genuine single row;
 // a `for … await post()` loop over a table is the named anti-pattern.
 
 const COUNT = 10;                              // global default (the user's number, else 10)
@@ -231,7 +231,7 @@ for (let i = 0; i < n; i++) {
     postal_code: ra.pick(place.postal),      // from THIS city's codes, never a base + index
   });
 }
-const accounts = await postMany("/accounts", accountRows);   // ONE call; rows WITH ids
+const accounts = await postMany("/accounts", accountRows);   // ONE call; rows WITH ids (no unique field here, so postMany)
 counts.accounts = accounts.length;
 assertSeedDistinct("accounts", accountRows, ["account_name"], accountRows.length);   // label column: every row differs
 assertSeedDistinct("accounts", accountRows, ["city"]);
@@ -258,7 +258,7 @@ for (let i = 0; i < people.length; i++) {
     account_id: account.id,
   });
 }
-const contacts = await postMany("/contacts", contactRows);   // ONE call (or seedEnsureMany("/contacts", contactRows, "email") when re-runs are plausible)
+const contacts = await seedEnsureMany("/contacts", contactRows, "email");   // ONE insert; email is unique, so re-run-safe
 counts.contacts = contacts.length;
 assertSeedDistinct("contacts", people.map(([, ln]) => ({ last_name: ln })), ["last_name"]);
 
@@ -301,7 +301,7 @@ The loop fixes only the *count*; it calls no LLM at runtime. Each row is one pla
       seat_code:  uniq("SEAT-", i),                                      // code-like unique_value → index-composed
     });
   }
-  const subscriptions = await postMany("/subscriptions", subscriptionRows);   // one call, uniform keys
+  const subscriptions = await seedEnsureMany("/subscriptions", subscriptionRows, "seat_code");   // one insert, uniform keys; keyed by the unique seat_code
   ```
 - **A parent's totals come from its children.** Build the children in memory first, compute each parent's totals from them, insert the parents, then insert the children with their parent's id, matched by the parent's natural key (the order `postMany` returns is not a promise):
   ```typescript
@@ -340,23 +340,25 @@ The loop fixes only the *count*; it calls no LLM at runtime. Each row is one pla
 
 ### Re-running the seed (idempotency)
 
-The seed script is a **one-shot**: `postMany()` (like `post()`) is a bare INSERT, so running it twice inserts a second full set of rows. `assertSeedCounts` does NOT catch this — it tallies only the rows THIS run inserted, so it still passes while the table silently holds 2×target. (This is the opposite of the deploy script, whose every write is read-before-write and re-run-convergent.) A partial first run that halted partway (e.g. the `contacts` call failed after the `accounts` call landed) is the common way this bites: a blind re-run appends another set of accounts. Note that one bulk call is all-or-nothing, so a table is either fully seeded or untouched — the partial state is always "some tables done, later ones not".
+A table seeded with `postMany()` is a **one-shot**: `postMany()` (like `post()`) is a bare INSERT, so running it twice inserts a second full set of rows. `assertSeedCounts` does NOT catch this — it tallies only the rows THIS run inserted, so it still passes while the table silently holds 2×target. (This is the opposite of the deploy script, whose every write is read-before-write and re-run-convergent.) A partial first run that halted partway (e.g. the `contacts` call failed after the `accounts` call landed) is the common way this bites: a blind re-run appends another set of accounts. Note that one bulk call is all-or-nothing, so a table is either fully seeded or untouched — the partial state is always "some tables done, later ones not".
 
-Two ways to stay safe:
+The rules:
 
-- **Run it exactly once.** The normal path. If a run is interrupted partway, do NOT blindly re-run — first inspect what landed (`await pgRequest("GET", "/<table>?select=id")` and count), then either finish the remaining tables by hand or clear the table and reseed.
-- **Use `seedEnsureMany(path, rows, keyField)` instead of `postMany`** when a re-run is plausible. It reads the whole table's keys first (one `keyField=in.(…)` GET per ≤100 rows), inserts only the missing rows in one POST, and returns every row (existing or new) WITH its id in input order, so a re-run converges instead of duplicating — the same `ensure` contract the deploy script uses. The `keyField` must be unique per row, present on every row, and stable across runs: a `unique_value` column is ideal, because the fixed seed of each table's `rng` regenerates the same key on every run of the same script. FK capture is unchanged:
+- **A table with a unique field is seeded with `seedEnsureMany(path, rows, <that field>)`**, never `postMany`: a `unique_value` field, or the label column when it carries the `unique` marker. A table with no unique field uses `postMany`. It reads the whole table's keys first (one `keyField=in.(…)` GET per ≤100 rows), inserts only the missing rows in one POST, and returns every row (existing or new) WITH its id in input order, so a re-run converges instead of duplicating — the same `ensure` contract the deploy script uses. The `keyField` must be unique per row, present on every row, and stable across runs: a `unique_value` column is ideal, because the fixed seed of each table's `rng` regenerates the same key on every run of the same script. FK capture is unchanged:
 
   ```typescript
   // contactRows built exactly as in the script pattern above
   const contacts = await seedEnsureMany("/contacts", contactRows, "email");   // re-run-safe: reads the keys, inserts only the missing rows
   ```
+- **After a halt partway**, the tables before the failing one have landed. When every one of them was seeded with `seedEnsureMany`, fix the cause and re-run the same script: it converges. When any of them used `postMany`, do NOT blindly re-run: first inspect what landed (`await pgRequest("GET", "/<table>?select=id")` and count), then either finish the remaining tables by hand or clear the table and reseed.
 
-The script is invoked from any shell with:
+The script is invoked from any shell with one command, a check run gating the real run:
 
 ```bash
-bun run <cwd>/.tmp_deploy/seed_<short>.ts
+DEPLOY_CHECK=1 bun run <cwd>/.tmp_deploy/seed_<short>.ts && bun run <cwd>/.tmp_deploy/seed_<short>.ts
 ```
+
+The check run builds every row and checks every insert without sending it (`deploy-lib.ts`, check run), so a script error halts before the first table is seeded and the one-shot problem above never starts. It still reads live, for FK targets that already exist.
 
 **Important for FK fields:** Capture IDs directly from the array each table's POST returns (`postMany` / `seedEnsureMany` hand you the rows with ids), do not make a separate GET query to look them up by name. Filters with spaces (e.g. `?account_name=eq.Beacon Foods`) require URL encoding; capturing from the POST response avoids this entirely. (This is a Layer-2 rule: catalog writes via `create_*` still resolve ids by re-reading — see the deploy script's `ensureMany`.)
 

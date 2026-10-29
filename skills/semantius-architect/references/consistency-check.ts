@@ -640,6 +640,11 @@ type SpecEntity = {
   labelColumn: string;         // `**Label column:**` (backticks stripped; "" = absent)
   lines: Set<string>;        // which `**Key:**` lines the block carries (e.g. "Label column")
   reconciliation: string;      // `**Reconciliation:**` ("" = absent = create-new)
+  editPermission: string;      // `**Edit permission:**` (backticks stripped; "manage" = absent)
+  auditLog: string;            // `**Audit log:**` ("no" = absent)
+  permCodes: Set<string>;      // `require_permission` codes in the `**Validation rules**` JSON
+  rulesJson: string;           // the `**Validation rules**` fence, verbatim ("" = absent)
+  labelParent: string;         // `**Label parent:**` (backticks stripped; "" = absent)
   fields: SpecField[];
 };
 
@@ -648,12 +653,26 @@ function parseSpecEntities(lines: string[]): Map<string, SpecEntity> {
   const out = new Map<string, SpecEntity>();
   let cur: SpecEntity | null = null;
   let inFence = false;
+  let afterRules = false; // the last non-blank line outside a fence was `**Validation rules**`
+  let inRules = false;    // inside the fence that follows it
   for (const l of topSection(lines, 3)) {
-    if (/^```/.test(l)) { inFence = !inFence; continue; }
-    if (inFence) continue;
+    if (/^```/.test(l)) {
+      inFence = !inFence;
+      inRules = inFence && afterRules;
+      afterRules = false;
+      continue;
+    }
+    if (inFence) {
+      if (inRules && cur) {
+        for (const m of l.matchAll(/"require_permission"\s*:\s*"([^"]+)"/g)) cur.permCodes.add(m[1]);
+        cur.rulesJson += `${l}\n`;
+      }
+      continue;
+    }
+    if (l.trim() !== "") afterRules = l.trim() === "**Validation rules**";
     const h = l.match(/^###\s+3\.\d+\s+`([^`]+)`/);
     if (h) {
-      cur = { keyType: null, keyPrefix: null, basedOn: "", labelColumn: "", lines: new Set(), reconciliation: "", fields: [] };
+      cur = { keyType: null, keyPrefix: null, basedOn: "", labelColumn: "", lines: new Set(), reconciliation: "", editPermission: "manage", auditLog: "no", permCodes: new Set(), rulesJson: "", labelParent: "", fields: [] };
       out.set(h[1].trim(), cur);
       continue;
     }
@@ -666,7 +685,10 @@ function parseSpecEntities(lines: string[]): Map<string, SpecEntity> {
       else if (key === "Key prefix") cur.keyPrefix = value;
       else if (key === "Based on") cur.basedOn = value.replace(/`/g, "").trim();
       else if (key === "Label column") cur.labelColumn = value.replace(/`/g, "").trim();
+      else if (key === "Label parent") cur.labelParent = value.replace(/`/g, "").trim();
       else if (key === "Reconciliation") cur.reconciliation = value;
+      else if (key === "Edit permission") cur.editPermission = value.replace(/`/g, "").trim() || "manage";
+      else if (key === "Audit log") cur.auditLog = value.replace(/`/g, "").trim() || "no";
       continue;
     }
     if (!isTableRow(l) || isSeparatorRow(l)) continue;
@@ -1015,6 +1037,22 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
       issues.push({ check: "family", detail: `§4 \`${r.from}\`.\`${r.field}\` → \`${r.to}\`: \`${r.from}\` is an is_a entity, so its delete behavior cannot be cascade (use restrict or clear)` });
     }
   }
+  // FK scope (analyst Stage 8 FK scope fix): a `parent` + `cascade` child with its own permission
+  // scope, or audit-logged with its own lifecycle, must be `reference` + `restrict`. An error only in
+  // the analyst's pre-save run (`--require-icons`); a warning for the modeler and optimizer.
+  for (const r of parseSpecRelationshipRows(lines)) {
+    if (r.kind.replace(/`/g, "") !== "parent" || !/^cascade$/i.test(r.del)) continue;
+    const child = ents.get(r.from), parent = ents.get(r.to);
+    if (!child || !parent || parent.fields.length === 0) continue;
+    const signals: string[] = [];
+    if (child.editPermission !== parent.editPermission) signals.push(`edit permission \`${child.editPermission}\` differs from the parent's \`${parent.editPermission}\``);
+    const own = [...child.permCodes].filter((c) => !parent.permCodes.has(c));
+    if (own.length) signals.push(`checks ${own.map((c) => `\`${c}\``).join(", ")} the parent does not`);
+    if (child.auditLog === "yes" && child.fields.some((f) => f.name === "workflow_state")) signals.push("audit log yes with its own lifecycle");
+    if (signals.length) {
+      issues.push({ check: "FK scope", detail: `§4 \`${r.from}\`.\`${r.field}\` → \`${r.to}\`: ${signals.join("; ")}; use reference + restrict (analyst Stage 8 FK scope fix)`, warn: !opts.requireIcons });
+    }
+  }
   // RACI process gates are not available on based entities (platform 90249).
   for (const ent of parseProcessGateEntities(lines)) {
     if (basedIds.includes(ent)) issues.push({ check: "family", detail: `§9 _process_gates_ names \`${ent}\`, an ${keys.get(ent)!.type} entity; process gates are not available on based entities` });
@@ -1022,6 +1060,47 @@ function checkSpec(text: string, lines: string[], fm: ReturnType<typeof frontmat
   // `<table>_ext` is the platform's storage table of a based entity, so no entity may end in `_ext`.
   for (const id of allIds) {
     if (/_ext$/.test(id)) issues.push({ check: "data_object name", detail: `entity \`${id}\` ends in \`_ext\`, which the platform reserves for the storage table of an is_a / has_a entity` });
+  }
+
+  // Write-time refusals the spec already shows, for every entity this spec deploys:
+  //  - a field named `_…` or `…_id_label` (reserved for the composed `_label` / `<fk>_label` columns);
+  //  - a `**Label parent:**` that is not a `reference` / `parent` field of the entity (23514);
+  //  - a validation rule whose `code` is not class 99 (`99000`-`99999`, 90905), a rule `name`
+  //    repeated within the entity, or a rules block that is not a JSON array.
+  for (const [id, e] of ents) {
+    if (BUILTINS.has(id) || /^(reuse-from|dropped)\b/.test(e.reconciliation)) continue;
+    for (const f of e.fields) {
+      if (f.name.startsWith("_") || f.name.endsWith("_id_label")) {
+        issues.push({ check: "reserved field name", detail: `§3 \`${id}\`.\`${f.name}\`: names starting with \`_\` or ending in \`_id_label\` are reserved for the platform's composed label columns; rename the field` });
+      }
+    }
+    if (e.labelParent) {
+      const fk = e.fields.find((f) => f.name === e.labelParent);
+      if (!fk || !/^(reference|parent)$/.test(fk.format)) {
+        issues.push({ check: "label parent", detail: `§3 \`${id}\` **Label parent:** \`${e.labelParent}\` ${fk ? `has format \`${fk.format}\`` : "is not a field of the entity"}; it must name one of the entity's own \`reference\` / \`parent\` fields` });
+      }
+    }
+    const raw = e.rulesJson.trim();
+    if (raw && !/^_\(none/.test(raw)) {
+      let rules: unknown;
+      try { rules = JSON.parse(raw); } catch (err) {
+        issues.push({ check: "validation rules", detail: `§3 \`${id}\` **Validation rules** is not valid JSON (${err instanceof Error ? err.message : err})` });
+        continue;
+      }
+      if (!Array.isArray(rules)) {
+        issues.push({ check: "validation rules", detail: `§3 \`${id}\` **Validation rules** must be a JSON array` });
+        continue;
+      }
+      const names = new Set<string>();
+      for (const r of rules as any[]) {
+        if (r?.source_module === "platform") continue;
+        if (!/^99\d{3}$/.test(String(r?.code ?? ""))) {
+          issues.push({ check: "validation rules", detail: `§3 \`${id}\` rule \`${r?.name ?? "?"}\` has code \`${r?.code ?? ""}\`; a model rule's code is class 99 (\`99000\`-\`99999\`), numbered from \`99001\` in §3 entity order` });
+        }
+        if (r?.name && names.has(r.name)) issues.push({ check: "validation rules", detail: `§3 \`${id}\` repeats rule name \`${r.name}\`; rule names are unique within an entity` });
+        if (r?.name) names.add(r.name);
+      }
+    }
   }
 
   // The label column is created by create_entity as single-line text and its format is locked

@@ -8,6 +8,52 @@ Entries below are newest first.
 
 ---
 
+## Sample data: re-run-safe by default where a table has a unique field
+
+2026-10-29. A seed script that halted partway could not be re-run: every table went in with `postMany`, a bare insert, so the tables that had landed were inserted twice, and the recovery was to inspect and finish or clear by hand. Rules: `references/stage-6-sample-data.md` (script pattern, "Re-running the seed (idempotency)").
+
+1. **A table with a unique field is seeded with `seedEnsureMany(path, rows, <that field>)`**: a `unique_value` field, or the label column with the `unique` marker. A table with none uses `postMany`.
+2. **After a halt partway**, the script is fixed and re-run as is when every table that landed used `seedEnsureMany`; otherwise what landed is inspected first, as before.
+
+---
+
+## Platform references read once per conversation
+
+2026-10-29. In an end-to-end run the analyst and the modeler each read the same use-semantius files in full in one conversation, so about 1,200 lines entered the context twice. Rules: SKILL.md, Step 0 (hard gate).
+
+1. **`../use-semantius/SKILL.md`, `data-modeling.md`, `jsonlogic.md` and `select-rule.md` are read once per conversation.** A file already in the conversation and not summarized away is not read again; after a context reset it is read again.
+
+---
+
+## Fewer task-list reads and one log call per stage
+
+2026-10-29. A `TaskUpdate` had to be preceded by a fresh `TaskList` in every response, and the admin's hand-off gate read the list twice, so each stage change cost extra sequential turns; fast-flow picks were logged one Bash call each. Rules: `../semantius-admin/references/task-tracking.md` (section 2 rule 4, section 3 record step), `../semantius-admin/references/fast-flow.md` (section 5, go-ahead marker), SKILL.md (task sequencing around the closing block).
+
+1. **A `TaskUpdate` uses an id from a `TaskCreate`, `TaskList` or `TaskUpdate` result still in context**; `TaskList` comes first only after a context reset, and where a step needs the list's state (duplicate guard, gate, resume, end-of-run check).
+2. **All of a stage's `log_pick` lines go in one Bash call.**
+
+---
+
+## Stage 5 entity and field checks run as code
+
+2026-10-29. Stage 5 areas 5, 5a and 6 were done by hand: ad-hoc reads per entity and a model comparing large JSON and strings byte for byte, which is slow and unreliable. Rules: `references/scaffold-lib.ts` (`verifyEntities`), `references/deploy-script-template.md` (helper table, step 6, Cardinal rule 8), `references/stage-5-verify.md` (areas 5, 5a, 6), SKILL.md (committed resources).
+
+1. **`verifyEntities(entityExpect, fieldExpect)`** re-reads the entities, their fields and the FK targets (three reads) and asserts label column, owning module, label parent, key type, entity provenance, byte-for-byte labels and description, `select_rule`; per field title, description, `unique_value`, `reference_table` and its target, enum values in order with their stated label and hints, `input_type_rule`, `catalog_field_code` on fields this run created, and no reserved-name fields. Live fields the spec does not declare are a warning.
+2. **It runs inside `runDeploy` right after `verifyScaffold`** and throws on any mismatch, so the deploy halts instead of reporting success. A halt gets one silent re-run of the same command, which sends the drifted values again; a second halt is reported as a stopped deploy. A `select_rule` / `input_type_rule` mismatch is a warning, so Stage 5 still offers the user a retry. Its findings feed the Stage 5 report; the agent does not repeat these checks with its own reads.
+3. **Still checked by hand:** the lifecycle state field name (`workflow_state`).
+
+---
+
+## Deploy scripts: ensureFields and a check run before every run
+
+2026-10-29. An ATS deploy halted twice on script errors before it succeeded: its `create_field` rows had no `table_name` (the `table_name=eq.<t>` filter passed to `ensureMany` scopes the read only, it never reaches the rows), and a helper went undefined after an edit. Each halt cost a fix and a full re-run. Rules: `references/deploy-lib.ts`, `references/scaffold-lib.ts`, `references/deploy-script-template.md` (run block, "Check run first", helper table, step 4, Cardinal rule 10), `references/stage-4-execute.md` (script paragraph, 4d), `references/stage-6-sample-data.md` (script invocation), SKILL.md (committed resources, cheat table).
+
+1. **`ensureFields(table, rows)`** is the fields pass of one entity: it stamps `table_name` and `catalog_field_code` (= `field_name` when absent) on every row and refuses a row without `field_name` / `format`, naming another table, or carrying `required` / `is_nullable`, then makes one `ensureMany` call.
+2. **`DEPLOY_CHECK=1`** runs a deploy or seed script end to end with live reads and every write checked and recorded but not sent; later reads see the rows it would have created. It refuses a `create_field` row without `table_name` / `field_name` / `format`, a `create_entity` row without `table_name` or an integer `module_id`, a double-wrapped payload, and update / delete calls without their key. `verifyScaffold` and `stampDeployedVersion` are skipped, and `runDeploy` prints `CHECK RUN passed` or `CHECK RUN HALTED`.
+3. **Every deploy and seed script runs as `DEPLOY_CHECK=1 bun run <script> && bun run <script>`**: one tool call, and a script error halts before anything is written.
+
+---
+
 ## Sample data: street names dealt, guarded and per country
 
 2026-10-28. A seeded suppliers table again had `Market Street` on every row, with only the house number varying. The script built the street from one literal name; `r.pick` listed street as a field where repeats are fine, "one shared street pool is fine" read as one street, and `assertSeedDistinct` on the full street passes because the house numbers differ. Rules: `references/stage-6-sample-data.md`, "Data has to read plausibly", the script pattern and "Records, not fields"; `references/deploy-lib.ts`; `references/deploy-script-template.md`, the helper table.

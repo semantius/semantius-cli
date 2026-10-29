@@ -16,7 +16,7 @@ Parse the blueprint's eight (now nine) numbered sections, plus the optional un-n
 - **§2 Mermaid dotted edges** (`A -.->|"is a kind of"| B`, `A -.->|"extends"| B`): the family links drawn from the `**Key types:**` rows. Not relationships: never turn one into a §4 row or a FK field.
 - **The type-enum handoff sentence** in a §2 Description, **"Each <Singular> is one of: A, B, or C."** (or "A or B"): record it on the entity; Stage 4 turns it into an enum field (see "Type enum from the design" there).
 - **§4 Aliases**: industry / vendor / domain synonyms — used in the Stage 2 similarity heuristic and the 2g concept pass for link targets.
-- **§5.1 Intra-scope edges**: from / verb / to / cardinality / kind / necessity / owner_side / **`delete_mode`** (`restrict` / `clear` / `cascade`) / **`fk_format`** (`reference` / `parent`) / notes. Both columns are consumed verbatim; the analyst does not reconstruct FK shape in Stages 2h / 10.
+- **§5.1 Intra-scope edges**: from / verb / to / cardinality / kind / necessity / owner_side / **`delete_mode`** (`restrict` / `clear` / `cascade`) / **`fk_format`** (`reference` / `parent`) / notes. Both columns are consumed verbatim, except rows changed by the analyst's Stage 8 FK scope fix; the analyst does not reconstruct FK shape in Stages 2h / 10.
 - **§5.2 Built-in edges**: edges between platform built-ins (`users`, `roles`) and this module's entities. Same `delete_mode` and `fk_format` columns.
 - **§5.3 Cross-scope edges**: edges to entities in other modules, split into two sub-tables:
   - **§5.3a** outbound from this scope's masters / contributors — same column shape as §5.1 (`delete_mode` ∈ {restrict, clear, cascade}, `fk_format` ∈ {reference, parent}).

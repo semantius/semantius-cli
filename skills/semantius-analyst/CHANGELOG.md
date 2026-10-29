@@ -8,6 +8,58 @@ Entries below are newest first. Each entry follows the maintainer template: what
 
 ---
 
+## Pre-save: write-time refusals checked
+
+2026-10-29. Rules: SKILL.md, pre-save table (rows "Validation-rule identity", "No reserved field names", "Label parent is a link"); checks in `../semantius-architect/references/consistency-check.ts`.
+
+1. **The pre-save run now fails** on a reserved field name (`_…`, `…_id_label`), a `**Label parent:**` that is not one of the entity's own `reference` / `parent` fields, and a validation rule whose code is not class 99, whose name repeats, or a rules block that is not a JSON array. Each row names its fix, so a fast run applies it and continues.
+
+---
+
+## Platform references read once per conversation
+
+2026-10-29. In an end-to-end run the analyst and the modeler each read the same use-semantius files in full in one conversation, so about 1,200 lines entered the context twice. Rules: SKILL.md, Step 0.
+
+1. **`../use-semantius/SKILL.md` and `data-modeling.md` are read once per conversation.** A file already in the conversation and not summarized away is not read again; after a context reset it is read again.
+
+---
+
+## Fewer task-list reads and one log call per stage
+
+2026-10-29. A `TaskUpdate` had to be preceded by a fresh `TaskList` in every response, and the admin's hand-off gate read the list twice, so each stage change cost extra sequential turns; fast-flow picks were logged one Bash call each. Rules: `../semantius-admin/references/task-tracking.md` (section 2 rule 4, section 3 record step), `../semantius-admin/references/fast-flow.md` (section 5, go-ahead marker), `references/stage-3-confirm.md` (revising the plan).
+
+1. **A `TaskUpdate` uses an id from a `TaskCreate`, `TaskList` or `TaskUpdate` result still in context**; `TaskList` comes first only after a context reset, and where a step needs the list's state (duplicate guard, gate, resume, end-of-run check).
+2. **All of a stage's `log_pick` lines go in one Bash call.**
+
+---
+
+## Icon check in one finder call
+
+2026-10-29. The Stage 4 icon check ran the Lucide finder once per enum entry, so a spec with dozens of entries spent dozens of sequential tool calls on it. Rules: `references/stage-4-fields.md` ("Enum values, labels and hints", rule 3); `../use-semantius/references/lucide-icon-finder.ts` (`--batch`); `../use-semantius/SKILL.md` (reference table).
+
+1. **One finder call for all entries of all enums:** `lucide-icon-finder.ts --batch -` reads a JSON object on stdin, one label per entry mapped to its queries, and prints each label as `## <label>` with its query lines. Each label is searched on its own.
+2. **One checker call** for every taken icon.
+3. The choice stays per entry and unchanged: the first hit only when it clearly fits, otherwise no icon, recorded on the entry as before.
+
+No file format change.
+
+---
+
+## FK scope fix in Stage 8
+
+2026-10-29. An ATS run shipped `scorecards.interview_id` and `offers.application_id` as `parent` + `cascade`, so deleting an interview or an application silently deleted interview feedback and offers. The divergent-permission-scope rule (`../use-semantius/references/data-modeling.md`) forbids that shape, but no stage applied it. Stage 9 compared only the §3 write tiers, which never carry a narrow tier, and it ran before Stage 10 wrote the `require_permission` rules. It also trusted the blueprint's FK shapes, while the architect left the check to the analyst. Rules: SKILL.md Stage 8 (Steps 0 and 1), the pre-save row on §4 FK shapes, Closing message ("Kept records"); `references/stage-9-governance.md` rules 2-3; `references/stage-4-fields.md`; `references/stage-1-parse.md`, `references/stage-2-inspect.md` and `references/semantic-spec-template.md`, where FK shapes are consumed verbatim except for the fix.
+
+1. **Stage 8 Step 0** settles every owned entity's `**Audit log:**` line before the fix reads it.
+2. **Stage 8 Step 1** checks every §4 `parent` + `cascade` row whose parent has its own §3 block. It fires on T1 (the child's edit permission differs from the parent's), T2 (the child has a `require_permission` code the parent lacks) or T3 (the child is audit-logged and has a `workflow_state`). A row that fires becomes `reference` + `restrict` through five fixed edits, never a question.
+3. **Fields already live as `parent` are left alone,** with a 🟡 §7.2 note, because flipping a live field needs a migration.
+4. **Junction legs are not checked.**
+5. **The close-out names the parents** that can no longer be deleted while they have such records; a fast run logs nothing for it.
+6. **`consistency-check.ts --require-icons` fails** a row that still fires (check `FK scope`).
+
+The file format version is unchanged: no column, key or annotation is added.
+
+---
+
 ## Entity icon is `**Icon:**`, stored in `entities.icon_name`
 
 2026-10-27. The platform renamed `entities.icon_url` to `icon_name`, which now takes a Lucide icon name or an icon URL like the module's `icon_name`. The file format version is unchanged. Rules: `references/semantic-spec-template.md`, §3 skeleton and the `**Icon:**` note; `references/stage-11-write.md`, delta 10; `references/stage-2-inspect.md`, the adopted entity index and the drift axes; `references/stage-3f-drift.md`, the drift axes and the cosmetic tier.

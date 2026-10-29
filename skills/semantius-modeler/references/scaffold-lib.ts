@@ -56,7 +56,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { read1, write, ensureMany, ensurePairs } from "./deploy-lib";
+import { read1, readIn, write, ensureMany, ensurePairs, CHECK_RUN } from "./deploy-lib";
 
 /**
  * Bump when the platform RBAC / module schema this file bakes in changes. Schema-coupled.
@@ -483,11 +483,11 @@ export async function scaffoldModule(cfg: ScaffoldConfig): Promise<ScaffoldResul
 export type Severity = "ok" | "warn" | "fail";
 export interface Finding { severity: Severity; check: string; detail: string; }
 
-function throwIfFailed(findings: Finding[]): void {
+function throwIfFailed(findings: Finding[], who = "verifyScaffold", what = "scaffold"): void {
   const fails = findings.filter((x) => x.severity === "fail");
   if (fails.length) {
     throw new Error(
-      `verifyScaffold: ${fails.length} scaffold check(s) FAILED — the deploy is NOT complete:\n` +
+      `${who}: ${fails.length} ${what} check(s) FAILED — the deploy is NOT complete:\n` +
       fails.map((x) => `  🛑 ${x.check}: ${x.detail}`).join("\n") +
       `\nFix the cause and re-run (every op is idempotent, so re-running converges).`,
     );
@@ -515,6 +515,7 @@ function throwIfFailed(findings: Finding[]): void {
  *   for (const x of findings) console.log(`${x.severity === "warn" ? "🟡" : "✓"} ${x.check} ${x.detail}`);
  */
 export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
+  if (CHECK_RUN) return [{ severity: "warn", check: "scaffold self-audit", detail: "skipped in a check run (nothing was written)" }];
   const f: Finding[] = [];
   const ok = (check: string, detail = "") => f.push({ severity: "ok", check, detail });
   const warn = (check: string, detail: string) => f.push({ severity: "warn", check, detail });
@@ -611,6 +612,134 @@ export async function verifyScaffold(cfg: ScaffoldConfig): Promise<Finding[]> {
   return f;
 }
 
+// ──────────────────────────── entity / field verify ────────────────────────────
+
+/** What the spec says about one entity this deploy created or synced (Stage 5 areas 5, 5a and 6). */
+export interface EntityExpect {
+  table_name: string; module_id: number;
+  singular_label: string; plural_label: string; description: string;
+  label_column?: string;            // omitted: a based entity, or a junction without one (not checked)
+  label_parent?: string | null;     // present: live must equal it (null = live has none)
+  id_type?: string; id_prefix?: string; id_refentity?: string;
+  catalog_entity_code?: string; entity_type?: string; catalog_owner_module?: string;
+  select_rule?: unknown;            // present only when the spec carries a Select rule block
+}
+
+/** One §3 field of that entity, as the script sent it (enum entries after `checkEnumIcons` / `mergeEnumEntries`). */
+export interface FieldExpect {
+  field_name: string; title?: string; description?: string;
+  unique_value?: boolean; reference_table?: string;
+  enum_values?: Array<string | { value: string; label?: string; description?: string; color?: string; icon?: string }>;
+  input_type_rule?: unknown;        // present only when the spec carries an Input type rules entry
+  created?: boolean;                // created by this run: catalog_field_code must equal field_name
+}
+
+/** Recursively key-sorted JSON: jsonb reorders object keys on read-back, array order still counts. */
+const canon = (v: unknown): string => JSON.stringify(v ?? null, (_k, x) =>
+  x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x);
+const quote = (v: unknown): string => { const t = String(v ?? ""); return `${Buffer.byteLength(t)} bytes "${t.length > 60 ? `${t.slice(0, 60)}…` : t}"`; };
+const AUTO_FIELDS = new Set(["id", "label", "created_at", "updated_at"]);
+
+/**
+ * Re-read the live catalog and assert the entities and fields match what the script
+ * sent: the EXECUTABLE form of modeler Stage 5 area 5 (label column, owning module,
+ * label parent, key type, `unique_value`, enum entries, entity and field provenance,
+ * FK targets, no reserved-name fields), 5a (text fidelity, byte for byte) and 6
+ * (`select_rule` / `input_type_rule`, compared structurally; a mismatch there is a warning,
+ * since Stage 5 offers the user a retry). One read for the
+ * entities, one for the fields of every table, one for the FK targets. Pass the entity
+ * rows with the `label_parent` / `select_rule` the script set afterwards, and per table
+ * the field rows as sent plus the label column's §3 title and description, with
+ * `created` on the rows this run created. Returns the ok/warn findings for the Stage 5
+ * report and THROWS on any failed check: run it inside `runDeploy` after `verifyScaffold`.
+ */
+export async function verifyEntities(
+  entities: EntityExpect[], fields: Record<string, FieldExpect[]>,
+): Promise<Finding[]> {
+  if (CHECK_RUN) return [{ severity: "warn", check: "entity and field self-audit", detail: "skipped in a check run (nothing was written)" }];
+  const f: Finding[] = [];
+  const ok = (check: string, detail = "") => f.push({ severity: "ok", check, detail });
+  const warn = (check: string, detail: string) => f.push({ severity: "warn", check, detail });
+  const fail = (check: string, detail: string) => f.push({ severity: "fail", check, detail });
+  const tables = [...new Set([...entities.map((e) => e.table_name), ...Object.keys(fields)])];
+  const liveE = new Map((await readIn("read_entity", "table_name", tables)).map((e) => [String(e.table_name), e] as const));
+  const liveF = new Map<string, Map<string, any>>();
+  for (const r of await readIn("read_field", "table_name", tables)) {
+    const t = String(r.table_name);
+    if (!liveF.has(t)) liveF.set(t, new Map());
+    liveF.get(t)!.set(String(r.field_name), r);
+  }
+  const targets = [...new Set(Object.values(fields).flat().map((x) => x.reference_table).filter((t): t is string => !!t))];
+  const targetSet = new Set((await readIn("read_entity", "table_name", targets)).map((e) => String(e.table_name)));
+  const same = (check: string, want: unknown, have: unknown): boolean => {
+    if (String(want ?? "") === String(have ?? "")) return true;
+    fail(check, `expected ${quote(want)}, live ${quote(have)}`);
+    return false;
+  };
+
+  for (const e of entities) {
+    const t = e.table_name;
+    const l = liveE.get(t);
+    if (!l) { fail(`entity ${t}`, "not found live"); continue; }
+    const before = f.length;
+    if (Number(l.module_id) !== e.module_id) fail(`entity ${t}.module_id`, `expected ${e.module_id}, live ${l.module_id}`);
+    if (e.label_column !== undefined) same(`entity ${t}.label_column`, e.label_column, l.label_column);
+    if ("label_parent" in e) same(`entity ${t}.label_parent`, e.label_parent, l.label_parent);
+    if (l.id_type !== undefined) same(`entity ${t}.id_type`, e.id_type ?? "auto_increment", l.id_type);
+    if (e.id_prefix !== undefined) same(`entity ${t}.id_prefix`, e.id_prefix, l.id_prefix);
+    same(`entity ${t}.id_refentity`, e.id_refentity, l.id_refentity);
+    if (!l.catalog_entity_code) fail(`entity ${t}.catalog_entity_code`, "empty");
+    else same(`entity ${t}.catalog_entity_code`, e.catalog_entity_code ?? t, l.catalog_entity_code);
+    same(`entity ${t}.entity_type`, e.entity_type || "unclassified", l.entity_type);
+    same(`entity ${t}.catalog_owner_module`, e.catalog_owner_module, l.catalog_owner_module);
+    for (const k of ["singular_label", "plural_label", "description"] as const) same(`entity ${t}.${k}`, e[k], l[k]);
+    if ("select_rule" in e && canon(e.select_rule) !== canon(l.select_rule)) warn(`entity ${t}.select_rule`, "differs from the spec (Stage 5 area 6: offer a retry)");
+    if (f.length === before) ok(`entity ${t}`, "matches the spec");
+  }
+
+  for (const t of Object.keys(fields)) {
+    const live = liveF.get(t) ?? new Map<string, any>();
+    const reserved = (n: string) => n.startsWith("_") || n.endsWith("_id_label");
+    for (const name of live.keys()) if (reserved(name)) fail(`field ${t}.${name}`, "reserved name materialized as a field");
+    const wanted = new Set(fields[t].map((x) => x.field_name));
+    const extra = [...live.keys()].filter((n) => !wanted.has(n) && !AUTO_FIELDS.has(n) && !reserved(n));
+    if (extra.length) warn(`fields of ${t}`, `live fields the spec does not declare: ${extra.join(", ")}`);
+    const before = f.length;
+    for (const x of fields[t]) {
+      const id = `field ${t}.${x.field_name}`;
+      const l = live.get(x.field_name);
+      if (!l) { fail(id, "not found live"); continue; }
+      if (x.title !== undefined) same(`${id}.title`, x.title, l.title);
+      if (x.description !== undefined) same(`${id}.description`, x.description, l.description);
+      if (!!x.unique_value !== !!l.unique_value) fail(`${id}.unique_value`, `expected ${!!x.unique_value}, live ${!!l.unique_value}`);
+      if (x.reference_table) {
+        same(`${id}.reference_table`, x.reference_table, l.reference_table);
+        if (!targetSet.has(x.reference_table)) fail(`${id}.reference_table`, `target ${x.reference_table} does not exist live`);
+      }
+      if (x.enum_values) {
+        const norm = (v: any) => (typeof v === "string" ? { value: v } : v ?? {});
+        const want = x.enum_values.map(norm), have = ((l.enum_values ?? []) as any[]).map(norm);
+        if (canon(want.map((v) => v.value)) !== canon(have.map((v) => v.value))) {
+          fail(`${id}.enum_values`, `values expected [${want.map((v) => v.value).join(", ")}], live [${have.map((v) => v.value).join(", ")}]`);
+        } else {
+          want.forEach((w, i) => {
+            for (const k of ["label", "color", "icon", "description"]) {
+              if (!(k in w)) continue;
+              const wv = k === "icon" && w.icon === "none" ? "" : w[k];
+              if (String(wv ?? "") !== String(have[i][k] ?? "")) fail(`${id}.enum_values ${w.value}.${k}`, `expected ${quote(wv)}, live ${quote(have[i][k])}`);
+            }
+          });
+        }
+      }
+      if ("input_type_rule" in x && canon(x.input_type_rule) !== canon(l.input_type_rule)) warn(`${id}.input_type_rule`, "differs from the spec (Stage 5 area 6: offer a retry)");
+      if (x.created && l.catalog_field_code !== x.field_name) fail(`${id}.catalog_field_code`, `expected ${quote(x.field_name)}, live ${quote(l.catalog_field_code)}`);
+    }
+    if (f.length === before) ok(`fields of ${t}`, `${fields[t].length} field(s) match the spec`);
+  }
+  throwIfFailed(f, "verifyEntities", "entity / field");
+  return f;
+}
+
 // ──────────────────────────── deploy-version stamp (Stage 5b) ─────────────────
 
 export interface DeployVersionStamp {
@@ -642,6 +771,7 @@ export interface DeployVersionStamp {
 export async function stampDeployedVersion(
   stamp: DeployVersionStamp,
 ): Promise<{ version: number; versionDate: string | null; related: Record<string, number> } | null> {
+  if (CHECK_RUN) { console.log("  [check run] deployed_version stamp skipped"); return null; }
   const mod = await read1("read_module", `module_slug=eq.${stamp.moduleSlug}`);
   if (!mod) throw new Error(`stampDeployedVersion: module ${stamp.moduleSlug} not found (deploy incomplete?)`);
   if (mod.version === undefined || mod.version === null) {

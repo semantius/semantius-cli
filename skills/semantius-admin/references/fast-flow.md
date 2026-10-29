@@ -69,7 +69,7 @@ The detail lives in the architect's stage files; this is the map.
   2. `"Change something first"`, description `"Tell me what to change. I update the design and show it to you again."`
   3. `"Ask me along the way"`, description `"I'll guide you through each piece of the design so we can shape it to how you work."`
 
-**Recording the answer.** Before anything else, the admin writes `log_diag "go-ahead: answered <option label>"` and updates the marker in its pipeline tasks' descriptions (`TaskList`, then `TaskUpdate` each). A diagnostic log with `go-ahead: asking` and no `answered` line is a run that stopped before the user saw the question.
+**Recording the answer.** Before anything else, the admin writes `log_diag "go-ahead: answered <option label>"` and updates the marker in its pipeline tasks' descriptions (`TaskUpdate` each, in one response). A diagnostic log with `go-ahead: asking` and no `answered` line is a run that stopped before the user saw the question.
 
 - **Yes:** `fast: go-ahead given`.
 - **Change something first:** stays `fast: awaiting go-ahead`; take the change in prose, update the draft, show the summary again, ask again.
@@ -159,7 +159,7 @@ The concrete pick at the main known gates, from rules 1 to 9. Every gate's own f
 
 ## 5. The auto-picks log
 
-`.tmp_admin/<run_id>/auto-picks.md`, in the run folder next to the diagnostic logs. It is a per-run diagnostic, not a policy record (gitignored, ephemeral; `output-discipline.md`), so the admin's "no decision log file" rule allows it. Each skill writes one line per decision, when the stage lists its questions:
+`.tmp_admin/<run_id>/auto-picks.md`, in the run folder next to the diagnostic logs. It is a per-run diagnostic, not a policy record (gitignored, ephemeral; `output-discipline.md`), so the admin's "no decision log file" rule allows it. Each skill writes one line per decision, when the stage lists its questions, **all of a stage's lines in one Bash call** (several `log_pick` lines in one command), never one call per pick:
 
 ```bash
 AUTO_PICKS=".tmp_admin/$RUN_ID/auto-picks.md"
