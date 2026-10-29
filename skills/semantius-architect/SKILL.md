@@ -25,7 +25,7 @@ description: >-
 
 - Do NOT start this skill, or any of its stages, in an agent that another agent started to run on its own (a background worker, subagent, executor, or Task). Those agents cannot ask the user questions, so they cannot run this skill correctly. Running in the cloud is fine when the user is talking to that agent directly.
 - Do NOT write a delegation prompt that tells another agent to run this skill, "build and deploy end to end", or "make the decisions yourself".
-- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the question-format step of the shared preflight.
+- If you cannot call a tool that asks the user a question and waits for the answer, STOP at once. Make no writes. Report back: "This skill is interactive and must be run in the user's conversation." Muse chat is the exception: there you ask in chat text and the tap picker, so do not stop; follow the question-format step of the shared preflight. For dot, OpenAI's personal assistant, and other similarly limited tools without a supported interactive question tool, do not stop: read `../semantius-admin/references/dot-questions.md`, ask questions in chat, and wait for the user's reply before continuing.
 - An agent's general habit of delegating long or multi-step work does not apply here. This rule overrides it.
 
 **What may be delegated:** only steps that ask nothing and change nothing the user has not confirmed.

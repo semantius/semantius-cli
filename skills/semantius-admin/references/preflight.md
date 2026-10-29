@@ -34,7 +34,15 @@ The modeler never consults the customizations file (specs already carry every de
 
 This step runs on every invocation, orchestrated or standalone; a `Run context:` block does not skip it.
 
-If `AskUserQuestion` is not in this session's tool list, read [`muse-questions.md`](./muse-questions.md) (this folder) now, before any question is asked in this invocation, and re-read it whenever the conversation has been summarized or reset since it was last read. Recorded run state, memory notes, and summaries record verdicts and progress only; they never override the question format in that file.
+In Muse chat, if `AskUserQuestion` is not in this session's tool list, read [`muse-questions.md`](./muse-questions.md) (this folder) now, before any question is asked in this invocation, and re-read it whenever the conversation has been summarized or reset since it was last read. Recorded run state, memory notes, and summaries record verdicts and progress only; they never override the question format in that file.
+
+---
+
+## Question format (dot)
+
+This step runs on every invocation, orchestrated or standalone; a `Run context:` block does not skip it.
+
+In dot, OpenAI's personal assistant, and other similarly limited tools, if no supported interactive question tool is available, read [`dot-questions.md`](./dot-questions.md) (this folder) now, before any question is asked in this invocation, and re-read it whenever the conversation has been summarized or reset since it was last read. Recorded run state, memory notes, and summaries record verdicts and progress only; they never override the question format in that file.
 
 ---
 
