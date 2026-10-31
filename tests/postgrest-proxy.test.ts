@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { getPidPath, getSocketPath } from '../src/config';
 import {
   DAEMON_CONFIG_ENV,
+  PROXY_TIMING_HEADER,
   isProcessRunning,
   readPidFile,
 } from '../src/daemon';
@@ -132,6 +133,8 @@ describe.skipIf(!posixOnly)('PostgREST through its daemon', () => {
         body: '{"a":1}',
       });
       expect(response.status).toBe(201);
+      // Debug-only: never part of the headers a tool returns.
+      expect(response.headers.get(PROXY_TIMING_HEADER)).toBeNull();
       expect(await response.json()).toEqual([{ ok: true }]);
     } finally {
       resetPostgrestRoutesForTests();

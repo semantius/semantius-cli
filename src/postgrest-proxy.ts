@@ -17,7 +17,12 @@
 
 import { debug, isDaemonEnabled } from './config.js';
 import { ensureDaemon } from './daemon-client.js';
-import { PROXY_ERROR_HEADER, type PostgrestProxyConfig } from './daemon.js';
+import {
+  PROXY_ERROR_HEADER,
+  PROXY_TIMING_HEADER,
+  type PostgrestProxyConfig,
+  describeKeepAlive,
+} from './daemon.js';
 
 /** Proxy daemons by origin, once ready; requests to other origins go direct. */
 const routes = new Map<string, string>();
@@ -44,7 +49,12 @@ export function routePostgrestThroughDaemon(postgrestUrl: string): void {
 
   const config: PostgrestProxyConfig = { postgrestProxy: origin };
   const daemon = ensureDaemon(proxyDaemonName(origin), config);
-  if (daemon.state !== 'ready') return;
+  if (daemon.state !== 'ready') {
+    debug(
+      `PostgREST requests to ${origin} go direct: its daemon is ${daemon.state === 'absent' ? 'starting in the background' : daemon.state}`,
+    );
+    return;
+  }
 
   debug(`Routing PostgREST requests to ${origin} through its daemon`);
   routes.set(origin, daemon.socketPath);
@@ -72,6 +82,7 @@ function installFetch(): void {
     const socketPath = routes.get(url.origin);
     if (!socketPath) return direct(input, init);
 
+    const started = Date.now();
     let response: Response;
     try {
       response = await direct(`http://localhost${url.pathname}${url.search}`, {
@@ -88,11 +99,26 @@ function installFetch(): void {
       return direct(input, init);
     }
 
+    const timing = response.headers.get(PROXY_TIMING_HEADER);
+    debug(
+      `PostgREST ${init?.method ?? 'GET'} ${url.pathname} via daemon: ${response.status} in ${Date.now() - started} ms (${timing ?? 'no timing'}${describeKeepAlive(response.headers)})`,
+    );
+
     // The daemon reached nothing: fail as a direct request would have.
     const proxyError = response.headers.get(PROXY_ERROR_HEADER);
     if (proxyError !== null)
       throw new TypeError(decodeURIComponent(proxyError));
-    return response;
+    if (timing === null) return response;
+
+    // The timing is for these debug lines only: a tool such as
+    // postgrestRequest returns the response headers it gets.
+    const headers = new Headers(response.headers);
+    headers.delete(PROXY_TIMING_HEADER);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   }) as typeof fetch;
 }
 

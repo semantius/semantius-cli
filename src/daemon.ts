@@ -69,6 +69,30 @@ export const DAEMON_CONFIG_ENV = 'SEMANTIUS_DAEMON_CONFIG';
  */
 export const PROXY_ERROR_HEADER = 'x-semantius-proxy-error';
 
+/**
+ * Set by a proxy daemon on every response it passes through, for
+ * <PREFIX>_DEBUG: how long the upstream took to answer and how long the
+ * daemon had been idle before the request, e.g. "upstream 140 ms after 4.2 s
+ * idle (request 17)". Neon documents no keep-alive limit for its Data API;
+ * an answer that is slow only after some idle time is the upstream having
+ * closed the connection, so the daemon had to open a new one. The client
+ * strips it before the response reaches any tool.
+ */
+export const PROXY_TIMING_HEADER = 'x-semantius-proxy-timing';
+
+/** The keep-alive terms a response states, if any, for debug lines. */
+export function describeKeepAlive(headers: Headers): string {
+  const terms = ['connection', 'keep-alive']
+    .map((name) => [name, headers.get(name)] as const)
+    .filter(([, value]) => value !== null)
+    .map(([name, value]) => `${name}: ${value}`);
+  return terms.length > 0 ? `; ${terms.join(', ')}` : '';
+}
+
+function formatMs(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
 export interface DaemonRequest {
   id: string;
   type: 'listTools' | 'callTool' | 'ping' | 'close' | 'getInstructions';
@@ -302,7 +326,9 @@ export async function proxyRequest(
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
+      // A copy: a fetched response's own headers are immutable, and the
+      // caller adds PROXY_TIMING_HEADER.
+      headers: new Headers(response.headers),
     });
   } catch (error) {
     return new Response(null, {
@@ -478,6 +504,10 @@ export async function runDaemon(
   // ------------------------------------------------------------------------
 
   function listenAsProxy(upstream: string) {
+    // When the last upstream answer arrived, for the idle time PROXY_TIMING_HEADER reports.
+    let lastAnswerAt: number | undefined;
+    let requests = 0;
+
     const proxy = Bun.serve({
       unix: socketPath,
       // A slow query sends nothing for a while; the client's own timeout
@@ -490,8 +520,24 @@ export async function runDaemon(
       fetch: async (req: Request) => {
         inFlight++;
         resetIdleTimer();
+        const n = ++requests;
+        const started = Date.now();
+        // Another request still running means the connection was not idle.
+        const idle =
+          lastAnswerAt === undefined
+            ? undefined
+            : inFlight > 1
+              ? 0
+              : started - lastAnswerAt;
         try {
-          return await proxyRequest(upstream, req);
+          const response = await proxyRequest(upstream, req);
+          lastAnswerAt = Date.now();
+          const timing = `upstream ${formatMs(lastAnswerAt - started)} ${idle === undefined ? 'as its first request' : `after ${formatMs(idle)} idle`} (request ${n})`;
+          response.headers.set(PROXY_TIMING_HEADER, timing);
+          debug(
+            `[daemon:${serverName}] ${req.method} ${new URL(req.url).pathname} → ${response.status}, ${timing}${describeKeepAlive(response.headers)}`,
+          );
+          return response;
         } finally {
           inFlight--;
           resetIdleTimer();
@@ -500,7 +546,20 @@ export async function runDaemon(
     });
     // Open the upstream connection now, so the first request through this
     // daemon already finds it. Any answer will do; none is needed.
-    fetch(upstream, { method: 'HEAD' }).catch(() => {});
+    const started = Date.now();
+    fetch(upstream, { method: 'HEAD' }).then(
+      (response) => {
+        lastAnswerAt ??= Date.now();
+        debug(
+          `[daemon:${serverName}] Opened the connection to ${upstream}: HEAD → ${response.status} in ${formatMs(Date.now() - started)}${describeKeepAlive(response.headers)}`,
+        );
+      },
+      (error) => {
+        debug(
+          `[daemon:${serverName}] Could not open the connection to ${upstream}: ${(error as Error).message}`,
+        );
+      },
+    );
     return proxy;
   }
 
