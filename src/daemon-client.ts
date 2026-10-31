@@ -218,13 +218,9 @@ async function spawnDaemon(
     const checkReady = async () => {
       try {
         const { value, done } = await reader.read();
-        if (done) {
-          if (!resolved) {
-            resolved = true;
-            resolve(false);
-          }
-          return;
-        }
+        // stdout closed without DAEMON_READY: the daemon is exiting, and the
+        // exit handler below reports why.
+        if (done) return;
 
         const text = new TextDecoder().decode(value);
         if (text.includes('DAEMON_READY')) {
@@ -262,13 +258,19 @@ async function spawnDaemon(
       }
     }, 5000);
 
-    // Check for early exit
-    proc.exited.then((code) => {
-      if (!resolved && code !== 0) {
-        resolved = true;
-        debug(`[daemon-client] Daemon exited with code ${code}`);
-        resolve(false);
-      }
+    // Check for early exit. The daemon explains a failed start on stderr;
+    // once it has exited that stream is finite, so reading it cannot hold
+    // this process open the way reading a running daemon's would.
+    proc.exited.then(async (code) => {
+      if (resolved) return;
+      resolved = true;
+      const stderr = (
+        await new Response(proc.stderr).text().catch(() => '')
+      ).trim();
+      debug(
+        `[daemon-client] Daemon exited with code ${code} before it was ready${stderr ? `:\n${stderr}` : ''}`,
+      );
+      resolve(false);
     });
   });
 }
