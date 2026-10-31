@@ -5,7 +5,6 @@
  */
 
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
 import {
   type ServerConfig,
   debug,
@@ -167,14 +166,17 @@ function isDaemonValid(serverName: string, config: ServerConfig): boolean {
 
 /**
  * Command prefix that re-launches this program. Inside a `bun build
- * --compile` binary, Bun.main is the virtual path of the binary itself
- * (its basename equals the executable's), so the binary alone is the
- * command. Under `bun run src/index.ts`, Bun.main is the entry script and
- * must be passed to bun explicitly. Exported for tests.
+ * --compile` binary, Bun.main is a path in Bun's virtual bundle
+ * (/$bunfs/root/…, B:\~BUN\root\… on Windows), so the binary alone is the
+ * command. That path is named after the build's --outfile, not the file
+ * installed: a release binary is built as semantius-linux-x64 and installed
+ * as semantius, so comparing it with process.execPath's name cannot tell the
+ * two modes apart. Under `bun run src/index.ts`, Bun.main is the entry
+ * script and must be passed to bun explicitly. Exported for tests.
  */
-export function getSelfCommand(): string[] {
-  const isCompiled = basename(Bun.main) === basename(process.execPath);
-  return isCompiled ? [process.execPath] : [process.execPath, Bun.main];
+export function getSelfCommand(main: string = Bun.main): string[] {
+  const isCompiled = /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(main);
+  return isCompiled ? [process.execPath] : [process.execPath, main];
 }
 
 /**

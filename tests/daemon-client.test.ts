@@ -1,5 +1,6 @@
 /**
- * Tests for daemon-client.ts's stopAllDaemons: called after `logout` to stop
+ * Tests for daemon-client.ts's getSelfCommand, and for its stopAllDaemons,
+ * which is called after `logout` to stop
  * every running daemon, since a revoked bearer can be baked into any of
  * their HTTP configs and a PID file's opaque config hash alone cannot say
  * which one (see the function's own docstring for why it cannot be scoped
@@ -19,9 +20,32 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { getPidPath, getSocketDir, getSocketPath } from '../src/config';
 import { isProcessRunning } from '../src/daemon';
-import { stopAllDaemons } from '../src/daemon-client';
+import { getSelfCommand, stopAllDaemons } from '../src/daemon-client';
 
 const posixOnly = process.platform !== 'win32';
+
+describe('getSelfCommand', () => {
+  // A release binary is built as semantius-linux-x64 & co. and installed as
+  // semantius: the bundle path's name never matches the installed file's.
+  test('re-launches a compiled binary alone, whatever it was renamed to', () => {
+    expect(getSelfCommand('/$bunfs/root/semantius-linux-x64')).toEqual([
+      process.execPath,
+    ]);
+    expect(getSelfCommand('B:\\~BUN\\root\\semantius-windows-x64.exe')).toEqual(
+      [process.execPath],
+    );
+    expect(getSelfCommand('B:/~BUN/root/semantius-windows-x64.exe')).toEqual([
+      process.execPath,
+    ]);
+  });
+
+  test('passes the entry script to bun when run from source', () => {
+    expect(getSelfCommand('/home/dev/semantius-cli/src/index.ts')).toEqual([
+      process.execPath,
+      '/home/dev/semantius-cli/src/index.ts',
+    ]);
+  });
+});
 
 describe.skipIf(!posixOnly)('stopAllDaemons', () => {
   const serverName = `stop-all-test-${process.pid}`;
