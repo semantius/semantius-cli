@@ -882,6 +882,10 @@ async function connectLocalCrud(
         ? { ...resolved, postgrestUrl: config.postgrest.replace(/\/+$/, '') }
         : resolved;
     config.postgrest = host.postgrestUrl;
+    const { routePostgrestThroughDaemon } = await import(
+      './postgrest-proxy.js'
+    );
+    routePostgrestThroughDaemon(host.postgrestUrl);
     return await createCrudConnection(serverName, config, host);
   } catch (error) {
     if (

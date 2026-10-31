@@ -1,8 +1,15 @@
 /**
- * semantius Daemon - Background worker that maintains persistent MCP connections
+ * semantius Daemon - Background worker that keeps a connection open across
+ * CLI invocations
  *
  * This is spawned as a detached process and manages a Unix socket for IPC.
- * It maintains the MCP server connection and forwards requests from CLI invocations.
+ * It runs in one of two modes, chosen by its config:
+ * - an MCP server config: it holds the MCP session and forwards listTools /
+ *   callTool frames from CLI invocations to it;
+ * - a PostgrestProxyConfig: it is an HTTP pass-through to one PostgREST
+ *   origin, so the local crud layer's requests reuse its open TLS connection
+ *   (see postgrest-proxy.ts). It holds no credentials: each request brings
+ *   its own Authorization header.
  */
 
 import {
@@ -34,6 +41,34 @@ import { enableFromEnv, logDaemonEvent } from './logger.js';
 // Types
 // ============================================================================
 
+/** A daemon that passes HTTP requests through to one PostgREST origin. */
+export interface PostgrestProxyConfig {
+  postgrestProxy: string;
+}
+
+export type DaemonConfig = ServerConfig | PostgrestProxyConfig;
+
+export function isPostgrestProxyConfig(
+  config: DaemonConfig,
+): config is PostgrestProxyConfig {
+  return 'postgrestProxy' in config;
+}
+
+/**
+ * The environment variable that hands a spawned daemon its config. Not argv:
+ * an HTTP server's config carries its bearer, and any user on the machine can
+ * read another's command line (/proc/<pid>/cmdline), but not its environment.
+ */
+export const DAEMON_CONFIG_ENV = 'SEMANTIUS_DAEMON_CONFIG';
+
+/**
+ * Set on the 502 a proxy daemon answers when the upstream request itself
+ * failed (DNS, TLS, connection refused), carrying the URI-encoded error
+ * message: the client rethrows it, so the failure reads as the network error
+ * it is rather than as an HTTP status from the server.
+ */
+export const PROXY_ERROR_HEADER = 'x-semantius-proxy-error';
+
 export interface DaemonRequest {
   id: string;
   type: 'listTools' | 'callTool' | 'ping' | 'close' | 'getInstructions';
@@ -59,9 +94,12 @@ interface PidFileContent {
 // ============================================================================
 
 /**
- * Write PID file with config hash for stale detection
+ * Claim the server's PID file for this process, with the config hash for
+ * stale detection. The file is created exclusively, so of two daemons started
+ * at once for the same server only one runs; the other gets false and exits.
+ * A file left by a process that is no longer running is taken over.
  */
-export function writePidFile(serverName: string, configHash: string): void {
+export function claimPidFile(serverName: string, configHash: string): boolean {
   const pidPath = getPidPath(serverName);
   const dir = dirname(pidPath);
 
@@ -74,8 +112,20 @@ export function writePidFile(serverName: string, configHash: string): void {
     configHash,
     startedAt: new Date().toISOString(),
   };
+  const text = JSON.stringify(content);
 
-  writeFileSync(pidPath, JSON.stringify(content), { mode: 0o600 });
+  try {
+    writeFileSync(pidPath, text, { mode: 0o600, flag: 'wx' });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+  }
+  const holder = readPidFile(serverName);
+  if (holder && holder.pid !== process.pid && isProcessRunning(holder.pid)) {
+    return false;
+  }
+  writeFileSync(pidPath, text, { mode: 0o600 });
+  return true;
 }
 
 /**
@@ -111,10 +161,10 @@ export function removePidFile(serverName: string): void {
 }
 
 /**
- * Remove socket file
+ * Remove one daemon's socket file
  */
-export function removeSocketFile(serverName: string): void {
-  const socketPath = getSocketPath(serverName);
+export function removeSocketFile(serverName: string, pid: number): void {
+  const socketPath = getSocketPath(serverName, pid);
   try {
     if (existsSync(socketPath)) {
       unlinkSync(socketPath);
@@ -223,6 +273,48 @@ export function flushPending(socket: WritableSocket): void {
 }
 
 // ============================================================================
+// PostgREST pass-through
+// ============================================================================
+
+/**
+ * Forward one request to `upstream` (an origin) and hand back the response
+ * as it came: the body still compressed (decompress: false), so the client's
+ * own fetch decodes it exactly as it would a direct response, and redirects
+ * unfollowed, so the client follows them as it would. A request that never
+ * got an answer comes back as a 502 marked with PROXY_ERROR_HEADER.
+ */
+export async function proxyRequest(
+  upstream: string,
+  req: Request,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const headers = new Headers(req.headers);
+  headers.delete('host');
+  try {
+    const response = await fetch(`${upstream}${url.pathname}${url.search}`, {
+      method: req.method,
+      headers,
+      body: req.body,
+      signal: req.signal,
+      redirect: 'manual',
+      decompress: false,
+    } as RequestInit);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch (error) {
+    return new Response(null, {
+      status: 502,
+      headers: {
+        [PROXY_ERROR_HEADER]: encodeURIComponent((error as Error).message),
+      },
+    });
+  }
+}
+
+// ============================================================================
 // Daemon Worker
 // ============================================================================
 
@@ -231,21 +323,25 @@ export function flushPending(socket: WritableSocket): void {
  */
 export async function runDaemon(
   serverName: string,
-  config: ServerConfig,
+  config: DaemonConfig,
 ): Promise<void> {
-  const socketPath = getSocketPath(serverName);
+  const socketPath = getSocketPath(serverName, process.pid);
   const configHash = getConfigHash(config);
   const timeoutMs = getDaemonTimeoutMs();
   const startedAtMs = Date.now();
 
   // Pick up the resolved log path the spawning CLI placed in our environment
-  // so daemon_stop events land in the same log file as everything else.
+  // so daemon_start/daemon_stop events land in the same log file as
+  // everything else.
   enableFromEnv();
 
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let mcpClient: ConnectedClient | null = null;
-  let server: ReturnType<typeof Bun.listen> | null = null;
+  let server: { stop: (closeActiveConnections?: boolean) => unknown } | null =
+    null;
   let ready = false;
+  // Proxied requests still running; the daemon is not idle while any are.
+  let inFlight = 0;
   const activeConnections = new Set<unknown>();
 
   // Cleanup function
@@ -293,16 +389,20 @@ export async function runDaemon(
     // Close socket server
     if (server) {
       try {
-        server.stop();
+        server.stop(true);
       } catch {
         // Ignore
       }
       server = null;
     }
 
-    // Clean up files
-    removeSocketFile(serverName);
-    removePidFile(serverName);
+    // Clean up files: our own socket, and the PID file only while it is
+    // still ours — a client that replaced this daemon may have let a
+    // successor claim it already.
+    removeSocketFile(serverName, process.pid);
+    if (readPidFile(serverName)?.pid === process.pid) {
+      removePidFile(serverName);
+    }
 
     debug(`[daemon:${serverName}] Cleanup complete`);
   };
@@ -313,6 +413,11 @@ export async function runDaemon(
       clearTimeout(idleTimer);
     }
     idleTimer = setTimeout(async () => {
+      // A request still running is not idle: look again a period later.
+      if (inFlight > 0) {
+        resetIdleTimer();
+        return;
+      }
       debug(`[daemon:${serverName}] Idle timeout reached, shutting down`);
       await cleanup('idle_timeout');
       process.exit(0);
@@ -336,28 +441,111 @@ export async function runDaemon(
     mkdirSync(socketDir, { recursive: true, mode: 0o700 });
   }
 
-  // Remove stale socket if exists
-  removeSocketFile(serverName);
+  // Two CLI invocations may each have started a daemon for this server: the
+  // one that claims the PID file runs, the other has nothing to do.
+  if (!claimPidFile(serverName, configHash)) {
+    debug(`[daemon:${serverName}] Another daemon already runs, exiting`);
+    process.exit(0);
+  }
 
-  // Write PID file
-  writePidFile(serverName, configHash);
-
-  // Connect to MCP server
   try {
-    debug(`[daemon:${serverName}] Connecting to MCP server...`);
-    mcpClient = await connectToServer(serverName, config);
-    debug(`[daemon:${serverName}] Connected to MCP server`);
+    server = isPostgrestProxyConfig(config)
+      ? listenAsProxy(config.postgrestProxy)
+      : await listenAsMcp(config);
   } catch (error) {
     console.error(
-      `[daemon:${serverName}] Failed to connect:`,
+      `[daemon:${serverName}] Failed to start:`,
       (error as Error).message,
     );
     await cleanup('startup_failed');
     process.exit(1);
   }
 
+  debug(`[daemon:${serverName}] Listening on ${socketPath}`);
+
+  // Start idle timer
+  resetIdleTimer();
+
+  // Written here, not by the CLI that spawned this daemon: it does not wait
+  // to see whether the start succeeded.
+  ready = true;
+  logDaemonEvent({
+    event: 'daemon_start',
+    server: serverName,
+    pid: process.pid,
+  });
+
+  // ------------------------------------------------------------------------
+
+  function listenAsProxy(upstream: string) {
+    const proxy = Bun.serve({
+      unix: socketPath,
+      // A slow query sends nothing for a while; the client's own timeout
+      // governs it, as on a direct connection. Without this, Bun resets a
+      // request after 10 s of silence. Its types reject idleTimeout next to
+      // `unix`, but the option applies there all the same (and
+      // server.timeout(req, 0) does not), hence the cast.
+      ...({ idleTimeout: 0 } as object),
+      maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+      fetch: async (req: Request) => {
+        inFlight++;
+        resetIdleTimer();
+        try {
+          return await proxyRequest(upstream, req);
+        } finally {
+          inFlight--;
+          resetIdleTimer();
+        }
+      },
+    });
+    // Open the upstream connection now, so the first request through this
+    // daemon already finds it. Any answer will do; none is needed.
+    fetch(upstream, { method: 'HEAD' }).catch(() => {});
+    return proxy;
+  }
+
+  async function listenAsMcp(mcpConfig: ServerConfig) {
+    debug(`[daemon:${serverName}] Connecting to MCP server...`);
+    mcpClient = await connectToServer(serverName, mcpConfig);
+    debug(`[daemon:${serverName}] Connected to MCP server`);
+
+    // Per-connection frame reassembly: a request may span several reads.
+    const inbound = new Map<unknown, LineReader>();
+    return Bun.listen({
+      unix: socketPath,
+      socket: {
+        open(socket) {
+          activeConnections.add(socket);
+          inbound.set(socket, createLineReader());
+          debug(`[daemon:${serverName}] Client connected`);
+        },
+        async data(socket, data) {
+          const reader = inbound.get(socket);
+          if (!reader) return;
+          for (const line of reader.push(data)) {
+            const response = await handleRequest(line);
+            writeAll(socket, `${JSON.stringify(response)}\n`);
+          }
+        },
+        drain(socket) {
+          flushPending(socket);
+        },
+        close(socket) {
+          activeConnections.delete(socket);
+          inbound.delete(socket);
+          debug(`[daemon:${serverName}] Client disconnected`);
+        },
+        error(socket, error) {
+          debug(`[daemon:${serverName}] Socket error: ${error.message}`);
+          activeConnections.delete(socket);
+          inbound.delete(socket);
+        },
+      },
+    });
+  }
+
   // Handle one complete request frame (see createLineReader)
-  const handleRequest = async (line: string): Promise<DaemonResponse> => {
+  async function handleRequest(line: string): Promise<DaemonResponse> {
     resetIdleTimer();
 
     let request: DaemonRequest;
@@ -438,59 +626,6 @@ export async function runDaemon(
         error: { code: 'EXECUTION_ERROR', message: err.message },
       };
     }
-  };
-
-  // Start Unix socket server
-  try {
-    // Per-connection frame reassembly: a request may span several reads.
-    const inbound = new Map<unknown, LineReader>();
-    server = Bun.listen({
-      unix: socketPath,
-      socket: {
-        open(socket) {
-          activeConnections.add(socket);
-          inbound.set(socket, createLineReader());
-          debug(`[daemon:${serverName}] Client connected`);
-        },
-        async data(socket, data) {
-          const reader = inbound.get(socket);
-          if (!reader) return;
-          for (const line of reader.push(data)) {
-            const response = await handleRequest(line);
-            writeAll(socket, `${JSON.stringify(response)}\n`);
-          }
-        },
-        drain(socket) {
-          flushPending(socket);
-        },
-        close(socket) {
-          activeConnections.delete(socket);
-          inbound.delete(socket);
-          debug(`[daemon:${serverName}] Client disconnected`);
-        },
-        error(socket, error) {
-          debug(`[daemon:${serverName}] Socket error: ${error.message}`);
-          activeConnections.delete(socket);
-          inbound.delete(socket);
-        },
-      },
-    });
-
-    debug(`[daemon:${serverName}] Listening on ${socketPath}`);
-
-    // Start idle timer
-    resetIdleTimer();
-
-    // Signal readiness by writing to stdout (parent will read this)
-    ready = true;
-    console.log('DAEMON_READY');
-  } catch (error) {
-    console.error(
-      `[daemon:${serverName}] Failed to start socket server:`,
-      (error as Error).message,
-    );
-    await cleanup('startup_failed');
-    process.exit(1);
   }
 }
 
@@ -499,24 +634,29 @@ export async function runDaemon(
 // ============================================================================
 
 /**
- * Handle `--daemon <serverName> <configJson>` when this program is launched
- * as a daemon (see getSelfCommand in daemon-client.ts). Called by index.ts
- * before normal argument parsing — which would otherwise reject `--daemon`
- * as an unknown option and exit, killing the daemon. Returns false when the
- * arguments are not a daemon launch; never returns on a daemon launch.
+ * Handle `--daemon <serverName>` when this program is launched as a daemon
+ * (see spawnDaemon in daemon-client.ts), with its config in
+ * DAEMON_CONFIG_ENV. Called by index.ts before normal argument parsing —
+ * which would otherwise reject `--daemon` as an unknown option and exit,
+ * killing the daemon. Returns false when the arguments are not a daemon
+ * launch; never returns on a daemon launch.
  */
 export function runDaemonFromArgv(argv: string[]): boolean {
   if (argv[0] !== '--daemon') return false;
 
   const serverName = argv[1];
-  const configJson = argv[2];
+  const configJson = process.env[DAEMON_CONFIG_ENV];
+  // Not passed on to anything this daemon starts (a stdio MCP server).
+  delete process.env[DAEMON_CONFIG_ENV];
 
   if (!serverName || !configJson) {
-    console.error('Usage: semantius --daemon <serverName> <configJson>');
+    console.error(
+      `Usage: ${DAEMON_CONFIG_ENV}=<configJson> semantius --daemon <serverName>`,
+    );
     process.exit(1);
   }
 
-  let config: ServerConfig;
+  let config: DaemonConfig;
   try {
     config = JSON.parse(configJson);
   } catch {

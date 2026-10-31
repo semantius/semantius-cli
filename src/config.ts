@@ -1066,10 +1066,21 @@ export function getSocketDir(): string {
 }
 
 /**
- * Get socket path for a specific server
+ * Socket path of one daemon process for a server. The PID is part of it
+ * because Bun unlinks a Unix socket's path when its server stops: with one
+ * path per server, a replaced daemon shutting down would delete the socket
+ * its successor had just created there.
  */
-export function getSocketPath(serverName: string): string {
-  return join(getSocketDir(), `${serverName}.sock`);
+export function getSocketPath(serverName: string, pid: number): string {
+  return join(getSocketDir(), `${serverName}-${pid}.sock`);
+}
+
+/**
+ * Where a daemon's stderr goes: it runs detached, so this file is the only
+ * record of why one failed to start (see spawnDaemon in daemon-client.ts).
+ */
+export function getDaemonStderrPath(serverName: string): string {
+  return join(getSocketDir(), `${serverName}.stderr`);
 }
 
 /**
@@ -1080,11 +1091,25 @@ export function getPidPath(serverName: string): string {
 }
 
 /**
- * Generate a hash of server config for stale detection
- * Returns consistent hash for identical configs
+ * Generate a hash of a daemon's config for stale detection: identical configs
+ * hash the same whatever their key order, and any difference at any depth —
+ * an HTTP server's bearer in `headers` above all — changes it, so a daemon
+ * started with a token the CLI has since replaced is never reused.
+ *
+ * Keys are sorted by a replacer at every level. Passing the top-level key
+ * list as JSON.stringify's replacer array instead (as this once did) also
+ * filters every nested object down to those names, so `headers` hashed as {}.
  */
-export function getConfigHash(config: ServerConfig): string {
-  const str = JSON.stringify(config, Object.keys(config).sort());
+export function getConfigHash(config: object): string {
+  const str = JSON.stringify(config, (_key, value: unknown) =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        )
+      : value,
+  );
   // Simple hash using Bun's native hashing
   const hasher = new Bun.CryptoHasher('sha256');
   hasher.update(str);

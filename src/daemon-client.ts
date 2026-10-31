@@ -4,16 +4,27 @@
  * Handles spawning daemons, detecting stale connections, and forwarding requests.
  */
 
-import { existsSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+} from 'node:fs';
+import { join } from 'node:path';
 import {
   type ServerConfig,
   debug,
   getConfigHash,
+  getDaemonStderrPath,
+  getPrefixedEnv,
   getSocketDir,
   getSocketPath,
   getTimeoutMs,
 } from './config.js';
 import {
+  DAEMON_CONFIG_ENV,
+  type DaemonConfig,
   type DaemonRequest,
   type DaemonResponse,
   createLineReader,
@@ -25,7 +36,7 @@ import {
   removeSocketFile,
   writeAll,
 } from './daemon.js';
-import { getResolvedLogFilePath, logDaemonEvent } from './logger.js';
+import { getResolvedLogFilePath } from './logger.js';
 
 // ============================================================================
 // Daemon Connection
@@ -121,47 +132,105 @@ async function sendRequest(
 const DAEMON_PING_TIMEOUT_MS = 5000;
 
 /**
- * Check if daemon is running and has matching config
+ * How long a daemon may run without its socket before it counts as wedged
+ * rather than still starting. An MCP daemon opens its socket only once the
+ * server's handshake is done, which on a cold serverless host has taken over
+ * 5 s.
  */
-function isDaemonValid(serverName: string, config: ServerConfig): boolean {
-  const socketPath = getSocketPath(serverName);
+const DAEMON_STARTUP_GRACE_MS = 30_000;
+
+/**
+ * Where a server's daemon stands, for this invocation:
+ * - ready: running with this config, its socket open: use it;
+ * - starting: running with this config, socket not open yet: go direct and
+ *   let it finish;
+ * - absent: none (a stale or mismatched one has just been cleared): go
+ *   direct, and start one for the next invocation;
+ * - unavailable: the socket directory is not this user's alone: go direct,
+ *   and start nothing.
+ */
+export type DaemonState =
+  | { state: 'ready'; socketPath: string }
+  | { state: 'starting' | 'absent' | 'unavailable' };
+
+/**
+ * Whether the socket directory is this user's alone: a real directory (not
+ * a symlink), owned by this uid, with no group or other access. It is in the
+ * shared /tmp under a predictable name, so another user can create it first;
+ * a client would then hand its requests (with their Authorization header,
+ * through a PostgREST proxy) to whatever listens there.
+ */
+function socketDirIsPrivate(): boolean {
+  const dir = getSocketDir();
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(dir);
+    if (
+      stat.isDirectory() &&
+      stat.uid === process.getuid?.() &&
+      (stat.mode & 0o077) === 0
+    ) {
+      return true;
+    }
+    debug(`[daemon-client] ${dir} is not private to this user; no daemon`);
+  } catch (error) {
+    debug(`[daemon-client] ${dir} is unusable: ${(error as Error).message}`);
+  }
+  return false;
+}
+
+/**
+ * Check whether a daemon for this server is running with this config, and
+ * clear away one that is dead, wedged, or was started with another config.
+ */
+export function getDaemonState(
+  serverName: string,
+  config: DaemonConfig,
+): DaemonState {
+  if (!socketDirIsPrivate()) return { state: 'unavailable' };
+
   const pidInfo = readPidFile(serverName);
 
   // No PID file = no daemon
   if (!pidInfo) {
     debug(`[daemon-client] No PID file for ${serverName}`);
-    return false;
+    return { state: 'absent' };
   }
 
   // Check if process is actually running
   if (!isProcessRunning(pidInfo.pid)) {
     debug(`[daemon-client] Process ${pidInfo.pid} not running, cleaning up`);
     removePidFile(serverName);
-    removeSocketFile(serverName);
-    return false;
+    removeSocketFile(serverName, pidInfo.pid);
+    return { state: 'absent' };
   }
 
-  // Check if config matches
-  const currentHash = getConfigHash(config);
-  if (pidInfo.configHash !== currentHash) {
+  // Check if config matches. A mismatch is routine: a refreshed bearer is
+  // part of an HTTP server's config.
+  if (pidInfo.configHash !== getConfigHash(config)) {
     debug(
       `[daemon-client] Config hash mismatch for ${serverName}, killing old daemon`,
     );
     killProcess(pidInfo.pid);
     removePidFile(serverName);
-    removeSocketFile(serverName);
-    return false;
+    removeSocketFile(serverName, pidInfo.pid);
+    return { state: 'absent' };
   }
 
   // Check if socket exists
+  const socketPath = getSocketPath(serverName, pidInfo.pid);
   if (!existsSync(socketPath)) {
+    if (Date.now() - Date.parse(pidInfo.startedAt) < DAEMON_STARTUP_GRACE_MS) {
+      debug(`[daemon-client] Daemon for ${serverName} is still starting`);
+      return { state: 'starting' };
+    }
     debug(`[daemon-client] Socket missing for ${serverName}, cleaning up`);
     killProcess(pidInfo.pid);
     removePidFile(serverName);
-    return false;
+    return { state: 'absent' };
   }
 
-  return true;
+  return { state: 'ready', socketPath };
 }
 
 /**
@@ -180,19 +249,22 @@ export function getSelfCommand(main: string = Bun.main): string[] {
 }
 
 /**
- * Spawn a new daemon process for a server
+ * Start a daemon for a server in the background, without waiting for it:
+ * this invocation goes direct either way, and the next one finds the daemon
+ * ready (getDaemonState). Waiting would put the daemon's whole startup, for
+ * an MCP server the handshake with a possibly cold serverless host, in front
+ * of this command.
+ *
+ * The daemon runs detached, in its own session, so a Ctrl-C at the terminal
+ * does not reach it. Its stderr goes to getDaemonStderrPath, which the next
+ * invocation shows under <PREFIX>_DEBUG when no daemon came up.
  */
-async function spawnDaemon(
-  serverName: string,
-  config: ServerConfig,
-): Promise<boolean> {
-  debug(`[daemon-client] Spawning daemon for ${serverName}`);
+function spawnDaemon(serverName: string, config: DaemonConfig): void {
+  debug(`[daemon-client] Spawning daemon for ${serverName} in the background`);
 
-  const configJson = JSON.stringify(config);
-
-  // Hand the daemon the exact resolved log destination so its stop events
-  // land in the same file (see getResolvedLogFilePath for why it cannot
-  // re-derive the path itself).
+  // Hand the daemon the exact resolved log destination so its start and stop
+  // events land in the same file (see getResolvedLogFilePath for why it
+  // cannot re-derive the path itself).
   const logPath = getResolvedLogFilePath();
 
   // Spawn the daemon as a second instance of THIS program. In a compiled
@@ -201,110 +273,78 @@ async function spawnDaemon(
   // and `bun` itself need not be installed. process.execPath is the binary
   // (compiled) or bun (dev mode, where Bun.main is the entry script).
   // index.ts routes `--daemon` to runDaemon before normal arg parsing.
-  const proc = Bun.spawn({
-    cmd: [...getSelfCommand(), '--daemon', serverName, configJson],
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: {
-      ...process.env,
-      ...(logPath ? { SEMANTIUS_LOG_FILE: logPath } : {}),
-    },
-  });
-
-  // Wait for daemon to signal readiness or fail
-  return new Promise((resolve) => {
-    let resolved = false;
-
-    const reader = proc.stdout.getReader();
-
-    const checkReady = async () => {
-      try {
-        const { value, done } = await reader.read();
-        // stdout closed without DAEMON_READY: the daemon is exiting, and the
-        // exit handler below reports why.
-        if (done) return;
-
-        const text = new TextDecoder().decode(value);
-        if (text.includes('DAEMON_READY')) {
-          if (!resolved) {
-            resolved = true;
-            logDaemonEvent({
-              event: 'daemon_start',
-              server: serverName,
-              pid: proc.pid,
-            });
-            // Don't await the process, let it run detached
-            proc.unref();
-            resolve(true);
-          }
-        } else {
-          // Keep reading
-          checkReady();
-        }
-      } catch {
-        if (!resolved) {
-          resolved = true;
-          resolve(false);
-        }
-      }
-    };
-
-    checkReady();
-
-    // Timeout after 5 seconds (fast fallback to direct connection)
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        debug(`[daemon-client] Daemon spawn timeout for ${serverName}`);
-        resolve(false);
-      }
-    }, 5000);
-
-    // Check for early exit. The daemon explains a failed start on stderr;
-    // once it has exited that stream is finite, so reading it cannot hold
-    // this process open the way reading a running daemon's would.
-    proc.exited.then(async (code) => {
-      if (resolved) return;
-      resolved = true;
-      const stderr = (
-        await new Response(proc.stderr).text().catch(() => '')
-      ).trim();
-      debug(
-        `[daemon-client] Daemon exited with code ${code} before it was ready${stderr ? `:\n${stderr}` : ''}`,
-      );
-      resolve(false);
+  try {
+    const proc = Bun.spawn({
+      cmd: [...getSelfCommand(), '--daemon', serverName],
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: Bun.file(getDaemonStderrPath(serverName)),
+      detached: true,
+      env: {
+        ...process.env,
+        [DAEMON_CONFIG_ENV]: JSON.stringify(config),
+        ...(logPath ? { SEMANTIUS_LOG_FILE: logPath } : {}),
+      },
     });
-  });
+    proc.unref();
+  } catch (error) {
+    debug(
+      `[daemon-client] Could not spawn a daemon for ${serverName}: ${(error as Error).message}`,
+    );
+  }
 }
 
 /**
- * Get or create a daemon connection for a server
- * Returns null if daemon mode fails (caller should fallback to direct connection)
+ * Under <PREFIX>_DEBUG, show the end of what the last daemon for a server
+ * wrote to stderr, when none is running now: why it failed to start, as a
+ * rule.
+ */
+function reportDaemonStderr(serverName: string): void {
+  if (!getPrefixedEnv('DEBUG')) return;
+  try {
+    const text = readFileSync(getDaemonStderrPath(serverName), 'utf8')
+      .trimEnd()
+      .split('\n')
+      .slice(-20)
+      .join('\n');
+    if (text) {
+      debug(
+        `[daemon-client] The last daemon for ${serverName} wrote to stderr:\n${text}`,
+      );
+    }
+  } catch {
+    // No daemon has run for this server yet
+  }
+}
+
+/**
+ * The daemon's state (getDaemonState), after starting one in the background
+ * when there is none: the caller goes direct unless it is ready.
+ */
+export function ensureDaemon(
+  serverName: string,
+  config: DaemonConfig,
+): DaemonState {
+  const daemon = getDaemonState(serverName, config);
+  if (daemon.state === 'absent') {
+    reportDaemonStderr(serverName);
+    spawnDaemon(serverName, config);
+  }
+  return daemon;
+}
+
+/**
+ * Get a connection to a server's MCP daemon, or null when this invocation
+ * must connect directly: none was ready (one is then started for the next
+ * invocation), or it did not answer.
  */
 export async function getDaemonConnection(
   serverName: string,
   config: ServerConfig,
 ): Promise<DaemonConnection | null> {
-  const socketPath = getSocketPath(serverName);
-
-  // Check if valid daemon exists
-  if (!isDaemonValid(serverName, config)) {
-    // Spawn new daemon
-    const spawned = await spawnDaemon(serverName, config);
-    if (!spawned) {
-      debug(`[daemon-client] Failed to spawn daemon for ${serverName}`);
-      return null;
-    }
-
-    // Wait a bit for socket to be ready
-    await new Promise((r) => setTimeout(r, 100));
-  }
-
-  // Verify socket exists
-  if (!existsSync(socketPath)) {
-    debug(`[daemon-client] Socket not found after spawn for ${serverName}`);
-    return null;
-  }
+  const daemon = ensureDaemon(serverName, config);
+  if (daemon.state !== 'ready') return null;
+  const { socketPath } = daemon;
 
   // Test connection with ping
   try {
@@ -403,8 +443,18 @@ export async function cleanupOrphanedDaemons(): Promise<void> {
       if (pidInfo && !isProcessRunning(pidInfo.pid)) {
         debug(`[daemon-client] Cleaning up orphaned daemon: ${serverName}`);
         removePidFile(serverName);
-        removeSocketFile(serverName);
+        removeSocketFile(serverName, pidInfo.pid);
       }
+    }
+
+    // A daemon killed outright (SIGKILL, a crash) leaves its socket behind,
+    // and its PID file may since name a successor: go by the PID in the name.
+    const sockets = await Array.fromAsync(
+      new Bun.Glob('*-*.sock').scan(socketDir),
+    );
+    for (const file of sockets) {
+      const pid = Number(/-(\d+)\.sock$/.exec(file)?.[1]);
+      if (pid && !isProcessRunning(pid)) unlinkSync(join(socketDir, file));
     }
   } catch {
     // Ignore errors during cleanup scan
@@ -434,9 +484,11 @@ export async function stopAllDaemons(): Promise<void> {
     for (const file of files) {
       const serverName = file.replace('.pid', '');
       const pidInfo = readPidFile(serverName);
-      if (pidInfo) killProcess(pidInfo.pid);
+      if (pidInfo) {
+        killProcess(pidInfo.pid);
+        removeSocketFile(serverName, pidInfo.pid);
+      }
       removePidFile(serverName);
-      removeSocketFile(serverName);
     }
   } catch (error) {
     debug(`[daemon-client] stopAllDaemons failed: ${(error as Error).message}`);
