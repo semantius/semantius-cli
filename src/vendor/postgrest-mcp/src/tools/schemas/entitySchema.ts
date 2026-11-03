@@ -19,7 +19,7 @@ export const entitySchema = z.looseObject({
     .string()
     .optional()
     .describe(
-      'Permission required to SELECT from this table, by name. It must already exist: this is a foreign key to permissions(permission_name), so an unregistered name is rejected with a foreign-key error rather than accepted. Create the permission first, then the entity.'
+      'Permission required to SELECT from this table, by name. It must already exist: this is a foreign key to permissions(permission_name), so an unregistered name is rejected with a foreign-key error rather than accepted. Create the permission first, then the entity. A rollup between two entities with different view permissions needs include_hidden_rows (90269).'
     ),
   edit_permission: z
     .string()
@@ -50,14 +50,14 @@ export const entitySchema = z.looseObject({
   edit_mode: z.enum(['auto', 'sidebar', 'modal', 'page']).optional().describe('UI edit mode for records of this table: auto, sidebar, modal, or page'),
   cube_mode: z.enum(['disabled', 'auto']).optional().describe('Cube mode for OLAP cube generation'),
   audit_log: z.boolean().optional().describe('When TRUE, DML operations on this table are logged to audit_record_logs'),
-  computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries, evaluated and stored on every insert and update: each entry derives the named field from the same record before the write'),
+  computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries, evaluated and stored on every insert and update: each entry derives the named field from the same record before the write. Saving applies the rules to existing records, and a record that cannot take its new value refuses the save (90908). A named field gets ctype computed, and input_type default or readonly becomes disabled. A rule cannot name a rollup field (90907).'),
   validation_rules: z.array(z.any()).optional().describe('Ordered list of {code, message, jsonlogic, description?} entries; each must evaluate truthy for the write to succeed'),
   select_rule: z.record(z.string(), z.any()).optional()
-    .describe('JsonLogic rule evaluated per row for the FOR SELECT RLS policy: true = the current user may see the record. Empty = no per-row rule.'),
+    .describe('JsonLogic rule evaluated per row for the FOR SELECT RLS policy: true = the current user may see the record. Empty = no per-row rule. Setting a rule on an entity that a rollup aggregates over needs include_hidden_rows on that rollup (90269).'),
   entity_type: z.enum(['operational_workflow', 'operational_record', 'catalog', 'junction', 'computed', 'unclassified']).optional()
     .describe('What kind of data this entity holds. operational_workflow: records move through a gated lifecycle (even one gated step such as draft to submitted counts). operational_record: everyday business records without such a lifecycle. catalog: reference or lookup data maintained by admins. junction: a pure link between entities with no fields of its own; the platform labels its rows by the records they link. computed: every field is derived and never written directly. unclassified: not classified yet (the default). Set it on create or change it on update like any other column.'),
   catalog_entity_code: z.string().optional()
-    .describe('Stable canonical identity this entity realizes (uber-model code, e.g. "vendors"); the rename/dialect/silo join key. table_name holds the deployed name. Write-once: set on create or filled once while empty, then never changed. Empty = not generated from a catalog spec.'),
+    .describe('Stable canonical identity this entity realizes (domain-map code, e.g. "vendors"); the rename/dialect/silo join key. table_name holds the deployed name. Write-once: set on create or filled once while empty, then never changed. Empty = not generated from a catalog spec.'),
   catalog_owner_module: z.string().optional()
     .describe('For an embedded-master placeholder, the slug of the module that should own this entity. Soft pointer (not an FK); empty when this module is the owner or the entity is local.'),
   catalog_entity_aliases: z.array(z.any()).optional()

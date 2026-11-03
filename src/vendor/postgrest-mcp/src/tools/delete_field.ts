@@ -31,7 +31,8 @@ export const deleteFieldTool: Tool<typeof inputSchema, undefined> = {
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead.`,
+      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead. ` +
+      `Refused with 90266 while a rollup of another entity uses the field as its link_field or value_field.`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo, request }) => {

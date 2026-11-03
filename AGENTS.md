@@ -77,11 +77,22 @@ one JSON file. Its rules:
   `limit` does not end a read, because PostgREST's `db-max-rows` may cut it;
   only an empty page does. There is no unpaged GET in the client.
 - **Never trust `Bun.file(p).slice(a, b).stream()` to stop at `b`.** On Windows
-  a small slice of a file over ~75 KB streams on past its end; `sliceStream`
-  (`format.ts`) counts the bytes and cuts it off.
+  a small slice of a file over ~75 KB streams on past its end. On Linux a slice
+  that stops well short of the end of the file delivers its bytes and never
+  closes. `sliceStream` (`format.ts`) counts the bytes and leaves as soon as they
+  are in, never on the next chunk.
 - **The import needs `fix_id_sequence`** on the target: explicit ids do not move
   the sequence. Databases on 0.5.0-beta1 lack the RPC until they are rebuilt;
   the import stops at `PGRST202` before writing any record.
+- **A rollup or computed `ctype` is not core.** `isCoreCtype` (`format.ts`) copies
+  the platform's `dd_ctype_is_core`: such a field is created and patched like any
+  other, but its column is calculated by the target and never written from the
+  file.
+- **Rollups are saved last.** They follow every other field and precede the entity
+  columns that name fields, with the rollups they read first (`orderRollups`),
+  because the platform checks a definition's fields when it is saved. A table a
+  rollup aggregates over is written one batch at a time: with two at once the
+  platform can leave a parent's total wrong, with no error.
 
 ## Tests that spawn the CLI
 

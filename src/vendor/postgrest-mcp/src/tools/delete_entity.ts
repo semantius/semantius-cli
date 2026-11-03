@@ -31,7 +31,10 @@ export const deleteEntityTool: Tool<typeof inputSchema, undefined> = {
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "table_name" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead.`,
+      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead. ` +
+      `Refused with 90260 while fields of other entities reference it, whatever their reference_delete_mode: find them with \`read_field\` filters "reference_table=eq.<table_name>", then delete them or point them at another entity first. ` +
+      `Refused with 90266 while a rollup of another entity aggregates over it. ` +
+      `To delete a whole module and all its tables at once, use \`delete_module\` (cascades); do not loop \`delete_entity\`.`,
     inputSchema,
   },
   handler: async ({ table_name, accept }, { authInfo, request }) => {

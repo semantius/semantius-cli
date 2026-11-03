@@ -7,8 +7,9 @@
  * re-import of unchanged data sends no write at all.
  *
  *   1. module, permissions, hierarchy, roles, grants (import_module only);
- *   2. schema: entities, fields, then the entity columns that name fields
- *      (validation rules and select_rule among them, so every record is
+ *   2. schema: entities, fields with the rollups last (saving one needs the
+ *      fields it names), then the entity columns that name fields (computed
+ *      fields, validation rules and select_rule among them, so every record is
  *      written under the rules, on a first import as on a re-import);
  *   3. the schema cache, when the schema changed on a cloud host;
  *   4. records, table by table in foreign-key order, keyed on the id column;
@@ -44,11 +45,18 @@ import {
   type TransferContext,
   type TransferDoc,
   type TransferFile,
+  isCoreCtype,
   omit,
   pick,
   readTransferFile,
 } from './format.js';
-import { type Reference, SelfReferences, planWrites } from './graph.js';
+import {
+  type Reference,
+  type RollupField,
+  SelfReferences,
+  orderRollups,
+  planWrites,
+} from './graph.js';
 import {
   type PostgrestClient,
   PostgrestError,
@@ -104,6 +112,7 @@ export async function importTransfer(
       `${path} carries no module; import it with import_entities`,
     );
   }
+  refuseLostRollups(doc);
 
   const moduleResult = kind === 'module' ? await importModule(ctx, doc) : {};
   const outcomes = new Map<string, EntityResult>(
@@ -472,6 +481,25 @@ function markUpdated(outcome: EntityResult | undefined): void {
   if (outcome && outcome.entity === 'unchanged') outcome.entity = 'updated';
 }
 
+const hasRollup = (f: Row): boolean =>
+  !!f.rollup && Object.keys(f.rollup as object).length > 0;
+
+/**
+ * The marker without a definition comes from a CLI that did not export
+ * rollups. Imported, it would be a plain column frozen at the exported values.
+ */
+function refuseLostRollups(doc: TransferDoc): void {
+  for (const e of schemaEntries(doc)) {
+    for (const f of e.fields) {
+      if (f.ctype === 'rollup' && !hasRollup(f)) {
+        throw new Error(
+          `${e.table_name}.${f.field_name}: the file marks it as a rollup but carries no definition, so an older CLI exported it. Export it again, or add the definition under "rollup" in the file.`,
+        );
+      }
+    }
+  }
+}
+
 /** Entities, then fields, then the entity columns that name fields. */
 async function importSchema(
   ctx: TransferContext,
@@ -557,7 +585,10 @@ async function importSchema(
   }
 
   // 2. Fields. The platform creates the core fields with the entity, so
-  //    they are only ever patched, and never in their fixed columns.
+  //    they are only ever patched, and never in their fixed columns. A rollup
+  //    goes last, new or changed, its whole patch with it (the platform checks
+  //    the format and the definition together), as in ensure_entities: saving
+  //    one needs its link and value fields, and computed_fields may read it.
   const targetFields = indexBy(
     await pg.readIn('fields', 'table_name', [...withSchema], {
       key: 'id',
@@ -567,45 +598,61 @@ async function importSchema(
     'field_name',
   );
   const insertable = FIELD_COLUMNS.filter((c) => !FIELD_READ_ONLY.includes(c));
+  const patchField = async (
+    table: string,
+    f: Row,
+    current: Row,
+    counts: Counts,
+  ): Promise<void> => {
+    const fixed = [
+      'field_name',
+      ...FIELD_READ_ONLY,
+      ...FIELD_CREATE_ONLY,
+      ...(isCoreCtype(f.ctype) || isCoreCtype(current.ctype)
+        ? CORE_FIELD_FIXED
+        : []),
+    ];
+    const change = changes(
+      f,
+      current,
+      FIELD_COLUMNS.filter((c) => !fixed.includes(c)),
+    );
+    if (change) {
+      await withContext(`updating field ${table}.${f.field_name}`, () =>
+        patch(
+          pg,
+          'fields',
+          [eq('table_name', table), eq('field_name', f.field_name)],
+          change,
+        ),
+      );
+      counts.updated++;
+      changed = true;
+    } else {
+      counts.unchanged++;
+    }
+  };
+
   const newFields: Row[] = [];
+  const rollups: Array<RollupField & { current?: Row; counts: Counts }> = [];
   for (const e of entities) {
     const counts: Counts = { created: 0, updated: 0, unchanged: 0 };
     (outcomes.get(e.table_name) as EntityResult).fields = counts;
     for (const f of e.fields) {
       const current = targetFields.get(`${e.table_name}\n${f.field_name}`);
-      const core = Boolean(f.ctype) || Boolean(current?.ctype);
-      if (!current) {
-        if (core) continue;
-        newFields.push({ table_name: e.table_name, ...pick(f, insertable) });
-        counts.created++;
-        continue;
-      }
-      const fixed = [
-        'field_name',
-        ...FIELD_READ_ONLY,
-        ...FIELD_CREATE_ONLY,
-        ...(core ? CORE_FIELD_FIXED : []),
-      ];
-      const change = changes(
-        f,
-        current,
-        FIELD_COLUMNS.filter((c) => !fixed.includes(c)),
-      );
-      if (change) {
-        await withContext(
-          `updating field ${e.table_name}.${f.field_name}`,
-          () =>
-            patch(
-              pg,
-              'fields',
-              [eq('table_name', e.table_name), eq('field_name', f.field_name)],
-              change,
-            ),
-        );
-        counts.updated++;
-        changed = true;
+      if (!current && isCoreCtype(f.ctype)) continue;
+      if (hasRollup(f)) {
+        rollups.push({ table: e.table_name, field: f, current, counts });
+      } else if (current) {
+        await patchField(e.table_name, f, current, counts);
       } else {
-        counts.unchanged++;
+        // `rollup: {}` is the column's default, and a target on an older
+        // platform has no such column to send it to.
+        newFields.push({
+          table_name: e.table_name,
+          ...omit(pick(f, insertable), ['rollup']),
+        });
+        counts.created++;
       }
     }
   }
@@ -613,6 +660,21 @@ async function importSchema(
     await withContext('creating fields', () =>
       insertRows(pg, 'fields', newFields),
     );
+    changed = true;
+  }
+  for (const { table, field, current, counts } of orderRollups(rollups)) {
+    if (current) {
+      await patchField(table, field, current, counts);
+      continue;
+    }
+    await withContext(
+      `creating rollup field ${table}.${field.field_name}`,
+      () =>
+        insertRows(pg, 'fields', [
+          { table_name: table, ...pick(field, insertable) },
+        ]),
+    );
+    counts.created++;
     changed = true;
   }
 
@@ -673,8 +735,10 @@ interface TableState {
   idColumn: string;
   /** Target catalog: field name → field. */
   catalog: Map<string, Row>;
-  /** Audit and computed columns: the platform sets them. */
+  /** Audit, computed and rollup columns: the platform sets them. */
   skip: Set<string>;
+  /** A rollup aggregates over this table: see writeTable. */
+  aggregated: boolean;
   /** Columns written, from the first record. */
   columns?: string[];
   userColumns: string[];
@@ -741,6 +805,17 @@ async function importRecords(
   })) {
     fieldsOf.get(field.table_name as string)?.push(field);
   }
+  // Every rollup on the target, not just the file's: the parent may not be in it.
+  const aggregated = new Set(
+    (
+      await pg.readAll('fields', {
+        filters: [eq('ctype', 'rollup')],
+        key: 'id',
+      })
+    )
+      .map((f) => (f.rollup as Row | undefined)?.link_field)
+      .map((link) => String(link).split('.')[0]),
+  );
 
   const states = new Map<string, TableState>();
   const references: Reference[] = [];
@@ -753,7 +828,7 @@ async function importRecords(
       : [];
     const skip = new Set<string>([
       ...fields
-        .filter((f) => f.ctype === 'audit')
+        .filter((f) => f.ctype === 'audit' || f.ctype === 'rollup')
         .map((f) => f.field_name as string),
       ...computed.filter((n): n is string => typeof n === 'string'),
     ]);
@@ -766,6 +841,7 @@ async function importRecords(
       idColumn: (entity.id_column as string) || 'id',
       catalog: new Map(fields.map((f) => [f.field_name as string, f])),
       skip,
+      aggregated: aggregated.has(table),
       userColumns: [],
       result,
     });
@@ -835,8 +911,10 @@ class RecordWriter {
       ? new SelfReferences(state.table, state.idColumn, selfReferences)
       : undefined;
     // Batches of a self-referencing table wait for each other: a later
-    // batch may point at rows of an earlier one.
-    const flight = new InFlight(self ? 1 : IN_FLIGHT);
+    // batch may point at rows of an earlier one. So do those of a table a
+    // rollup aggregates over: with two at once, the platform can leave a
+    // parent's total wrong, with no error.
+    const flight = new InFlight(self || state.aggregated ? 1 : IN_FLIGHT);
     const count = pass === 1 ? 'first' : 'second';
     let columns: string[] | undefined;
     let batch: Row[] = [];

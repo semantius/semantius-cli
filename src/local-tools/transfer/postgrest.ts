@@ -33,10 +33,11 @@ const TRANSIENT_STATUS = new Set([429, 502, 503, 504]);
 /** Of those, the ones that prove the request never ran. */
 const NEVER_RAN_STATUS = new Set([429, 503]);
 /**
- * Platform errors that ask to be retried: 90232, a table held locked by
- * another writer past fix_id_sequence's 2 s lock_timeout.
+ * Errors that ask to be retried: 90232, a table held locked by another writer
+ * past fix_id_sequence's 2 s lock_timeout, and 40P01, a deadlock PostgreSQL
+ * ended by rolling this statement back.
  */
-const RETRY_CODES = new Set(['90232']);
+const RETRY_CODES = new Set(['90232', '40P01']);
 
 /** A failed request: PostgREST's error code when it gave one. */
 export class PostgrestError extends Error {

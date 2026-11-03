@@ -14,6 +14,10 @@
  *   - POST /entities creates the table and its core fields (id, label,
  *     created_at / updated_at); data rows get audit timestamps and computed
  *     columns (a small JsonLogic subset);
+ *   - a field's derived ctype: computed when its entity's computed_fields name
+ *     it, rollup when it has a definition, whose link field (90262), value field
+ *     (90264) and filter columns (90265) must exist when it is saved. A rollup
+ *     column cannot be written, and no aggregate is ever calculated;
  *   - serial ids whose sequence does not advance past an explicit id;
  *   - /rpc/get_userinfo in the platform's shape ({user_id, …}) and
  *     /rpc/fix_id_sequence (ok, missing = PGRST202, denied = 42501, null,
@@ -126,6 +130,25 @@ export function evaluate(
   }
 }
 
+/** The columns a rollup filter names. */
+function filterVars(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(filterVars);
+  if (!node || typeof node !== 'object') return [];
+  return Object.entries(node).flatMap(([op, arg]) =>
+    op === 'var' ? [String(arg)] : filterVars(arg),
+  );
+}
+
+/** What a rollup column holds with no child: the format's zero value. */
+function emptyAggregate(format: unknown): unknown {
+  if (format === 'date' || format === 'date-time') return null;
+  return ['integer', 'int32', 'int64', 'number', 'float', 'double'].includes(
+    String(format),
+  )
+    ? 0
+    : '';
+}
+
 function compare(a: unknown, b: unknown): number {
   if (a === b) return 0;
   if (a === null || a === undefined) return 1;
@@ -196,6 +219,8 @@ export class FakePostgrest {
   intercept?: (request: Captured) => Response | undefined;
   /** Milliseconds every request takes. */
   latency = 0;
+  /** Per table, the most writes in progress at once (needs `latency`). */
+  readonly peakWrites = new Map<string, number>();
   /** fix_id_sequence answers 90232 (table busy) this many times first. */
   busy = 0;
   /** Bearer tokens GET /api/auth/token issued for an x-api-key, in order. */
@@ -210,6 +235,7 @@ export class FakePostgrest {
   private readonly store = new Map<string, Map<string, Row>>();
   private readonly sequences = new Map<string, number>();
   private readonly sorted = new Map<string, number[]>();
+  private readonly writing = new Map<string, number>();
   private tick = 0;
 
   constructor(
@@ -349,6 +375,7 @@ export class FakePostgrest {
         cube_type: 'auto',
         input_type_rule: {},
         catalog_field_code: '',
+        rollup: {},
       }),
     });
     this.define('users', {
@@ -388,6 +415,13 @@ export class FakePostgrest {
     });
   }
 
+  /** Set columns past the triggers, as the platform's rollup upkeep does. */
+  setStored(table: string, key: unknown, values: Row): void {
+    const row = this.tableOf(table).get(String(key));
+    if (!row) throw new Error(`fake: no ${table} row ${key}`);
+    Object.assign(row, values);
+  }
+
   /** The rows of a table, ordered by key; copies. */
   rows(table: string): Row[] {
     const def = this.defOf(table);
@@ -424,7 +458,16 @@ export class FakePostgrest {
       prefer: headers.get('prefer') ?? undefined,
     };
     this.requests.push(captured);
-    if (this.latency) await Bun.sleep(this.latency);
+    if (this.latency) {
+      const step = method === 'GET' ? 0 : 1;
+      const writes = (this.writing.get(target) ?? 0) + step;
+      this.writing.set(target, writes);
+      if (writes > (this.peakWrites.get(target) ?? 0)) {
+        this.peakWrites.set(target, writes);
+      }
+      await Bun.sleep(this.latency);
+      this.writing.set(target, (this.writing.get(target) as number) - step);
+    }
     const intercepted = this.intercept?.(captured);
     if (intercepted) return intercepted;
     if (url.pathname === '/api/auth/token' && headers.get('x-api-key')) {
@@ -711,6 +754,7 @@ export class FakePostgrest {
     let row = input;
     if (def.defaults) row = { ...def.defaults(row), ...row };
     if (def.generated) row[def.key] = def.generated(row);
+    if (table === 'fields') this.deriveField(row);
     if (def.serial && (row[def.key] === undefined || row[def.key] === null)) {
       const next = this.sequences.get(table) ?? 1;
       this.sequences.set(table, next + 1);
@@ -741,14 +785,91 @@ export class FakePostgrest {
 
   private updateRow(table: string, row: Row, changes: Row): void {
     const before = { ...row };
-    Object.assign(row, changes);
-    if (this.defOf(table).data) this.triggers(table, row, false);
-    this.checkUnique(table, row);
     this.undo?.push(() => {
       for (const k of Object.keys(row)) delete row[k];
       Object.assign(row, before);
     });
+    Object.assign(row, changes);
+    if (this.defOf(table).data) this.triggers(table, row, false, before);
+    if (table === 'fields') this.deriveField(row, before);
+    this.checkUnique(table, row);
     this.touched.push({ table, row });
+    if (table === 'entities' && 'computed_fields' in changes) {
+      // The platform's no-op write, which re-derives the entity's fields.
+      for (const field of this.fieldsOf(String(row.table_name))) {
+        this.updateRow('fields', field, {});
+      }
+    }
+  }
+
+  /**
+   * The derived ctype of a field, before it is stored, as the triggers on
+   * fields have it. The label column keeps its marker, whatever names it.
+   */
+  private deriveField(row: Row, before?: Row): void {
+    const disable = () => {
+      if (row.input_type === 'default' || row.input_type === 'readonly') {
+        row.input_type = 'disabled';
+      }
+    };
+    if (!row.ctype || row.ctype === 'computed') {
+      const rules = this.tableOf('entities').get(String(row.table_name))
+        ?.computed_fields as Row[] | undefined;
+      if (rules?.some((c) => c.name === row.field_name)) {
+        row.ctype = 'computed';
+        disable();
+      } else {
+        row.ctype = '';
+      }
+    }
+    const definition = row.rollup as Row;
+    if (!Object.keys(definition ?? {}).length) {
+      if (row.ctype === 'rollup') row.ctype = '';
+      return;
+    }
+    if (!before || !Bun.deepEquals(before.rollup, row.rollup)) {
+      this.checkRollup(row, definition);
+    }
+    row.ctype = 'rollup';
+    disable();
+  }
+
+  /** What the platform checks when a rollup definition is saved. */
+  private checkRollup(row: Row, definition: Row): void {
+    const fields = this.tableOf('fields');
+    const name = `Rollup ${row.field_name} on ${row.table_name}`;
+    const link = String(definition.link_field);
+    const [child] = link.split('.');
+    const linkField = fields.get(link);
+    if (
+      (linkField?.format !== 'reference' && linkField?.format !== 'parent') ||
+      linkField.reference_table !== row.table_name
+    ) {
+      throw fail(
+        400,
+        '90262',
+        `${name}: link_field ${link} must name a reference or parent field of another entity that points at ${row.table_name}`,
+      );
+    }
+    if (definition.function !== 'count') {
+      const value = String(definition.value_field);
+      if (!fields.has(`${child}.${value}`)) {
+        throw fail(
+          400,
+          '90264',
+          `${name}: value_field ${value} must name a field of ${child}`,
+        );
+      }
+    }
+    for (const column of filterVars(definition.filter)) {
+      if (!fields.has(`${child}.${column}`)) {
+        throw fail(
+          400,
+          '90265',
+          `${name}: the filter cannot be compiled: column ${column} does not exist on ${child}`,
+        );
+      }
+    }
   }
 
   /** POST /entities: the physical table and its core fields. */
@@ -804,9 +925,21 @@ export class FakePostgrest {
       this.insertRow('fields', { ...field, table_name: table });
   }
 
-  /** Audit timestamps and computed columns of a data row. */
-  private triggers(table: string, row: Row, inserting: boolean): void {
+  /** Audit timestamps, rollup and computed columns of a data row. */
+  private triggers(
+    table: string,
+    row: Row,
+    inserting: boolean,
+    before?: Row,
+  ): void {
     const entity = this.tableOf('entities').get(table) as Row;
+    // The rollup guard, ahead of the computed fields as on the platform: a
+    // written value is ignored, with no error.
+    for (const field of this.fieldsOf(table)) {
+      if (field.ctype !== 'rollup') continue;
+      const column = String(field.field_name);
+      row[column] = before?.[column] ?? emptyAggregate(field.format);
+    }
     // Runs row by row, before the row is stored: like a BEFORE ROW trigger,
     // it sees the rows stored earlier in the statement, never later ones.
     const lookup = (t: string, id: unknown) => this.tableOf(t).get(String(id));

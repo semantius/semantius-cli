@@ -18,7 +18,11 @@ import { setHostsIndexDirForTests } from '../src/hosts-index';
 import { createBuiltinConnection } from '../src/local-tools/connection';
 import { exportEntities } from '../src/local-tools/transfer/export';
 import { ENTITY_CREATE_ONLY } from '../src/local-tools/transfer/format';
-import { SelfReferences, planWrites } from '../src/local-tools/transfer/graph';
+import {
+  SelfReferences,
+  orderRollups,
+  planWrites,
+} from '../src/local-tools/transfer/graph';
 import { PostgrestClient } from '../src/local-tools/transfer/postgrest';
 import {
   FakePostgrest,
@@ -1542,6 +1546,31 @@ describe('import: files and schema', () => {
     expect(records(target, 'contacts')).toEqual(records(source, 'contacts'));
   });
 
+  test('a records block with far more of the file after it ends', async () => {
+    // Bun on Linux delivers such a slice, then never closes its stream.
+    const source = fake('source.example.test');
+    seedCrm(source);
+    source.insert(
+      'contacts',
+      Array.from({ length: 12000 }, (_, i) => ({
+        id: 1000 + i,
+        full_name: `Contact ${i}`,
+        account_id: 2,
+        email: `c${i}@example.test`,
+      })),
+    );
+    const path = join(dir, 'large.json');
+    await call(source, 'export_entities', { names: 'accounts,contacts', path });
+    expect(Bun.file(path).size).toBeGreaterThan(1_000_000);
+
+    const target = targetWithModule();
+    const result = await call(target, 'import_entities', { path });
+    expect(result.entities.map((e: Row) => e.records)).toEqual([
+      { written: 5, unchanged: 0 },
+      { written: 12002, unchanged: 0 },
+    ]);
+  });
+
   test('a schema-only file, then a changed field', async () => {
     const source = fake('source.example.test');
     seedCrm(source);
@@ -1692,6 +1721,525 @@ describe('import: files and schema', () => {
     );
     expect(patch).toBeGreaterThanOrEqual(0);
     expect(patch).toBeLessThan(firstRequest(target, 'POST', 'accounts'));
+  });
+});
+
+describe('import: rollup and computed fields', () => {
+  /** A module and its entities, with nothing but their core fields. */
+  function seedEntities(
+    f: FakePostgrest,
+    module_name: string,
+    tables: string[],
+  ): void {
+    const [module] = f.insert('modules', [
+      {
+        module_name,
+        module_slug: module_name.toLowerCase(),
+        description: '',
+      },
+    ]);
+    f.insert(
+      'entities',
+      tables.map((table_name) => ({
+        table_name,
+        singular_label: table_name,
+        plural_label: table_name,
+        module_id: module.id,
+      })),
+    );
+  }
+
+  /** A field by its id, `<table>.<field>`. */
+  const field = (id: string, format: string, extra: Row = {}): Row => {
+    const [table_name, field_name] = id.split('.');
+    return { table_name, field_name, title: field_name, format, ...extra };
+  };
+
+  const COUNT_ORDERS = { link_field: 'orders.customer_id', function: 'count' };
+  const SUM_SUBTOTALS = {
+    link_field: 'orders.customer_id',
+    function: 'sum',
+    value_field: 'subtotal',
+  };
+
+  /**
+   * A module whose names sort against its dependencies, as Northwind's
+   * customers over orders would:
+   *   customers: order_count, and two rollups that read the rollup
+   *              orders.subtotal, orders_total (its value) and big_orders (a filter)
+   *   order_lines: order_id → orders, amount (computed)
+   *   orders: customer_id → customers, subtotal (over order_lines)
+   */
+  function seedSales(
+    f: FakePostgrest,
+    options: { customers?: number; lines?: number } = {},
+  ): void {
+    seedEntities(f, 'Sales', ['customers', 'order_lines', 'orders']);
+    f.insert('fields', [
+      field('customers.name', 'text', { field_order: 1 }),
+      field('orders.customer_id', 'reference', {
+        reference_table: 'customers',
+        field_order: 1,
+      }),
+      field('order_lines.order_id', 'parent', {
+        reference_table: 'orders',
+        reference_delete_mode: 'cascade',
+        field_order: 1,
+      }),
+      field('order_lines.quantity', 'integer', { field_order: 2 }),
+      field('order_lines.amount', 'number', { field_order: 3 }),
+    ]);
+    f.update('entities', 'order_lines', {
+      computed_fields: [
+        { name: 'amount', jsonlogic: { '*': [{ var: 'quantity' }, 10] } },
+      ],
+    });
+    f.insert('fields', [
+      field('orders.subtotal', 'number', {
+        field_order: 2,
+        rollup: {
+          link_field: 'order_lines.order_id',
+          function: 'sum',
+          value_field: 'amount',
+        },
+      }),
+    ]);
+    f.insert('fields', [
+      field('customers.big_orders', 'int64', {
+        field_order: 2,
+        rollup: { ...COUNT_ORDERS, filter: { '>': [{ var: 'subtotal' }, 100] } },
+      }),
+      field('customers.order_count', 'int64', {
+        field_order: 3,
+        rollup: COUNT_ORDERS,
+      }),
+      field('customers.orders_total', 'number', {
+        field_order: 4,
+        rollup: SUM_SUBTOTALS,
+      }),
+    ]);
+    f.insert(
+      'customers',
+      Array.from({ length: options.customers ?? 2 }, (_, i) => ({
+        id: i + 1,
+        name: `Customer ${i + 1}`,
+      })),
+    );
+    f.insert('orders', [
+      { id: 1, customer_id: 1 },
+      { id: 2, customer_id: 2 },
+    ]);
+    f.insert(
+      'order_lines',
+      Array.from({ length: options.lines ?? 3 }, (_, i) => ({
+        id: i + 1,
+        order_id: i % 2 ? 2 : 1,
+        quantity: 1 + (i % 3),
+      })),
+    );
+    // What the platform would have calculated: the fake never aggregates.
+    f.setStored('orders', 1, { subtotal: 120 });
+    f.setStored('customers', 1, {
+      big_orders: 1,
+      order_count: 1,
+      orders_total: 120,
+    });
+  }
+
+  async function exportSales(
+    source: FakePostgrest,
+    options: Row = {},
+  ): Promise<string> {
+    const path = join(dir, 'sales.json');
+    await call(source, 'export_module', { name: 'Sales', path, ...options });
+    return path;
+  }
+
+  /** The CRM, with accounts.score computed from accounts.employees. */
+  function seedScore(f: FakePostgrest): void {
+    seedCrm(f);
+    f.insert('fields', [
+      field('accounts.employees', 'integer', { field_order: 6 }),
+      field('accounts.score', 'integer', { field_order: 7 }),
+    ]);
+    f.update('entities', 'accounts', {
+      computed_fields: [
+        { name: 'score', jsonlogic: { '*': [{ var: 'employees' }, 2] } },
+      ],
+    });
+    for (const id of [1, 2, 3, 4, 5]) {
+      f.update('accounts', id, { employees: id * 10 });
+    }
+  }
+
+  async function exportCrm(
+    source: FakePostgrest,
+    options: Row = {},
+  ): Promise<string> {
+    const path = join(dir, 'crm.json');
+    await call(source, 'export_module', { name: 'CRM', path, ...options });
+    return path;
+  }
+
+  /** The field_name of each field POSTed, in request order. */
+  const postedFields = (f: FakePostgrest): Row[] =>
+    f.requests
+      .filter((r) => r.method === 'POST' && r.target === 'fields')
+      .flatMap((r) => r.body as Row[]);
+
+  test('a computed field is created from the file, with records and without', async () => {
+    const source = fake('source.example.test');
+    seedScore(source);
+
+    const target = emptyTarget();
+    await call(target, 'import_module', { path: await exportCrm(source) });
+    expect(target.row('fields', 'accounts.score')).toMatchObject({
+      ctype: 'computed',
+      input_type: 'disabled',
+    });
+    expect(target.row('accounts', 3)).toMatchObject({
+      employees: 30,
+      score: 60,
+    });
+
+    const schemaOnly = fake('schema-only.example.test');
+    await call(schemaOnly, 'import_module', {
+      path: await exportCrm(source, { exclude_data: true }),
+    });
+    expect(schemaOnly.row('fields', 'accounts.score')).toMatchObject({
+      ctype: 'computed',
+    });
+  });
+
+  test('an existing computed field takes a changed format; a label field still does not', async () => {
+    const source = fake('source.example.test');
+    seedScore(source);
+    const target = emptyTarget();
+    await call(target, 'import_module', { path: await exportCrm(source) });
+
+    source.update('fields', 'accounts.score', { format: 'number' });
+    source.update('fields', 'accounts.account_name', { format: 'email' });
+    await call(target, 'import_module', { path: await exportCrm(source) });
+    expect(target.row('fields', 'accounts.score')).toMatchObject({
+      format: 'number',
+    });
+    expect(target.row('fields', 'accounts.account_name')).toMatchObject({
+      format: 'text',
+    });
+  });
+
+  test('rollups round trip, written after the fields they name and before computed_fields', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    const result = await call(target, 'import_module', {
+      path: await exportSales(source),
+    });
+
+    for (const id of [
+      'orders.subtotal',
+      'customers.big_orders',
+      'customers.order_count',
+      'customers.orders_total',
+    ]) {
+      expect(target.row('fields', id)).toMatchObject({
+        ctype: 'rollup',
+        input_type: 'disabled',
+        rollup: source.row('fields', id)?.rollup as Row,
+      });
+    }
+    expect(target.row('fields', 'order_lines.amount')).toMatchObject({
+      ctype: 'computed',
+    });
+    expect(result.entities[0].fields).toEqual({
+      created: 4,
+      updated: 0,
+      unchanged: 3,
+    });
+
+    const posted = postedFields(target).map((f) => f.field_name);
+    expect(posted.indexOf('customer_id')).toBeLessThan(
+      posted.indexOf('order_count'),
+    );
+    const lastRollup = target.requests.findLastIndex(
+      (r) =>
+        r.method === 'POST' &&
+        r.target === 'fields' &&
+        Object.keys(((r.body as Row[])[0].rollup as Row) ?? {}).length > 0,
+    );
+    const computed = target.requests.findIndex(
+      (r) =>
+        r.method === 'PATCH' &&
+        r.target === 'entities' &&
+        'computed_fields' in (r.body as Row),
+    );
+    expect(lastRollup).toBeLessThan(computed);
+  });
+
+  test('a rollup waits for the rollup it reads, through its value field or its filter', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    // The customers come first in the file: the fake refuses 90264 and 90265.
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    const posted = postedFields(target).map((f) => f.field_name);
+    expect(posted.indexOf('subtotal')).toBeLessThan(
+      posted.indexOf('orders_total'),
+    );
+    expect(posted.indexOf('subtotal')).toBeLessThan(
+      posted.indexOf('big_orders'),
+    );
+  });
+
+  test('a rollup added to an existing field follows its new link field, its format in the same PATCH', async () => {
+    const source = fake('source.example.test');
+    seedEntities(source, 'Sales', ['customers', 'orders']);
+    source.insert('fields', [
+      field('customers.order_count', 'integer', { field_order: 1 }),
+    ]);
+    const target = emptyTarget();
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    source.insert('fields', [
+      field('orders.customer_id', 'reference', {
+        reference_table: 'customers',
+        field_order: 1,
+      }),
+    ]);
+    source.update('fields', 'customers.order_count', {
+      format: 'int64',
+      rollup: COUNT_ORDERS,
+    });
+    const mark = target.requests.length;
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    const writes = target.writesSince(mark).filter((r) => r.target === 'fields');
+    expect(writes.map((r) => r.method)).toEqual(['POST', 'PATCH']);
+    expect(writes[1].body).toMatchObject({
+      format: 'int64',
+      rollup: COUNT_ORDERS,
+    });
+    expect(target.row('fields', 'customers.order_count')).toMatchObject({
+      ctype: 'rollup',
+      format: 'int64',
+    });
+  });
+
+  test('rollup: {} removes a definition on re-import; the field and its values stay', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    source.update('fields', 'customers.order_count', { rollup: {} });
+    const mark = target.requests.length;
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    const patches = target
+      .writesSince(mark)
+      .filter((r) => r.method === 'PATCH' && r.target === 'fields');
+    expect(patches.map((r) => r.body)).toEqual([{ rollup: {} }]);
+    expect(target.row('fields', 'customers.order_count')).toMatchObject({
+      ctype: '',
+      rollup: {},
+      input_type: 'disabled',
+    });
+    // An ordinary column now, so its value comes from the file.
+    expect(target.row('customers', 1)).toMatchObject({ order_count: 1 });
+  });
+
+  test('a new ordinary field is POSTed without rollup, a rollup with it and alone, neither with ctype', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    const posted = new Map(postedFields(target).map((f) => [f.field_name, f]));
+    expect(posted.get('name')).not.toHaveProperty('rollup');
+    expect(posted.get('amount')).not.toHaveProperty('rollup');
+    expect(posted.get('subtotal')).toHaveProperty('rollup');
+    for (const f of posted.values()) expect(f).not.toHaveProperty('ctype');
+    for (const request of target.requests) {
+      if (request.method !== 'POST' || request.target !== 'fields') continue;
+      const body = request.body as Row[];
+      if (body.some((f) => 'rollup' in f)) expect(body).toHaveLength(1);
+    }
+  });
+
+  test('rollup columns are not written, and a target total that differs is not a change', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    const writes = upserts(target, 'customers').filter((w) =>
+      w.columns.includes('name'),
+    );
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) {
+      for (const column of ['big_orders', 'order_count', 'orders_total']) {
+        expect(write.columns).not.toContain(column);
+      }
+    }
+    // The file says 1; nothing on the target has aggregated.
+    expect(target.row('customers', 1)).toMatchObject({ order_count: 0 });
+  });
+
+  test('re-importing an unchanged file with both kinds of field writes nothing', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    const path = await exportSales(source);
+    await call(target, 'import_module', { path });
+
+    const mark = target.requests.length;
+    const again = await call(target, 'import_module', { path });
+    expect(target.writesSince(mark)).toEqual([]);
+    expect(again.entities[0].records).toEqual({ written: 0, unchanged: 2 });
+  });
+
+  test('the marker without a definition is refused before any request', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const path = await exportSales(source);
+    const doc = JSON.parse(await readFile(path, 'utf8'));
+    for (const { entity } of doc.entities) {
+      for (const f of entity.fields) delete f.rollup;
+    }
+    await writeFile(path, JSON.stringify(doc));
+
+    const target = emptyTarget();
+    const mark = target.requests.length;
+    for (const tool of ['import_module', 'import_entities']) {
+      const error = await callError(target, tool, { path });
+      expect(error).toContain(
+        'customers.big_orders: the file marks it as a rollup',
+      );
+      expect(error).toContain('Export it again');
+    }
+    expect(target.requests.length).toBe(mark);
+  });
+
+  test('a file from before rollups, with no such key, still imports', async () => {
+    const source = fake('source.example.test');
+    seedCrm(source);
+    const path = await exportCrm(source);
+    const doc = JSON.parse(await readFile(path, 'utf8'));
+    for (const { entity } of doc.entities) {
+      for (const f of entity.fields) delete f.rollup;
+    }
+    await writeFile(path, JSON.stringify(doc));
+
+    const target = emptyTarget();
+    await call(target, 'import_module', { path });
+    expect(target.rows('accounts')).toHaveLength(5);
+    expect(target.row('fields', 'contacts.email')).toMatchObject({
+      rollup: {},
+    });
+  });
+
+  test('a table a rollup aggregates over is written one batch at a time; any other table is not', async () => {
+    const source = fake('source.example.test');
+    seedSales(source, { customers: 4100, lines: 4100 });
+    const path = await exportSales(source);
+    const target = emptyTarget();
+    target.latency = 20;
+    await call(target, 'import_module', { path });
+
+    expect(target.rows('order_lines')).toHaveLength(4100);
+    expect(target.peakWrites.get('order_lines')).toBe(1);
+    expect(target.peakWrites.get('customers')).toBeGreaterThan(1);
+  });
+
+  test('so is one whose parent is not in the file', async () => {
+    const source = fake('source.example.test');
+    seedSales(source, { lines: 4100 });
+    const target = emptyTarget();
+    await call(target, 'import_module', {
+      path: await exportSales(source, { exclude_data: true }),
+    });
+    const parents = join(dir, 'parents.json');
+    await call(source, 'export_entities', {
+      names: 'customers,orders',
+      path: parents,
+    });
+    await call(target, 'import_entities', { path: parents });
+
+    const lines = join(dir, 'lines.json');
+    await call(source, 'export_entities', { names: 'order_lines', path: lines });
+    target.latency = 20;
+    await call(target, 'import_entities', { path: lines });
+
+    expect(target.rows('order_lines')).toHaveLength(4100);
+    expect(target.peakWrites.get('order_lines')).toBe(1);
+  });
+
+  test('a deadlock (40P01) on an upsert is replayed', async () => {
+    const source = fake('source.example.test');
+    seedSales(source);
+    const target = emptyTarget();
+    let deadlocks = 1;
+    target.intercept = (request) => {
+      if (
+        request.method !== 'POST' ||
+        request.target !== 'order_lines' ||
+        !deadlocks
+      ) {
+        return undefined;
+      }
+      deadlocks--;
+      return Response.json(
+        { code: '40P01', message: 'deadlock detected' },
+        { status: 500 },
+      );
+    };
+    await call(target, 'import_module', { path: await exportSales(source) });
+
+    expect(deadlocks).toBe(0);
+    expect(upserts(target, 'order_lines')).toHaveLength(2);
+    expect(target.rows('order_lines')).toHaveLength(3);
+  });
+
+  test('modules that depend on each other through a rollup are restored by re-running each', async () => {
+    const source = fake('source.example.test');
+    seedEntities(source, 'Crm', ['customers']);
+    seedEntities(source, 'Sales', ['orders']);
+    source.insert('fields', [
+      field('customers.name', 'text', { field_order: 1 }),
+      field('orders.customer_id', 'reference', {
+        reference_table: 'customers',
+        field_order: 1,
+      }),
+    ]);
+    source.insert('fields', [
+      field('customers.order_count', 'int64', {
+        field_order: 2,
+        rollup: COUNT_ORDERS,
+      }),
+    ]);
+    source.insert('customers', [{ id: 1, name: 'Acme' }]);
+    source.insert('orders', [{ id: 1, customer_id: 1 }]);
+    const crm = join(dir, 'crm.json');
+    await call(source, 'export_module', { name: 'Crm', path: crm });
+    const sales = join(dir, 'sales.json');
+    await call(source, 'export_module', { name: 'Sales', path: sales });
+
+    const target = emptyTarget();
+    expect(await callError(target, 'import_module', { path: crm })).toContain(
+      '(90262)',
+    );
+    expect(await callError(target, 'import_module', { path: sales })).toContain(
+      '(23503)',
+    );
+    await call(target, 'import_module', { path: crm });
+    await call(target, 'import_module', { path: sales });
+
+    expect(target.row('fields', 'customers.order_count')).toMatchObject({
+      ctype: 'rollup',
+    });
+    expect(target.rows('customers')).toHaveLength(1);
+    expect(target.rows('orders')).toHaveLength(1);
   });
 });
 
@@ -1895,5 +2443,96 @@ describe('write order', () => {
         { id: 'a', p: null },
       ]),
     ).toThrow('is not a number');
+  });
+});
+
+describe('rollup order', () => {
+  const rollup = (id: string, definition: unknown) => {
+    const [table, field_name] = id.split('.');
+    return { table, field: { field_name, rollup: definition } };
+  };
+  const ids = (list: ReturnType<typeof rollup>[]) =>
+    orderRollups(list).map((r) => `${r.table}.${r.field.field_name}`);
+
+  const sum = (link_field: string, value_field: string) => ({
+    link_field,
+    function: 'sum',
+    value_field,
+  });
+
+  test('a rollup follows the one its value field names, on the link entity only', () => {
+    expect(
+      ids([
+        rollup('customers.total', sum('orders.customer_id', 'subtotal')),
+        rollup('orders.subtotal', sum('lines.order_id', 'amount')),
+      ]),
+    ).toEqual(['orders.subtotal', 'customers.total']);
+    // Same field name, another entity: no dependency.
+    expect(
+      ids([
+        rollup('customers.total', sum('orders.customer_id', 'subtotal')),
+        rollup('invoices.subtotal', sum('lines.invoice_id', 'amount')),
+      ]),
+    ).toEqual(['customers.total', 'invoices.subtotal']);
+  });
+
+  test('a rollup follows any rollup a var of its filter names, at any depth', () => {
+    const filter = {
+      and: [{ '>': [{ var: 'subtotal' }, 100] }, { '!': { var: 'closed' } }],
+    };
+    expect(
+      ids([
+        rollup('customers.big', {
+          link_field: 'orders.customer_id',
+          function: 'count',
+          filter,
+        }),
+        rollup('orders.subtotal', sum('lines.order_id', 'amount')),
+      ]),
+    ).toEqual(['orders.subtotal', 'customers.big']);
+  });
+
+  test('otherwise the order given', () => {
+    const count = { link_field: 'orders.customer_id', function: 'count' };
+    expect(
+      ids([rollup('z.a', count), rollup('a.z', count), rollup('m.m', count)]),
+    ).toEqual(['z.a', 'a.z', 'm.m']);
+    expect(ids([])).toEqual([]);
+  });
+
+  test('a chain sorts through every level', () => {
+    expect(
+      ids([
+        rollup('a.total', sum('b.a_id', 'total')),
+        rollup('b.total', sum('c.b_id', 'total')),
+        rollup('c.total', sum('d.c_id', 'amount')),
+      ]),
+    ).toEqual(['c.total', 'b.total', 'a.total']);
+  });
+
+  test('a cycle, and what waits behind it, keeps the order given for the platform to refuse', () => {
+    expect(
+      ids([
+        rollup('c.total', sum('a.c_id', 'total')),
+        rollup('a.total', sum('b.a_id', 'total')),
+        rollup('b.total', sum('a.b_id', 'total')),
+      ]),
+    ).toEqual(['c.total', 'a.total', 'b.total']);
+  });
+
+  test('a field that sums itself does not wait for itself', () => {
+    expect(ids([rollup('t.total', sum('t.parent_id', 'total'))])).toEqual([
+      't.total',
+    ]);
+  });
+
+  test('a malformed link_field keeps the order given, for the platform to refuse', () => {
+    expect(
+      ids([
+        rollup('a.x', { link_field: 'nodot', value_field: 'y' }),
+        rollup('a.y', { link_field: 42, value_field: 'x' }),
+        rollup('a.z', { link_field: '.x', value_field: 'y' }),
+      ]),
+    ).toEqual(['a.x', 'a.y', 'a.z']);
   });
 });

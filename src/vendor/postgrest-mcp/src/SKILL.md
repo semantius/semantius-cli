@@ -58,7 +58,7 @@
    | Entity | Purpose | Key Relationships |
    |--------|---------|-------------------|
    | **entities** | Domain concept definition | Parent of fields; references module; uses permissions |
-   | **fields** | Entity attributes/columns | Belongs to entity; may reference other entities |
+   | **fields** | Entity attributes/columns | Belongs to entity; may reference other entities; may aggregate a child entity (`rollup`) |
    | **modules** | Domain grouping | Referenced by entities/roles/permissions; carries `module_type` and the permission/role FKs (`manage_permission`, `admin_permission`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`) |
    | **permissions** | Atomic capabilities | Used by entities; granted to roles; can inherit |
    | **permission_hierarchy** | Permission inclusion | Each row says `including_permission_name` *includes* `included_permission_name` (the broader implies the narrower); carries immutable `origin` |
@@ -85,6 +85,7 @@
    12. **`reference_table` mandates relational format** — Any field with a `reference_table` MUST use `format: "reference"` or `format: "parent"`.
    13. **`number` is the default for amounts and currencies** — Any field representing money, prices, totals, rates, or similar measured quantities must use `format: "number"`. Use `float` or `double` only when the user explicitly requests it or the field stores inherently imprecise values (e.g., scientific measurements, ML scores, GPS coordinates). Never default to `float` or `double` for financial data. Set `precision` to control decimal places (default 2); omit it unless a different scale is needed.
       Setting any scalar format (`integer`, `string`, `uuid`, etc.) alongside `reference_table` is always wrong and will always fail. No exceptions.
+   14. **Aggregates over child records are rollups** — A value summed, counted or otherwise aggregated from child records is a field with a `rollup` definition, never a `computed_fields` rule or a value the client maintains. See *Rollup Fields*.
 
    ---
 
@@ -285,7 +286,7 @@
    - **Delete a `has_a` record** to detach it; the base record stays. A base record with an extension cannot be deleted (`90251`): remove the extensions first.
    - The `<table_name>_ext` tables store each entity's own fields; never write them directly (`90244`).
 
-   **Limits:** a `reference` or `parent` field of an `is_a` entity cannot use `reference_delete_mode: "cascade"` (`90249`; use `restrict` or `clear`) — `parent` defaults to `cascade`, so set the mode explicitly on every `parent` field of an `is_a` entity; `order_column`, queue mappings and RACI process gates are not available on `is_a`/`has_a` entities (`90249`); a base cannot be switched to `managed: false` while entities are based on it (`90252`); an upsert (`Prefer: resolution=merge-duplicates`, `PUT`) fails with `42P10` — insert, then update; a search spans every level but is slower on large tables. A view, function or policy built by hand on an `is_a`/`has_a` entity's view blocks every change that rebuilds its family — a field change on any level, a rename, a root prefix change, rules — and the delete of a family entity (`90256`, the hint names the objects): drop them, make the change, then create them again.
+   **Limits:** a `reference` or `parent` field of an `is_a` entity cannot use `reference_delete_mode: "cascade"` (`90249`; use `restrict` or `clear`) — `parent` defaults to `cascade`, so set the mode explicitly on every `parent` field of an `is_a` entity; `order_column`, queue mappings and RACI process gates are not available on `is_a`/`has_a` entities (`90249`), and neither side of a rollup can be one (`90249`); a base cannot be switched to `managed: false` while entities are based on it (`90252`); an upsert (`Prefer: resolution=merge-duplicates`, `PUT`) fails with `42P10` — insert, then update; a search spans every level but is slower on large tables. A view, function or policy built by hand on an `is_a`/`has_a` entity's view blocks every change that rebuilds its family — a field change on any level, a rename, a root prefix change, rules — and the delete of a family entity (`90256`, the hint names the objects): drop them, make the change, then create them again.
 
    **Deleting:** an `is_a`/`has_a` entity, or the base of one, cannot be deleted while it has records (`90247`), and a base cannot be deleted while entities are based on it (`90248`). Deleting a module is refused the same way while one of these entities in it has records (`90247`); entities of the same module that are based on each other do not block it. Before deleting an entity, check its dependents with `read_entity(filters: "id_refentity=eq.<table_name>")`.
 
@@ -303,6 +304,10 @@
    The platform evaluates these on every INSERT and UPDATE: `computed_fields` first (in order, each result written back into the working record), then `validation_rules` (in order, any failing rule rejects the write).
 
    **Trigger lifecycle.** When both arrays are empty or null, no entity trigger function exists. As soon as one becomes non-empty, the platform generates a BEFORE INSERT/UPDATE function on the table. When both arrays go back to empty, or the entity is deleted, the function is dropped.
+
+   **Saving applies the rules to existing records.** Adding or changing `computed_fields` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with `90908`, whose `record_id` and `problem` say why. The pass moves no `updated_at` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps `$user_id` or `$now` unconditionally moves on this pass, as on any update; make such a stamp insert-only: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.created_by"}]}`. Removing a rule keeps the last values as ordinary data.
+
+   **Derived marker.** A field a rule names gets `ctype: "computed"`, and its `input_type` `default` or `readonly` becomes `disabled` (and stays `disabled` when the rule goes). The label column keeps `ctype: "label"`. Rules match fields by name and a rename does not rewrite them, so a renamed field loses the marker: update the rule too. A rule cannot name a rollup field (`90907`), and a computed field cannot become a rollup (`90261`).
 
    #### `computed_fields` element shape
 
@@ -391,7 +396,75 @@
    | `$now`     | date-time | Server timestamp at evaluation time. |
    | `$user_id` | uuid      | Authenticated user performing the write (null when the write is system-initiated). |
    | `$old`     | object    | Previous row as JSON on UPDATE; null on INSERT. |
+   | `$mode`    | text      | The operation: `insert`, `update` or `delete`. |
 
+
+   ---
+
+   ### Rollup Fields (aggregates over child records)
+
+   When user says: *"Show each order's total from its lines"*, *"Count the open tickets per customer"*, or *"Show the latest ship date on the order"*
+
+   A rollup field holds a `sum`, `min`, `max`, `avg` or `count` over the records of a child entity, and the database keeps it current. Use one whenever a value depends on **other** records: `computed_fields` only see the record being written. A rollup is not a format: the field keeps an ordinary `format`, and its `rollup` definition makes it a rollup.
+
+   | Key | Required | Purpose |
+   |-----|----------|---------|
+   | `link_field` | yes | `<child table_name>.<field_name>`: a `reference` or `parent` field of the child that points at this entity (`90262`). The child may be this entity itself (a tree). |
+   | `function` | yes | `sum`, `min`, `max`, `avg` or `count` (`90263`). |
+   | `value_field` | except with `count` | The field of the child to aggregate; not allowed with `count` (`90264`). It may itself be a rollup, unless the chain comes back to this field (`90267`). |
+   | `filter` | no | JsonLogic over the child record, limited to the subset below (`90265`). |
+   | `include_hidden_rows` | no | `true` accepts aggregating child records that readers of this entity may not see. See *Hidden child rows*. |
+
+   The rollup field's `format` must fit the result (`90268`):
+
+   | `function` | `value_field` format | Rollup field format |
+   |------------|----------------------|---------------------|
+   | `count` | none | `int64` (recommended), another integer format, or `number` |
+   | `sum` | numeric | `number` keeps every digit; an integer format can overflow |
+   | `avg` | numeric | `number`, `float` or `double` |
+   | `min`, `max` | numeric, text-typed, `date` or `date-time` | same column type as the value field: `email` over `text` works, `date` over `date-time` does not |
+
+   Keys, booleans, times, durations, UUIDs, binaries and JSON cannot be aggregated (`90264`).
+
+   **Creating one:** the child entity, `link_field` and `value_field` must already exist, so create the rollup field last. Several rollups can go in one `create_field` array. Sample `data` item:
+
+   ```json
+   {
+     "table_name": "orders",
+     "field_name": "open_amount",
+     "title": "Open Amount",
+     "format": "number",
+     "rollup": {
+       "link_field": "order_lines.order_id",
+       "function": "sum",
+       "value_field": "amount",
+       "filter": { "==": [{ "var": "status" }, "open"] }
+     }
+   }
+   ```
+
+   - Omit `ctype`: it becomes `rollup` by itself. Omit `precision` too: it is copied from a `number` value field.
+   - `input_type` `default` and `readonly` become `disabled`; `hidden` stays.
+   - `required`, `searchable` and `unique_value` are refused (`90261`), and so is a definition on a key, a core field, a `reference` or `parent` field, or a field a `computed_fields` rule names.
+   - Neither side can be an `is_a` or `has_a` entity (`90249`). On an unmanaged entity the definition is kept as metadata, and takes effect once both sides are managed.
+
+   **The filter** is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, timestamp, UUID or TypeID column of the child. Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record.
+
+   **How it behaves:**
+   - The value cannot be written by hand. On create it starts as the empty aggregate, and on update a changed value is recomputed, with no error. Change the child records instead.
+   - With no matching child records the value is `0` for numbers, `''` for text, and NULL for `date` and `date-time`.
+   - A child write that moves a total runs the parent's own `computed_fields`, `validation_rules`, queue mappings and RACI triggers, with its rules evaluated as the user who wrote the child. So a parent rule can test a rollup (a total under a credit limit) and refuse the child write, and a parent rule that tests the writer's permission blocks child writes by users who cannot edit the parent. A parent computed field can read a rollup (`total` = `subtotal` + `freight`).
+   - A child write that changes nothing but rollup columns moves no `updated_at` and writes no audit row on the parent.
+
+   **Hidden child rows (`90269`):** the aggregate covers every child record, and every reader of the parent sees it. When the child has a `select_rule`, or a `view_permission` other than the parent's, the rollup is refused unless its definition sets `include_hidden_rows: true`. That setting shows those readers a sum, count, minimum or maximum over rows they cannot see, so ask the user before setting it. The refusal also applies later: adding a `select_rule` to the child, or changing a `view_permission` on either side, fails while it would affect a rollup without the flag.
+
+   **Changing and removing:**
+   - Saving a new or changed definition recalculates the records whose value differs. This is not an edit: no `updated_at`, audit row, queue message or RACI event, on this entity or any rollup parent above it. Those tables take no other writes until the save commits, so warn the user before doing this on a busy table.
+   - A definition that needs another column type (`sum(amount)` to `max(ship_date)`) is a format change (`90223`): drop and recreate the field.
+   - `rollup: {}` removes the definition. The field stays with its last values as ordinary data, `ctype` clears, and `input_type` stays `disabled` until you change it.
+   - Renames of the tables and fields a definition names are followed automatically.
+   - The link field, the value field and the child entity cannot be deleted while another entity's rollup depends on them (`90266`, which names the rollups), unless the same module delete removes both sides. The rollup field itself is deleted like any other field.
+   - Find rollups with `read_field(filters: "ctype=eq.rollup")`. `get_schema` shows `ctype: "rollup"`, `is_core: false` and the definition under `rollup`.
 
    ---
 
@@ -541,6 +614,7 @@
 
    **For removing fields:**
    - Check if field is referenced elsewhere: `read_field` with `filters: "reference_table=eq.<table>"`
+   - A field that a rollup of another entity uses as its `link_field` or `value_field` cannot be deleted (`90266`)
    - Warn user about data loss
    - Use `delete_field` only after explicit confirmation
 
@@ -560,6 +634,7 @@
    - Adding view/edit permissions to previously open entities
    - Changing `enum_values`
    - Adding `unique_value: true` to an existing field (will fail if duplicate values exist — suggest deduplication first)
+   - Adding or changing a `rollup` definition or `computed_fields` (recalculates existing records with no audit row; the tables written take no other writes until the save commits)
    - These may affect existing data or access patterns
 
    ### 🛑 High-Risk Changes (require explicit user confirmation)
@@ -569,6 +644,8 @@
    - Changing primary key fields (`id_type` cannot change at all; a record's key value cannot change either, the update fails with `90236`)
    - Choosing `is_a` or `has_a` (`id_refentity` and an `is_a` prefix are fixed at creation; a record's type cannot change later)
    - Deleting an entity that others are based on (refused with `90248`; check `id_refentity=eq.<table_name>` first)
+   - Deleting an entity that fields of other entities reference (refused with `90260`; check `reference_table=eq.<table_name>` first)
+   - Setting `include_hidden_rows: true` on a rollup (readers see an aggregate over rows they cannot read)
    - **Always check dependencies before deletion**
 
    ---
@@ -629,7 +706,7 @@
    | Format(s) | PostgreSQL type | Auto default | Nullable? |
    |-----------|-----------------|--------------|-----------|
    | `string`, `text`, `multiline`, `html`, `code`, `email`, `url`, `uri`, `uuid`, `password`, `color`, `icon` | TEXT | `''` | NOT NULL |
-   | `enum` | TEXT | `''` unless `input_type: "required"`, then the value of the first entry of `enum_values` | NOT NULL |
+   | `enum` | TEXT | `''`, which a required enum refuses, so a required enum with no `default_value` must be sent on every write | NOT NULL |
    | `integer`, `int32` / `int64` | INTEGER / BIGINT | `0` | NOT NULL |
    | `rating` | INTEGER | `0` (not rated) | NOT NULL — the 0–5 range is checked by the platform, not a database constraint; a required rating needs a value from 1 to 5 |
    | `number`, `float`, `double` | NUMERIC / REAL | `0.0` | NOT NULL |
@@ -674,10 +751,25 @@
    | Value | Meaning |
    |-------|---------|
    | `default` | Standard editable input — use for most fields |
-   | `required` | Editable but marked as mandatory in the UI |
-   | `readonly` | Displayed but not editable |
-   | `disabled` | Shown greyed out, not editable |
+   | `required` | Editable and mandatory; the database refuses a missing value |
+   | `readonly` | Displayed but not editable; a form still submits the value |
+   | `disabled` | Shown greyed out, not editable, and not submitted by a form |
    | `hidden` | Not shown in forms at all |
+
+   On a rollup or computed field, `default` and `readonly` become `disabled` automatically, because a form must not submit a derived value.
+
+   **`required` is enforced for every writer, not only forms.** A write that leaves a required field missing fails with error `90258`. Missing means:
+
+   - `NULL` for `reference`, `date` and `date-time`
+   - blank or whitespace-only text, and an empty `enum`
+   - JSON `{}`, `[]`, `null` or `""`
+   - an empty `binary`, and a `rating` of `0`
+
+   Numbers and booleans have no missing value, so `0` and `false` are accepted. A field with an `input_type_rule` is not enforced by the database, because the rule can turn `required` off per record.
+
+   - **Populated tables:** adding a required field with no real `default_value` to a table with rows fails with `90259`, and so does changing a field to `required` while rows have no value for it. Add the field as `default`, backfill it, then change it to `required`.
+   - **Labels:** the label field a new entity gets automatically is `required`. If its writers don't send a label, such as a junction named by the two records it links, set that field's `input_type` to `default`.
+   - **Delete mode:** `required` together with `reference_delete_mode: "clear"` fails with `90257`, because clearing the reference would make every delete of the parent fail.
 
 
    ### `unique_value` Values
@@ -726,6 +818,24 @@
 
    ---
 
+   ### `ctype` Values
+
+   Marks what kind of column a field is. **It is derived, never sent:** a value sent on create is ignored, and changing it on update fails with `90214`.
+
+   | Value | Meaning | Protected |
+   |-------|---------|-----------|
+   | empty | Ordinary field | no |
+   | `id` | Primary key | yes |
+   | `label` | Display label | yes, but it may be renamed and its default value changed |
+   | `audit` | `created_at` and `updated_at` | yes |
+   | `core` | Other system columns | yes |
+   | `rollup` | Value aggregated by the database from the field's `rollup` definition | no |
+   | `computed` | Value written by one of the entity's `computed_fields` rules | no |
+
+   A protected column cannot be deleted (`90217`) or renamed (`90218`), and its format (`90219`) and default value (`90220`) cannot change. A `rollup` or `computed` field can still be renamed, deleted, or moved to another format with the same column type. `get_schema` reports these two with `is_core: false`.
+
+   ---
+
    ## Tool Reference
 
    ### Priority Rule
@@ -748,11 +858,11 @@
    - **read_entity** — Query entities (use `filters` to find by `table_name` before creating)
    - **create_entity** — Define a new domain concept
    - **update_entity** — Modify entity metadata or permissions
-   - **delete_entity** — Remove entity (check all dependencies first!)
+   - **delete_entity** — Remove entity (check all dependencies first!). Refused with `90260` while fields of other entities reference it, whatever their `reference_delete_mode`, which governs deleting records rather than the entity: find them with `read_field(filters: "reference_table=eq.<table_name>")`, then delete them or point them at another entity. Refused with `90266` while a rollup of another entity aggregates over it.
 
    ### Field Management
    - **read_field** — Query fields (filter by `table_name`; also use to find cross-references before deletion)
-   - **create_field** — Add an attribute to an entity
+   - **create_field** — Add an attribute to an entity, or an aggregate over a child entity (`rollup`)
    - **update_field** — Modify field properties. ⚠️ `format` can only be changed to another format with the same primitive type.
    - **delete_field** — Remove field (warn user about data loss; require confirmation)
 
@@ -760,7 +870,7 @@
    - **read_module** — Check if a module exists before creating one
    - **create_module** — Create a new domain grouping
    - **update_module** — Modify module metadata
-   - **delete_module** — Remove module (check all dependent entities first!)
+   - **delete_module** — Remove module INCLUDING all its entities, fields, and records (automatic cascade; do NOT delete entities first). Confirm with the user and back up with `export_module` first. Refused with `90260` while a field of another module references one of its entities, and with `90266` while a rollup of another module aggregates over one; references between its own entities do not count. Two modules that reference each other need one such field removed first.
 
    ### RBAC Tools
    - **read_permission** / **create_permission** — Manage atomic capabilities

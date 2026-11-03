@@ -144,7 +144,7 @@ export const FIELD_COLUMNS = without(keysOf(fieldSchema), 'id', 'table_name');
 /** Exported, never written. */
 export const FIELD_READ_ONLY = ['ctype'];
 export const FIELD_CREATE_ONLY = ['catalog_field_code'];
-/** Never patched on a core field (ctype ≠ ''). */
+/** Never patched on a core field (isCoreCtype). */
 export const CORE_FIELD_FIXED = [
   'field_name',
   'format',
@@ -152,6 +152,14 @@ export const CORE_FIELD_FIXED = [
   'ctype',
   'is_pk',
 ];
+/**
+ * The platform's dd_ctype_is_core: a rollup or computed field is derived, but
+ * stays the administrator's to change. A marker this CLI does not know is core
+ * there too.
+ */
+export function isCoreCtype(ctype: unknown): boolean {
+  return Boolean(ctype) && ctype !== 'rollup' && ctype !== 'computed';
+}
 
 // ------------------------------------------------------------------ helpers
 
@@ -408,9 +416,11 @@ export class TransferFile {
 
 /**
  * The bytes [start, end) of a file. Bun's slice(start, end).stream() cannot
- * be trusted with the bound: on Windows (Bun 1.3), a slice smaller than its
- * first read of a larger file streams on past `end`. So the bytes are
- * counted here and the stream is cut off at `end`.
+ * be trusted with the bound (Bun 1.3): on Windows, a slice smaller than its
+ * first read of a larger file streams on past `end`; on Linux, a slice that
+ * stops well short of the end of the file delivers its bytes and then never
+ * closes. So the bytes are counted here, and the stream is left as soon as
+ * they are in: waiting for the next chunk would wait forever on Linux.
  */
 async function* sliceStream(
   path: string,
@@ -419,9 +429,9 @@ async function* sliceStream(
 ): AsyncGenerator<Uint8Array> {
   let left = end - start;
   for await (const chunk of Bun.file(path).slice(start, end).stream()) {
-    if (left <= 0) break;
     yield chunk.length > left ? chunk.subarray(0, left) : chunk;
     left -= chunk.length;
+    if (left <= 0) return;
   }
 }
 

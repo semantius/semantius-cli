@@ -253,7 +253,7 @@ to work and change nothing.
   Only a human at a browser can restore it.
 
 **`--login-flow auto|browser|device` — new, and the skill has to carry it.**
-Implemented 2026-09-26 (`headless-login-device-code.md`). It changes what the tiers above say
+Implemented 2026-09-26 (`abec0e5`). It changes what the tiers above say
 about headless behaviour, so it is not optional detail:
 
 - `login` and `use` **no longer stall for 5 minutes** without a browser. `auto` uses the
@@ -556,8 +556,7 @@ it.
   real headless Linux: `login` / `use` now pick the device code grant when the host advertises
   it, and otherwise fail in ~1 s with exit 5 instead of stalling 5 minutes. `--login-flow
   auto|browser|device` selects explicitly and is required on Windows/macOS, where headless
-  cannot be detected. See `headless-login-device-code.md` §8 for the departures and the
-  remaining limitation. **The skill work this creates is in Step 2 above, not here.**
+  cannot be detected. **The skill work this creates is in Step 2 above, not here.**
 - **`-md` dumps the README's Development section** (`README.md:695-768`: `bun run dev whoami`,
   `bun run dev call crud …`) verbatim to agents — the only place an agent ever sees the CLI
   invoked as anything but `semantius`. Either the dump skips that section or the README moves

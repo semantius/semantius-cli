@@ -10,6 +10,8 @@
  * columns are nullable, so a `parent` column can never be the one left out,
  * and a cycle made only of parent columns could not have been filled on the
  * source either.
+ *
+ * Rollup fields have an order of their own, in the schema step: see orderRollups.
  */
 
 import type { Row } from './format.js';
@@ -236,6 +238,58 @@ function findCycle(
     if (cycle) return cycle;
   }
   return undefined;
+}
+
+/** A field with a rollup definition, and the entity it belongs to. */
+export interface RollupField {
+  table: string;
+  field: Row;
+}
+
+/** The columns a rollup filter names: every string under a `var`. */
+function filterVars(node: unknown): unknown[] {
+  if (Array.isArray(node)) return node.flatMap(filterVars);
+  if (!node || typeof node !== 'object') return [];
+  return Object.entries(node).flatMap(([op, arg]) =>
+    op === 'var' ? [arg] : filterVars(arg),
+  );
+}
+
+/**
+ * `rollups` in write order: each after the rollups of its child entity that it
+ * reads, through value_field (90264) or a var of its filter (90265), since the
+ * platform checks both when the definition is saved. Otherwise the order given,
+ * which a cycle or a malformed link_field also keeps: the platform answers those
+ * (90267, 90262).
+ */
+export function orderRollups<T extends RollupField>(
+  rollups: readonly T[],
+): T[] {
+  const index = new Map(
+    rollups.map((r, i) => [`${r.table}\n${r.field.field_name}`, i]),
+  );
+  const waitsFor = rollups.map((r, i) => {
+    const { link_field: link, value_field, filter } = r.field.rollup as Row;
+    const dot = typeof link === 'string' ? link.indexOf('.') : -1;
+    if (dot < 1) return [];
+    const child = (link as string).slice(0, dot);
+    return [value_field, ...filterVars(filter)]
+      .map((column) => index.get(`${child}\n${column}`))
+      .filter((j): j is number => j !== undefined && j !== i);
+  });
+
+  const order: T[] = [];
+  const left = new Set(rollups.keys());
+  while (left.size) {
+    const remaining = [...left];
+    // Nothing ready means a cycle: the first one left goes next.
+    const next =
+      remaining.find((i) => waitsFor[i].every((j) => !left.has(j))) ??
+      remaining[0];
+    order.push(rollups[next]);
+    left.delete(next);
+  }
+  return order;
 }
 
 /**

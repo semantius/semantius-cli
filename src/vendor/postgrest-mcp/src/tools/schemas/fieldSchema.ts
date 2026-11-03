@@ -36,10 +36,11 @@ export const fieldSchema = z.looseObject({
     .describe('Column default: a literal value or an SQL expression such as CURRENT_TIMESTAMP. Stored as text; a number, boolean or JSON value is converted ("1", "true", "{}").'),
   field_order: z.number().int().optional().describe('Display order of the field within its entity'),
   input_type: z.enum(['default', 'required', 'readonly', 'disabled', 'hidden']).optional()
-    .describe('How the UI presents the field for input; input_type_rule can override it per record'),
+    .describe('How the UI presents the field for input; input_type_rule can override it per record. On a required field with no input_type_rule, the database also refuses a missing value. On a rollup or computed field, default and readonly become disabled, so a form does not submit the derived value.'),
   width: z.enum(['default','s', 'm', 'w']).optional().describe('Display width of the field in the UI: default (automatic), s (small), m (medium) or w (wide)'),
-  ctype: z.enum(['', 'id', 'label', 'audit', 'core']).optional()
-    .describe('Marks a DD-managed core column: empty (normal user field), id (primary key), label (display field), audit (record-versioning columns such as created_at and updated_at) or core (other system columns). A core column cannot be deleted or renamed (the label column may be renamed), and its format and default value cannot change. Set by the DD only and never changed.'),
+  // rollup and computed are listed so a field read back can be written back unchanged.
+  ctype: z.enum(['', 'id', 'label', 'audit', 'core', 'rollup', 'computed']).optional()
+    .describe('Special column type: id, label, audit and core mark a column the dictionary protects; rollup marks a field whose value the database aggregates from its rollup definition, computed a field whose value one of the entity\'s computed_fields rules writes (the label column keeps label). Derived, never set by hand. Empty is a normal user field, audit covers record-versioning columns such as created_at and updated_at, and core other system columns. A protected column cannot be deleted or renamed (the label column may be renamed), and its format and default value cannot change (the label column\'s default value may). A rollup or computed field can still be renamed and deleted. Ignored on create; changing it on update is refused with 90214.'),
   searchable: z.boolean().optional().describe('Whether field is included in full-text search'),
   enum_values: z.array(z.union([
     z.string(),
@@ -71,4 +72,6 @@ export const fieldSchema = z.looseObject({
     .describe('JsonLogic rule evaluated client-side against the record being edited. It returns an input_type (default, required, readonly, disabled or hidden) that replaces the static input_type. Empty = no rule.'),
   catalog_field_code: z.string().optional()
     .describe('Stable design-time field identity (blueprint field name, e.g. "status"); the field-rename join key. Write-once: set on create or filled once while empty, then never changed. Empty = not generated from a catalog spec.'),
+  rollup: z.record(z.string(), z.any()).optional()
+    .describe('Rollup definition, empty for an ordinary field. Keys: link_field (<child entity>.<reference or parent field pointing at this entity>), function (sum, min, max, avg or count), value_field (a field of the child; not with count), filter (JsonLogic over the child record, restricted to and, or, !, comparisons, in and var; optional) and include_hidden_rows (true accepts aggregating child records that readers of this entity may not see). The field keeps an ordinary format that fits the result: int64 for count, the value field\'s format for min and max, a numeric format for sum and avg; precision is copied from the value field. The database maintains the column and sets ctype to rollup. The child entity, link_field and value_field must already exist. A rollup cannot be required, searchable or unique_value (90261), and neither side can be an is_a or has_a entity (90249). Send {} to remove the definition: the field stays, with its last values as ordinary data.'),
 })
