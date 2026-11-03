@@ -22,11 +22,11 @@
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getPidPath, getSocketPath } from '../../src/config';
-import { isProcessRunning, killProcess } from '../../src/daemon';
+import { isProcessRunning, killProcess, readPidFile } from '../../src/daemon';
 import { proxyDaemonName } from '../../src/postgrest-proxy';
 
 const posixOnly = process.platform !== 'win32';
@@ -38,6 +38,7 @@ describe.skipIf(!posixOnly)('compiled binary daemon', () => {
   let logPath: string;
   // Unique server name so the test never touches a real daemon of the user.
   const serverName = `fs-daemon-test-${process.pid}`;
+  const coldStartName = `cold-start-daemon-test-${process.pid}`;
 
   // The local crud layer's PostgREST, stubbed in this process.
   let postgrest: ReturnType<typeof Bun.serve>;
@@ -98,9 +99,7 @@ describe.skipIf(!posixOnly)('compiled binary daemon', () => {
   }
 
   function daemonPid(name = serverName): number | null {
-    const pidPath = getPidPath(name);
-    if (!existsSync(pidPath)) return null;
-    return JSON.parse(readFileSync(pidPath, 'utf8')).pid as number;
+    return readPidFile(name)?.pid ?? null;
   }
 
   /** Wait until a daemon spawned in the background has opened its socket. */
@@ -198,7 +197,7 @@ describe.skipIf(!posixOnly)('compiled binary daemon', () => {
   }, 120_000);
 
   afterAll(async () => {
-    for (const name of [serverName, proxyName]) {
+    for (const name of [serverName, coldStartName, proxyName]) {
       const pid = daemonPid(name);
       if (pid && isProcessRunning(pid)) killProcess(pid);
       await rm(getPidPath(name), { force: true });
@@ -276,6 +275,48 @@ describe.skipIf(!posixOnly)('compiled binary daemon', () => {
     expect(existsSync(getPidPath(serverName))).toBe(false);
     expect(existsSync(getSocketPath(serverName, pid as number))).toBe(false);
   }, 30_000);
+
+  test('the first call does not start the server twice at once', async () => {
+    // Two `npx -y` at once on a cold cache break each other's install, and
+    // the loser may be the command the user ran. So the daemon, which starts
+    // the server too, may only start once the direct connection is up.
+    const installDir = join(tempDir, 'cold-start');
+    await mkdir(installDir);
+    const coldConfig = join(tempDir, 'cold_start_servers.json');
+    await writeFile(
+      coldConfig,
+      JSON.stringify({
+        mcpServers: {
+          [coldStartName]: {
+            command: 'bun',
+            args: [
+              'run',
+              join(import.meta.dir, '..', 'fixtures', 'cold-start-mcp-server.ts'),
+              installDir,
+            ],
+          },
+        },
+      }),
+    );
+
+    const r = await runCli([
+      '-c',
+      coldConfig,
+      'call',
+      '--diag',
+      coldStartName,
+      'ping',
+      '{}',
+    ]);
+    expect(r.stderr).toContain('Spawning daemon');
+    expect(existsSync(join(installDir, 'collided'))).toBe(false);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('pong');
+
+    const pid = await waitForDaemon(coldStartName);
+    expect(isProcessRunning(pid)).toBe(true);
+    expect(existsSync(join(installDir, 'collided'))).toBe(false);
+  }, 120_000);
 
   test('the local crud layer goes direct first, then through its PostgREST daemon', async () => {
     const first = await runCli(getThings());

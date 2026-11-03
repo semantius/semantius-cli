@@ -31,6 +31,7 @@ import {
 import {
   type DaemonConnection,
   cleanupOrphanedDaemons,
+  ensureDaemon,
   getDaemonConnection,
 } from './daemon-client.js';
 import { isAuthErrorMessage } from './errors.js';
@@ -1027,6 +1028,17 @@ export async function getConnection(
   // Fall back to direct connection
   debug(`Using direct connection for ${serverName}`);
   const { client, close } = await connectToServer(serverName, resolvedConfig);
+
+  // Only now, for the next invocation (see getDaemonConnection for why).
+  if (isDaemonEnabled()) {
+    try {
+      ensureDaemon(serverName, resolvedConfig);
+    } catch (err) {
+      debug(
+        `Could not start a daemon for ${serverName}: ${(err as Error).message}`,
+      );
+    }
+  }
 
   return {
     async listTools(): Promise<ToolInfo[]> {

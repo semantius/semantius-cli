@@ -335,14 +335,17 @@ export function ensureDaemon(
 
 /**
  * Get a connection to a server's MCP daemon, or null when this invocation
- * must connect directly: none was ready (one is then started for the next
- * invocation), or it did not answer.
+ * must connect directly: none was ready, or it did not answer. This starts no
+ * daemon: the caller does (ensureDaemon) once its direct connection is up. A
+ * daemon started before that would launch the server at the same moment, and
+ * two `npx -y` at once on a cold cache break each other's install (ENOTEMPTY),
+ * which can fail the command itself.
  */
 export async function getDaemonConnection(
   serverName: string,
   config: ServerConfig,
 ): Promise<DaemonConnection | null> {
-  const daemon = ensureDaemon(serverName, config);
+  const daemon = getDaemonState(serverName, config);
   if (daemon.state !== 'ready') return null;
   const { socketPath } = daemon;
 

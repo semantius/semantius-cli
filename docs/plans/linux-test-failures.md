@@ -1,7 +1,40 @@
 # Problem: tests that fail on Linux in Docker
 
-Status: **open, cause unknown.** Seen 2026-11-03. Fix what is wrong, then verify it with the criteria at
-the end. Nothing below is a diagnosis unless it says so.
+Status: **causes found, fix verified locally; the CI check on the fix commit is still open.** Seen
+2026-11-03. "What is known" below is the original report; "Causes" replaces its open questions.
+
+## Causes
+
+The difference the report missed is the Bun version: the recipe pinned 1.3.12, the version on the
+development machine, while CI installs `latest`, 1.4.4. Failures 1 and 2 exist only on 1.3.12. Failure 3
+exists on both, and is a product bug. The recipe now uses 1.4.4.
+
+1. **`postgrest-proxy`: Bun 1.3.12.** Its `fetch` reports an unreachable Unix socket as
+   `FailedToOpenSocket`; 1.4.4 reports the `ENOENT` or `ECONNREFUSED` that `socketUnreachable` checks for.
+   The test "passed alone" without testing anything: with no earlier test there is no PID file, so its
+   pid is 0, `isProcessRunning(0)` is true (signal 0 to its own process group), and no daemon ever exists.
+2. **`stream`: Bun 1.3.12.** The CLI hangs on most runs of this test on that version, and not at all on
+   1.4.4 (0 failures in 40 file runs, 20 of them under CPU load). It is intermittent, not order-dependent:
+   on 1.3.12 it passed 1 of 12 runs alone and 0 of 12 in the whole file, with 5 s timeouts, and 1 of 3 in
+   the whole file with 20 s. That is why it passed at first. **Not found:** what in Bun 1.3.12 hangs.
+3. **`integration/daemon`: two `npx -y` at once, on any Bun.** The first call started the daemon and then
+   connected directly, so both launched `npx -y` within milliseconds, into one cold `_npx/<hash>` directory.
+   `HOME` is redirected, so the cache is cold on every run and CI's pre-cache step does not reach it. The
+   installs collide under CPU load (`ENOTEMPTY`, `TAR_ENTRY_ERROR`): 5 of 25 runs on 1.4.4, 0 of 40 on an
+   idle machine. All 5 failures show it. When the direct connection lost, the user's own command exited
+   3. The other failing tests followed from that.
+
+   **Fix:** the daemon now starts after the direct connection is up (`getDaemonConnection` in
+   `src/daemon-client.ts`, `getConnection` in `src/client.ts`), when the install is finished. The same
+   load: 0 of 40. On 1.3.12: 8 of 8, up from 1 of 3. A new test with a fixture that models the install
+   failed 5 of 5 before the fix, with no load needed. Two separate CLI invocations on a cold cache can
+   still collide: that is `npx` itself.
+
+   **Also found under load:** the test's `daemonPid` parsed the PID file without a guard and could read
+   it while it was being written (1 of 40). The test was wrong, and now uses `readPidFile`.
+
+Results on 1.4.4, with the fix: every "Done when" item below except 3. Each file passed 3 of 3 from a clean
+image, the full suite passed twice (841 pass, 10 skip, 0 fail), and Windows passed (823 pass, 32 skip, 0 fail).
 
 ## What is known
 
@@ -74,7 +107,7 @@ Differences between this container and the CI job, none of them tested:
 From the repository root, in Git Bash on Windows (elsewhere, use `$(pwd)` and drop `MSYS_NO_PATHCONV`):
 
 ```bash
-MSYS_NO_PATHCONV=1 docker run --rm -e CI=1 -v "$(pwd -W):/src:ro" oven/bun:1.3.12 sh -c '
+MSYS_NO_PATHCONV=1 docker run --rm -e CI=1 -v "$(pwd -W):/src:ro" oven/bun:1.4.4 sh -c '
   mkdir -p /work && cd /src && tar --exclude=node_modules --exclude=.git -cf - . | tar -xf - -C /work
   (apt-get update -qq && apt-get install -y -qq nodejs npm git) >/dev/null 2>&1
   cd /work && bun install --frozen-lockfile >/dev/null 2>&1
