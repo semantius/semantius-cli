@@ -1,7 +1,7 @@
 # Problem: tests that fail on Linux in Docker
 
-Status: **causes found, fix verified locally; the CI check on the fix commit is still open.** Seen
-2026-11-03. "What is known" below is the original report; "Causes" replaces its open questions.
+Status: **fixed, with one question left open: what hangs inside Bun 1.3.12.** Seen 2026-11-03. "What is
+known" below is the original report; "Causes" replaces its open questions.
 
 ## Causes
 
@@ -34,8 +34,9 @@ CI, the release builds and the recipe all read.
    **Also found under load:** the test's `daemonPid` parsed the PID file without a guard and could read
    it while it was being written (1 of 40). The test was wrong, and now uses `readPidFile`.
 
-Results on 1.4.4, with the fix: every "Done when" item below except 3. Each file passed 3 of 3 from a clean
+Results on 1.4.4, with the fix: every "Done when" item below holds. Each file passed 3 of 3 from a clean
 image, the full suite passed twice (841 pass, 10 skip, 0 fail), and Windows passed (823 pass, 32 skip, 0 fail).
+`Test (ubuntu-latest)` and `Test (windows-latest)` are green on `d6263a6`, the commit with the fix and the pin.
 
 ## What is known
 
