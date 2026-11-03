@@ -912,8 +912,8 @@ class RecordWriter {
       : undefined;
     // Batches of a self-referencing table wait for each other: a later
     // batch may point at rows of an earlier one. So do those of a table a
-    // rollup aggregates over: with two at once, the platform can leave a
-    // parent's total wrong, with no error.
+    // rollup aggregates over: with two at once, the platform can deadlock, or
+    // leave a parent's total wrong with no error.
     const flight = new InFlight(self || state.aggregated ? 1 : IN_FLIGHT);
     const count = pass === 1 ? 'first' : 'second';
     let columns: string[] | undefined;

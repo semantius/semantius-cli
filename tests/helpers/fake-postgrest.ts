@@ -837,7 +837,19 @@ export class FakePostgrest {
   /** What the platform checks when a rollup definition is saved. */
   private checkRollup(row: Row, definition: Row): void {
     const fields = this.tableOf('fields');
-    const name = `Rollup ${row.field_name} on ${row.table_name}`;
+    // As on the wire: the message a template, its values in the JSON hint.
+    const refuse = (code: string, tail: string, values: Row): HttpError =>
+      fail(
+        400,
+        code,
+        `Rollup \${field_name} on \${table}: ${tail}`,
+        null,
+        JSON.stringify({
+          table: row.table_name,
+          field_name: row.field_name,
+          ...values,
+        }),
+      );
     const link = String(definition.link_field);
     const [child] = link.split('.');
     const linkField = fields.get(link);
@@ -845,29 +857,32 @@ export class FakePostgrest {
       (linkField?.format !== 'reference' && linkField?.format !== 'parent') ||
       linkField.reference_table !== row.table_name
     ) {
-      throw fail(
-        400,
+      throw refuse(
         '90262',
-        `${name}: link_field ${link} must name a reference or parent field of another entity that points at ${row.table_name}`,
+        'link_field ${link_field} must name a reference or parent field of another entity that points at ${table}',
+        { link_field: link },
       );
     }
     if (definition.function !== 'count') {
       const value = String(definition.value_field);
       if (!fields.has(`${child}.${value}`)) {
-        throw fail(
-          400,
+        throw refuse(
           '90264',
-          `${name}: value_field ${value} must name a field of ${child}`,
+          'value_field ${value_field} must name a field of ${link_table} that ${function} can aggregate',
+          {
+            value_field: value,
+            link_table: child,
+            function: definition.function,
+            problem: 'no such field',
+          },
         );
       }
     }
     for (const column of filterVars(definition.filter)) {
       if (!fields.has(`${child}.${column}`)) {
-        throw fail(
-          400,
-          '90265',
-          `${name}: the filter cannot be compiled: column ${column} does not exist on ${child}`,
-        );
+        throw refuse('90265', 'the filter cannot be compiled: ${problem}', {
+          problem: `column ${column} does not exist on ${child}`,
+        });
       }
     }
   }

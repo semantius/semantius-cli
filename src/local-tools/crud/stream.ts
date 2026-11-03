@@ -18,6 +18,7 @@ import { ErrorCode } from '../../errors.js';
 import { resolveHost } from '../../host.js';
 import { recordJwt, recordUrl, timeMcp } from '../../logger.js';
 import { postgrestRequestTool } from '../../vendor/postgrest-mcp/src/tools/postgrestRequest.js';
+import { formatPostgrestError } from '../../vendor/postgrest-mcp/src/utils/postgrest.js';
 import { describeFailure, isPostgrestErrorBody } from './http-errors.js';
 import { isolateVendoredCall } from './isolate.js';
 import { withLocalRetries } from './retry.js';
@@ -61,12 +62,11 @@ export function buildStreamRequest(
   };
 }
 
-/** Same text shape as makePostgrestRequest's errors: "(code) message". */
+/** The same text as makePostgrestRequest's errors. */
 function postgrestErrorText(body: string): string {
   try {
     const json = JSON.parse(body);
-    const message = json.message || body;
-    return json.code ? `(${json.code}) ${message}` : message;
+    return formatPostgrestError({ ...json, message: json.message || body });
   } catch {
     return body;
   }

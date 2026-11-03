@@ -2226,9 +2226,11 @@ describe('import: rollup and computed fields', () => {
     await call(source, 'export_module', { name: 'Sales', path: sales });
 
     const target = emptyTarget();
-    expect(await callError(target, 'import_module', { path: crm })).toContain(
-      '(90262)',
+    const first = await callError(target, 'import_module', { path: crm });
+    expect(first).toContain(
+      'creating rollup field customers.order_count: (90262) Rollup order_count on customers: link_field orders.customer_id must name',
     );
+    expect(first).not.toContain('${');
     expect(await callError(target, 'import_module', { path: sales })).toContain(
       '(23503)',
     );

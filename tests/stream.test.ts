@@ -244,6 +244,22 @@ describe('call crud postgrestRequest --stream (end to end)', () => {
     }
   });
 
+  test('a platform refusal fills its message from the hint', async () => {
+    reply = () =>
+      Response.json(
+        {
+          code: '90262',
+          message: 'Rollup ${field_name} on ${table} is wrong',
+          details: null,
+          hint: JSON.stringify({ table: 'customers', field_name: 'order_count' }),
+        },
+        { status: 400 },
+      );
+    const result = await runCli(stream({ method: 'GET', path: '/t' }));
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr.trim()).toBe('Error: (90262) Rollup order_count on customers is wrong');
+  });
+
   test('a non-PostgREST error page names the status, the request and the host', async () => {
     reply = () =>
       new Response('<html><body>Bad Gateway</body></html>', {

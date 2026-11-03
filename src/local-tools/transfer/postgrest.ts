@@ -17,6 +17,7 @@ import { getAccessToken, getUsedCredentialSource } from '../../auth/token.js';
 import { TRANSIENT_RETRY_DELAYS_MS, jitter } from '../../client.js';
 import type { HostFacts } from '../../host.js';
 import { recordJwt, recordUrl } from '../../logger.js';
+import { formatPostgrestError } from '../../vendor/postgrest-mcp/src/utils/postgrest.js';
 import { describeFailure } from '../crud/http-errors.js';
 import type { Row } from './format.js';
 
@@ -103,21 +104,6 @@ export function inList(column: string, values: readonly unknown[]): string {
 /** A column list for select= / columns=. */
 export function columnList(columns: readonly string[]): string {
   return columns.map((c) => encodeURIComponent(quote(c))).join(',');
-}
-
-/** The body of a PostgREST error as one line: `(code) message (details) hint`. */
-function formatPostgrestError(error: {
-  code?: string;
-  message?: string;
-  details?: unknown;
-  hint?: unknown;
-}): string {
-  let text = error.code
-    ? `(${error.code}) ${error.message}`
-    : `${error.message}`;
-  if (error.details) text += ` (${error.details})`;
-  if (error.hint) text += ` Hint: ${error.hint}`;
-  return text;
 }
 
 function parseErrorBody(

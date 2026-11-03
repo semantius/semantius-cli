@@ -1,7 +1,7 @@
 # Plan: export and import rollup and computed fields
 
-Status: **implemented and verified on a real platform 2026-11-03, uncommitted** (§6). The ubuntu
-CI job has not run on it. The work also found a Linux hang that is already shipped (§8) and a
+Status: **implemented and verified on a real platform 2026-11-03** (§6), committed as `b0211a0` with
+ubuntu and Windows CI green. The work also found a Linux hang that is already shipped (§8) and a
 platform bug that loses rollup totals (§7). Raised while syncing `postgrest-mcp` with the platform's
 rollup commits (`semantius` `a933308`, `4dd0339`).
 
@@ -56,7 +56,7 @@ Full rules are in `semantius/docs/rollup-fields.md`.
 - **Concurrent child writes are not safe.** Two statements over shared parents can leave a total
   wrong with no error (measured, §6 and §7). The platform's doc also says they can deadlock with
   `40P01` (`rollup-fields.md`, "Cost and concurrency"), since the generated trigger updates parents
-  in no fixed order (`0440_rollup.sql:847-850`). No run here ever produced one.
+  in no fixed order (`0440_rollup.sql:847-850`). That happens too: 2 of 9 runs at 50,000 lines (§6).
 - **`ensure_entities` is the precedent for order.** It applies a field with a non-empty `rollup`,
   new or changed, after every other field of every entity and before the deferred entity
   columns (`0290_ensure_entities.sql:693-716`).
@@ -120,9 +120,8 @@ already use. It costs almost nothing: about 3.2 s against 3.1 s for 50,000 rows.
 comes from the target's `fields?ctype=eq.rollup`, not from the file, because the parent may not be
 in the file.
 
-Also add `40P01` to `RETRY_CODES`, because the platform documents that such statements can deadlock
-and other writers on a live target remain possible. PostgreSQL rolled the statement back, so
-replaying it is safe. This part is a precaution: no run ever produced a deadlock.
+Also add `40P01` to `RETRY_CODES`, because such statements do deadlock (§6) and other writers on a
+live target remain possible. PostgreSQL rolled the statement back, so replaying it is safe.
 
 **D8. Modules that depend on each other through a rollup: document, do not defer.** Accepted
 2026-11-03. Take a rollup in `crm` over `orders` in `sales`, where `orders.customer_id` references
@@ -222,7 +221,11 @@ Local results, before any commit:
   The failure is `requests go direct again once the daemon is gone`
   (`tests/postgrest-proxy.test.ts`). It fails the same way on a clean `64e8895` in that container
   when the whole file runs, passes alone, and the ubuntu CI job is green at `64e8895`.
-- The ubuntu CI job has not run on this work: it needs a push.
+- A second test, `pipes the PostgREST body to stdout byte for byte` (`tests/stream.test.ts`), later
+  began failing in that container when its whole file runs, and fails the same way on a clean
+  `b0211a0`. It passes alone and in CI. Why it flipped was not found.
+- The ubuntu CI job is green on `b0211a0`. The later fix for unfilled platform errors (§8) has not
+  been through CI yet.
 
 ## 5. Tests
 
@@ -319,7 +322,7 @@ The fixes, each removed in a patched copy of the CLI, to show it is needed:
 
 | Removed | Result on the real platform |
 |---|---|
-| D7 | 50,000 lines: 6 of 6 runs report success with wrong totals, 28 to 57 parents and all 5 groups. 10,000 lines: 3 of 7 runs, 1 parent and its group each. No deadlock in any run. |
+| D7 | 50,000 lines, 9 runs: 7 report success with wrong totals, 28 to 62 parents and all 5 groups, and 2 stop with `40P01`. 10,000 lines: 3 of 7 runs wrong, 1 parent and its group each. |
 | `filter` in `orderRollups` | Northwind is refused: `90265`, `column subtotal does not exist on orders` |
 | The `sliceStream` fix, on Linux | The import stalls until the call times out. The fix then finishes it on the same target in 2.7 s. |
 
@@ -358,11 +361,8 @@ The fixes, each removed in a patched copy of the CLI, to show it is needed:
     total. If the two are equal the row is skipped, so the guard that would recompute (`:958-959`)
     never runs. D7 keeps an import's own batches apart, but not an import from other writers, and
     `rollup-fields.md` says writers to one parent serialize, which does not hold for the aggregate.
-    An untested suggestion: lock the parents in key order first, then compute, which would also
-    remove the deadlock the doc describes.
-  - CLI: rollup errors arrive as a template (`Rollup ${field_name} on ${table}: …`) with the values
-    in the hint, and `formatPostgrestError` (`postgrest.ts:108`) prints both as they are. D8's
-    expected first error reads that way. The `withContext` prefix still names the field.
+    A `count` loses one on every overlapping pair, whatever the amounts. The report, with a
+    reproduction and a tested fix, is `semantius/plans/2026-11-03-1130-rollup-lost-totals.md`.
   - `semantius`: `ensure_entities` applies rollups in document order, so a `.jsonc` listing a
     nested rollup before the one it sums would hit `90264`. From reading only.
   - `postgrest-mcp`: `delete_module` tells agents to back up with `export_module`, which only the
@@ -393,3 +393,12 @@ when the next chunk arrived, so it waited forever and the import stopped making 
 
 The fix leaves the stream as soon as the bytes are in, instead of waiting for the next chunk.
 `AGENTS.md` records both halves. It goes in the same commit as the rollup work.
+
+**Also found: platform errors were shown unfilled.** The platform's messages are templates that the
+client must fill from the JSON hint (`semantius/docs/error-contract.md`, client rule 3), and no path in
+the CLI did. It first showed in D8's expected error, `Rollup ${field_name} on ${table}: …`, and it
+applies to every platform error, not just rollups. The transfer client printed the raw JSON after the
+template, and `--stream` and the crud tools dropped the hint, so there the values appeared nowhere.
+`formatPostgrestError` in `postgrest-mcp` (`5ca01ef`) now serves all of them, the CLI through its
+vendored copy, and also keeps the parameters no template named. The `--crud-mcp` route shows the fix
+once the remote server is deployed from that commit.

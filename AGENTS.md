@@ -92,7 +92,17 @@ one JSON file. Its rules:
   columns that name fields, with the rollups they read first (`orderRollups`),
   because the platform checks a definition's fields when it is saved. A table a
   rollup aggregates over is written one batch at a time: with two at once the
-  platform can leave a parent's total wrong, with no error.
+  platform can deadlock, or leave a parent's total wrong with no error.
+
+## Platform errors are templates
+
+The platform never fills its own error messages: a client fills their `${name}`
+placeholders from the JSON in the hint (`semantius/docs/error-contract.md`,
+"Client rules"). So never print a PostgREST error's `message` directly: go through
+`formatPostgrestError`, which also keeps the parameters no template named. It lives
+upstream, in `postgrest-mcp`'s `src/utils/postgrest.ts`, and the CLI's own clients
+(`--stream`, the transfer tools) import the vendored copy, so every path prints an
+error the same way.
 
 ## Tests that spawn the CLI
 

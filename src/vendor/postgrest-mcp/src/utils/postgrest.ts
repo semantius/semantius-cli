@@ -20,6 +20,61 @@ interface PostgrestRequestOptions {
   additionalHeaders?: Record<string, string>
 }
 
+/** PostgREST's JSON error. */
+export interface PostgrestErrorBody {
+  code?: string
+  message: string
+  details?: unknown
+  hint?: unknown
+}
+
+const PLACEHOLDER = /\$\{([a-z][a-z0-9_]*)\}/g
+
+/** The parameters of a platform error: a hint that starts with `{` and parses. */
+function hintParameters(hint: unknown): Record<string, unknown> | undefined {
+  if (typeof hint !== 'string' || !hint.startsWith('{')) return undefined
+  try {
+    return JSON.parse(hint)
+  } catch {
+    return undefined
+  }
+}
+
+const shown = (value: unknown): string =>
+  value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value)
+
+/**
+ * A PostgREST error as one line: `(code) message (details) (rest) Hint: hint`.
+ *
+ * The platform never fills its own messages (semantius docs/error-contract.md,
+ * "Client rules"): the message and the suggestion under the hint's `hint` key
+ * are templates, and the client fills their ${name} placeholders from the JSON
+ * in the hint. Any other hint is PostgreSQL's or PostgREST's own text, shown as
+ * it is. `rest` is what no template named, which can still matter: why a value
+ * field was refused, or the catalog number behind a 42501.
+ */
+export function formatPostgrestError(error: PostgrestErrorBody): string {
+  const parameters = hintParameters(error.hint)
+  const used = new Set(['hint'])
+  const fill = (template: string): string =>
+    template.replace(PLACEHOLDER, (placeholder, name: string) => {
+      if (!parameters || !Object.hasOwn(parameters, name)) return placeholder
+      used.add(name)
+      return shown(parameters[name])
+    })
+
+  let text = fill(String(error.message))
+  if (error.code) text = `(${error.code}) ${text}`
+  if (error.details) text += ` (${error.details})`
+  const suggestion = parameters ? parameters.hint : error.hint
+  const hint = suggestion ? ` Hint: ${fill(String(suggestion))}` : ''
+  const rest = Object.entries(parameters ?? {})
+    .filter(([name]) => !used.has(name))
+    .map(([name, value]) => `${name}: ${shown(value)}`)
+  if (rest.length) text += ` (${rest.join(', ')})`
+  return text + hint
+}
+
 function getHeaders(
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   token?: string,
@@ -81,8 +136,7 @@ export async function makePostgrestRequest(options: PostgrestRequestOptions): Pr
     let errmsg = errorText
     try {
       const json = JSON.parse(errorText)
-      errmsg = json.message || errorText
-      if (json.code) errmsg = `(${json.code}) ${errmsg}`
+      errmsg = formatPostgrestError({ ...json, message: json.message || errorText })
       console.error('PostgREST request failed:', url.toString(), method, body, json)
     } catch {
       console.error('PostgREST request failed:', url.toString(), method, body, errorText)

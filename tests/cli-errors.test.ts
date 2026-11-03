@@ -667,6 +667,29 @@ describe('CLI errors through the local crud layer', () => {
     );
   });
 
+  test('a platform refusal fills its message from the hint, which the vendored tool drops', async () => {
+    reply = () =>
+      Response.json(
+        {
+          code: '90262',
+          message: 'Rollup ${field_name} on ${table}: link_field ${link_field} is wrong',
+          details: null,
+          hint: JSON.stringify({
+            table: 'customers',
+            field_name: 'order_count',
+            link_field: 'orders.customer_id',
+          }),
+        },
+        { status: 400 },
+      );
+    const result = await runLocal(pg({ method: 'POST', path: '/fields', body: { a: 1 } }));
+    expect(result.exitCode).toBe(4);
+    expect(result.stderr).toContain(
+      'Error: (90262) Rollup order_count on customers: link_field orders.customer_id is wrong',
+    );
+    expect(result.stderr).not.toContain('${');
+  });
+
   test('--single with 0 rows → exit 1', async () => {
     // What the Neon Data API answers for an object request that matches nothing.
     reply = () => Response.json(null);
