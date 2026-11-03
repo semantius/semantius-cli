@@ -2,7 +2,9 @@
 
 ## Linux is a first-class target
 
-The CLI ships for Linux, macOS and Windows, and CI tests `ubuntu-latest` and `windows-latest`. A green local run only proves the platform you ran it on. Before calling platform-sensitive work done, think through how it behaves on the other platforms and run the tests on them. If you're not on Linux, use Docker (`oven/bun` image plus Node for the `npx` integration tests) or push a branch and wait for the ubuntu CI job. Never stack days of unpushed commits that have only been tested on one OS.
+The CLI ships for Linux, macOS and Windows, and CI tests `ubuntu-latest` and `windows-latest`. A green local run only proves the platform you ran it on. Before calling platform-sensitive work done, think through how it behaves on the other platforms and run the tests on them. If you're not on Linux, use Docker (`oven/bun:$(cat .bun-version)` image plus Node for the `npx` integration tests) or open a PR from a branch and wait for the ubuntu CI job (CI does not run on a bare branch). Never stack days of unpushed commits that have only been tested on one OS.
+
+`.bun-version` is the one Bun version: CI and the release builds install it, and local and Docker runs should use it too. Bun's behaviour changes between versions in ways that look like platform or test-order bugs: on 1.3.12 a `--stream` test hung on most runs and an unreachable Unix socket raised a code the daemon fallback did not know, while CI, on a newer Bun, stayed green. To move to a new version, change the file, raise `engines.bun` in `package.json` to match, and let CI prove it.
 
 Watch for these, which have all broken Linux CI before while passing on Windows:
 

@@ -7,7 +7,8 @@ Status: **causes found, fix verified locally; the CI check on the fix commit is 
 
 The difference the report missed is the Bun version: the recipe pinned 1.3.12, the version on the
 development machine, while CI installs `latest`, 1.4.4. Failures 1 and 2 exist only on 1.3.12. Failure 3
-exists on both, and is a product bug. The recipe now uses 1.4.4.
+exists on both, and is a product bug. The version is now pinned in `.bun-version`, currently 1.4.4, which
+CI, the release builds and the recipe all read.
 
 1. **`postgrest-proxy`: Bun 1.3.12.** Its `fetch` reports an unreachable Unix socket as
    `FailedToOpenSocket`; 1.4.4 reports the `ENOENT` or `ECONNREFUSED` that `socketUnreachable` checks for.
@@ -107,7 +108,7 @@ Differences between this container and the CI job, none of them tested:
 From the repository root, in Git Bash on Windows (elsewhere, use `$(pwd)` and drop `MSYS_NO_PATHCONV`):
 
 ```bash
-MSYS_NO_PATHCONV=1 docker run --rm -e CI=1 -v "$(pwd -W):/src:ro" oven/bun:1.4.4 sh -c '
+MSYS_NO_PATHCONV=1 docker run --rm -e CI=1 -v "$(pwd -W):/src:ro" "oven/bun:$(cat .bun-version)" sh -c '
   mkdir -p /work && cd /src && tar --exclude=node_modules --exclude=.git -cf - . | tar -xf - -C /work
   (apt-get update -qq && apt-get install -y -qq nodejs npm git) >/dev/null 2>&1
   cd /work && bun install --frozen-lockfile >/dev/null 2>&1
