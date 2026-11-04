@@ -25,8 +25,8 @@ One vocabulary across every Semantius skill. The "never use" column names words 
 |---|---|---|---|
 | The entity others share a key with | **base** | "the shared record", or its plural label | "parent" (the FK format) |
 | `id_type: is_a` | **`is_a` entity** | "a kind of <Singular>" | "derived" |
-| `id_type: has_a` | **`has_a` entity** | "something a <Singular> can also be" | "role" (the blueprint `role` column and RBAC roles) |
-| Either of the two | **based entity** (matches `**Based on:**`) | describe it; don't name it | "derived" (the `derived` role value, derived gates, derived tiers) |
+| `id_type: has_a` | **`has_a` entity** | "something a <Singular> can also be" | "role" (it means a permission role only) |
+| Either of the two | **based entity** (matches `**Based on:**`) | describe it; don't name it | "derived" (the `derived` `held_as` value, derived gates, derived tiers) |
 | A base plus at least one based entity | **family** | "kept once as <Plural>" | "cluster" |
 | The alternative: one entity plus an enum field | **type enum** | "a type choice on <Plural>" | bare "kind" (the §4 `kind` column, `module_kind`) |
 
@@ -48,7 +48,7 @@ Inheritance is not a way to reuse fields:
 | 1:n data per organizational level (a customer's data per sales area or company code) | a child entity with a `parent` field |
 | Two entities that merely share some field names | nothing: give each its own fields |
 
-Kinds that differ by only a few fields stay one entity with a type enum even when the kind is fixed at creation. The architect's `normalization.md` holds the full decision order.
+Kinds that differ by only a few fields stay one entity with a type enum even when the kind is fixed at creation.
 
 - **`is_a`, a subtype.** `activities` > `emails` > `classified_emails`, and `tasks` is_a `activities`; `persons` and `organizations` is_a `business_partners`. Every record is exactly one type, fixed when it is created: an email has an `eml_…` id, and `activities` lists it with every other activity. The base must be a managed `typeid` or `is_a` entity (`90240`). The subtype needs its own `id_prefix`. Chains may go several levels deep.
 - **`has_a`, an optional extension.** `customers` and `suppliers` has_a `business_partners`: a partner has at most one customer record and at most one supplier record, and both use the partner's `bp_…` key. The base must be a managed `typeid` entity (`90240`). One level only: nothing can be based on a `has_a` entity.
@@ -125,7 +125,7 @@ Never send `id_refentity` on `update_entity` (`90241`). The one change it takes 
 ## Writing
 
 - **Writes through any level reach the record's own type.** `PATCH /activities?id=eq.<eml id>` runs the emails rules too. `DELETE /activities?id=eq.<eml id>` deletes the email completely, running the delete rules of every level (any of them may refuse). An update writes the level that changed and the levels below it.
-- **Insert an `is_a` record once, at its own table**, with the base's fields in the same payload. Never insert a base row and then a subtype row: that creates two records, and a record's type cannot change afterwards. A direct insert into the base with a subtype's prefix fails (`90237`).
+- **Insert an `is_a` record once, at its own table**, with the base's fields in the same payload. Never insert a base row and then a subtype row: that creates two records, and a record's type cannot change afterward. A direct insert into the base with a subtype's prefix fails (`90237`).
 - **Create a `has_a` record:**
   - without an `id`, it creates the base record too (send the base's fields with it);
   - with the `id` of an existing base record, it **attaches** to it. Only the extension's fields are written. A base value that differs from the stored one is refused (`90246`), so send only the extension's own fields plus the id, and change base values through the base.

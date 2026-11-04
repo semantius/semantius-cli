@@ -1,14 +1,14 @@
 # Importer Essentials (distilled from use-semantius)
 
-The Step 0 hard-gate read for `semantius-importer`: everything the import workflow needs from `use-semantius`, condensed. This file is a distillation, not the authority — **`../use-semantius/` wins on any conflict**. Consult the full references on demand:
+The Step 0 hard-gate read for `semantius-importer`: everything the import workflow needs from `use-semantius`, condensed. This file is a distillation, not the authority — **`../../use-semantius/` wins on any conflict**. Consult the full references on demand:
 
 | Situation | Read |
 |---|---|
-| FK modeling depth (reference vs parent semantics, junctions, delete modes) | `../use-semantius/references/data-modeling.md` |
-| RBAC beyond the module's two standard permissions | `../use-semantius/references/rbac.md` |
-| Schema-evolution risk classes, renames, deletions | `../use-semantius/references/data-modeling.md` → Safe Evolution Patterns |
-| PostgREST syntax beyond this file | `../use-semantius/references/crud-tools.md` |
-| Exotic CLI forms, chaining, daemon/env tuning | `../use-semantius/references/cli-usage.md` |
+| FK modeling depth (reference vs parent semantics, junctions, delete modes) | `../../use-semantius/references/data-modeling.md` |
+| RBAC beyond the module's two standard permissions | `../../use-semantius/references/rbac.md` |
+| Schema-evolution risk classes, renames, deletions | `../../use-semantius/references/data-modeling.md` → Safe Evolution Patterns |
+| PostgREST syntax beyond this file | `../../use-semantius/references/crud-tools.md` |
+| Exotic CLI forms, chaining, daemon/env tuning | `../../use-semantius/references/cli-usage.md` |
 
 ---
 
@@ -87,8 +87,8 @@ Properties the importer uses:
 | `title` | Human label. |
 | `format` | Open vocabulary; the importer passes the csvschema verdict through (`string`, `multiline`, `integer`, `number`, `date`, `date-time`, `boolean`, `enum`, `email`, `url`, ...; also `rating`, `color`, `icon`, see data-modeling.md). `enum` requires `enum_values` (never `select`). Monetary values: `number` + `precision`. |
 | `precision` | `number` only; digits after the decimal (default 2). |
-| `input_type` | `default`, `required` (mandatory in UI), `readonly`, `disabled`, `hidden`. **There is no `required` column and no `is_nullable`** — sending either fails. Never target live `readonly`/`disabled` fields with an import. |
-| `field_order` | Display order. **Omit it**: the platform appends each new field after the entity's existing ones in array order, so the CSV column order becomes the display order. Set it only when the user asks for a specific position, after reading the entity's live `field_order` values: the auto-created fields already hold positions (the label field sits at 20), and a tie renders in an unpredictable order without any error. Choose a value strictly between the two live neighbours the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 990000 to put it last. Values from 990000 up are reserved for system columns; every other field stays below 990000. |
+| `input_type` | `default`, `required` (mandatory, enforced by the platform), `readonly`, `disabled`, `hidden`. **There is no `required` column and no `is_nullable`** — sending either fails. Never target live `readonly`/`disabled` fields with an import. |
+| `field_order` | Display order. **Omit it**: the platform appends each new field after the entity's existing ones in array order, so the CSV column order becomes the display order. Set it only when the user asks for a specific position, after reading the entity's live `field_order` values: the auto-created fields already hold positions (the label field sits at 20), and a tie renders in an unpredictable order without any error. Choose a value strictly between the two live neighbors the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 990000 to put it last. Values from 990000 up are reserved for system columns; every other field stays below 990000. |
 | `width` | `"default"` unless a layout need exists. |
 | `unique_value` | `true` enforces DB-level uniqueness (the "mark this field unique" answer; the import then skips rows whose value already exists). On an existing field it fails when live duplicates exist. |
 | `searchable` | `true` adds the field to full-text search. |

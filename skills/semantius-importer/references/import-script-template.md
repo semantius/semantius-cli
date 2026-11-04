@@ -13,7 +13,7 @@ cp <skill-folder>/references/import.template.ts <run-folder>/import.ts
 
 ## Workspace layout
 
-Every import run gets its own scratch folder under the **current working directory**, joining the plugin's scratch-folder family beside the modeler's `.tmp_deploy/` and the admin's `.tmp_admin/`. `<cwd>` is the one path every shell, the Write tool, and the harness already agree on — no translation, no surprises — and unlike the OS temp directory it survives a sandbox restart mid-run, so an approved `mapping.json` is never lost between review and import. Do **not** write to `$TMPDIR` / `/tmp/` / `$env:TEMP`: those paths resolve differently between Git Bash and Windows-native runtimes, a recycling sandbox may wipe them, and the user cannot inspect them by path if a run fails. Add `.tmp_import/` to `.gitignore` once.
+Every import run gets its own scratch folder under the **current working directory**. `<cwd>` is the one path every shell, the Write tool, and the harness already agree on — no translation, no surprises — and unlike the OS temp directory it survives a sandbox restart mid-run, so an approved `mapping.json` is never lost between review and import. Do **not** write to `$TMPDIR` / `/tmp/` / `$env:TEMP`: those paths resolve differently between Git Bash and Windows-native runtimes, a recycling sandbox may wipe them, and the user cannot inspect them by path if a run fails.
 
 ```
 <cwd>/.tmp_import/run-<yyyymmdd-hhmmss>/
@@ -38,7 +38,7 @@ cp <skill-folder>/references/import.template.ts .tmp_import/run-<ts>/import.ts  
 bun add --cwd .tmp_import/run-<ts> csv-parse                           # still from <cwd>: --cwd targets the run folder, no `cd`
 ```
 
-**Never `cd` into the run folder.** Preflight check 1 (`../semantius-admin/references/preflight.md`) applies to this skill's scripts exactly as it does to a bare `semantius call`: `create-fields.ts` and `import.ts` spawn `semantius call crud …` as child processes, and a child inherits the shell's current working directory, from which the CLI reads its `.env`. Run from inside `.tmp_import/run-<ts>/`, the CLI never reads the session's `.env`, so every `create_field` call and every batch insert either fails with an auth error (exit 5) that looks like a CLI bug, or, worse, lands with whatever the global `.env` or the current host supplies. Nothing in the scripts needs the run folder as cwd: `mapping.json`, `node_modules/csv-parse`, `import-summary.json`, and `failed-batches.json` all resolve relative to the script file's own location (`import.meta.url` / Bun's upward module lookup), so they run identically from `<cwd>` by path — the same shape as the modeler's `bun run .tmp_deploy/deploy_<slug>.ts`. `bun add --cwd` covers the one step that does need the run folder as its working directory. Do not "solve" this by copying or symlinking `.env` into the run folder either: the run folder is gitignored scratch and must never carry credentials.
+**Never `cd` into the run folder.** Preflight check 1 applies to this skill's scripts exactly as it does to a bare `semantius call`: `create-fields.ts` and `import.ts` spawn `semantius call crud …` as child processes, and a child inherits the shell's current working directory, from which the CLI reads its `.env`. Run from inside `.tmp_import/run-<ts>/`, the CLI never reads the session's `.env`, so every `create_field` call and every batch insert either fails with an auth error (exit 5) that looks like a CLI bug, or, worse, lands with whatever the global `.env` or the current host supplies. Nothing in the scripts needs the run folder as cwd: `mapping.json`, `node_modules/csv-parse`, `import-summary.json`, and `failed-batches.json` all resolve relative to the script file's own location (`import.meta.url` / Bun's upward module lookup), so they run identically from `<cwd>` by path. `bun add --cwd` covers the one step that does need the run folder as its working directory. Do not "solve" this by copying or symlinking `.env` into the run folder either: the run folder may be committed or shared, so it must never carry credentials.
 
 Run commands (from `<cwd>`, by path, as each stage arrives; `<run-folder>` = `.tmp_import/run-<ts>`):
 
@@ -49,7 +49,7 @@ bun run <run-folder>/create-fields.ts                     # Stage 4: create the 
 bun run <run-folder>/import.ts <absolute-path-to>/<file>.csv   # Stage 5
 ```
 
-The workspace lives under the project's working directory but stays out of `git status` via the `.tmp_import/` gitignore entry; it never goes into the CSV's folder or the skill folder. Always report the run folder's **absolute path** in the final summary so the user can open `failed-batches.json` and `import-summary.json` directly. Re-running an import for the same table: prefer updating `mapping.json` in the existing run folder over generating a fresh one, so `failed-batches.json` history stays in one place.
+The workspace lives under the project's working directory; it never goes into the CSV's folder or the skill folder. Always report the run folder's **absolute path** in the final summary so the user can open `failed-batches.json` and `import-summary.json` directly. Re-running an import for the same table: prefer updating `mapping.json` in the existing run folder over generating a fresh one, so `failed-batches.json` history stays in one place.
 
 ## Design rules the script implements
 
@@ -92,4 +92,4 @@ The old generation-time checklist is now a checklist on the artifact, verified o
 - [ ] `id_column` equals the target entity's live `id_column` (from `read_entity`; `id` only for entities this skill just created).
 - [ ] `expected_records` carries the introspection's `record_count` on full scans, `null` when the scan was capped.
 - [ ] When the diff chose coerce-into-live for a mismatched column, that column's `format` is the **live** field's format, so validation routes incompatible rows to the failed capture.
-- [ ] After a successful run, report the summary with the run folder's absolute path and leave the folder in place (the user may want `failed-batches.json` and `import-summary.json`); `.tmp_import/` is gitignored and the user manages cleanup — the next run gets its own folder.
+- [ ] After a successful run, report the summary with the run folder's absolute path and leave the folder in place (the user may want `failed-batches.json` and `import-summary.json`); the user manages cleanup — the next run gets its own folder.

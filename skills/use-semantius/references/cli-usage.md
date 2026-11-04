@@ -25,7 +25,7 @@ Verify with `semantius --version`.
 
 | Installer | Binary | PATH |
 |---|---|---|
-| `install.ps1` (Windows) | `%LOCALAPPDATA%\Programs\Semantius\semantius.exe` | Updates the user PATH, but only programs started afterwards see it: restart VS Code or the agent app. A new terminal tab inside it is not enough. |
+| `install.ps1` (Windows) | `%LOCALAPPDATA%\Programs\Semantius\semantius.exe` | Updates the user PATH, but only programs started afterward see it: restart VS Code or the agent app. A new terminal tab inside it is not enough. |
 | `install.sh` (Linux / macOS) | `/usr/local/bin/semantius` when that folder is writable, else `~/.local/bin/semantius` | Never edits PATH; it prints the line to add to the shell profile. macOS never has `~/.local/bin` on PATH. It warns when another `semantius` earlier on PATH shadows the new one. |
 
 ### Installing from an agent

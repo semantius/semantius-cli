@@ -6,6 +6,10 @@ Entries below are newest first.
 
 ---
 
+## Shared preflight and question files live in use-semantius
+
+2026-11-04. Asked for by Martin Amm: the pipeline skills consume shared files from `use-semantius` and no longer provide them to the generic skills, so a generic skill never depends on a pipeline skill. The file format is unchanged; `version` stays `3.1`. The Question format step is in `use-semantius/references/preflight.md`, and the description no longer names the pipeline skills.
+
 ## signs in to a named host on request
 
 2026-10-04. When `semantius --host <h> whoami` exits 5 in Preflight 3, the skill no longer only tells the user to run `semantius login --host <h>`: it asks (Sign in / Stop) and, on Sign in, runs `semantius login --host <h>` in the background and relays the sign-in link, with `--login-flow device` when the user is not at the machine. It still never runs `use` (which would switch the current host) or `logout`. The Writing conventions list that question beside the Stage 3 gate. The preflight's CLI version note is gone; the skill ships with the CLI it describes.

@@ -43,8 +43,8 @@ Until your PATH has it, run the binary by the path on the installer's
 
 ### 2. Install the agent skills
 
-The Semantius skills (`use-semantius`, `semantius-architect`,
-`semantius-admin`, …) teach your coding agent to work with Semantius. They are
+The Semantius skills (`use-semantius`, `semantius-importer`,
+`semantius-transfer`, …) teach your coding agent to work with Semantius. They are
 installed from this repository's [`skills/`](skills/) folder by the
 [`skills`](https://github.com/vercel-labs/skills) installer, which needs
 **Node.js 22.20 or later, and git**. Use the command that fits how you install.

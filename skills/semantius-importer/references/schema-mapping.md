@@ -92,7 +92,7 @@ Source of truth for this contract: `semantius-cli/src/local-tools/csv-schema.d.t
 
 ## 2. Format mapping
 
-> **Ledger note (sections 2-7).** Every user question these sections describe (a format override, an ambiguous enum, the unique-key question, the reserved-column collisions, an FK candidate, the label column, a zero-for-empty or enum-empty rule) is a `Q:` ledger task in the Stage 2 review loop: enumerated all at once, asked in batches of up to four, and completed only after the answer is in `mapping.json`. Templates and sequence: SKILL.md writing convention 7 and `../../semantius-admin/references/task-tracking.md`. Nothing here is asked outside that loop.
+> **Ledger note (sections 2-7).** Every user question these sections describe (a format override, an ambiguous enum, the unique-key question, the reserved-column collisions, an FK candidate, the label column, a zero-for-empty or enum-empty rule) is a `Q:` ledger task in the Stage 2 review loop: enumerated all at once, asked in batches of up to four, and completed only after the answer is in `mapping.json`. Templates and sequence: SKILL.md writing convention 7 and Stage 2. Nothing here is asked outside that loop.
 
 The vocabulary is aligned, so most formats pass straight into `create_field`:
 
@@ -134,7 +134,7 @@ Because of quirk 1, treat every `enum` verdict as a claim to verify, not a fact.
 | readable labels (`On hold`, `Key account`) | genuine `enum`: propose snake_case values with the file's text as the label, `{"value": "on_hold", "label": "On hold"}`; records store the value and the import translates each cell (the `coerce` enum branch matches a value, then a label, case-insensitively) |
 | longer free text, names, or values that clearly continue beyond the sample | `string`; the low cardinality is an artifact of a small file |
 
-**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`; records, `default_value` and comparisons always use the value. An enum field the import creates gets every entry as an object with a `label` and a `color`, and an `icon` where a Lucide icon fits, by the rules in `../use-semantius/references/data-modeling.md` → "Enum values and labels" and "Enum colors"; check each icon with `bun "<skill-folder>/../use-semantius/references/lucide-icon-checker.ts" <name…>`. Against an existing field, compare by value: a file holding the labels of a live field's entries is not a mismatch (the import translates them), and a difference in labels or hints is cosmetic.
+**Values and labels.** An `enum_values` entry is a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`; records, `default_value` and comparisons always use the value. An enum field the import creates gets every entry as an object with a `label` and a `color`, and an `icon` where a Lucide icon fits, by the rules in `../../use-semantius/references/data-modeling.md` → "Enum values and labels" and "Enum colors"; check each icon with `bun "<skill-folder>/../use-semantius/references/lucide-icon-checker.ts" <name…>`. Against an existing field, compare by value: a file holding the labels of a live field's entries is not a mismatch (the import translates them), and a difference in labels or hints is cosmetic.
 
 Genuine enum extras: consider whether the CSV plausibly contains every lifecycle value. A 30-row export may miss states. When the user knows more values exist, add them to `enum_values` now; adding later is also possible via `update_field`.
 

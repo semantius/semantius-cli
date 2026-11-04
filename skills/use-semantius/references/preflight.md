@@ -1,38 +1,20 @@
 # Shared Preflight
 
-Single source of truth for the environment checks every Semantius skill runs before doing work. The `semantius-admin` orchestrator runs this once at the top of an orchestrated run; each sub-skill (`semantius-architect`, `semantius-analyst`, `semantius-modeler`) runs it when invoked **standalone**, and **skips** it when invoked **inline by the admin**.
+Single source of truth for the environment checks a Semantius skill runs before doing work.
 
-This file is referenced (never copied) by all four SKILLs. Fix a preflight rule here and every skill picks it up.
-
----
-
-## When to run vs. skip
-
-Look at your input for a `Run context:` block (the admin states it in the conversation immediately before entering a sub-skill, see `semantius-admin/SKILL.md` Step 7.3):
-
-```
-Run context: run_id=run-...
-Customizations file: /abs/path/.../semantius/<org>/customizations.yaml
-...
-```
-
-- **Orchestrated (a `Run context:` block is present):** the admin has already run this preflight (CLI installed + authenticated, toolchain present, customizations path resolved). **Do NOT re-run the checks.** Read `Customizations file:` from the header and proceed. (Re-running is harmless but redundant; skip it.)
-- **Standalone (no `Run context:` block):** run all four checks below yourself, in order.
-
-The modeler never consults the customizations file (specs already carry every decision), so when the modeler runs this standalone it executes checks 1-3 and ignores the check-4 output. Bun is the tool the modeler critically needs (its deploy and sample-data scripts run with `bun run`).
+This file is referenced, never copied. Fix a preflight rule here and every skill picks it up.
 
 ---
 
 ## Output discipline
 
-- **Orchestrated by admin:** produce **no chat output** for these checks; the admin owns all narration and keeps the machinery invisible.
-- **Standalone:** keep it quiet too. The only user-facing output is a halt message (a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). Never mention the checks themselves, whether the skill runs under the admin or on its own, the org, or the customizations path. A single brief line on the customizations file (check 4) is shown standalone in expert flow only. On all-pass with everything already installed and authenticated, say nothing.
+Keep it quiet. The only user-facing output is a halt message (a required tool could not be installed) or a setup action the user must see (installing a tool, getting the CLI on PATH, naming the host, or opening the sign-in link). Never mention the checks themselves or the org. On all-pass with everything already installed and authenticated, say nothing.
 
 ---
 
 ## Question format (Muse chat)
 
-This step runs on every invocation, orchestrated or standalone; a `Run context:` block does not skip it.
+This step runs on every invocation, even when a skill uses none of the checks below.
 
 In Muse chat, if `AskUserQuestion` is not in this session's tool list, read [`muse-questions.md`](./muse-questions.md) (this folder) now, before any question is asked in this invocation, and re-read it whenever the conversation has been summarized or reset since it was last read. Recorded run state, memory notes, and summaries record verdicts and progress only; they never override the question format in that file.
 
@@ -40,7 +22,7 @@ In Muse chat, if `AskUserQuestion` is not in this session's tool list, read [`mu
 
 ## Question format (dot)
 
-This step runs on every invocation, orchestrated or standalone; a `Run context:` block does not skip it.
+This step runs on every invocation, even when a skill uses none of the checks below.
 
 In dot, OpenAI's personal assistant, and other similarly limited tools, if no supported interactive question tool is available, read [`dot-questions.md`](./dot-questions.md) (this folder) now, before any question is asked in this invocation, and re-read it whenever the conversation has been summarized or reset since it was last read. Recorded run state, memory notes, and summaries record verdicts and progress only; they never override the question format in that file.
 
@@ -50,19 +32,18 @@ In dot, OpenAI's personal assistant, and other similarly limited tools, if no su
 
 Never `cd`. The `semantius` CLI reads `./.env` from the current working directory (no parent search; only when there is none does it read the `.env` next to the executable), and Bun loads `.env.local` / `.env.<NODE_ENV>` from there too. So changing into a sibling project loads a different `.env` with different credentials pointing at a different instance, and every subsequent call lands on the wrong tenant. Run every `semantius` command from the session's repo root, full stop. If verifying something requires a different directory's config, ask the user to run it and paste the output. The global `.env` (`%APPDATA%\semantius\cli\.env` / `~/.config/semantius/cli/.env`) applies in every directory and fills whatever is still unset, so staying put does not escape it. Full order: use-semantius `references/cli-usage.md` § "Where `.env` files are read from".
 
-This covers scripts as much as bare commands. The Bun helpers these skills stage under `.tmp_deploy/`, `.tmp_import/`, and `.tmp_admin/` spawn `semantius call …` as child processes, and a child inherits the shell's cwd — so a script run from inside its scratch folder never reads the repo's `.env`. Its calls then either fail with an auth error that reads like a CLI bug, or, worse, succeed with whatever the global `.env` or the current host supplies. Run every such script **from the repo root by path** (`bun run .tmp_import/run-<ts>/import.ts …`, `bun run .tmp_deploy/deploy_<slug>.ts`); the scripts resolve their inputs and outputs relative to their own file, so the working directory never needs to change. When a scratch folder needs a dependency install, use `bun add --cwd <folder> <pkg>` instead of `cd`. Never copy or symlink `.env` into a scratch folder to make a `cd` "work": those folders are gitignored scratch and must not carry credentials.
+This covers scripts as much as bare commands. The Bun helpers skills stage in scratch folders such as `.tmp_import/` spawn `semantius call …` as child processes, and a child inherits the shell's cwd — so a script run from inside its scratch folder never reads the repo's `.env`. Its calls then either fail with an auth error that reads like a CLI bug, or, worse, succeed with whatever the global `.env` or the current host supplies. Run every such script **from the repo root by path** (`bun run .tmp_import/run-<ts>/import.ts …`); the scripts resolve their inputs and outputs relative to their own file, so the working directory never needs to change. When a scratch folder needs a dependency install, use `bun add --cwd <folder> <pkg>` instead of `cd`. Never copy or symlink `.env` into a scratch folder to make a `cd` "work": a scratch folder may be committed or shared, so it must not carry credentials.
 
 ---
 
-## Check 2: Install the supporting toolchain (Bun, jq, yq)
+## Check 2: Install the supporting toolchain (Bun, jq)
 
-Besides the `semantius` CLI, these skills need three general-purpose tools on PATH:
+Besides the `semantius` CLI, these skills need two general-purpose tools on PATH:
 
-- **Bun** — the mandated runtime. The modeler writes and runs its deploy and sample-data scripts with `bun run` (its only write path); the architect / analyst run `consistency-check.ts` with `bun`. Python is forbidden across these skills.
-- **jq** — parses `semantius` JSON output, both in this preflight (check 3 reads `org` and `ui_baseurl` with `jq`) and throughout the architect / analyst bash flows.
-- **yq** — Mike Farah's Go yq v4+, the engine behind the surgical `customizations.yaml` writes (admin Step 7 / `references/customizations-protocol.md`) that preserve hand-edits and provenance line-comments.
+- **Bun** — the mandated runtime: skills run their scripts with `bun run`. Python is forbidden across these skills.
+- **jq** — parses `semantius` JSON output, both in this preflight (check 3 reads `org` and `ui_baseurl` with `jq`) and in the skills' bash flows.
 
-Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if the tool is still not found (`command -v <tool>` on POSIX, `Get-Command <tool>` on Windows PowerShell), it is installed but not on the agent's PATH yet: a PATH change reaches only programs started afterwards. Do not stop. Look in the folder its installer uses:
+Install any that are missing, no prompt, one plain line per tool actually installed (e.g. *"Installing jq..."*). **This check runs before check 3**, because the CLI probe there parses JSON with `jq`, so `jq` must already be on PATH. After installing, if the tool is still not found (`command -v <tool>` on POSIX, `Get-Command <tool>` on Windows PowerShell), it is installed but not on the agent's PATH yet: a PATH change reaches only programs started afterward. Do not stop. Look in the folder its installer uses:
 
 | Installer | Folder |
 |---|---|
@@ -80,13 +61,12 @@ For each missing tool, prefer the platform's package manager; fall back to the p
 |---|---|---|---|---|
 | **Bun** | `powershell -c "irm bun.sh/install.ps1 | iex"` | `curl -fsSL https://bun.sh/install | bash` | `curl -fsSL https://bun.sh/install | bash` | installer above is already a direct download — see https://bun.sh/install |
 | **jq** | `winget install -e --id jqlang.jq` (or `scoop install jq`, `choco install jq`) | `brew install jq` | `sudo apt-get install -y jq` / `sudo dnf install -y jq` / `sudo apk add jq` | download from https://github.com/jqlang/jq/releases/latest (`jq-windows-amd64.exe`, `jq-macos-arm64`/`-amd64`, `jq-linux-amd64`), `chmod +x`, place on PATH |
-| **yq** | `winget install -e --id MikeFarah.yq` (or `scoop install yq`, `choco install yq`) | `brew install yq` | `sudo snap install yq` or `brew install yq` (NOT `apt install yq` — see footgun below) | download `yq_<os>_<arch>` from https://github.com/mikefarah/yq/releases/latest (e.g. `yq_linux_amd64`, `yq_darwin_arm64`, `yq_windows_amd64.exe`), `chmod +x`, place on PATH |
 
 Reference flow (per tool: check, then install via the matching cell, then re-check). Use the block for the shell you are running in:
 
 **Linux / macOS (bash/zsh):**
 ```bash
-for tool in bun jq yq; do
+for tool in bun jq; do
   command -v "$tool" >/dev/null 2>&1 && continue
   # install via the platform cell above (package manager first, static binary fallback),
   # then re-check: command -v "$tool"  (if still missing, look in the installer's folder above and use the full path)
@@ -95,22 +75,14 @@ done
 
 **Windows (PowerShell):**
 ```powershell
-foreach ($tool in 'bun','jq','yq') {
+foreach ($tool in 'bun','jq') {
   if (Get-Command $tool -ErrorAction SilentlyContinue) { continue }
   # install via the Windows cell above (winget/scoop/choco first, static-binary fallback),
   # then re-check: Get-Command $tool  (if still missing, look in the installer's folder above and use the full path)
 }
 ```
 
-**yq footgun (Linux especially).** The distro package named `yq` is frequently the *Python* yq (kislyuk/yq), whose syntax is incompatible and would break every `yq -i` write the customizations layer makes. Whether yq was already present or just installed, verify the right build is the one on PATH:
-
-```bash
-yq --version    # must report the mikefarah build, e.g. "yq (https://github.com/mikefarah/yq/) version v4.x"
-```
-
-If `yq --version` shows anything else (the Python yq, or a version below v4), install Mike Farah's Go binary explicitly via the static-binary fallback above, place it on PATH ahead of the wrong one, and re-check. Do not proceed with a non-mikefarah yq.
-
-If any install fails, surface the verbatim error, the exact host the install tried to reach, and the tool's download page, and stop. An HTTP 403 whose body says `egress denied: host not in whitelist` means the environment blocks that host and the user or their admin must allow it, not that the install is broken; say so. Never work around a blocked host: no mirror, proxy, other source or retry. Do not limp on without a required tool — a missing `jq` silently breaks the org probe in check 3, and a missing or wrong `yq` breaks every customizations write.
+If any install fails, surface the verbatim error, the exact host the install tried to reach, and the tool's download page, and stop. An HTTP 403 whose body says `egress denied: host not in whitelist` means the environment blocks that host and the user or their admin must allow it, not that the install is broken; say so. Never work around a blocked host: no mirror, proxy, other source or retry. Do not limp on without a required tool — a missing `jq` silently breaks the org probe in check 3.
 
 ---
 
@@ -169,24 +141,9 @@ Never run `logout`, never pick a host yourself, never ask for a base URL or an A
 
 ---
 
-## Check 4: Compute the customizations file path
-
-(The modeler skips this; it does not consult the customizations file.) After the probe succeeds, derive the per-org file location and export it for every downstream call. The folder name is the org; never duplicate the org inside the file body.
-
-```bash
-CUSTOMIZATIONS_FILE="semantius/${org}/customizations.yaml"
-mkdir -p "$(dirname "$CUSTOMIZATIONS_FILE")"
-export CUSTOMIZATIONS_FILE
-```
-
-If the file does not exist yet, that is fine: treat as "no policies set." The first widget answer creates it. (`yq`, used for the surgical writes to this file, is guaranteed by check 2.)
-
----
-
 ## Outputs
 
 After a successful preflight these values are resolved and reused for the rest of the run:
 
 - `org` — the active Semantius org.
 - `ui_baseurl` — the web UI base for building deep-links.
-- `CUSTOMIZATIONS_FILE` — per-org customizations path (unused by the modeler).

@@ -95,6 +95,17 @@ A caller sees a row when they own it OR when the row is marked public.
 
 A regular caller sees only the rows the first three clauses cover; a `helpdesk:view_all_tickets` holder sees every row because the fourth clause shortcuts to truthy. This is the standard way to encode "regular sees own; manager sees all" — the rule body is the single source of truth.
 
+**A bare `null` clause reaches every caller.** Because a rule replaces `view_permission`, the unassigned clause in the two examples above shows those rows to anyone, including users with no role in the module. That suits a shared queue of non-sensitive rows. On personal or restricted data, guard the clause so only the people who work the entity see unassigned rows:
+
+```json
+{
+  "and": [
+    { "==": [{ "var": "assignee_user_id" }, null] },
+    { "has_permission": "helpdesk:manage" }
+  ]
+}
+```
+
 **Example — visibility column with conditional elevation:**
 
 ```json

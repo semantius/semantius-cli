@@ -63,6 +63,8 @@ flowchart LR
 **Key type:** typeid
 **Key prefix:** act
 **Audit log:** no
+**View permission:** partners:read_activities
+**Edit permission:** partners:write_activities
 **Catalog entity code:** `activities`
 **Entity type:** operational_record
 **Description:** Anything logged on a business partner's timeline.
@@ -87,6 +89,8 @@ flowchart LR
 **Key type:** typeid
 **Key prefix:** bp
 **Audit log:** no
+**View permission:** partners:read_business_partners
+**Edit permission:** partners:write_business_partners
 **Catalog entity code:** `business_partners`
 **Entity type:** operational_record
 **Description:** A company or person the business deals with.
@@ -108,6 +112,8 @@ flowchart LR
 **Key type:** has_a
 **Based on:** `business_partners`
 **Audit log:** no
+**View permission:** partners:read_customers
+**Edit permission:** partners:write_customers
 **Catalog entity code:** `customers`
 **Entity type:** operational_record
 **Description:** A business partner the business sells to.
@@ -129,6 +135,8 @@ flowchart LR
 **Key prefix:** eml
 **Based on:** `activities`
 **Audit log:** no
+**View permission:** partners:read_emails
+**Edit permission:** partners:write_emails
 **Catalog entity code:** `emails`
 **Entity type:** operational_record
 **Description:** An email on a business partner's timeline.
@@ -151,6 +159,8 @@ flowchart LR
 **Key type:** has_a
 **Based on:** `organizations`
 **Audit log:** no
+**View permission:** partners:read_vendors
+**Edit permission:** partners:write_vendors
 **Catalog entity code:** `vendors`
 **Entity type:** operational_record
 **Description:** A company the business buys from, kept once as an organization.
@@ -176,7 +186,7 @@ flowchart LR
 
 ## 4. Relationship summary
 
-| From | Field | To | Cardinality | Kind | fk_format | Delete behavior |
+| FK table | FK field | References | Cardinality | Kind | fk_format | Delete behavior |
 |---|---|---|---|---|---|---|
 | `activities` | `business_partner_id` | `business_partners` | N:1 | reference | reference | restrict |
 | `emails` | `thread_id` | `activities` | N:1 | reference | reference | clear |
@@ -207,7 +217,7 @@ flowchart LR
 - `kam`
   - label: Key account
 
-## 6. Cross-model link suggestions
+## 6. Cross-model relationship suggestions
 
 _(none: live extraction is reverse-engineering; every cross-module FK already exists as a §3 reference)_
 
@@ -231,10 +241,20 @@ _(none: reverse-engineered from a live module)_
 
 ## 8.1 Permissions catalog
 
-| permission | tier | description | included in `:admin`? | reconciliation |
+| permission | tier | description | included in `:admin`? | high risk? |
 | --- | --- | --- | --- | --- |
-| `partners:read` | baseline-read | Read access to every record in the module. | ✓ | (none) |
-| `partners:manage` | baseline-manage | Create and edit records in the module. | ✓ | (none) |
+| `partners:read` | baseline-read | Read access to every record in the module. | ✓ | - |
+| `partners:manage` | baseline-manage | Create and edit records in the module. | ✓ | - |
+| `partners:read_activities` | entity-read | Read Activities | ✓ | - |
+| `partners:read_business_partners` | entity-read | Read Business Partners | ✓ | - |
+| `partners:read_customers` | entity-read | Read Customers | ✓ | - |
+| `partners:read_emails` | entity-read | Read Emails | ✓ | - |
+| `partners:read_vendors` | entity-read | Read Vendors | ✓ | - |
+| `partners:write_activities` | entity-write | Write Activities | ✓ | - |
+| `partners:write_business_partners` | entity-write | Write Business Partners | ✓ | - |
+| `partners:write_customers` | entity-write | Write Customers | ✓ | - |
+| `partners:write_emails` | entity-write | Write Emails | ✓ | - |
+| `partners:write_vendors` | entity-write | Write Vendors | ✓ | - |
 
 ## 8.2 Business rules
 
@@ -257,6 +277,21 @@ _(none: access_scope is basic, so no permission-gated business rules are authore
 | --- | --- | --- |
 | `partners:manage` | `partners:read` | ♻ exists |
 | `partners:manage` | `crm:manage` | ♻ exists |
+| `partners:read` | `partners:read_business_partners` | ♻ exists |
+| `partners:read` | `partners:read_activities` | ♻ exists |
+| `partners:read` | `partners:read_customers` | ♻ exists |
+| `partners:read` | `partners:read_emails` | ♻ exists |
+| `partners:read` | `partners:read_vendors` | ♻ exists |
+| `partners:manage` | `partners:write_business_partners` | ♻ exists |
+| `partners:manage` | `partners:write_activities` | ♻ exists |
+| `partners:manage` | `partners:write_customers` | ♻ exists |
+| `partners:manage` | `partners:write_emails` | ♻ exists |
+| `partners:manage` | `partners:write_vendors` | ♻ exists |
+| `partners:write_business_partners` | `partners:read_business_partners` | ♻ exists |
+| `partners:write_activities` | `partners:read_activities` | ♻ exists |
+| `partners:write_customers` | `partners:read_customers` | ♻ exists |
+| `partners:write_emails` | `partners:read_emails` | ♻ exists |
+| `partners:write_vendors` | `partners:read_vendors` | ♻ exists |
 
 **Processes:** _(none: access_scope is basic, no Processes catalog is authored)_
 

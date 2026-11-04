@@ -2,6 +2,29 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Shared preflight and question files live in use-semantius
+
+2026-11-04. Asked for by Martin Amm: the pipeline skills consume shared files from `use-semantius` and no longer provide them to the generic skills, so a generic skill never depends on a pipeline skill. The file format is unchanged; `version` stays `3.1`. The checks are `use-semantius/references/preflight.md`, without yq or the customizations path, which this skill never used. It no longer names the pipeline skills; its stage tasks block an in-progress unprefixed task when `TaskList` shows one.
+
+## "Relationship" replaces "edge" and "connect" for data relationships
+
+2026-11-03. Paired with the analyst's entry of the same name. The `Q:` template is now `Q: <Header> looks like a relationship to <Table>. Add the relationship?`. The file format is unchanged; `version` stays `3.1`.
+
+## "Relationship" replaces "link" for data relationships
+
+2026-11-03. Paired with the analyst's entry of the same name. The `Q:` template is now `Q: <Header> looks like a relationship to <Table>. Add the relationship?`. Deep links keep the word.
+
+## `Required` is enforced by the platform
+
+2026-11-02. Paired with the modeler's entry of the same name. `references/importer-essentials.md` described `input_type: "required"` as mandatory in the UI. The platform enforces it.
+
+## The import never edits .gitignore
+
+2026-10-30. Paired with the modeler's entry of the same name. The skill told the agent to add `.tmp_import/` to the user's `.gitignore`, an edit to a shared, committed file nobody asked for.
+
+- `SKILL.md`, Stage 4 run workspace, and `references/import-script-template.md`, Workspace layout: the agent does not add, change or create a `.gitignore` entry for the run folder.
+- The run folder is described as scratch, with no claim about whether it is ignored or committed. The rule never to copy `.env` into it now rests on the folder possibly being committed or shared.
+
 ## A clean file write is never narrated as an error
 
 2026-10-27. Paired with the architect and analyst entries of the same name and the modeler's entry of the same date.
@@ -52,7 +75,7 @@ Description and docs only, no contract change (2026-09-26).
 
 ## task-tool call economy
 
-Guidance only, no contract change (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain edge, parent edge and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (writing convention 7 "Stage tasks" and "Ledger stages"; Stage 2 review-loop step 1, E). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
+Guidance only, no contract change (2026-08-19). Task tracking: one `TaskUpdate` per task carries chain relationship, parent relationship and status together; question gates are set in one call on the stage task (`addBlockedBy: [Q: ids]`). Same graph, ~⅓ fewer task calls per stage entry, N→1 for a question enumeration. Canonical text: `../semantius-admin/references/task-tracking.md` (§1 relations, §2 rule 1, §3 E and the gate; `TaskList` row corrected: returns `blockedBy` only, not `blocks`). Files: SKILL.md (writing convention 7 "Stage tasks" and "Ledger stages"; Stage 2 review-loop step 1, E). Motivated by a 2026-08-19 run that spent ~40 of 149 tool calls on task bookkeeping.
 
 ## helpers run from `<cwd>` by path, never from inside the run folder
 
@@ -68,7 +91,7 @@ Guidance only, no contract change (2026-08-18). The importer now uses the harnes
 
 ## `AskUserQuestion` mechanics
 
-`AskUserQuestion` mechanics (guidance only, no contract change): call the widget alone in its own response after mapping edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. New writing convention 6, plus sequencing sentences in the Stage 2 review loop and the Stage 4 pre-write gate. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch cancelled the pause.
+`AskUserQuestion` mechanics (guidance only, no contract change): call the widget alone in its own response after mapping edits and re-renders; answers arrive as a `<user_answers>` input block; there is no `user_answers` tool. New writing convention 6, plus sequencing sentences in the Stage 2 review loop and the Stage 4 pre-write gate. Motivated by a 2026-08-17 copilot run where `edit` + `AskUserQuestion` in one tool batch canceled the pause.
 
 ## update mode postponed; "mark this field unique?" question
 

@@ -20,6 +20,11 @@
  * does not survive here. skills/ holds nothing but upstream's files (no notes,
  * no sync record): `npx skills` reads it. The upstream commit goes in the commit
  * message instead.
+ *
+ * EXCLUDED_SKILLS stay upstream only. A sync leaves them out, which removes them
+ * from skills/, and uncommitted work on them upstream blocks nothing. `:check`
+ * reports one found here as extra rather than ignoring it: that folder would
+ * still ship through `npx skills`, and the next sync would delete it.
  */
 
 import {
@@ -39,6 +44,16 @@ const UPSTREAM_DIR = process.env.SEMANTIUS_AGENT_DIR
   : join(REPO_ROOT, '..', 'semantius-agent');
 const UPSTREAM_ROOT = 'semantius-plugin/skills';
 const SKILLS_DIR = join(REPO_ROOT, 'skills');
+const EXCLUDED_SKILLS = [
+  'semantius-admin',
+  'semantius-analyst',
+  'semantius-architect',
+  'semantius-modeler',
+];
+
+/** Whether a skills/-relative path belongs to a skill this repo does not carry. */
+const isExcluded = (path: string) =>
+  EXCLUDED_SKILLS.some((skill) => path.startsWith(`${skill}/`));
 
 // ---------------------------------------------------------------------------
 // git access
@@ -120,7 +135,13 @@ function main(): void {
   if (!existsSync(join(UPSTREAM_DIR, '.git'))) {
     fail(`upstream checkout not found at ${UPSTREAM_DIR} (set SEMANTIUS_AGENT_DIR)`);
   }
-  const dirty = git(['status', '--porcelain', '--', UPSTREAM_ROOT]).trim();
+  const dirty = git([
+    'status',
+    '--porcelain',
+    '--',
+    UPSTREAM_ROOT,
+    ...EXCLUDED_SKILLS.map((skill) => `:(exclude)${UPSTREAM_ROOT}/${skill}`),
+  ]).trim();
   if (dirty) {
     fail(`${UPSTREAM_ROOT} in ${UPSTREAM_DIR} has uncommitted changes; commit them first:\n${dirty}`);
   }
@@ -128,7 +149,8 @@ function main(): void {
 
   const upstreamPaths = git(['ls-tree', '-r', '-z', '--name-only', 'HEAD', '--', UPSTREAM_ROOT])
     .split('\0')
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((p) => !isExcluded(p.slice(UPSTREAM_ROOT.length + 1)));
   if (upstreamPaths.length === 0) fail(`upstream has no ${UPSTREAM_ROOT} at HEAD`);
 
   const blobs = readBlobs(upstreamPaths);
@@ -148,7 +170,9 @@ function main(): void {
       }
     }
     for (const path of local) {
-      if (!files.has(path)) problems.push(`  extra:   ${path} (no longer upstream)`);
+      if (files.has(path)) continue;
+      const why = isExcluded(path) ? 'excluded from the sync' : 'no longer upstream';
+      problems.push(`  extra:   ${path} (${why})`);
     }
 
     const source = `${join(UPSTREAM_DIR, UPSTREAM_ROOT)} @ ${head.slice(0, 12)}`;

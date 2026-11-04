@@ -32,7 +32,7 @@ Demo operations tracker (governed).
 |---|---|---|---|
 | 1 | `vendors` | Vendor | A supplier the team buys assets from. |
 | 2 | `assets` | Asset | A physical or virtual item the team tracks. |
-| 3 | `asset_vendors` | Asset Vendor | Links an asset to a secondary vendor. |
+| 3 | `asset_vendors` | Asset Vendor | Relates an asset to a secondary vendor. |
 | 4 | `users` | User | Users and agents |
 
 ### Entity-relationship diagram
@@ -55,7 +55,8 @@ flowchart LR
 **Label column:** `vendor_name`
 **Key type:** uuid
 **Audit log:** no
-**Edit permission:** admin
+**View permission:** demo-ops-pro:read_vendors
+**Edit permission:** demo-ops-pro:write_vendors
 **Cube mode:** disabled
 **Catalog entity code:** `vendors`
 **Entity type:** catalog
@@ -81,6 +82,8 @@ flowchart LR
 **Key type:** typeid
 **Key prefix:** asset
 **Audit log:** yes
+**View permission:** demo-ops-pro:read_assets
+**Edit permission:** demo-ops-pro:write_assets
 **Edit mode:** sidebar
 **Icon:** https://example.invalid/asset.svg
 **Catalog entity code:** `assets`
@@ -128,6 +131,79 @@ flowchart LR
         },
         {
           "require_permission": "demo-ops-pro:retire_asset"
+        },
+        true
+      ]
+    }
+  },
+  {
+    "code": "99002",
+    "name": "deploy_needs_gate",
+    "message": "Only the accountable role or an admin can deploy an asset.",
+    "description": "Deploying is a process gate; an admin can step in.",
+    "jsonlogic": {
+      "if": [
+        {
+          "and": [
+            {
+              "value_changed": "workflow_state"
+            },
+            {
+              "==": [
+                {
+                  "var": "workflow_state"
+                },
+                "deployed"
+              ]
+            }
+          ]
+        },
+        {
+          "or": [
+            {
+              "is_raci_actor": [
+                "assets",
+                "deployed",
+                "accountable"
+              ]
+            },
+            {
+              "has_permission": "demo-ops-pro:deploy_asset"
+            }
+          ]
+        },
+        true
+      ]
+    }
+  },
+  {
+    "code": "99003",
+    "name": "procure_needs_gate",
+    "message": "Only the accountable role can procure an asset.",
+    "description": "Procuring (creating) an asset is a high-risk process gate.",
+    "jsonlogic": {
+      "if": [
+        {
+          "==": [
+            {
+              "var": "$old"
+            },
+            null
+          ]
+        },
+        {
+          "or": [
+            {
+              "is_raci_actor": [
+                "assets",
+                "in_stock",
+                "accountable"
+              ]
+            },
+            {
+              "has_permission": "demo-ops-pro:procure_asset"
+            }
+          ]
         },
         true
       ]
@@ -186,10 +262,11 @@ flowchart LR
 
 **Plural label:** Asset Vendors
 **Audit log:** no
-**Edit permission:** link
+**View permission:** demo-ops-pro:read_asset_vendors
+**Edit permission:** demo-ops-pro:write_asset_vendors
 **Catalog entity code:** `asset_vendors`
 **Entity type:** junction
-**Description:** Links an asset to a secondary vendor.
+**Description:** Relates an asset to a secondary vendor.
 
 **Fields**
 
@@ -200,7 +277,7 @@ flowchart LR
 
 **Relationships**
 
-- Each `asset_vendors` links one `assets` to one `vendors` (junction, both legs cascade on delete).
+- Each `asset_vendors` relates one `assets` to one `vendors` (junction, both legs cascade on delete).
 
 ### 3.4 `users` - User
 
@@ -217,7 +294,7 @@ flowchart LR
 
 ## 4. Relationship summary
 
-| From | Field | To | Cardinality | Kind | fk_format | Delete behavior |
+| FK table | FK field | References | Cardinality | Kind | fk_format | Delete behavior |
 |---|---|---|---|---|---|---|
 | `assets` | `vendor_id` | `vendors` | N:1 | reference | reference | restrict |
 | `assets` | `owner_id` | `users` | N:1 | reference | reference | clear |
@@ -236,7 +313,7 @@ flowchart LR
 - `approved`
 - `blocked`
 
-## 6. Cross-model link suggestions
+## 6. Cross-model relationship suggestions
 
 _(none: live extraction is reverse-engineering; every cross-module FK already exists as a §3 reference)_
 
@@ -260,15 +337,23 @@ _(none: reverse-engineered from a live module)_
 
 ## 8.1 Permissions catalog
 
-| permission | tier | description | included in `:admin`? | reconciliation |
+| permission | tier | description | included in `:admin`? | high risk? |
 | --- | --- | --- | --- | --- |
-| `demo-ops-pro:read` | baseline-read | Read access to every record in the module. | ✓ | (none) |
-| `demo-ops-pro:manage` | baseline-manage | Create and edit records in the module. | ✓ | (none) |
-| `demo-ops-pro:admin` | baseline-admin | Administer reference data and settings. | - | (none) |
-| `demo-ops-pro:approve_vendor` | workflow-gate (lifecycle) | Approve a vendor for use. | - | (none) |
-| `demo-ops-pro:link` | narrow | Link assets to secondary vendors. | ✓ | (none) |
-| `demo-ops-pro:retire_asset` | workflow-gate (rule) | Retire an asset. | ✓ | (none) |
-| `demo-ops-pro:view_all_assets` | override | See every asset, not only your own. | ✓ | (none) |
+| `demo-ops-pro:read` | baseline-read | Read access to every record in the module. | ✓ | - |
+| `demo-ops-pro:manage` | baseline-manage | Create and edit records in the module. | ✓ | - |
+| `demo-ops-pro:admin` | baseline-admin | Administer reference data and settings. | - | - |
+| `demo-ops-pro:approve_vendor` | workflow-gate (lifecycle) | Approve a vendor for use. | - | ✓ |
+| `demo-ops-pro:deploy_asset` | workflow-gate (lifecycle) | Deploy an asset. | ✓ | - |
+| `demo-ops-pro:procure_asset` | workflow-gate (lifecycle) | Procure an asset. | - | ✓ |
+| `demo-ops-pro:read_asset_vendors` | entity-read | Read Asset Vendors | ✓ | - |
+| `demo-ops-pro:read_assets` | entity-read | Read Assets | ✓ | - |
+| `demo-ops-pro:read_vendors` | entity-read | Read Vendors | ✓ | - |
+| `demo-ops-pro:relate` | narrow | Relate assets to secondary vendors. | ✓ | - |
+| `demo-ops-pro:retire_asset` | workflow-gate (rule) | Retire an asset. | ✓ | - |
+| `demo-ops-pro:view_all_assets` | override | See every asset, not only your own. | ✓ | - |
+| `demo-ops-pro:write_asset_vendors` | entity-write | Write Asset Vendors | ✓ | - |
+| `demo-ops-pro:write_assets` | entity-write | Write Assets | ✓ | - |
+| `demo-ops-pro:write_vendors` | entity-write | Write Vendors | ✓ | - |
 
 ## 8.2 Business rules
 
@@ -294,7 +379,17 @@ _(none: not extracted from live state by semantius-optimizer; author by hand)_
 | `demo-ops-pro:manage` | `demo-ops-pro:read` | ♻ exists |
 | `demo-ops-pro:admin` | `demo-ops-pro:retire_asset` | ♻ exists |
 | `demo-ops-pro:admin` | `demo-ops-pro:view_all_assets` | ♻ exists |
-| `demo-ops-pro:manage` | `demo-ops-pro:link` | ♻ exists |
+| `demo-ops-pro:admin` | `demo-ops-pro:deploy_asset` | ♻ exists |
+| `demo-ops-pro:manage` | `demo-ops-pro:relate` | ♻ exists |
+| `demo-ops-pro:read` | `demo-ops-pro:read_assets` | ♻ exists |
+| `demo-ops-pro:read` | `demo-ops-pro:read_vendors` | ♻ exists |
+| `demo-ops-pro:read` | `demo-ops-pro:read_asset_vendors` | ♻ exists |
+| `demo-ops-pro:manage` | `demo-ops-pro:write_assets` | ♻ exists |
+| `demo-ops-pro:admin` | `demo-ops-pro:write_vendors` | ♻ exists |
+| `demo-ops-pro:relate` | `demo-ops-pro:write_asset_vendors` | ♻ exists |
+| `demo-ops-pro:write_assets` | `demo-ops-pro:read_assets` | ♻ exists |
+| `demo-ops-pro:write_vendors` | `demo-ops-pro:read_vendors` | ♻ exists |
+| `demo-ops-pro:write_asset_vendors` | `demo-ops-pro:read_asset_vendors` | ♻ exists |
 
 **Processes:**
 

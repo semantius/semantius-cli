@@ -8,6 +8,49 @@ Entries below are newest first.
 
 ---
 
+## Shared preflight and question files live in use-semantius
+
+2026-11-04. Asked for by Martin Amm: the pipeline skills consume shared files from `use-semantius` and no longer provide them to the generic skills, so a generic skill never depends on a pipeline skill. The file format is unchanged; `version` stays `3.1`. It no longer names the pipeline skills. Removed: Stage 4 and the closing pointer to authoring the missing content, which belong to `semantius-analyst` (`references/modes-audit-extend-rebuild.md`). The maintainer checks moved to `evals/round-trip/README.md`. The extractor changed in comments only.
+
+## Stable permission names: full codes, per-entity tiers, rows the module reaches
+
+2026-11-04. Paired with the architect, analyst and modeler entries on an entity's permissions being named by the catalog, never by what is installed. `version` stays `3.1`, changed in place.
+
+- **§3.** Every owned entity carries `**View permission:**` and `**Edit permission:**` as the live full codes, right after `**Audit log:**`. A computed entity has no edit line, the platform default `edit_permission` `admin` is not emitted, and an empty live column leaves its line out. The extractor no longer takes `edit_permission`'s suffix as a tier, which would have read `write_candidates` as a narrow tier.
+- **§8.1.** The `reconciliation` column is gone. New tiers `entity-read` and `entity-write`, told from a gate by the hierarchy (`write_off_invoice` does not include a `read_off_invoice`). A narrow tier is a bundle that includes a write permission, or a hand-made code an entity's edit permission names. Under `access_scope: custom` the per-entity tiers are not used. `bypass_submit_lock` is `workflow-gate (rule)` by name, under any prefix, because the rule that cites it can sit on a reused entity.
+- **Rows the module reaches.** Permissions were read by `module_id` and hierarchy rows filtered to those, so a later embedder lost its owner-named rows and the modeler would have refused the extracted spec. The extractor now also reads rows other modules hold that it reaches through hierarchy rows, owned entities' columns and owned entities' rules (`LiveData.otherPerms`). The walk stops at another module's `read`, `manage`, `admin` or narrow tier. §9.1 keeps every row between two §8.1 permissions, plus a family edit grant to another module's bundle.
+- **RACI.** The extractor still writes no RACI realization table. The template lint's `NOT_EMITTED_BY_OPTIMIZER` names the header without `grant_module`.
+- **Eval.** `fixture-basic`, `family`, `gated` and `full` move to per-entity permissions. New `fixture-later-embedder` and `fixture-custom`. `check.ts` gains a shape assertion independent of the goldens.
+
+Rules: `references/spec-extract-lib.ts`.
+
+## Spec §4 headings: `FK table`, `FK field`, `References`
+
+2026-11-03. The extractor writes the new §4 headings, matching the analyst's template. Row content and order do not change. Rules: `references/spec-extract-lib.ts`.
+
+## "Relationship" replaces "edge" and "connect" for data relationships
+
+2026-11-03. Paired with the analyst's entry of the same name. Hierarchy rows are "hierarchy relationships"; a Mermaid line is a "diagram edge". `spec-extract-lib.ts` renames `edgeLines` to `diagramEdgeLines`; its output is byte-identical. The file format is unchanged; `version` stays `3.1`.
+
+## "Relationship" replaces "link" for data relationships
+
+2026-11-03. Paired with the analyst's entry of the same name, to stay byte-compatible with its spec template. The extractor writes `## 6. Cross-model relationship suggestions` and the junction sentence ``Each `x` relates one `a` to one `b` ``. The goldens changed only in those lines and in the fixture samples: the description `Relates an asset to a secondary vendor.` and the sample permission `demo-ops-pro:relate`, with its description `Relate assets to secondary vendors.`. `version` stays `3.1`: no parser reads these words, so the file format did not change.
+
+## Spec §6 relationship table has a `Required` column
+
+2026-11-02. The analyst's spec §6 relationship table is now `| From | To | Verb | Cardinality | Required | Delete | Reconciliation |`. The extractor's output does not change: it writes the `_(none: ...)_` placeholder in place of that table, because every live cross-module relationship already exists as a §3 reference, whose `Required` cell carries the live `input_type`. The round-trip eval's `NOT_EMITTED_BY_OPTIMIZER` list names the new header, so the template lint stays explicit about it. No golden changes.
+
+## One permission per gate: §8.1 `high risk?` and the lifecycle-gate heuristic
+
+2026-11-01. Paired with the gate permission model (one `workflow-gate (lifecycle)` permission per gate at `gated` and `raci`, held by the admin except high-risk gates under `raci`, every gate rule citing it through `has_permission`).
+
+1. **`spec-extract-lib.ts`** emits the six-column §8.1 header ``| permission | tier | description | included in `:admin`? | high risk? | reconciliation |``. `high risk?` is ✓ only on a `workflow-gate (lifecycle)` row under `access_scope: raci` that `<slug>:admin` does not include; it is `-` on every other row and at every other level (at `gated` the admin holds every gate, so live state cannot show the marker).
+2. **Tier heuristic.** Every gate is now cited by a rule, so "cited means `workflow-gate (rule)`" would misclassify every lifecycle gate. A code is `workflow-gate (lifecycle)` when its citing validation rule carries `value_changed` on `workflow_state`, or when it sits in the `has_permission` branch of an `or` next to `is_raci_actor`; any other cited code stays `workflow-gate (rule)`, and an uncited one stays `workflow-gate (lifecycle)`. Citations are read structurally from `require_permission` and `has_permission` operands instead of a text match on the rules JSON.
+3. **Round-trip:** `fixture-full.json` gains `deploy_asset` (a living A-gate transition rule, included by `:admin`, `high risk?` -) next to `approve_vendor` (no `:admin` row, `high risk?` ✓); new `fixture-gated.json` / `expected-gated.md` (an `access_scope: gated` module with a `has_permission` transition gate that `:admin` includes and a `has_permission` rule gate); every golden gains the column. SKILL.md Category A / B describe the column and the heuristic.
+4. **Create gates.** A code cited in the gated branch of a create guard (an insert-only rule, `{"if": [{"==": [{"var": "$old"}, null]}, <gate check>, true]}`, where the gate check is `has_permission(<gate>)` or the living `or(is_raci_actor(<entity>, <initial state>, "accountable"), has_permission(<gate>))`) is `workflow-gate (lifecycle)`, so its tier and `high risk?` come out right instead of reading as a rule gate. `fixture-gated.json` gains the plain create gate `create_request` (included by `:admin`), and `fixture-full.json` the high-risk living create gate `procure_asset` (no `:admin` row, `high risk?` ✓); goldens regenerated.
+
+---
+
 ## Entity icon is read from `icon_name`
 
 2026-10-27. Paired with the analyst entry "Entity icon is `**Icon:**`, stored in `entities.icon_name`".
@@ -53,7 +96,7 @@ Entries below are newest first.
 
 2026-09-28. `SPEC_VERSION` 5.7 → 5.8 in lockstep with the analyst. The platform added `is_a` / `has_a` key types (`entities.id_refentity`) and `{"value", "label"}` enum entries; the extractor now reads both back.
 
-1. **Families.** A based entity (`id_type` `is_a` / `has_a`) emits `**Key type:**`, `**Key prefix:**` for `is_a` (prefix now also for `is_a`, not only `typeid`), and `` **Based on:** `<id_refentity>` ``; it emits no `**Label column:**` / `**Label parent:**` / `**Order column:**` (the platform sets them from the base). Its Relationships prose starts with the canonical family sentence, and §2 gets a dotted edge (`<entity> -.->|is a kind of| <base>` / `-.->|extends|`) after the relationship edges, matching `consistency-check.ts --emit-mermaid`.
+1. **Families.** A based entity (`id_type` `is_a` / `has_a`) emits `**Key type:**`, `**Key prefix:**` for `is_a` (prefix now also for `is_a`, not only `typeid`), and `` **Based on:** `<id_refentity>` ``; it emits no `**Label column:**` / `**Label parent:**` / `**Order column:**` (the platform sets them from the base). Its Relationships prose starts with the canonical family sentence, and §2 gets a dotted edge (`<entity> -.->|is a kind of| <base>` / `-.->|extends|`) after the relationship diagram edges, matching `consistency-check.ts --emit-mermaid`.
 2. **Cross-module related entities.** Related-table discovery also follows `id_refentity`, and a related non-built-in entity owned by another module now renders as a `reuse-from <module>.<table>` block (like a built-in: no Fields table) instead of an empty create-new block. §9.1 keeps a cross-module hierarchy row only when it is a family edit grant (this module's permission including the base's `edit_permission`).
 3. **Enum labels.** Notes `enum_values:` list values only; §5 emits `` - `value` - Label `` for a pair and `` - `value` `` otherwise.
 4. **Round-trip:** new `fixture-family.json` / `expected-family.md`; the basic and full goldens changed only in the `version` line.
@@ -67,7 +110,7 @@ Entries below are newest first.
 
 ## Platform: name-keyed permissions (reader only; `SPEC_VERSION` unchanged)
 
-2026-09-26. The platform keys `permissions` by `permission_name` (no numeric id), `permission_hierarchy` rows link `including_permission_name` to `included_permission_name`, and the module record references `manage_permission` / `admin_permission` by name. `spec-extract-lib.ts` now indexes permissions by name, computes the `included in :admin?` closure over names, filters the module's hierarchy edges by name, and reads the baseline role grants from the module's name references. The emitted spec is byte-identical (both round-trip goldens unchanged); the fixtures `fixture-basic.json` / `fixture-full.json` were converted to the live shape.
+2026-09-26. The platform keys `permissions` by `permission_name` (no numeric id), `permission_hierarchy` rows relate `including_permission_name` to `included_permission_name`, and the module record references `manage_permission` / `admin_permission` by name. `spec-extract-lib.ts` now indexes permissions by name, computes the `included in :admin?` closure over names, filters the module's hierarchy relationships by name, and reads the baseline role grants from the module's name references. The emitted spec is byte-identical (both round-trip goldens unchanged); the fixtures `fixture-basic.json` / `fixture-full.json` were converted to the live shape.
 
 ---
 
@@ -89,9 +132,9 @@ Description only, `SPEC_VERSION` unchanged (2026-09-26). "Export" and "snapshot"
 
 1. **`**Label column:**`** is omitted when live `label_column` is null/empty (both the owned and the built-in block) instead of emitting `` `null` `` — a junction without a local label is valid.
 2. **§8.1 `tier`** is always a modeler-accepted value: `narrow` when the suffix is an owned entity's `edit_permission` suffix; `override` for `view_all_*` / `manage_all_*` (tested before the rule test, since overrides are wired into `select_rule` via `has_permission`); `workflow-gate (rule)` when the code occurs in an owned entity's `validation_rules` / `select_rule` JSON; else `workflow-gate (lifecycle)`. A bare `workflow-gate` (a modeler 🛑) is no longer emitted. **`included in :admin?`** is derived from the live hierarchy (`✓` iff `<slug>:admin` transitively includes the permission; `-` for the `baseline-admin` row; `✓` everywhere when no admin permission exists).
-3. **§9.1 reconciliation cells** are `♻ exists` (U+267B, no VS16) — the reverse pass reads live state, so every role / hierarchy edge exists by construction. The `### 9.1` key is `module_slug` uppercased (template `{{SYSTEM_SLUG_UPPER}}`), not `domain_code`.
+3. **§9.1 reconciliation cells** are `♻ exists` (U+267B, no VS16) — the reverse pass reads live state, so every role / hierarchy relationship exists by construction. The `### 9.1` key is `module_slug` uppercased (template `{{SYSTEM_SLUG_UPPER}}`), not `domain_code`.
 4. **`access_scope`-aware placeholders.** §8.2, §9.2 and the empty Processes line keep the "access_scope is basic" reason under `basic` and say "not extracted from live state by semantius-optimizer; author by hand" otherwise (previously the basic text was hardcoded for `full` modules too). The RACI surface (`**RACI mode:**` / `**RACI realization:**` / RACI plan) is never emitted, not even as a placeholder: `consistency-check.ts` keys its `raci_mode` provenance gate on the `**RACI realization:**` literal.
-5. **`**Processes:**`** caption is bare (the template's parenthetical was authoring commentary). **§6** carries `### Outbound handoffs` / `### Inbound handoffs` placeholders after the link-table placeholder (template v5.5; the platform exposes no handoff registry to read back). **Mermaid** emits `classDef builtin` only when a built-in takes part in an edge and `classDef master` only for a non-builtin `reuse-from` / `promote-to-master` entity in an edge (the architect checker's criterion); previously `classDef builtin` was unconditional.
+5. **`**Processes:**`** caption is bare (the template's parenthetical was authoring commentary). **§6** carries `### Outbound handoffs` / `### Inbound handoffs` placeholders after the relationship-table placeholder (template v5.5; the platform exposes no handoff registry to read back). **Mermaid** emits `classDef builtin` only when a built-in takes part in a diagram edge and `classDef master` only for a non-builtin `reuse-from` / `promote-to-master` entity in a diagram edge (the architect checker's criterion); previously `classDef builtin` was unconditional.
 6. **`--from-fixture <json>`** renders from a JSON snapshot of the live reads (`main()` split into `loadLive()` → `render()`; `read()` and the read order are untouched). **`evals/round-trip/check.ts`** (fixtures `basic` + `full`, committed goldens, `--update`) diffs the render against the goldens, runs `consistency-check.ts` on it, and lints the analyst template's skeleton against the extractor (zero em-dashes; every skeleton heading / emitted table header appears in the source; `NOT_EMITTED_BY_OPTIMIZER` lists the §6 / §8.2 / RACI / §9.2 tables it never emits). SKILL.md "Verifying the extractor" points here; the stale `master-it-ops-starter` anchor is gone. Category A/B in SKILL.md corrected (§8.2, §9.2 and the RACI surface are Category B). Stale template line-number references in the source replaced by section anchors.
 
 Files: `references/spec-extract-lib.ts`, SKILL.md, `evals/round-trip/{check.ts,README.md,fixture-basic.json,fixture-full.json,expected-basic.md,expected-full.md}`.

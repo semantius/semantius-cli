@@ -1,0 +1,136 @@
+{
+  "mod": {
+    "id": 30,
+    "module_name": "Demo Handmade",
+    "module_slug": "demo-handmade",
+    "description": "A module built by hand in the UI",
+    "icon_name": "hammer",
+    "module_type": "domain",
+    "settings": { "naming_mode": "agent-optimized" },
+    "access_scope": "custom",
+    "domain_code": "HANDMADE",
+    "logo_color": "",
+    "home_page": "",
+    "version": 1,
+    "version_date": "2026-11-04T08:00:00+00:00",
+    "default_viewer_role_id": 301,
+    "default_manager_role_id": 302,
+    "default_admin_role_id": null,
+    "view_permission": "demo-handmade:read",
+    "manage_permission": "demo-handmade:manage",
+    "admin_permission": null
+  },
+  "ownedRaw": [
+    {
+      "id": 801,
+      "module_id": 30,
+      "table_name": "tools",
+      "singular_label": "Tool",
+      "plural_label": "Tools",
+      "description": "A tool in the workshop.",
+      "label_column": "tool_name",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "auto_increment",
+      "id_prefix": "",
+      "audit_log": false,
+      "view_permission": "demo-handmade:read",
+      "edit_permission": "demo-handmade:manage",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_name": "",
+      "catalog_entity_code": "tools",
+      "entity_type": "catalog",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 802,
+      "module_id": 30,
+      "table_name": "loans",
+      "singular_label": "Loan",
+      "plural_label": "Loans",
+      "description": "A tool lent to someone.",
+      "label_column": "loan_title",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "auto_increment",
+      "id_prefix": "",
+      "audit_log": false,
+      "view_permission": "demo-handmade:read",
+      "edit_permission": "demo-handmade:lend",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_name": "",
+      "catalog_entity_code": "loans",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    },
+    {
+      "id": 803,
+      "module_id": 30,
+      "table_name": "repairs",
+      "singular_label": "Repair",
+      "plural_label": "Repairs",
+      "description": "A repair of a tool.",
+      "label_column": "repair_title",
+      "order_column": "",
+      "id_column": "id",
+      "id_type": "auto_increment",
+      "id_prefix": "",
+      "audit_log": false,
+      "view_permission": "demo-handmade:read",
+      "edit_permission": "demo-handmade:write_repairs",
+      "edit_mode": "auto",
+      "cube_mode": "auto",
+      "icon_name": "",
+      "catalog_entity_code": "repairs",
+      "entity_type": "operational_record",
+      "catalog_owner_module": "",
+      "label_parent": null,
+      "catalog_entity_aliases": [],
+      "computed_fields": [],
+      "validation_rules": [],
+      "select_rule": {}
+    }
+  ],
+  "fieldsByTable": {
+    "tools": [
+      { "field_name": "tool_name", "format": "text", "title": "Tool", "description": "", "input_type": "required", "ctype": "label", "field_order": 1 }
+    ],
+    "loans": [
+      { "field_name": "loan_title", "format": "text", "title": "Loan", "description": "", "input_type": "required", "ctype": "label", "field_order": 1 },
+      { "field_name": "tool_id", "format": "reference", "title": "Tool", "description": "", "input_type": "required", "reference_table": "tools", "reference_delete_mode": "restrict", "relationship_label": "lends", "ctype": "custom", "field_order": 2 }
+    ],
+    "repairs": [
+      { "field_name": "repair_title", "format": "text", "title": "Repair", "description": "", "input_type": "required", "ctype": "label", "field_order": 1 },
+      { "field_name": "tool_id", "format": "reference", "title": "Tool", "description": "", "input_type": "required", "reference_table": "tools", "reference_delete_mode": "restrict", "relationship_label": "needs", "ctype": "custom", "field_order": 2 }
+    ]
+  },
+  "related": [],
+  "perms": [
+    { "permission_name": "demo-handmade:read", "description": "Read the workshop." },
+    { "permission_name": "demo-handmade:manage", "description": "Run the workshop." },
+    { "permission_name": "demo-handmade:lend", "description": "Lend tools." },
+    { "permission_name": "demo-handmade:write_repairs", "description": "Record repairs." }
+  ],
+  "allHierarchy": [
+    { "including_permission_name": "demo-handmade:manage", "included_permission_name": "demo-handmade:read" },
+    { "including_permission_name": "demo-handmade:manage", "included_permission_name": "demo-handmade:lend" }
+  ],
+  "roles": [
+    { "id": 301, "slug": "demo_handmade_viewer", "origin": "user", "catalog_role_code": "" },
+    { "id": 302, "slug": "demo_handmade_manager", "origin": "user", "catalog_role_code": "" }
+  ],
+  "processes": [],
+  "relatedModules": []
+}

@@ -38,7 +38,8 @@
       "id_prefix": "bp",
       "id_refentity": null,
       "audit_log": false,
-      "edit_permission": "partners:manage",
+      "view_permission": "partners:read_business_partners",
+      "edit_permission": "partners:write_business_partners",
       "edit_mode": "auto",
       "cube_mode": "auto",
       "icon_name": "",
@@ -65,7 +66,8 @@
       "id_prefix": "act",
       "id_refentity": null,
       "audit_log": false,
-      "edit_permission": "partners:manage",
+      "view_permission": "partners:read_activities",
+      "edit_permission": "partners:write_activities",
       "edit_mode": "auto",
       "cube_mode": "auto",
       "icon_name": "",
@@ -92,7 +94,8 @@
       "id_prefix": "",
       "id_refentity": "business_partners",
       "audit_log": false,
-      "edit_permission": "partners:manage",
+      "view_permission": "partners:read_customers",
+      "edit_permission": "partners:write_customers",
       "edit_mode": "auto",
       "cube_mode": "auto",
       "icon_name": "",
@@ -119,7 +122,8 @@
       "id_prefix": "eml",
       "id_refentity": "activities",
       "audit_log": false,
-      "edit_permission": "partners:manage",
+      "view_permission": "partners:read_emails",
+      "edit_permission": "partners:write_emails",
       "edit_mode": "auto",
       "cube_mode": "auto",
       "icon_name": "",
@@ -146,7 +150,8 @@
       "id_prefix": "",
       "id_refentity": "organizations",
       "audit_log": false,
-      "edit_permission": "partners:manage",
+      "view_permission": "partners:read_vendors",
+      "edit_permission": "partners:write_vendors",
       "edit_mode": "auto",
       "cube_mode": "auto",
       "icon_name": "",
@@ -315,6 +320,46 @@
     {
       "permission_name": "partners:manage",
       "description": "Create and edit records in the module."
+    },
+    {
+      "permission_name": "partners:read_business_partners",
+      "description": "Read Business Partners"
+    },
+    {
+      "permission_name": "partners:write_business_partners",
+      "description": "Write Business Partners"
+    },
+    {
+      "permission_name": "partners:read_activities",
+      "description": "Read Activities"
+    },
+    {
+      "permission_name": "partners:write_activities",
+      "description": "Write Activities"
+    },
+    {
+      "permission_name": "partners:read_customers",
+      "description": "Read Customers"
+    },
+    {
+      "permission_name": "partners:write_customers",
+      "description": "Write Customers"
+    },
+    {
+      "permission_name": "partners:read_emails",
+      "description": "Read Emails"
+    },
+    {
+      "permission_name": "partners:write_emails",
+      "description": "Write Emails"
+    },
+    {
+      "permission_name": "partners:read_vendors",
+      "description": "Read Vendors"
+    },
+    {
+      "permission_name": "partners:write_vendors",
+      "description": "Write Vendors"
     }
   ],
   "allHierarchy": [
@@ -333,6 +378,66 @@
     {
       "including_permission_name": "other:manage",
       "included_permission_name": "other:read"
+    },
+    {
+      "including_permission_name": "partners:read",
+      "included_permission_name": "partners:read_business_partners"
+    },
+    {
+      "including_permission_name": "partners:read",
+      "included_permission_name": "partners:read_activities"
+    },
+    {
+      "including_permission_name": "partners:read",
+      "included_permission_name": "partners:read_customers"
+    },
+    {
+      "including_permission_name": "partners:read",
+      "included_permission_name": "partners:read_emails"
+    },
+    {
+      "including_permission_name": "partners:read",
+      "included_permission_name": "partners:read_vendors"
+    },
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "partners:write_business_partners"
+    },
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "partners:write_activities"
+    },
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "partners:write_customers"
+    },
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "partners:write_emails"
+    },
+    {
+      "including_permission_name": "partners:manage",
+      "included_permission_name": "partners:write_vendors"
+    },
+    {
+      "including_permission_name": "partners:write_business_partners",
+      "included_permission_name": "partners:read_business_partners"
+    },
+    {
+      "including_permission_name": "partners:write_activities",
+      "included_permission_name": "partners:read_activities"
+    },
+    {
+      "including_permission_name": "partners:write_customers",
+      "included_permission_name": "partners:read_customers"
+    },
+    {
+      "including_permission_name": "partners:write_emails",
+      "included_permission_name": "partners:read_emails"
+    },
+    {
+      "including_permission_name": "partners:write_vendors",
+      "included_permission_name": "partners:read_vendors"
     }
   ],
   "roles": [

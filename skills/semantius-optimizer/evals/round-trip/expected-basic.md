@@ -34,7 +34,7 @@ Demo operations tracker.
 |---|---|---|---|
 | 1 | `vendors` | Vendor | A supplier the team buys assets from. |
 | 2 | `assets` | Asset | A physical or virtual item the team tracks. |
-| 3 | `asset_vendors` | Asset Vendor | Links an asset to a secondary vendor. |
+| 3 | `asset_vendors` | Asset Vendor | Relates an asset to a secondary vendor. |
 | 4 | `users` | User | Users and agents |
 
 ### Entity-relationship diagram
@@ -56,6 +56,8 @@ flowchart LR
 **Plural label:** Vendors
 **Label column:** `vendor_name`
 **Audit log:** no
+**View permission:** demo-ops:read_vendors
+**Edit permission:** demo-ops:write_vendors
 **Catalog entity code:** `vendors`
 **Entity type:** catalog
 **Description:** A supplier the team buys assets from.
@@ -77,6 +79,8 @@ flowchart LR
 **Plural label:** Assets
 **Label column:** `asset_tag`
 **Audit log:** yes
+**View permission:** demo-ops:read_assets
+**Edit permission:** demo-ops:write_assets
 **Catalog entity code:** `assets`
 **Entity type:** operational_workflow
 **Description:** A physical or virtual item the team tracks. Created when procured.
@@ -102,9 +106,11 @@ flowchart LR
 
 **Plural label:** Asset Vendors
 **Audit log:** no
+**View permission:** demo-ops:read_asset_vendors
+**Edit permission:** demo-ops:write_asset_vendors
 **Catalog entity code:** `asset_vendors`
 **Entity type:** junction
-**Description:** Links an asset to a secondary vendor.
+**Description:** Relates an asset to a secondary vendor.
 
 **Fields**
 
@@ -115,7 +121,7 @@ flowchart LR
 
 **Relationships**
 
-- Each `asset_vendors` links one `assets` to one `vendors` (junction, both legs cascade on delete).
+- Each `asset_vendors` relates one `assets` to one `vendors` (junction, both legs cascade on delete).
 
 ### 3.4 `users` - User
 
@@ -132,7 +138,7 @@ flowchart LR
 
 ## 4. Relationship summary
 
-| From | Field | To | Cardinality | Kind | fk_format | Delete behavior |
+| FK table | FK field | References | Cardinality | Kind | fk_format | Delete behavior |
 |---|---|---|---|---|---|---|
 | `assets` | `vendor_id` | `vendors` | N:1 | reference | reference | restrict |
 | `assets` | `owner_id` | `users` | N:1 | reference | reference | clear |
@@ -146,7 +152,7 @@ flowchart LR
 - `deployed`
 - `retired`
 
-## 6. Cross-model link suggestions
+## 6. Cross-model relationship suggestions
 
 _(none: live extraction is reverse-engineering; every cross-module FK already exists as a §3 reference)_
 
@@ -170,10 +176,16 @@ _(none: reverse-engineered from a live module)_
 
 ## 8.1 Permissions catalog
 
-| permission | tier | description | included in `:admin`? | reconciliation |
+| permission | tier | description | included in `:admin`? | high risk? |
 | --- | --- | --- | --- | --- |
-| `demo-ops:read` | baseline-read | Read access to every record in the module. | ✓ | (none) |
-| `demo-ops:manage` | baseline-manage | Create and edit records in the module. | ✓ | (none) |
+| `demo-ops:read` | baseline-read | Read access to every record in the module. | ✓ | - |
+| `demo-ops:manage` | baseline-manage | Create and edit records in the module. | ✓ | - |
+| `demo-ops:read_asset_vendors` | entity-read | Read Asset Vendors | ✓ | - |
+| `demo-ops:read_assets` | entity-read | Read Assets | ✓ | - |
+| `demo-ops:read_vendors` | entity-read | Read Vendors | ✓ | - |
+| `demo-ops:write_asset_vendors` | entity-write | Write Asset Vendors | ✓ | - |
+| `demo-ops:write_assets` | entity-write | Write Assets | ✓ | - |
+| `demo-ops:write_vendors` | entity-write | Write Vendors | ✓ | - |
 
 ## 8.2 Business rules
 
@@ -195,6 +207,15 @@ _(none: access_scope is basic, so no permission-gated business rules are authore
 | permission | includes | reconciliation |
 | --- | --- | --- |
 | `demo-ops:manage` | `demo-ops:read` | ♻ exists |
+| `demo-ops:read` | `demo-ops:read_assets` | ♻ exists |
+| `demo-ops:read` | `demo-ops:read_vendors` | ♻ exists |
+| `demo-ops:read` | `demo-ops:read_asset_vendors` | ♻ exists |
+| `demo-ops:manage` | `demo-ops:write_assets` | ♻ exists |
+| `demo-ops:manage` | `demo-ops:write_vendors` | ♻ exists |
+| `demo-ops:manage` | `demo-ops:write_asset_vendors` | ♻ exists |
+| `demo-ops:write_assets` | `demo-ops:read_assets` | ♻ exists |
+| `demo-ops:write_vendors` | `demo-ops:read_vendors` | ♻ exists |
+| `demo-ops:write_asset_vendors` | `demo-ops:read_asset_vendors` | ♻ exists |
 
 **Processes:** _(none: access_scope is basic, no Processes catalog is authored)_
 

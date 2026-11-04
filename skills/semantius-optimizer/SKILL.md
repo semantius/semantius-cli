@@ -1,11 +1,10 @@
 ---
 name: semantius-optimizer
 description: >-
-  Reverse-engineers a `*-semantic-spec.md` file (the analyst artifact) from a
-  live Semantius module: entities, fields, enum values, permissions, roles,
-  and permission hierarchy, plus referenced built-ins (e.g. `users`),
-  byte-compatible with what `semantius-analyst` writes and `semantius-modeler`
-  deploys. Deterministic, with an optional audit pass after saving. Trigger
+  Reverse-engineers a `*-semantic-spec.md` file from a live Semantius module:
+  entities, fields, enum values, permissions, roles, and permission hierarchy,
+  plus referenced built-ins (e.g. `users`), in the standard spec format.
+  Deterministic. Trigger
   when the user wants to extract / export / optimize / snapshot /
   reverse-engineer / pull / regenerate a spec from a live Semantius module,
   build a spec for a module created without one, bring a customized live
@@ -19,38 +18,28 @@ description: >-
 
 # semantius-optimizer Skill
 
-Closes the reverse arc of the spec lifecycle. It is the fifth peer of the
-`semantius-*` family (architect / analyst / modeler / use-semantius): the only one
-that runs the pipeline **backwards**, from live catalog to `*-semantic-spec.md`.
+Goes from the live catalog to a `*-semantic-spec.md`.
 
-```
-semantius-architect → semantius-analyst → semantius-modeler → (users customize / build in the UI) → semantius-optimizer → …
-```
-
-The `*-semantic-spec.md` this skill produces is **interchangeable with one the
-`semantius-analyst` skill writes**: same front-matter keys, same section structure
-(§1 Overview … §9 Governance), same reconciliation annotations. The
-`semantius-modeler` can re-deploy it; the analyst can audit or extend it. That
-compatibility is the point: without it, a module built directly in the Semantius
-UI (or customized live) has no spec, and nothing in the pipeline can govern it.
+The `*-semantic-spec.md` this skill produces has the standard spec format:
+same front-matter keys, same section structure (§1 Overview … §9 Governance), same
+reconciliation annotations. That compatibility is the point: without it, a module
+built directly in the Semantius UI (or customized live) has no spec.
 
 **Primary use case:** a module exists in production with no spec (built in the UI,
 or drifted from its original). This skill produces the missing `*-semantic-spec.md`
-from live state, which then feeds `semantius-analyst` Extend/Audit or a
-`semantius-modeler` re-deploy.
+from live state.
 
 ## Division of responsibility
 
 - **This skill** owns the workflow: pick the module, run the deterministic
-  extractor, present the result, and audit it only if the user later asks.
+  extractor, and present the result.
 - **`references/spec-extract-lib.ts`** owns the mapping: it is the single
   deterministic source of the generated markdown. All live→spec rules live there,
   not in prose, so the output is reproducible and every rule is one place.
 - **`use-semantius`** owns the platform contract (the `semantius` CLI, PostgREST
   encoding, the built-ins list).
 - **This skill is READ-ONLY against Semantius.** It never writes to the platform.
-  Any fix is applied to the `.md` only; a re-deploy via `semantius-modeler` is how
-  changes reach the live catalog.
+  Any fix is applied to the `.md` only.
 
 ## Writing conventions (every output this skill produces)
 
@@ -71,16 +60,6 @@ This skill writes files at `version: "3.1"` (the `FORMAT_VERSION` constant in
 `version` is the file format version. It changes only when the file format changes,
 and only with the user's approval.
 
-The authoritative output shape is
-`semantius-plugin/skills/semantius-analyst/references/semantic-spec-template.md`
-(its "Skeleton" fence is the emitted surface, byte-for-byte). Read it before
-changing the extractor, and run `bun evals/round-trip/check.ts` afterwards: it
-renders the fixtures offline via `--from-fixture`, diffs them against the committed
-goldens, runs `consistency-check.ts` on the output, and lints the template skeleton
-against the extractor (zero em-dashes; every skeleton heading and emitted table
-header appears as a literal in `spec-extract-lib.ts`). Regenerate the goldens with
-`--update` after an intentional change and review the diff.
-
 ---
 
 ## Step 0: Load required context
@@ -90,8 +69,6 @@ Read first:
 - `<skills-root>/use-semantius/SKILL.md` and
   `<skills-root>/use-semantius/references/data-modeling.md` (built-ins list,
   platform constraints).
-- `<skills-root>/semantius-analyst/references/semantic-spec-template.md` (the
-  output template the extractor targets).
 - `references/spec-extract-lib.ts` in this skill folder (the mapping).
 
 ---
@@ -99,7 +76,7 @@ Read first:
 ## High-level workflow
 
 ```
-1. Pick module  →  2. Pre-flight the output path, then run the extractor  →  3. Present + verify  →  (4. Audit, only if the user later asks)
+1. Pick module  →  2. Pre-flight the output path, then run the extractor  →  3. Present + verify
 ```
 
 A request for only a diagram of the module runs the shorter
@@ -178,8 +155,9 @@ itself, and it checks the output path first, before any live read, so a direct
 invocation also fails fast instead of doing work and then clobbering.
 
 The script reads module, entities (creation order), fields (field-order, auto-
-fields stripped), permissions, roles, and permission hierarchy; discovers
-referenced built-ins; and writes the spec. It prints a one-line summary
+fields stripped), permissions (the rows the module holds, then the rows other modules
+hold that it reaches through hierarchy rows, entity columns and rules), roles, and
+permission hierarchy; discovers referenced built-ins; and writes the spec. It prints a one-line summary
 (entity / permission counts). It is idempotent and side-effect-free against the
 platform.
 
@@ -200,13 +178,9 @@ asked for a spec; answer the three questions they actually have, in order:
    module doesn't store, so they couldn't be recovered. Phrase each as a plain to-do
    about the spec.
 
-Close with one line pointing anyone who wants the missing content authored properly
-at `semantius-analyst` Extend mode.
-
-**Write it for the reader, not the pipeline.** Do NOT put any of this in the report:
+**Write it for the reader.** Do NOT put any of this in the report:
 stage numbers, the labels "Category A/B", "byte-compatible", "reverse pass",
-"canonical order", "reconciliation annotations", "the modeler can re-deploy / the
-analyst can audit", a dumped list of frontmatter keys, or a "trust these" enumeration
+"canonical order", "reconciliation annotations", a dumped list of frontmatter keys, or a "trust these" enumeration
 of every faithfully-copied section. That vocabulary is internal; reciting it is the
 noise this section exists to prevent. If the report runs long, it is narrating
 machinery — cut it.
@@ -225,9 +199,6 @@ machinery — cut it.
 > - **Field descriptions** are mostly blank; only a few fields carry one.
 > - **Some record labels** (e.g. "Contract Number") were guessed from the column
 >   name — skim them to make sure they read right.
->
-> Want the missing prose authored properly? Run `semantius-analyst` in Extend mode
-> on this file.
 
 Adapt the bullets to what actually applies to the module (drop any that don't; the
 Overview one almost always applies). Mention lost provenance metadata (license,
@@ -239,15 +210,22 @@ to this reader, and in one line — never a key-by-key list.
 **Category A — faithful from live (trust; nothing to flag):** all platform
 frontmatter; §2 table & labels; the Mermaid edge set; every §3 entity annotation
 (plural label, label column — omitted on a junction whose live value is null and on a
-based entity, audit log, edit permission, entity type, label parent, key type / prefix /
+based entity, audit log, view and edit permission as the entity's live full codes (the
+edit line is omitted on a computed entity, and when the live value is the platform default
+`admin`), entity type, label parent, key type / prefix /
 `**Based on:**`, reconciliation, including `reuse-from <module>.<table>` for a related
 entity of another module such as a family base); every §3 field's name / format /
 required / Notes; §3 Relationships prose (with the family sentence); §4 rows; §5
-enumerations (a `{value, label}` entry as a `` - `value` `` bullet with its `label`, `color`, `icon` and `description` as property sub-bullets); the dotted family
-edges;
-§8.1 permission names, descriptions, and `included in :admin?` (derived from the live
-hierarchy); §9.1 baseline roles (with `♻ exists`, since live is the source), §9.1
-hierarchy (plus a cross-module row only when it is a family edit grant), §9.1
+enumerations (a `{value, label}` entry as a `` - `value` `` bullet with its `label`, `color`, `icon` and `description` as property sub-bullets); the dotted family edges;
+§8.1 permission names, descriptions, `included in :admin?` (derived from the live
+hierarchy) and, under `access_scope: raci`, `high risk?` (✓ on a
+`workflow-gate (lifecycle)` row that the `<slug>:admin` hierarchy does not include).
+§8.1 lists the rows the module holds plus the rows it reaches through hierarchy rows,
+its entities' columns and its entities' rules, so an owner-named row another module
+holds stays in the spec; another module's `read`, `manage`, `admin` or narrow tier is
+never a §8.1 row here. §9.1 baseline roles (with `♻ exists`, since live is the source),
+§9.1 hierarchy (every row from a §8.1 permission to a §8.1 permission, whichever module
+holds them, plus a family edit grant to another module's bundle), §9.1
 Processes catalog. Entity order is the canonical `entity_type` tier
 then `table_name` A->Z, so it round-trips against a convention-compliant spec.
 
@@ -262,12 +240,24 @@ then `table_name` A->Z, so it round-trips against a convention-compliant spec.
    Title"); irregulars like `app_name` → "Application Name" are not recoverable.
 5. §3 field Description — live truth, often empty.
 6. Built-in entity description (e.g. `users`) — live value, not authored prose.
-7. §6 link table, §6 `### Outbound handoffs` / `### Inbound handoffs`, §7.1, §7.2 —
+7. §6 relationship table, §6 `### Outbound handoffs` / `### Inbound handoffs`, §7.1, §7.2 —
    emitted as `_(none: …)_` placeholders (the platform exposes no handoff registry).
-8. §8.1 `tier` — a heuristic (narrow / override / workflow-gate (rule) /
-   workflow-gate (lifecycle)) over what the spec can prove, always a value the
-   modeler accepts; `reconciliation` is `(none)` (a `re-prefixed-from` origin is not
-   recoverable).
+8. §8.1 `tier`: a heuristic over what the spec can prove, always a value a deploy
+   accepts. `entity-write` is a `write_*` code an owned entity's edit permission names
+   or that includes its own `read_*`; `entity-read` is a `read_*` code an owned entity's
+   view permission names, or that the module's `read` or its own `write_*` includes.
+   Under `access_scope: custom` neither tier is used. `narrow` is a code that includes a
+   write permission, or any other code an owned entity's edit permission names,
+   `override` a `view_all_*` / `manage_all_*` code, and `bypass_submit_lock` is always
+   `workflow-gate (rule)`. Another code a rule cites through `has_permission` or
+   `require_permission` is `workflow-gate (lifecycle)` when the citing rule is a
+   `workflow_state` transition rule (`value_changed` on `workflow_state`), the code
+   sits in the `has_permission` branch next to `is_raci_actor`, or it is checked by a
+   create guard (an insert-only rule, `if` on `{"==": [{"var": "$old"}, null]}`), and
+   `workflow-gate (rule)` otherwise; a code no rule cites is
+   `workflow-gate (lifecycle)`. Under `access_scope: gated`, `high risk?` is `-` on
+   every row: the admin holds every gate there, so live state cannot show which gates
+   are high-risk.
 9. §8.2 Business rules and §9.2 Functional ownership — `_(none: …)_` placeholders
    (the definitional reason under `access_scope: basic` / `custom`, "not extracted"
    otherwise; the Processes placeholder is definitional under every value but `raci`).
@@ -279,11 +269,10 @@ then `table_name` A->Z, so it round-trips against a convention-compliant spec.
     "`X` ↔ `Y` is many-to-many through the `<junction>` junction table"), the verb does not.
 
 **Drift check (only when comparing against an authored source spec).** If a value the
-platform *does* persist differs from the source spec, that is a forward-pipeline
-(`semantius-modeler` / `semantius-architect`) bug, not a limitation here — surface it
-separately and plainly. Observed on `it-ops-starter`: the modeler dropping the
-label-field title and some `field.description` values; a malformed hyphen/underscore
-role slug from the architect. A plain generate run has no source to diff, so this note
+platform *does* persist differs from the source spec, that is a deploy bug, not a
+limitation here — surface it separately and plainly. Observed on `it-ops-starter`: a
+dropped label-field title and some dropped `field.description` values; a malformed
+hyphen/underscore role slug. A plain generate run has no source to diff, so this note
 does not apply to it.
 
 ## Diagram-only run
@@ -299,75 +288,24 @@ Stage 2a and Stage 3 do not apply:
    bun run references/spec-extract-lib.ts <module_slug> --diagram
    ```
 
-   It prints the §2 Mermaid block a full run would write, built from live state with
-   the conventions of `semantius-architect/references/stage-5-mermaid.md`: one node per
-   entity (related entities of other modules and built-ins included), each edge labeled
-   with its link field's `relationship_label`, dotted edges for entity families,
+   It prints the §2 Mermaid block a full run would write, built from live state: one node per
+   entity (related entities of other modules and built-ins included), each diagram edge labeled
+   with its relationship field's `relationship_label`, dotted edges for entity families,
    built-ins and shared masters shaded green. Never draw the diagram by hand, and never
    as an `erDiagram` listing columns.
 3. Show the printed block unchanged in a `mermaid` fence, after one line naming the
-   module and its entity count. Only when a relationship edge (`-->`) has no label, add
-   one line naming those edges (`<from> → <to>`): their link fields carry no
+   module and its entity count. Only when a relationship's diagram edge (`-->`) has no label, add
+   one line naming those diagram edges (`<from> → <to>`): their relationship fields carry no
    relationship label in the live module, so the arrow has no text until one is set.
 
 Work quietly, as in a full run: the user sees the module picker when it is needed,
 then the diagram.
 
-## Stage 4: Audit the extracted spec for live-model defects (only when the user asks)
-
-**Why the analyst is the right auditor.** `semantius-analyst` OWNS the spec artifact:
-it authors specs (blueprint → spec) and its Mode B Audit is the canonical read-only
-checker for a `*-semantic-spec.md`. Because this skill just wrote a spec, the analyst
-audit is available — but on a *reverse-engineered* spec its value is specific: the
-spec mirrors live state, so any real modeling defect the audit finds is a genuine
-problem **in the live module**, now made visible. That is the point of running it.
-
-**Do not prompt for this. The skill ends at Stage 3.** Never ask, offer, or pop up a
-question about the audit (no `AskUserQuestion`, no trailing "want me to audit?" line).
-Delivering the spec plus its Stage 3 verification is the end of a normal run. A
-freshly generated spec does not need an unprompted audit, and the trailing question
-reads as noise.
-
-Run the audit ONLY when the user explicitly asks for it in a later turn (e.g. "audit
-it", "check the live model for defects"). When they do, run the `semantius-analyst`
-Mode B checks against the written file, and split the findings:
-
-- **Real live-model defects (surface as actionable):** label-column-is-a-FK, missing
-  or filler `relationship_label`, malformed JsonLogic, duplicate `validation_rules`
-  codes, an enum whose live values would orphan records. These describe the live
-  module; fixing them means a `semantius-modeler` re-deploy.
-- **Authoring-completeness findings (expected — do NOT surface as actionable):**
-  missing `initial_request`, empty §6/§7, missing `description` block. These fire *by
-  construction* on every extracted spec (they are the Category-B authored content live
-  never held). Note them as expected, not as problems.
-
-Do NOT confuse this authoring audit with an extraction-fidelity check. "Does the spec
-faithfully match live?" is a different question, answered by re-running the extractor
-(deterministic) or a `semantius-modeler` deploy-test round-trip — not by the analyst.
-
 ---
-
-## Verifying the extractor (for maintainers)
-
-Two checks, run both after any change to `spec-extract-lib.ts` or a bump of the
-analyst template:
-
-1. **Offline round-trip (always available):** `bun evals/round-trip/check.ts` from
-   this skill folder. It renders `evals/round-trip/fixture-*.json` (JSON snapshots of
-   the live reads, `basic` modules and one `raci` module) via `--from-fixture`, diffs
-   each against its committed `expected-*.md` golden, runs the architect's
-   `consistency-check.ts` on the render, and lints the analyst template's skeleton
-   against the extractor. Exit 0 means green. After an intentional extractor change,
-   `--update` regenerates the goldens; review the diff before committing.
-2. **Live round-trip (needs an instance):** a reference module (`it-ops-starter`) and
-   its committed spec (`semantius/specs/it-ops-starter-semantic-spec.md`, itself an
-   extractor output) anchor a drift check: regenerate from live and confirm every
-   diff falls in Category B or is an intentional extractor change already reflected
-   in the goldens. A value diff outside that is an extractor defect.
 
 ## What this skill does not do
 
 - Does **not** write to Semantius (read-only reverse-engineering).
 - Does **not** capture user assignments, sample business data, or webhook logs.
 - Does **not** invent authored content (§1 beyond a seed, §6/§7, authored
-  frontmatter). Those are the analyst's job in Extend mode.
+  frontmatter).

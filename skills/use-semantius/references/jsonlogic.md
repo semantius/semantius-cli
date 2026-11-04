@@ -127,13 +127,14 @@ Inserts and updates pass untouched; a delete passes only for holders of `sales:d
 
 #### Platform-extension operators
 
-In addition to standard JsonLogic operators, the platform provides three extension operators usable in `computed_fields`, `validation_rules`, `select_rule` (see `select-rule.md`), and `input_type_rule`:
+In addition to standard JsonLogic operators, the platform provides four extension operators usable in `computed_fields`, `validation_rules`, `select_rule` (see `select-rule.md`), and `input_type_rule`:
 
 | Operator | Shape | Returns | Use in |
 |---|---|---|---|
 | `{"value_changed": "<field>"}` | unary, takes a field name string | boolean — `true` when the field's value differs from `$old.<field>` (always `true` on INSERT) | `validation_rules`, `computed_fields`. Scope a rule to the moment a specific column changes (e.g. an approval gate fires only on the transition into `approved`, not on every subsequent edit). |
 | `{"require_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — returns `true` when the caller holds the permission, **throws** otherwise. The throw is the platform's permission error, not the rule's: SQLSTATE `42501` (HTTP 403), message `Permission denied: ${permission} required`, with `hint.code` `90101` and the permission name in `hint.permission` (plus `hint.entity` and `hint.rule`). The `${permission}` placeholder is a template the client fills from the hint; the server never interpolates it. The rule's own `code` and `message` are not used | `validation_rules`. Use only inside `if` so the throw is conditional, not unconditional. Wrong shape for `select_rule` (a per-row throw during SELECT would be a disaster) — use `has_permission` there instead. |
 | `{"has_permission": "<permission_code>"}` | unary, takes a permission code string | boolean — `true` when the caller holds the permission, `false` otherwise (never throws) | `select_rule` (see `select-rule.md`; primary use — added specifically so `select_rule` can broaden visibility for elevated roles without throwing per row), `input_type_rule`, and `validation_rules` (when a non-throwing check is preferable, e.g. composing with `or` to allow the permission *or* an ownership match). |
+| `{"is_raci_actor": ["<entity>", "<to_state>", "<letter>"]}` | three strings: the entity's `table_name`, the target state, and a RACI letter as stored in `raci_assignments.raci` (`responsible`, `accountable`, `consulted`, `informed`) | boolean: resolves the process through the `process_gates` row for `(<entity>, <to_state>)` and returns `true` when the caller holds a role assigned that letter for that process in `raci_assignments`, `false` otherwise (never throws) | `validation_rules`: the approval gate (A-gate) of a module whose RACI matrix runs live in the `processes` / `raci_assignments` / `process_gates` tables. Compose it with `has_permission` in an `or` so a holder of the gate permission can take the step too (example below). |
 
 **Choosing between `require_permission` and `has_permission` in `validation_rules`.** Both work on the write side. `require_permission` throws on miss with the platform's generic permission error (above), so the caller learns which permission is missing but never sees the rule's `message`. `has_permission` returns boolean, so a rule that returns it from the gated branch fails with its own `code` and `message`: the right shape whenever the failure text should explain the business rule ("Only an approver can move an offer to `approved`"). `has_permission` is also the right shape when the permission is one branch of a wider predicate ("the caller is the owner *or* holds the override permission"), because `or([owner_match, require_permission(...)])` throws `42501` for a non-owner without the permission, so the rule's own `code` and `message` never surface; `or([owner_match, has_permission(...)])` returns truthy whenever either branch matches and otherwise fails with the rule's own `code` and `message`.
 
@@ -180,6 +181,31 @@ A caller without `ats:approve_offer` gets `99001` and the rule's message. With `
 ```
 
 INSERT passes trivially (no `$old`); UPDATE / DELETE passes when the caller is the original author or holds the override permission. Using `has_permission` here (not `require_permission`) is essential — the `or` needs a non-throwing branch so the owner-match path works for callers without the override.
+
+**Example: live RACI approval gate (uses `value_changed` + `is_raci_actor` + `has_permission`):** the conditional approval gate above, in a module whose RACI matrix runs live. The usual `workflow_state` transition `if` stays; its gated branch admits the Accountable role or a holder of the gate permission:
+
+```json
+{
+  "code": "99001",
+  "name": "approve_offer_requires_accountable_or_approver",
+  "message": "Only the hiring manager or an admin can approve an offer.",
+  "jsonlogic": {
+    "if": [
+      { "and": [
+        { "value_changed": "workflow_state" },
+        { "==": [{ "var": "workflow_state" }, "approved"] }
+      ]},
+      { "or": [
+        { "is_raci_actor": ["offers", "approved", "accountable"] },
+        { "has_permission": "ats:approve_offer" }
+      ]},
+      true
+    ]
+  }
+}
+```
+
+The role assigned `accountable` for the process that gates `offers` → `approved` passes, and so does any holder of `ats:approve_offer` (for example an admin role whose permission includes it); anyone else gets `99001` and the rule's message. The permission branch is `has_permission`, not `require_permission`, for the same reason as the owner-or-elevated example above: the `or` needs a non-throwing branch so the Accountable path works for a caller who lacks the gate permission, and a refused caller gets the rule's own `code` and `message`.
 
 #### String concatenation (`concat`)
 
@@ -337,7 +363,7 @@ In `computed_fields`, this writes the margin into a derived field while throwing
 }
 ```
 
-**Pattern 6 — Customer country pulled through two hops.** When the link is a chain (`address → customer.country_code`), nest `set_record` calls; the inner body has access to both bindings:
+**Pattern 6 — Customer country pulled through two hops.** When the relationship is a chain (`address → customer.country_code`), nest `set_record` calls; the inner body has access to both bindings:
 
 ```json
 {

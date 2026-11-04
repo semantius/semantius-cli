@@ -9,6 +9,7 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 | Concept | Description |
 |---------|-------------|
 | **Permission** | Atomic capability, named `<module>:<action>` (e.g., `crm:read`, `crm:manage`) |
+| **Bundle** | A permission that exists to include others through the hierarchy (e.g., `crm:manage`). Roles hold bundles; see *Per-entity permissions and bundles* |
 | **Permission Hierarchy** | `manage` implicitly includes `read`, set up so users don't need both assigned separately |
 | **Role** | Named bundle of permissions (e.g., `crm_viewer`, `crm_manager`) |
 | **Role Permission** | M:N join: grants a permission to a role |
@@ -27,11 +28,55 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 
 Never use free-form names like `"can_edit"` or `"admin"`, always scope to a module.
 
+**The prefix names the module that owns the capability, which may not be installed yet.** `ats-candidate-crm:write_candidates` is a valid permission in a tenant that only has `hiring-starter`. The platform checks only the shape of the name: a permission's prefix does not have to match its `module_id`, a hierarchy row can cross modules, and `has_permission` compares names without looking at modules.
+
+`permissions.module_id` says which module **holds** the row, which is not always the module the prefix names. A row is held by the module the prefix names once that module is installed, otherwise by the module where the entity lives, otherwise by the first module that needed it. Deleting the holding module deletes the row, its grants and its hierarchy rows, and is refused while an entity still names the permission. So `module_id=eq.<id>` does not list every permission a module uses: follow its hierarchy rows too.
+
+---
+
+## Per-entity permissions and bundles
+
+A module deployed from a spec names each entity's permissions after the catalog, never after what is installed, and holds them through bundles:
+
+| Permission | Name | Prefix |
+|---|---|---|
+| Entity read | `<owner>:read_<entity>` | The entity's master |
+| Entity write | `<owner>:write_<entity>` | The entity's master |
+| Workflow gate | `<owner>:<verb>` | The module that realizes the state, if the catalog names one; otherwise the entity's master |
+| Override (`view_all_`, `manage_all_`, `submit_`, `bypass_submit_lock`) | `<owner>:<verb>` | The entity's master |
+| Bundle (`read`, `manage`, `admin`, and a narrow tier such as `interview`) | `<unit>:<tier>` | The module that declares it |
+
+An entity's `view_permission` and `edit_permission` point at its own read and write permissions, and never change. Roles hold bundles, and the bundles include the entity permissions through `permission_hierarchy`:
+
+| Permission | Includes |
+|---|---|
+| `<unit>:read` | `read_<entity>` for every entity the module provisions, consumes or contributes to |
+| `<unit>:manage` | `<unit>:read`, and `write_<entity>` for each entity written at the `manage` tier |
+| `<unit>:admin` | `<unit>:manage`, `write_<entity>` for each entity written at the `admin` tier, plus gates and overrides |
+| Narrow tier | `write_<entity>` for the entities it covers. `<unit>:manage` includes it |
+| `write_<entity>` | `read_<entity>`, because a write without read is unusable under row-level security |
+
+For example, `hiring-starter` embeds `candidates`, whose master is `ats-candidate-crm`:
+
+```
+candidates.view_permission = ats-candidate-crm:read_candidates
+candidates.edit_permission = ats-candidate-crm:write_candidates
+
+ats-candidate-crm:write_candidates includes ats-candidate-crm:read_candidates
+hiring-starter:read                includes ats-candidate-crm:read_candidates
+hiring-starter:manage              includes ats-candidate-crm:write_candidates
+hiring-starter:admin               includes ats-candidate-crm:hire_candidate
+```
+
+The names are the same in every install order: when `ats-candidate-crm` installs later, the rows move to it, and nothing is renamed. A holder of `hiring-starter:manage` can write `candidates` and nothing else in the CRM module. Another module's access to one entity is one hierarchy row to that entity's permission, not a row to the owner's `read` or `manage`.
+
+`access_scope: custom` keeps hand-made permissions and has no per-entity rows. A module built by hand (the steps below, or `semantius-importer`) can use module-wide permissions as its entities' `view_permission` and `edit_permission`, as `crm:read` and `crm:manage` do below: both shapes are valid on the platform.
+
 ---
 
 ## Step-by-Step: Full RBAC Setup for a New Module
 
-Every step below writes a **set** of records of one kind, so each is **one** call with an array in `data` (Golden Rule 7): both permissions in one `create_permission`, both roles in one `create_role`, both grants in one `create_role_permission`. Duplicate-check each set with one `read_*` using an `in.(...)` filter first (`read_permission '{"filters": "permission_name=in.(crm:read,crm:manage)"}'`). A permission is keyed by its `permission_name`, so every reference to it (hierarchy edges, grants, module wiring) writes the name directly; only roles and users carry a numeric `id`, and those ids come from that read, never from the create response.
+Every step below writes a **set** of records of one kind, so each is **one** call with an array in `data` (Golden Rule 7): both permissions in one `create_permission`, both roles in one `create_role`, both grants in one `create_role_permission`. Duplicate-check each set with one `read_*` using an `in.(...)` filter first (`read_permission '{"filters": "permission_name=in.(crm:read,crm:manage)"}'`). A permission is keyed by its `permission_name`, so every reference to it (hierarchy relationships, grants, module wiring) writes the name directly; only roles and users carry a numeric `id`, and those ids come from that read, never from the create response.
 
 ### 1. Create Permissions
 
@@ -55,7 +100,7 @@ semantius call crud create_permission '{
 
 ### 2. Set Up Permission Hierarchy (optional but recommended)
 
-Make `crm:manage` implicitly include `crm:read`, so assigning `manage` is sufficient (with an admin tier, both edges — `admin → manage` and `manage → read` — go in one call):
+Make `crm:manage` implicitly include `crm:read`, so assigning `manage` is sufficient (with an admin tier, both relationships — `admin → manage` and `manage → read` — go in one call):
 
 ```bash
 semantius call crud create_permission_hierarchy '{
@@ -68,9 +113,9 @@ semantius call crud create_permission_hierarchy '{
 
 ### 3. Create Roles
 
-The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$` — **underscores only, NO hyphens**, unlike a `module_slug`, which DOES allow hyphens; the two formats differ, so when you build a role slug from a hyphenated module slug you must convert `-`→`_`, e.g. module `hvac-svc-mgmt` → role `hvac_svc_mgmt_viewer`, never `hvac-svc-mgmt_viewer`. A hyphen in the slug fails the regex. Auto-derived from `role_name` if omitted, but pass it explicitly so the handle is deploy-controlled and not left to slugify). There is **no `name` and no `label` field** — those are a common mistake. For a role that belongs to a module you MUST also pass **`module_id`**, the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and unlinked from the module record's `default_*_role_id`.
+The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$` — **underscores only, NO hyphens**, unlike a `module_slug`, which DOES allow hyphens; the two formats differ, so when you build a role slug from a hyphenated module slug you must convert `-`→`_`, e.g. module `hvac-svc-mgmt` → role `hvac_svc_mgmt_viewer`, never `hvac-svc-mgmt_viewer`. A hyphen in the slug fails the regex. Auto-derived from `role_name` if omitted, but pass it explicitly so the handle is deploy-controlled and not left to slugify). There is **no `name` and no `label` field** — those are a common mistake. For a role that belongs to a module you MUST also pass **`module_id`**, the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and not related to the module record's `default_*_role_id`.
 
-**`origin`** records who provisioned a role or hierarchy edge, and it cannot change after creation. Leave it unset when you create RBAC by hand; it defaults to `"user"`. `"model"` and `"model_master"` are set only by a `semantius-modeler` deploy (a domain module and a master module respectively), and `"system"` only by the platform.
+**`origin`** records who provisioned a role or hierarchy relationship, and it cannot change after creation. Leave it unset when you create RBAC by hand; it defaults to `"user"`. `"model"` and `"model_master"` are set only by a spec deploy (a domain module and a master module respectively), and `"system"` only by the platform.
 
 ```bash
 # Viewer (read only) and manager (full access) roles — in ONE call
