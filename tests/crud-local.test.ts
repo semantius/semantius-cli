@@ -209,22 +209,23 @@ describe('local crud layer', () => {
       }
     }
 
-    test('cloud registers all 53 vendored tools, in upstream order', async () => {
+    test('cloud registers all 54 vendored tools, in upstream order', async () => {
       const names = await listed(CLOUD);
-      expect(names.length).toBe(53);
+      expect(names.length).toBe(54);
       expect(names).toEqual(
         (vendoredTools as Array<{ name: string }>).map((t) => t.name),
       );
       expect(names.slice(0, 2)).toEqual(['getCurrentUser', 'postgrestRequest']);
       expect(names).not.toContain('echo');
-      // sqlToRest is MCP-only: its WASM parser does not survive bun build --compile.
-      expect(names).not.toContain('sqlToRest');
+      expect(names).toContain('sqlToRest');
       for (const name of CLOUD_ONLY_TOOLS) expect(names).toContain(name);
     });
 
     test('self-hosted leaves out sendEmail, get_cli_token and get_cli_config', async () => {
       const names = await listed(SELF_HOSTED);
-      expect(names.length).toBe(50);
+      expect(names.length).toBe(51);
+      // It computes locally and needs no cloud endpoint.
+      expect(names).toContain('sqlToRest');
       for (const name of ['sendEmail', 'get_cli_token', 'get_cli_config']) {
         expect(names).not.toContain(name);
       }

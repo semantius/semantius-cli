@@ -64,12 +64,8 @@ const COPY_ROOTS = [
 /**
  * Upstream files under COPY_ROOTS that are not copied:
  *   - echo.ts is commented out of upstream's tool list (debug only).
- *   - sqlToRest.ts needs @supabase/sql-to-rest, whose WASM parser is loaded
- *     from disk next to its glue code and is missing inside a
- *     `bun build --compile` binary (ENOENT on $bunfs/root/pg-parser.wasm).
- *     The tool stays available through the MCP route (--crud-mcp).
  */
-const EXCLUDED = new Set(['src/tools/echo.ts', 'src/tools/sqlToRest.ts']);
+const EXCLUDED = new Set(['src/tools/echo.ts']);
 
 /** Vendor-relative paths owned by this script but excluded from --check. */
 const INSTRUCTIONS_FILE = 'src/generated/instructions.ts';

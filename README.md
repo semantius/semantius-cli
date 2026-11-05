@@ -176,7 +176,7 @@ covered in [Credentials](#credentials-sources-and-evaluation-order); everyday
 use in [Usage](#usage). No config file is needed: the `crud` tools run inside
 the CLI against your organization's PostgREST API, and `cube` (analytics) is
 reached as a Semantius MCP server. `--crud-mcp` sends the `crud` tools through
-the Semantius cloud MCP server instead (the only way to use `sqlToRest`).
+the Semantius cloud MCP server instead.
 
 ## Usage
 

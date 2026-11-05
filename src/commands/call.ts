@@ -80,6 +80,22 @@ function streamProblem(options: CallOptions): string | null {
 const BULK_ARG_KEYS = ['data', 'body', 'id', 'table_name'] as const;
 
 /**
+ * Whether a tool result is the MCP SDK's answer to a call of a tool the server
+ * does not have. The text is compared whole, so that a tool's own error that
+ * merely says "not found" (a missing record, say) is never taken for it.
+ */
+function isToolNotFoundResult(result: unknown, toolName: string): boolean {
+  const r = result as {
+    content?: Array<{ type: string; text?: string }>;
+    isError?: boolean;
+  } | null;
+  return (
+    r?.isError === true &&
+    r.content?.[0]?.text === `MCP error -32602: Tool ${toolName} not found`
+  );
+}
+
+/**
  * Parse target into server and tool name
  */
 function parseTarget(target: string): { server: string; tool: string } {
@@ -438,17 +454,19 @@ async function runCall(options: CallOptions): Promise<void> {
     );
   }
 
+  const availableToolNames = async (): Promise<string[] | undefined> => {
+    try {
+      return (await connection.listTools()).map((t) => t.name);
+    } catch {
+      return undefined; // We'll show the error without a tool list
+    }
+  };
+
   let result: unknown;
   try {
     result = await connection.callTool(toolName, args);
   } catch (error) {
-    let availableTools: string[] | undefined;
-    try {
-      const tools = await connection.listTools();
-      availableTools = tools.map((t) => t.name);
-    } catch {
-      // Ignore - we'll show error without tool list
-    }
+    const availableTools = await availableToolNames();
 
     const errMsg = (error as Error).message;
     if (errMsg.includes('not found') || errMsg.includes('unknown tool')) {
@@ -460,6 +478,21 @@ async function runCall(options: CallOptions): Promise<void> {
         formatCliError(toolExecutionError(toolName, serverName, errMsg)),
       );
     }
+    await safeClose(connection.close);
+    return exit(ErrorCode.SERVER_ERROR);
+  }
+
+  // An MCP SDK server does not throw on an unknown tool: it answers with an
+  // error result, so only a server built otherwise reaches the catch above.
+  if (isToolNotFoundResult(result, toolName)) {
+    if (options.diag) {
+      console.log(JSON.stringify(result, null, 2));
+    }
+    console.error(
+      formatCliError(
+        toolNotFoundError(toolName, serverName, await availableToolNames()),
+      ),
+    );
     await safeClose(connection.close);
     return exit(ErrorCode.SERVER_ERROR);
   }

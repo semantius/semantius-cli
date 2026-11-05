@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { compileCommand } from '../../scripts/build';
 import { getPidPath, getSocketPath } from '../../src/config';
 import { isProcessRunning, killProcess, readPidFile } from '../../src/daemon';
 import { proxyDaemonName } from '../../src/postgrest-proxy';
@@ -140,14 +141,7 @@ describe.skipIf(!posixOnly)('compiled binary daemon', () => {
     logPath = join(tempDir, 'semantius.jsonl');
 
     const build = Bun.spawnSync({
-      cmd: [
-        'bun',
-        'build',
-        '--compile',
-        join(import.meta.dir, '..', '..', 'src', 'index.ts'),
-        '--outfile',
-        built,
-      ],
+      cmd: compileCommand({ outfile: built, minify: false }),
       stdout: 'pipe',
       stderr: 'pipe',
     });

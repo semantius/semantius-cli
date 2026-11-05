@@ -9,8 +9,7 @@
  *
  * Each scenario runs the CLI twice — plain and with --crud-mcp — with the
  * environment from .env plus SEMANTIUS_NO_DAEMON=1. The scenarios are those of
- * docs/plans/bench/bench.ts. sqlToRest is MCP-only (not in the local layer),
- * so it is removed from the remote side of the listing comparisons.
+ * docs/plans/bench/bench.ts.
  *
  * Needs network access to <org>.semantius.ai (Deno), api.semantius.cloud,
  * <org>.semantius.cloud/token and the tenant PostgREST. The write test creates
@@ -27,7 +26,6 @@ const ENABLED =
 
 const REPO = join(import.meta.dir, '..', '..');
 const CLI = join(REPO, 'src', 'index.ts');
-const MCP_ONLY_TOOLS = ['sqlToRest'];
 
 interface Run {
   stdout: string;
@@ -189,7 +187,7 @@ describe.skipIf(!ENABLED)('local layer vs --crud-mcp parity', () => {
     }
   });
 
-  test('info crud: same tools (minus MCP-only) and the same instructions', async () => {
+  test('info crud: same tools and the same instructions', async () => {
     const { local, mcp } = await both(['info', 'crud']);
     const parse = (text: string) => {
       const lines = text.split('\n');
@@ -209,33 +207,15 @@ describe.skipIf(!ENABLED)('local layer vs --crud-mcp parity', () => {
     expect(mcp.stdout).toContain('Transport: HTTP');
     expect(l.instructions.length).toBeGreaterThan(1000);
     expect(l.instructions).toBe(m.instructions);
-    expect(l.tools).toEqual(m.tools.filter((t) => !MCP_ONLY_TOOLS.includes(t)));
+    expect(l.tools).toEqual(m.tools);
   });
 
-  test('grep and -md are text-equal apart from MCP-only tools', async () => {
-    const dropMcpOnlyLines = (text: string) =>
-      text
-        .split('\n')
-        .filter((l) => !MCP_ONLY_TOOLS.some((t) => l.includes(t)))
-        .join('\n');
+  test('grep and -md are text-equal', async () => {
     const g = await both(['grep', '*']);
-    expect(g.local.stdout).toBe(dropMcpOnlyLines(g.mcp.stdout));
+    expect(g.local.stdout).toBe(g.mcp.stdout);
 
-    // In -md, drop each MCP-only tool's "#### <tool>" section and the tool
-    // counts it changes.
-    const dropMcpOnlySections = (md: string) => {
-      const out: string[] = [];
-      let skipping = false;
-      for (const line of md.split('\n')) {
-        if (line.startsWith('#')) {
-          skipping = MCP_ONLY_TOOLS.some((t) => line === `#### ${t}`);
-        }
-        if (!skipping) out.push(line.replace(/^### Tools \(\d+\)$/, '### Tools'));
-      }
-      return out.join('\n');
-    };
     const md = await both(['-md']);
-    expect(dropMcpOnlySections(md.local.stdout)).toBe(dropMcpOnlySections(md.mcp.stdout));
+    expect(md.local.stdout).toBe(md.mcp.stdout);
   });
 
   describe('--stream', () => {

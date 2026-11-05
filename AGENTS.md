@@ -26,6 +26,16 @@ Always use the release script — it handles everything (version bumps, tests, a
 
 Do NOT do any of these steps manually — manual releases have repeatedly caused the binary to report the wrong version or the release workflow to not trigger. Commit and push your actual code changes first; the script only commits the version bump itself. The local gates prove only your own OS, so check that the summary's CI line shows green runs on the commit being tagged.
 
+## Compiling
+
+Every compile goes through `scripts/build.ts` (`bun run build*`, `release.yml`, and `compileCommand` in the tests): never write a `bun build --compile` command anywhere else. It embeds `pg-parser.wasm`, the parser behind `sqlToRest`, which `@supabase/sql-to-rest` loads as soon as it is imported. A binary built without it still compiles, then reports an ENOENT on every crud command, while every run from source stays green. `tests/integration/compiled-binary.test.ts` runs a real binary on Linux and Windows to catch that. Anything else the CLI reads from disk at run time needs the same two things.
+
+## Exclusions are the owner's decision
+
+Never drop a requested feature, tool or platform on your own judgement: stop and ask, with the options and what each costs. A plan's fallback wording ("excluding it is acceptable if it is not easy") does not decide it: report what you found and let the owner judge whether it is easy. `sqlToRest` was left out of the local tools that way in 2026-09, over 13 build commands when the working recipe was already known, and nobody was asked. It stayed out for two months, behind a test asserting its absence.
+
+A comment on an exclusion or workaround says whether it is a hard limit or a choice, what the choice was traded against, and what would lift it. "Does not survive `bun build --compile`" read as impossible, so nobody questioned it.
+
 ## Vendored code
 
 The vendored tree under `src/vendor/` is synced, never edited: `src/vendor/postgrest-mcp/` is copied from the `postgrest-mcp` repo by `bun run sync-mcp-tools` (`scripts/sync-postgrest-mcp.ts`) — change the code upstream, then re-sync and commit. The one exception is `src/vendor/postgrest-mcp/src/utils/resetSchemaCache.ts`, the CLI's local replacement, which the script never writes. `bun run sync-mcp-tools:check` (run by the release script) fails if the copy drifted from upstream.

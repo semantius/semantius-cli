@@ -859,12 +859,32 @@ describe('CLI errors through the local crud layer', () => {
     expect(info.exitCode).toBe(0);
     expect(info.stdout).toContain('Transport: postgrest');
     expect(info.stdout).toContain(`URL: ${offline}/rest`);
-    expect(info.stdout).toContain('Tools (50):'); // self-hosted: no sendEmail / get_cli_*
+    expect(info.stdout).toContain('Tools (51):'); // self-hosted: no sendEmail / get_cli_*
 
     const md = await runLocal(['-md'], {}, offline);
     expect(md.exitCode).toBe(0);
     expect(md.stdout).toContain('## crud');
     expect(md.stdout).toContain('#### read_entity');
     expect(md.stdout).not.toContain('Connection error');
+  });
+
+  // The MCP SDK answers an unknown tool with an error result rather than
+  // throwing, so `call` used to print the protocol's own text and no hint.
+  test('call of a tool the server lacks is TOOL_NOT_FOUND and names the tools it has', async () => {
+    const r = await runLocal(['call', 'crud', 'no_such_tool', '{}']);
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain(
+      'Error [TOOL_NOT_FOUND]: Tool "no_such_tool" not found in server "crud"',
+    );
+    expect(r.stderr).toContain('Available tools: getCurrentUser, postgrestRequest');
+    expect(r.stderr).not.toContain('-32602');
+  });
+
+  test("a tool's own \"not found\" error is not taken for a missing tool", async () => {
+    reply = () => Response.json({ message: 'Tool postgrestRequest not found' }, { status: 404 });
+    const r = await runLocal(pg({ method: 'GET', path: '/things' }));
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr).toContain('Tool postgrestRequest not found');
+    expect(r.stderr).not.toContain('TOOL_NOT_FOUND');
   });
 });

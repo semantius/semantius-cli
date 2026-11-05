@@ -63,22 +63,22 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build Linux x64
-        run: bun build --compile --minify --target=bun-linux-x64 src/index.ts --outfile dist/semantius-linux-x64
-      
+        run: bun run build:linux
+
       - name: Build Linux ARM64
-        run: bun build --compile --minify --target=bun-linux-arm64 src/index.ts --outfile dist/semantius-linux-arm64
-      
+        run: bun run build:linux-arm
+
       - name: Build macOS x64
-        run: bun build --compile --minify --target=bun-darwin-x64 src/index.ts --outfile dist/semantius-darwin-x64
-      
+        run: bun run build:macos
+
       - name: Build macOS ARM64
-        run: bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile dist/semantius-darwin-arm64
-      
+        run: bun run build:macos-arm
+
       - name: Build Windows x64
-        run: bun build --compile --minify --target=bun-windows-x64 src/index.ts --outfile dist/semantius-windows-x64.exe
-      
+        run: bun run build:windows
+
       - name: Build Windows ARM64
-        run: bun build --compile --minify --target=bun-windows-arm64 src/index.ts --outfile dist/semantius-windows-arm64.exe
+        run: bun run build:windows-arm
       
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

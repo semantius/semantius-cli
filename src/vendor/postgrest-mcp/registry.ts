@@ -2,6 +2,7 @@
 // Every *Tool export of the copied src/tools/*.ts, in upstream src/mcp.ts order.
 import { getCurrentUserTool } from './src/tools/getCurrentUser.ts'
 import { postgrestRequestTool } from './src/tools/postgrestRequest.ts'
+import { sqlToRestTool } from './src/tools/sqlToRest.ts'
 import { createEntityTool } from './src/tools/create_entity.ts'
 import { readEntityTool } from './src/tools/read_entity.ts'
 import { updateEntityTool } from './src/tools/update_entity.ts'
@@ -57,6 +58,7 @@ import { sendEmailTool } from './src/tools/send_email.ts'
 export const tools = [
   getCurrentUserTool,
   postgrestRequestTool,
+  sqlToRestTool,
   createEntityTool,
   readEntityTool,
   updateEntityTool,
