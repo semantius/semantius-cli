@@ -12,18 +12,18 @@ const inputSchema = {
       z.array(z.record(z.string(), z.unknown())),
     ])
     .optional()
-    .describe('Request body for POST/PUT/PATCH requests. Either one object or an array of objects (bulk insert). With an array, PostgREST requires every item to have the same keys unless the path adds ?columns=col1,col2 (then omitted keys become NULL). For bulk writes prefer the typed create_*/update_*/delete_* tools, which handle this for you.'),
+    .describe('Request body for POST/PUT/PATCH requests. Either one object or an array of objects (bulk insert). With an array, PostgREST requires every item to have the same keys unless the path adds ?columns=col1,col2 (then omitted keys become NULL). A heterogeneous array without ?columns fails with the misleading error PGRST102 Empty or invalid json; make the keys uniform. For bulk writes prefer the typed create_*/update_*/delete_* tools, which handle this for you.'),
   accept: z
     .string()
     .optional()
-    .describe('Accept header value (e.g., application/vnd.pgrst.object+json to return a single object, text/csv for CSV export)'),
+    .describe('Accept header value (e.g., application/vnd.pgrst.object+json to return a single object, text/csv for CSV export). Do not use application/vnd.pgrst.object+json with an array body.'),
 }
 
 export const postgrestRequestTool: Tool<typeof inputSchema, undefined> = {
   name: 'postgrestRequest',
   options: {
     title: 'Call PostgREST API',
-    description: 'Performs a raw HTTP request against the PostgREST API. Use only for queries or filter-based mutations the typed CRUD tools cannot express; the typed tools already support arrays for bulk create/update/delete.',
+    description: 'Performs a raw HTTP request against the PostgREST API. Use only for queries or filter-based mutations the typed CRUD tools cannot express; the typed tools already support arrays for bulk create/update/delete. Always sends Prefer: return=representation. On is_a and has_a entities PUT and on_conflict upserts fail with 42P10: insert, then PATCH.',
     inputSchema,
   },
   handler: async ({ method, path, body, accept }, { authInfo }) => {

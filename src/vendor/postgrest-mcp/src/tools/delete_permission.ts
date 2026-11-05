@@ -12,7 +12,7 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   permission_name: oneOrMany(z.string()).describe(
-    `permission_name of the permission to delete, or a non-empty array of permission_names to delete several records in one request. ` +
+    `permission_name of the permission to delete, or a non-empty array of permission_names to delete several records in one request. If one fails, none is deleted. ` +
     `A permission that an entity, module or queue still names is refused: those columns are foreign keys to it. ` +
     `WARNING: This operation is permanent and cannot be undone. ` +
     `Consider using an update to set a "deleted" flag instead of permanent deletion.`

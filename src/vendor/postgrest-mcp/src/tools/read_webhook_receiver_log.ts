@@ -29,7 +29,7 @@ const inputSchema = {
     .describe(
       `Comma-separated list of columns to include in the response. ` +
       `Examples: "id,name,email" (specific columns), "*" (all columns - default if omitted). ` +
-      `Supports nested resources and related data using PostgREST embedded resource syntax. ` +
+      `Supports nested resources and related data using PostgREST embedded resource syntax. Composed labels _label and <fk>_label (one per reference or parent field) are read-only, not part of * and must be selected by name. ` +
       `Leave empty to select all columns.`
     ),
   limit: z

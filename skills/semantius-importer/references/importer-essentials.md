@@ -53,7 +53,7 @@ semantius call crud create_permission '{"data": [{"permission_name": "crm:read",
 semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "crm:read", "manage_permission": "crm:manage"}}'
 ```
 
-- `module_slug`: required, `^[a-z0-9_-]+$`. Permission names are always `<module_slug>:<action>` (slug, never display name).
+- `module_slug`: always pass it, `^[a-z0-9][a-z0-9_-]*$`. Permission names are always `<module_slug>:<action>` (slug, never display name).
 - `view_permission` / `manage_permission` / `admin_permission` hold the permission **name** (text FK to `permissions.permission_name`); write the name directly. The FK means a permission must exist before a module names it, hence create the module on the `user:read` default, create the permissions, then wire. Skipping the `update_module` wiring leaves the module on the `user:read` default.
 - `description` is a ≤40-char tagline.
 

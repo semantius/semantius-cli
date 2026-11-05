@@ -226,7 +226,7 @@ The ten forms fall into three tiers:
 | `--login-flow <mode>` | Grant a sign-in uses: `auto` (default), `browser` or `device` (see Credentials Setup). Also `SEMANTIUS_LOGIN_FLOW` |
 | `-c, --config <path>` | Config file to use instead of the default search. Also `SEMANTIUS_CONFIG_PATH` |
 | `--env <prefix>` | Read `<PREFIX>_API_KEY`, `<PREFIX>_ORG`, … instead of `SEMANTIUS_*` |
-| `--crud-mcp` | Run the `crud` tools on the Semantius cloud MCP server instead of inside the CLI (cloud only). Needed for `sqlToRest` |
+| `--crud-mcp` | Run the `crud` tools on the Semantius cloud MCP server instead of inside the CLI (cloud only) |
 | `--disable-jwt-cache` | Skip the token cache; re-authenticate on every request. Also `SEMANTIUS_DISABLE_JWT_CACHE=1` |
 | `--reset-cache` | Drop the cached token and host lookup before running (alias `--reset-jwt-cache`) |
 

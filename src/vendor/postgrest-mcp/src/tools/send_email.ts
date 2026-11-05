@@ -30,7 +30,7 @@ export const sendEmailTool: Tool<typeof inputSchema, undefined> = {
     title: 'Send Email',
     description:
       'Sends a transactional email. Provide either `html` or `text` (or both). ' +
-      'Returns the provider messageId on success.',
+      'Returns the provider messageId on success. At least one of html or text must be non-empty, else SendMail: Either html or text must be provided. Recipient addresses are bare email addresses without display names.',
     inputSchema,
   },
   handler: async (input, { authInfo, request }) => {

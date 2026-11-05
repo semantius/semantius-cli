@@ -12,7 +12,7 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   id: oneOrMany(z.number().int()).describe(
-    `ID of the module to delete, or a non-empty array of IDs to delete several modules in one request. ` +
+    `ID of the module to delete, or a non-empty array of IDs to delete several modules in one request. If one fails, none is deleted. ` +
     `Deleting a module automatically deletes ALL of its entities, fields, and business records. ` +
     `WARNING: This operation is permanent and cannot be undone.`
   ),

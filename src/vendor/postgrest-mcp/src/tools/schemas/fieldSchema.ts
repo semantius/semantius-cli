@@ -17,12 +17,12 @@ export const FIELD_FORMATS = Object.keys(formats) as [string, ...string[]]
 
 export const fieldSchema = z.looseObject({
   id: z.string().optional().describe('Generated identifier (table_name.field_name) - Auto-generated'),
-  table_name: z.string().describe('Entity this field belongs to'),
+  table_name: z.string().describe('Entity this field belongs to. On an is_a or has_a entity create only its own fields: a name repeating the base or a based-on entity field is refused (90243).'),
   field_name: z.string().describe('Physical column name in database: lowercase letters, digits and _. Names starting with _ are reserved for generated system columns such as _label.'),
   title: z.string().describe('Human-readable display name for the field'),
   description: z.string().optional().describe('What the field represents. Also written into the column comment, which PostgREST shows in its OpenAPI output.'),
   format: z.enum(FIELD_FORMATS).optional()
-    .describe('JSON Schema format or primitive type'),
+    .describe('JSON Schema format or primitive type. May change only within the same Postgres primitive (for example text to multiline); a cross-primitive change or a change on a core column is refused (90219).'),
   is_pk: z.boolean().optional().describe('Whether this field is the primary key; cannot change after the field is created'),
   // The column is text. A number or boolean is stored as its text ("1", "true"), an object or array as its JSON.
   default_value: z.codec(
@@ -33,7 +33,7 @@ export const fieldSchema = z.looseObject({
       encode: (v) => v,
     },
   ).optional()
-    .describe('Column default: a literal value or an SQL expression such as CURRENT_TIMESTAMP. Stored as text; a number, boolean or JSON value is converted ("1", "true", "{}").'),
+    .describe('Column default: a literal value or an SQL expression such as CURRENT_TIMESTAMP. Stored as text; a number, boolean or JSON value is converted ("1", "true", "{}"). For an enum field give the stored value, never the label.'),
   field_order: z.number().int().optional().describe('Display order of the field within its entity'),
   input_type: z.enum(['default', 'required', 'readonly', 'disabled', 'hidden']).optional()
     .describe('How the UI presents the field for input; input_type_rule can override it per record. On a required field with no input_type_rule, the database also refuses a missing value. On a rollup or computed field, default and readonly become disabled, so a form does not submit the derived value.'),

@@ -12,7 +12,7 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   id: oneOrMany(z.number().int()).describe(
-    `ID of the role to delete, or a non-empty array of IDs to delete several records in one request. ` +
+    `ID of the role to delete, or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. Check its user_role assignments first. ` +
     `WARNING: This operation is permanent and cannot be undone. ` +
     `Consider using an update to set a "deleted" flag instead of permanent deletion.`
   ),

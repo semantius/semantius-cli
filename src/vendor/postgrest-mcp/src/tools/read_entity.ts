@@ -29,7 +29,7 @@ const inputSchema = {
     .describe(
       `Comma-separated list of columns to include in the response. ` +
       `Examples: "id,name,email" (specific columns), "*" (all columns - default if omitted). ` +
-      `Supports nested resources and related data using PostgREST embedded resource syntax. ` +
+      `Supports nested resources and related data using PostgREST embedded resource syntax. Composed labels _label and <fk>_label (one per reference or parent field) are read-only, not part of * and must be selected by name. ` +
       `Leave empty to select all columns.`
     ),
   limit: z
@@ -74,7 +74,8 @@ export const readEntityTool: Tool<typeof inputSchema, undefined> = {
     description: `Reads and queries entities from the entities table. ` +
       `Supports flexible filtering, column selection, pagination, and sorting using PostgREST query syntax. ` +
       `Returns an array of matching records. Use filters to narrow results, select to choose columns, ` +
-      `limit/offset for pagination, and order for sorting.`,
+      `limit/offset for pagination, and order for sorting. ` +
+      `Also returns id_type, id_prefix, id_refentity (the base of an is_a or has_a entity, else null), label_parent, computed_fields and validation_rules (JSON arrays).`,
     inputSchema,
   },
   handler: async ({ filters, select, limit, offset, order, accept }, { authInfo }) => {

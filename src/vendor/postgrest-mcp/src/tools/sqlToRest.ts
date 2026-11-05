@@ -10,7 +10,7 @@ export const sqlToRestTool: Tool<typeof inputSchema, undefined> = {
   name: 'sqlToRest',
   options: {
     title: 'SQL to REST',
-    description: 'Converts SQL query to a PostgREST API request (method, path)',
+    description: 'Converts SQL query to a PostgREST API request (method, path). Translation only: it returns {method, path} and runs nothing; pass the result to postgrestRequest. Unsupported SQL returns an error.',
     inputSchema,
   },
   handler: async ({ sql }) => {

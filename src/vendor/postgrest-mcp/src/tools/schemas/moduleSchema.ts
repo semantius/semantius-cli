@@ -59,7 +59,7 @@ export const moduleSchema = z.looseObject({
     .describe(
       'Default admin role of this module (FK to roles.id)'
     ),
-  logo_color: z.string().optional().describe('Hex color code for module logo'),
+  logo_color: z.string().optional().describe('Hex color code for module logo, lowercase (for example #4f46e5)'),
   icon_name: z.string().optional().describe('Icon shown for the module: a Lucide icon name in kebab-case (e.g. "users"; latest Lucide release, names searchable in https://cdn.jsdelivr.net/npm/lucide-static/tags.json) or an icon URL'),
   home_page: z.string().optional().describe('Default home page path for module'),
   module_slug: z
@@ -90,6 +90,6 @@ export const moduleSchema = z.looseObject({
     .enum(['custom', 'basic', 'advanced', 'gated', 'raci'])
     .optional()
     .describe(
-      'Permission structure of the module. Omitted, it is custom.'
+      'Permission structure of the module. Omitted, it is custom. custom: custom permission structure. basic: two permissions, view and edit. advanced: three permissions, view, edit and admin. gated: view, edit and admin, plus a permission per process gate held by admins. raci: view, edit and admin, plus a permission per process gate held by RACI roles (and by admins, except for high-risk gates).'
     ),
 })

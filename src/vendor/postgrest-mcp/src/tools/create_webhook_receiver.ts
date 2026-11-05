@@ -14,7 +14,7 @@ import { oneOrMany, bulkInsertOptions } from '../utils/bulk.ts'
 const inputSchema = {
   data: oneOrMany(webhook_receiverSchema).describe(
     `Data object containing fields for the new webhook receiver, or a non-empty array of such objects to create several webhook receiver records in one request. ` +
-    `Array items may have different keys; keys omitted from an item take the column default. ` +
+    `Array items may have different keys; a key omitted from an item takes the column default and an explicit null inserts NULL. All items are inserted in one transaction: if one is rejected, none is created. ` +
     `All fields are defined with their types and descriptions. ` +
     `Required fields must be provided. Optional fields can be omitted. ` +
     `Auto-generated fields (like IDs) will be populated automatically and should not be included in the input.`

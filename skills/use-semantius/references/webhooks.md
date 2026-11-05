@@ -95,7 +95,7 @@ function sign(secret: string, msgId: string, timestamp: string, body: string): s
 
 ```bash
 semantius call crud read_webhook_receiver_log '{
-  "filters": "receiver_id=eq.<receiver_id>",
+  "filters": "webhook_receiver_id=eq.<receiver_id>",
   "order": "created_at.desc",
   "limit": 20
 }'

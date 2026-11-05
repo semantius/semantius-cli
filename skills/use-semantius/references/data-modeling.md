@@ -59,7 +59,7 @@ Every entity **must** belong to a module.
 A module has two name fields with distinct jobs:
 
 - **`module_name`** is the unique, human-facing display name shown in the UI module selector and on the module landing page. Keep acronyms as acronyms (`CRM`, `ITSM`, `CMDB`), this is what users read. Matches the source model's `system_name`.
-- **`module_slug`** is the lowercase, URL-safe handle — **required and non-empty** (regex `^[a-z0-9_-]+$`; lowercase letters, digits, `_`, and `-`). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A missing, empty, or malformed slug is rejected with `module_slug must be lowercase alphanumeric, underscore, or hyphen`.
+- **`module_slug`** is the lowercase, URL-safe handle. Optional in the schema (an empty value derives it from `module_name`), but always pass it explicitly (regex `^[a-z0-9][a-z0-9_-]*$`; lowercase letters, digits, `_`, and `-`, starting with a letter or digit). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A malformed slug is rejected with `module_slug must be lowercase, start with a letter or digit, and contain only a-z, 0-9, '-' and '_'`.
 
 **Check before creating** (filter on `module_slug` for the URL handle, or on `module_name` for the display name):
 ```bash
@@ -77,7 +77,7 @@ semantius call crud create_permission '{"data": [
 
 The `description` field is a compact tagline (≤40 chars) shown beside `module_name` in the selector chip, for acronyms, the plain English expansion (`CRM` → `Customer Relationship Management`); for non-acronyms a 2-4 word disambiguating phrase. Long-form prose belongs elsewhere, not on the module record.
 
-Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `logo_url`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
+Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
 
 - **`icon_name`** — the module's UI icon: a Lucide icon name or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference), like an entity's `icon_name`; distinct from the module `logo_url`. The module's `logo_color` has format `color`.
 - **`domain_code`** — short uppercase business-domain code the module belongs to (`ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`.

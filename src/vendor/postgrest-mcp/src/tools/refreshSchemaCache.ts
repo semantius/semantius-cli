@@ -7,7 +7,7 @@ export const refreshSchemaCacheTool: Tool<Record<never, never>, undefined> = {
   name: 'refresh_schema_cache',
   options: {
     title: 'Refresh Schema Cache',
-    description: 'Forces a schema cache refresh',
+    description: 'Forces a schema cache refresh. The cache refreshes automatically after structural changes; call this only when a new table or column is not found.',
     inputSchema: {},
   },
   handler: async (_input, { authInfo, request }) => {

@@ -14,7 +14,7 @@ import { oneOrMany, bulkInsertOptions } from '../utils/bulk.ts'
 const inputSchema = {
   data: oneOrMany(roleSchema).describe(
     `Data object containing fields for the new role, or a non-empty array of such objects to create several role records in one request. ` +
-    `Array items may have different keys; keys omitted from an item take the column default. ` +
+    `Array items may have different keys; a key omitted from an item takes the column default and an explicit null inserts NULL. All items are inserted in one transaction: if one is rejected, none is created. ` +
     `All fields are defined with their types and descriptions. ` +
     `Required fields must be provided. Optional fields can be omitted. ` +
     `Auto-generated fields (like IDs) will be populated automatically and should not be included in the input.`
@@ -32,7 +32,8 @@ export const createRoleTool: Tool<typeof inputSchema, undefined> = {
     description: `Creates a new role record in the roles table. ` +
       `This tool validates input data and returns the complete created record. ` +
       `Auto-generated fields (like IDs) will be populated automatically. ` +
-      `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.`,
+      `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records. ` +
+      `There is no name or label field: use role_name and slug.`,
     inputSchema,
   },
   handler: async ({ data, accept }, { authInfo }) => {

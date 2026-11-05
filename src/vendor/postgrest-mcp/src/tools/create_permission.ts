@@ -14,7 +14,7 @@ import { oneOrMany, bulkInsertOptions } from '../utils/bulk.ts'
 const inputSchema = {
   data: oneOrMany(permissionSchema).describe(
     `Data object containing fields for the new permission, or a non-empty array of such objects to create several permission records in one request. ` +
-    `Array items may have different keys; keys omitted from an item take the column default. ` +
+    `Array items may have different keys; a key omitted from an item takes the column default and an explicit null inserts NULL. All items are inserted in one transaction: if one is rejected, none is created. ` +
     `All fields are defined with their types and descriptions. ` +
     `Required fields must be provided. Optional fields can be omitted. ` +
     `permission_name is the primary key and is always required: permissions has no auto-generated id.`

@@ -13,7 +13,7 @@ import { resetSchemaCache } from '../utils/resetSchemaCache.ts'
 
 const inputSchema = {
   table_name: oneOrMany(z.string()).describe(
-    `table_name of the entity to delete, or a non-empty array of table_names to delete several entities in one request. ` +
+    `table_name of the entity to delete, or a non-empty array of table_names to delete several entities in one request. If one fails, none is deleted. ` +
     `WARNING: This operation is permanent and cannot be undone. ` +
     `Consider using an update to set a "deleted" flag instead of permanent deletion.`
   ),
@@ -34,6 +34,7 @@ export const deleteEntityTool: Tool<typeof inputSchema, undefined> = {
       `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead. ` +
       `Refused with 90260 while fields of other entities reference it, whatever their reference_delete_mode: find them with \`read_field\` filters "reference_table=eq.<table_name>", then delete them or point them at another entity first. ` +
       `Refused with 90266 while a rollup of another entity aggregates over it. ` +
+      `Refused with 90247 while an is_a or has_a entity or a base has records, and with 90248 while entities are based on it (find them with read_entity filter id_refentity=eq.<table_name>). ` +
       `To delete a whole module and all its tables at once, use \`delete_module\` (cascades); do not loop \`delete_entity\`.`,
     inputSchema,
   },
