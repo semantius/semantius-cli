@@ -86,19 +86,22 @@ export function schemaTypeLabel(schema: unknown): string {
 }
 
 /**
- * Format server list for display
+ * Format server list for display: per server its name, an intro (the first
+ * line of its instructions), then its tool names. `tools` without a server
+ * passes intro = false; nothing else differs.
  */
 export function formatServerList(
   servers: Array<{ name: string; tools: ToolInfo[]; instructions?: string }>,
   withDescriptions: boolean,
+  intro = true,
 ): string {
   const lines: string[] = [];
 
   for (const server of servers) {
     lines.push(color(server.name, colors.bold + colors.cyan));
 
-    // Show instructions if available (first line only in list view, or all if short)
-    if (server.instructions) {
+    // Intro: the first line of the instructions
+    if (intro && server.instructions) {
       const instructionLines = server.instructions.split('\n');
       const firstLine = instructionLines[0].slice(0, 100);
       const suffix =
@@ -194,7 +197,34 @@ export function formatServerDetails(
   }
 
   lines.push('');
-  lines.push(`${color(`Tools (${tools.length}):`, colors.bold)}`);
+  lines.push(formatToolsSection(tools, withDescriptions));
+
+  return lines.join('\n').trimEnd();
+}
+
+/**
+ * The "Tools (N):" heading and the tool list. `info <server>` prints it after
+ * its intro; `tools <server>` prints only this.
+ */
+export function formatToolsSection(
+  tools: ToolInfo[],
+  withDescriptions = false,
+): string {
+  return [
+    color(`Tools (${tools.length}):`, colors.bold),
+    formatToolList(tools, withDescriptions),
+  ].join('\n');
+}
+
+/**
+ * A server's tools, each with its parameters (name, type, required or
+ * optional). Shared by `info <server>` and `tools`.
+ */
+export function formatToolList(
+  tools: ToolInfo[],
+  withDescriptions = false,
+): string {
+  const lines: string[] = [];
 
   for (const tool of tools) {
     lines.push(`  ${color(tool.name, colors.green)}`);
@@ -226,28 +256,125 @@ export function formatServerDetails(
 }
 
 /**
- * Format tool schema
+ * `info <server> <tool>`: the intro (tool and server), then exactly what
+ * `tools <server> <tool>` prints. Nothing else differs between the two.
  */
-export function formatToolSchema(serverName: string, tool: ToolInfo): string {
-  const lines: string[] = [];
-
-  lines.push(
+export function formatToolSchema(
+  serverName: string,
+  tool: ToolInfo,
+  pretty = false,
+): string {
+  return [
     `${color('Tool:', colors.bold)} ${color(tool.name, colors.green)}`,
-  );
-  lines.push(
     `${color('Server:', colors.bold)} ${color(serverName, colors.cyan)}`,
-  );
-  lines.push('');
+    '',
+    formatToolDefinition(tool, pretty),
+  ].join('\n');
+}
 
-  if (tool.description) {
-    lines.push(`${color('Description:', colors.bold)}`);
-    lines.push(`  ${tool.description}`);
-    lines.push('');
+const SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+
+type SchemaObject = Record<string, unknown>;
+
+function isPlainObject(value: unknown): value is SchemaObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Keywords whose value is one schema, a list of schemas, or a map of name -> schema.
+const SCHEMA_KEYWORDS = ['items', 'not', 'additionalProperties'] as const;
+const SCHEMA_LIST_KEYWORDS = [
+  'anyOf',
+  'oneOf',
+  'allOf',
+  'prefixItems',
+] as const;
+const SCHEMA_MAP_KEYWORDS = [
+  'properties',
+  'patternProperties',
+  '$defs',
+  'definitions',
+] as const;
+
+/**
+ * Removes what carries no information from a JSON Schema, and nothing else:
+ *   - `minimum` -9007199254740991 and `maximum` 9007199254740991, the limits of
+ *     an exactly representable integer that zod adds to every `.int()`. Any
+ *     other bound stays (`precision` 0..18 is a real rule).
+ *   - `$schema`, the draft the document is written in.
+ *   - `additionalProperties: {}`, which equals leaving the keyword out.
+ *   - `propertyNames: {"type":"string"}`: object keys are always strings.
+ * Keys keep their order, descriptions and every other keyword are untouched,
+ * and a property that happens to be called `minimum` or `$schema` is kept (the
+ * walk follows schema keywords, not property names). Returns a new object.
+ */
+export function normalizeSchema<T>(schema: T): T {
+  return normalizeNode(schema) as T;
+}
+
+function normalizeNode(node: unknown): unknown {
+  if (!isPlainObject(node)) return node;
+
+  const out: SchemaObject = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === '$schema') continue;
+    if (key === 'minimum' && value === -SAFE_INTEGER) continue;
+    if (key === 'maximum' && value === SAFE_INTEGER) continue;
+    if (
+      key === 'additionalProperties' &&
+      isPlainObject(value) &&
+      Object.keys(value).length === 0
+    ) {
+      continue;
+    }
+    if (
+      key === 'propertyNames' &&
+      isPlainObject(value) &&
+      Object.keys(value).length === 1 &&
+      value.type === 'string'
+    ) {
+      continue;
+    }
+
+    if ((SCHEMA_KEYWORDS as readonly string[]).includes(key)) {
+      out[key] = normalizeNode(value);
+    } else if ((SCHEMA_LIST_KEYWORDS as readonly string[]).includes(key)) {
+      out[key] = Array.isArray(value) ? value.map(normalizeNode) : value;
+    } else if ((SCHEMA_MAP_KEYWORDS as readonly string[]).includes(key)) {
+      out[key] = isPlainObject(value)
+        ? Object.fromEntries(
+            Object.entries(value).map(([name, sub]) => [
+              name,
+              normalizeNode(sub),
+            ]),
+          )
+        : value;
+    } else {
+      out[key] = value;
+    }
   }
+  return out;
+}
 
-  lines.push(`${color('Input Schema:', colors.bold)}`);
-  lines.push(JSON.stringify(tool.inputSchema, null, 2));
-
+/**
+ * One tool for the `tools` command: the description exactly as the server sends
+ * it, then the input schema on one line, without the keywords normalizeSchema
+ * removes. The labels match `info`, so a parser that takes the text from the
+ * first `{` after "Input Schema:" reads both.
+ */
+export function formatToolDefinition(tool: ToolInfo, pretty = false): string {
+  const lines: string[] = [];
+  if (tool.description) {
+    lines.push('Description:');
+    lines.push(tool.description);
+  }
+  lines.push('Input Schema:');
+  lines.push(
+    JSON.stringify(
+      normalizeSchema(tool.inputSchema),
+      null,
+      pretty ? 2 : undefined,
+    ),
+  );
   return lines.join('\n');
 }
 
@@ -270,8 +397,14 @@ export class McpToolError extends Error {
  *
  * @param result - Raw MCP tool result
  * @param diag - When true, return the full JSON; when false (default), return only the `data` field
+ * @param pretty - When true, indent the JSON with two spaces; default is compact
  */
-export function formatToolResult(result: unknown, diag = false): string {
+export function formatToolResult(
+  result: unknown,
+  diag = false,
+  pretty = false,
+): string {
+  const space = pretty ? 2 : undefined;
   if (typeof result === 'object' && result !== null) {
     const r = result as {
       content?: Array<{ type: string; text?: string }>;
@@ -326,19 +459,20 @@ export function formatToolResult(result: unknown, diag = false): string {
               >
             ).data,
             null,
-            2,
+            space,
           );
         }
 
         // No postgrestRequest-style envelope — tool returned bare JSON
-        // (e.g. crud tools). Pretty-print it as-is.
-        return JSON.stringify(parsed, null, 2);
+        // (e.g. crud tools). Printed compact unless --pretty: the result is
+        // read by agents, and indentation costs 20-35% more tokens.
+        return JSON.stringify(parsed, null, space);
       }
     }
   }
 
   // Fallback to JSON
-  return JSON.stringify(result, null, 2);
+  return JSON.stringify(result, null, space);
 }
 
 /**

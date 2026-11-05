@@ -7,6 +7,7 @@
  *   semantius info <server>            Show server details
  *   semantius info <server> <tool>     Show tool schema
  *   semantius grep <pattern>           Search tools by glob pattern
+ *   semantius tools [server] [tool]    Lean tool names, parameters and definitions
  *   semantius call <server> <tool>     Call tool (reads JSON from stdin if no args)
  *   semantius call <server> <tool> {}  Call tool with JSON args
  */
@@ -21,6 +22,7 @@ import { pingCommand, whoamiCommand } from './commands/identity.js';
 import { infoCommand } from './commands/info.js';
 import { listCommand } from './commands/list.js';
 import { markdownCommand } from './commands/markdown.js';
+import { toolsCommand } from './commands/tools.js';
 import {
   type AuthFlag,
   DEFAULT_CONCURRENCY,
@@ -76,6 +78,7 @@ interface ParsedArgs {
     | 'list'
     | 'info'
     | 'grep'
+    | 'tools'
     | 'call'
     | 'help'
     | 'version'
@@ -107,6 +110,10 @@ interface ParsedArgs {
   json: boolean;
   /** --clear, for "use" only: clear the current host instead of setting one. */
   clear: boolean;
+  /** --pretty, for "call" and "tools": indent the JSON instead of printing it compact. */
+  pretty: boolean;
+  /** --all, for the bare listing, "info" and "grep": also contact remote servers. */
+  all: boolean;
   crudMcp: boolean;
   pingCount?: number;
   disableJwtCache: boolean;
@@ -122,6 +129,7 @@ interface ParsedArgs {
 const SUBCOMMANDS = [
   'info',
   'grep',
+  'tools',
   'call',
   'ping',
   'whoami',
@@ -258,6 +266,8 @@ function parseArgs(args: string[]): ParsedArgs {
     envPrefix: 'SEMANTIUS',
     json: false,
     clear: false,
+    pretty: false,
+    all: false,
     crudMcp: false,
     disableJwtCache: false,
     resetCache: false,
@@ -296,6 +306,14 @@ function parseArgs(args: string[]): ParsedArgs {
 
       case '--json':
         result.json = true;
+        break;
+
+      case '--pretty':
+        result.pretty = true;
+        break;
+
+      case '--all':
+        result.all = true;
         break;
 
       case '--clear':
@@ -510,6 +528,14 @@ function parseArgs(args: string[]): ParsedArgs {
       );
       process.exit(ErrorCode.CLIENT_ERROR);
     }
+    return result;
+  }
+
+  if (firstArg === 'tools') {
+    const { server, tool } = parseServerTool(positional.slice(1));
+    result.command = 'tools';
+    result.server = server || undefined;
+    result.tool = tool;
     return result;
   }
 
@@ -753,6 +779,10 @@ Usage:
   semantius [options] info <server>                Show server details
   semantius [options] info <server> <tool>         Show tool schema
   semantius [options] grep <pattern>               Search tools by glob pattern
+  semantius [options] tools [server] [tool]        Like info, without the header and instruction text: the local
+                                                   servers' tools with parameters, or one tool's description
+                                                   and input schema (compact JSON; the safe-integer bounds,
+                                                   $schema and empty additionalProperties are left out)
   semantius [options] call <server> <tool>         Call tool (reads JSON from stdin if no args)
   semantius [options] call <server> <tool> <json>  Call tool with JSON arguments
   semantius [options] ping [-n [count]]            Check connectivity & latency: crud/getCurrentUser, one PostgREST
@@ -825,6 +855,9 @@ Options:
   --diag                   (call) Output full JSON response instead of just response.data
                            (whoami) Also show the bearer token used for the request
   --json                   (hosts only) Machine-readable output instead of the table
+  --all                    (list, info, grep) Also contact the configured remote servers. By default
+                           only the local crud and utils servers are contacted, which is much faster
+  --pretty                 (call, info, tools) Indent the JSON for reading; the default is compact
   --clear                  (use only) Unset the current host instead of setting one: "semantius use --clear"
   --single                 (call only) Expect exactly one row; exit 1 on 0 rows, exit 2 on 2+ rows.
                            Rejected (exit 1) for bulk calls: an array in data/body/id/table_name
@@ -870,8 +903,8 @@ Options:
                            before running; the next call fetches fresh ones. Alias: --reset-jwt-cache
 
 Output:
-  semantius/info/grep      Human-readable text to stdout
-  call                     response.data JSON to stdout (use --diag for full response)
+  semantius/info/grep/tools  Human-readable text to stdout
+  call                     response.data as compact JSON to stdout (use --diag for full response)
   call ... --stream        The PostgREST body as-is: compact JSON (jq works) or CSV
   Errors                   Always to stderr
 
@@ -1356,6 +1389,7 @@ async function main(): Promise<void> {
     case 'list':
       await listCommand({
         withDescriptions: args.withDescriptions,
+        all: args.all,
         configPath: args.configPath,
       });
       break;
@@ -1369,8 +1403,10 @@ async function main(): Promise<void> {
     case 'info':
       // info always has a server (validated in parseArgs)
       await infoCommand({
-        target: buildTarget(args.server, args.tool),
+        server: args.server,
+        tool: args.tool,
         withDescriptions: args.withDescriptions,
+        pretty: args.pretty,
         configPath: args.configPath,
       });
       break;
@@ -1379,6 +1415,18 @@ async function main(): Promise<void> {
       await grepCommand({
         pattern: args.pattern ?? '',
         withDescriptions: args.withDescriptions,
+        all: args.all,
+        configPath: args.configPath,
+      });
+      break;
+
+    case 'tools':
+      await toolsCommand({
+        server: args.server,
+        tool: args.tool,
+        withDescriptions: args.withDescriptions,
+        all: args.all,
+        pretty: args.pretty,
         configPath: args.configPath,
       });
       break;
@@ -1389,6 +1437,7 @@ async function main(): Promise<void> {
         args: args.args,
         configPath: args.configPath,
         diag: args.diag,
+        pretty: args.pretty,
         single: args.single,
         stream: args.stream,
       });

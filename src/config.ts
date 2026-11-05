@@ -204,6 +204,14 @@ export function isPostgrestServer(
   return 'postgrest' in config;
 }
 
+/**
+ * A server that runs inside the CLI (crud, utils): listing its tools sends no
+ * request to a remote host. Everything else is a remote server.
+ */
+export function isLocalServer(config: ServerConfig): boolean {
+  return isBuiltinServer(config) || isPostgrestServer(config);
+}
+
 // ============================================================================
 // Env Prefix State
 // ============================================================================

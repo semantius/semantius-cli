@@ -1,118 +1,12 @@
 /**
- * Info command - Show server or tool details
+ * Info command - Show server or tool details, with the intro.
+ * The implementation is showTools; `tools` is the same call without the intro.
  */
 
-import { authLayerExitCode } from '../auth/token.js';
-import { type McpConnection, getConnection, safeClose } from '../client.js';
-import {
-  type McpServersConfig,
-  type ServerConfig,
-  getServerConfig,
-  loadConfig,
-} from '../config.js';
-import {
-  ErrorCode,
-  formatCliError,
-  isAuthErrorMessage,
-  serverConnectionError,
-  toolNotFoundError,
-} from '../errors.js';
-import { formatServerDetails, formatToolSchema } from '../output.js';
+import { type ShowToolsOptions, showTools } from './show-tools.js';
 
-export interface InfoOptions {
-  target: string; // "server" or "server/tool"
-  withDescriptions: boolean;
-  configPath?: string;
-}
+export type InfoOptions = Omit<ShowToolsOptions, 'intro'>;
 
-/**
- * Parse target into server and optional tool name
- */
-function parseTarget(target: string): { server: string; tool?: string } {
-  const parts = target.split('/');
-  if (parts.length === 1) {
-    return { server: parts[0] };
-  }
-  return { server: parts[0], tool: parts.slice(1).join('/') };
-}
-
-/**
- * Execute the info command
- */
 export async function infoCommand(options: InfoOptions): Promise<void> {
-  let config: McpServersConfig;
-
-  try {
-    config = await loadConfig(options.configPath);
-  } catch (error) {
-    console.error((error as Error).message);
-    process.exit(ErrorCode.CLIENT_ERROR);
-  }
-
-  const { server: serverName, tool: toolName } = parseTarget(options.target);
-
-  let serverConfig: ServerConfig;
-  try {
-    serverConfig = getServerConfig(config, serverName);
-  } catch (error) {
-    console.error((error as Error).message);
-    process.exit(ErrorCode.CLIENT_ERROR);
-  }
-
-  let connection: McpConnection;
-
-  try {
-    connection = await getConnection(serverName, serverConfig);
-  } catch (error) {
-    const own = authLayerExitCode(error);
-    if (own !== undefined) {
-      console.error((error as Error).message);
-      process.exit(own);
-    }
-    const message = (error as Error).message;
-    console.error(formatCliError(serverConnectionError(serverName, message)));
-    process.exit(
-      isAuthErrorMessage(message)
-        ? ErrorCode.AUTH_ERROR
-        : ErrorCode.NETWORK_ERROR,
-    );
-  }
-
-  try {
-    if (toolName) {
-      // Show specific tool schema
-      const tools = await connection.listTools();
-      const tool = tools.find((t) => t.name === toolName);
-
-      if (!tool) {
-        const availableTools = tools.map((t) => t.name);
-        console.error(
-          formatCliError(
-            toolNotFoundError(toolName, serverName, availableTools),
-          ),
-        );
-        process.exit(ErrorCode.CLIENT_ERROR);
-      }
-
-      // Human-readable output
-      console.log(formatToolSchema(serverName, tool));
-    } else {
-      // Show server details
-      const tools = await connection.listTools();
-      const instructions = await connection.getInstructions();
-
-      // Human-readable output
-      console.log(
-        formatServerDetails(
-          serverName,
-          serverConfig,
-          tools,
-          options.withDescriptions,
-          instructions,
-        ),
-      );
-    }
-  } finally {
-    await safeClose(connection.close);
-  }
+  await showTools({ ...options, intro: true });
 }

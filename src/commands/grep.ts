@@ -13,6 +13,7 @@ import {
 import {
   type McpServersConfig,
   getServerConfig,
+  isLocalServer,
   listServerNames,
   loadConfig,
 } from '../config.js';
@@ -22,6 +23,8 @@ import { formatSearchResults } from '../output.js';
 export interface GrepOptions {
   pattern: string;
   withDescriptions: boolean;
+  /** Also search remote servers (--all). Default: only the local crud and utils. */
+  all?: boolean;
   configPath?: string;
 }
 
@@ -160,7 +163,20 @@ export async function grepCommand(options: GrepOptions): Promise<void> {
   }
 
   const pattern = globToRegex(options.pattern);
-  const serverNames = listServerNames(config);
+  const allNames = listServerNames(config);
+  const skipped = options.all
+    ? []
+    : allNames.filter((name) => !isLocalServer(config.mcpServers[name]));
+  const serverNames = allNames.filter((name) => !skipped.includes(name));
+
+  // Said after the results, so a miss is not read as "no such tool".
+  const skippedNote = () => {
+    if (skipped.length > 0) {
+      console.log(
+        `Not searched: ${skipped.join(', ')} (remote; use --all to include)`,
+      );
+    }
+  };
 
   if (serverNames.length === 0) {
     console.error(
@@ -204,9 +220,11 @@ export async function grepCommand(options: GrepOptions): Promise<void> {
     console.log('  Tip: Pattern matches tool names only (not server names)');
     console.log(`  Tip: Use '*' for wildcards, e.g. '*file*' or 'read_*'`);
     console.log(`  Tip: Run 'semantius' to list all available tools`);
+    skippedNote();
     return;
   }
 
   // Human-readable output
   console.log(formatSearchResults(allResults, options.withDescriptions));
+  skippedNote();
 }

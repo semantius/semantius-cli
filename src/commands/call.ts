@@ -43,6 +43,7 @@ export interface CallOptions {
   args?: string; // JSON arguments
   configPath?: string;
   diag?: boolean; // When true, output full JSON instead of just response.data
+  pretty?: boolean; // When true, indent the JSON result (default: compact)
   // When true, inject accept: application/vnd.pgrst.object+json; exit 1 on
   // 0 rows, exit 2 on 2+ rows. Rejected (exit 1) when a bulk argument
   // (array in data/body/id/table_name) is present — see BULK_ARG_KEYS.
@@ -233,6 +234,7 @@ async function handleSingleResult(
   result: unknown,
   connection: McpConnection,
   diag: boolean,
+  pretty = false,
 ): Promise<void> {
   const r = result as {
     content?: Array<{ type: string; text?: string }>;
@@ -317,7 +319,7 @@ async function handleSingleResult(
   if (diag) {
     console.log(JSON.stringify(parsed, null, 2));
   } else {
-    console.log(JSON.stringify(data, null, 2));
+    console.log(JSON.stringify(data, null, pretty ? 2 : undefined));
   }
 }
 
@@ -498,13 +500,18 @@ async function runCall(options: CallOptions): Promise<void> {
   }
 
   if (options.single) {
-    await handleSingleResult(result, connection, options.diag ?? false);
+    await handleSingleResult(
+      result,
+      connection,
+      options.diag ?? false,
+      options.pretty ?? false,
+    );
     await safeClose(connection.close);
     return;
   }
 
   try {
-    console.log(formatToolResult(result, options.diag));
+    console.log(formatToolResult(result, options.diag, options.pretty));
   } catch (error) {
     if (options.diag && error instanceof McpToolError) {
       console.log(JSON.stringify(error.rawResult, null, 2));

@@ -365,6 +365,6 @@ describe('call crud postgrestRequest --stream (end to end)', () => {
       env: { SEMANTIUS_STREAM: '1' },
     });
     expect(typed.exitCode).toBe(0);
-    expect(new TextDecoder().decode(typed.stdout)).toBe('[\n  {\n    "id": 1\n  }\n]\n');
+    expect(new TextDecoder().decode(typed.stdout)).toBe('[{"id":1}]\n');
   });
 });

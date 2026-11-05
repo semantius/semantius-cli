@@ -272,7 +272,18 @@ describe('output', () => {
       };
 
       const output = formatToolResult(result);
-      expect(output).toBe(JSON.stringify(data, null, 2));
+      expect(output).toBe(JSON.stringify(data));
+    });
+
+    test('indents the result with pretty', () => {
+      const payload = [{ id: 1 }];
+      const result = {
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
+      };
+
+      expect(formatToolResult(result, false, true)).toBe(
+        JSON.stringify(payload, null, 2),
+      );
     });
 
     test('returns raw joined text in diag mode', () => {
@@ -303,7 +314,7 @@ describe('output', () => {
       };
 
       const output = formatToolResult(result);
-      expect(output).toBe(JSON.stringify(payload, null, 2));
+      expect(output).toBe(JSON.stringify(payload));
     });
 
     test('returns bare JSON array (crud tool shape)', () => {
@@ -313,7 +324,7 @@ describe('output', () => {
       };
 
       const output = formatToolResult(result);
-      expect(output).toBe(JSON.stringify(payload, null, 2));
+      expect(output).toBe(JSON.stringify(payload));
     });
 
     test('falls back to JSON for non-text content', () => {

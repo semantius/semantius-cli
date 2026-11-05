@@ -132,8 +132,8 @@ describe('CLI Integration Tests', () => {
   });
 
   describe('list command', () => {
-    test('lists servers and tools', async () => {
-      const result = await runCli([]);
+    test('lists servers and tools with --all', async () => {
+      const result = await runCli(['--all']);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('filesystem');
@@ -141,8 +141,17 @@ describe('CLI Integration Tests', () => {
       expect(result.stdout).toMatch(/read_file|list_directory|write_file/);
     });
 
+    test('does not contact remote servers by default, and names them', async () => {
+      const result = await runCli([]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toMatch(/read_file|list_directory|write_file/);
+      expect(result.stdout).toContain('semantius info filesystem');
+      expect(result.stdout).toContain('--all');
+    });
+
     test('lists with descriptions using -d flag', async () => {
-      const result = await runCli(['-d']);
+      const result = await runCli(['-d', '--all']);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('filesystem');
@@ -153,16 +162,24 @@ describe('CLI Integration Tests', () => {
   });
 
   describe('grep command', () => {
-    test('searches tools by pattern', async () => {
-      const result = await runCli(['grep', '*file*']);
+    test('searches tools by pattern with --all', async () => {
+      const result = await runCli(['grep', '*file*', '--all']);
 
       expect(result.exitCode).toBe(0);
       // Should find file-related tools (space-separated format: server tool)
       expect(result.stdout).toContain('read_file ');
     });
 
+    test('skips remote servers by default and says so', async () => {
+      const result = await runCli(['grep', '*file*']);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain('read_file ');
+      expect(result.stdout).toContain('Not searched: filesystem');
+    });
+
     test('searches with descriptions', async () => {
-      const result = await runCli(['grep', '*directory*', '-d']);
+      const result = await runCli(['grep', '*directory*', '-d', '--all']);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('filesystem');
