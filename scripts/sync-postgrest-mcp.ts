@@ -50,22 +50,26 @@ const COPY_ROOTS = [
   'types.ts',
   'src/SKILL.md',
   'src/tools',
-  ...[
-    'postgrest',
-    'bulk',
-    'formatResponse',
-    'errorHandler',
-    'apiKeyAuth',
-    'semantiusOrg',
-    'env',
-  ].map((name) => `src/utils/${name}.ts`),
+  'src/utils',
 ];
 
 /**
  * Upstream files under COPY_ROOTS that are not copied:
  *   - echo.ts is commented out of upstream's tool list (debug only).
+ *   - resetSchemaCache.ts is replaced by the CLI's own version (upstream needs
+ *     Kysely/Neon and DB credentials); see REPLACEMENT_FILE.
+ *   - controlPlane.ts is the hosted server's tenant lookup; no tool imports it
+ *     (only src/db and resetSchemaCache do). A choice, not a hard limit: it
+ *     fails the CLI's typecheck (untyped response.json()). Lift it by
+ *     dropping this line if a tool ever imports it.
+ * Everything else under src/utils is copied, so a new upstream util arrives
+ * with the tool that imports it.
  */
-const EXCLUDED = new Set(['src/tools/echo.ts']);
+const EXCLUDED = new Set([
+  'src/tools/echo.ts',
+  'src/utils/resetSchemaCache.ts',
+  'src/utils/controlPlane.ts',
+]);
 
 /** Vendor-relative paths owned by this script but excluded from --check. */
 const INSTRUCTIONS_FILE = 'src/generated/instructions.ts';
