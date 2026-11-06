@@ -299,12 +299,12 @@ describe('output', () => {
       expect(output).toContain('Part 2');
     });
 
-    test('throws when text content is not valid JSON', () => {
+    test('passes through text content that is not valid JSON (e.g. markdown)', () => {
       const result = {
         content: [{ type: 'text', text: 'Hello, world!' }],
       };
 
-      expect(() => formatToolResult(result)).toThrow('not valid JSON');
+      expect(formatToolResult(result)).toBe('Hello, world!');
     });
 
     test('returns bare JSON when response has no envelope', () => {

@@ -435,9 +435,9 @@ export function formatToolResult(
         try {
           parsed = JSON.parse(text);
         } catch {
-          throw new Error(
-            `Unexpected tool response: not valid JSON. Use --diag to see the raw output.\n${text}`,
-          );
+          // Not JSON (e.g. tools that return markdown such as
+          // generate_module_diagram): pass the text through unchanged.
+          return text;
         }
 
         if (

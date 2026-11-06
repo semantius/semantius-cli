@@ -32,7 +32,7 @@ export const generateModuleDiagramTool: Tool<typeof inputSchema, undefined> = {
   options: {
     title: 'Generate Module Diagram',
     description:
-      `Generates a Mermaid entity relationship diagram (flowchart) for a module. ` +
+      `Generates a Mermaid entity relationship diagram (database model) for a module. ` +
       `Reads the module's entities and all their reference and parent fields. ` +
       `Entities of the module and external entities (referenced from, or referencing, other modules) get different colors, ` +
       `external nodes also show their module, every node shows its entity type, and each arrow is labelled with the ` +
