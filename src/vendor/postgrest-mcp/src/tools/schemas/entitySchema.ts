@@ -9,7 +9,7 @@ export const entitySchema = z.looseObject({
   table_name: z.string().describe('Physical table name in database: lowercase letters, digits and _, starting with a letter or _. Primary key.'),
   singular: z.string().optional().describe('Singular form of table name (auto-derived from table_name when blank)'),
   plural: z.string().optional().describe('Plural form of table name, auto-assigned to table_name'),
-  singular_label: z.string().describe('Human-readable singular label for UI/reports (e.g. Customer)'),
+  singular_label: z.string().optional().describe('Human-readable singular noun for UI/reports (e.g. Customer), symmetric with plural_label. When blank it is derived from label_column (service_name becomes "Service Name"), so pass it. It does not set the title of the label field, which is always "Name".'),
   plural_label: z.string().optional().describe('Human-readable plural label for UI/reports (e.g. Customers)'),
   icon_name: z.string().optional().describe('Icon shown for the entity: a Lucide icon name in kebab-case (e.g. "users"; latest Lucide release, names searchable in https://cdn.jsdelivr.net/npm/lucide-static/tags.json) or an icon URL'),
   name_sort: z.string().optional().describe('Sort key that orders entities in navigation'),
@@ -48,14 +48,14 @@ export const entitySchema = z.looseObject({
   searchable: z.boolean().optional().describe('Whether table is included in full-text search (auto-computed)'),
   is_child: z.boolean().optional().describe('Whether table has any parent relationships (auto-computed)'),
   edit_mode: z.enum(['auto', 'sidebar', 'modal', 'page']).optional().describe('UI edit mode for records of this table: auto, sidebar, modal, or page'),
-  cube_mode: z.enum(['disabled', 'auto']).optional().describe('Cube mode for OLAP cube generation'),
+  cube_mode: z.enum(['disabled', 'auto']).optional().describe('Cube mode for OLAP cube generation. Default auto.'),
   audit_log: z.boolean().optional().describe('When TRUE, DML operations on this table are logged to audit_record_logs'),
   computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries, evaluated and stored on every insert and update: each entry derives the named field from the same record before the write. Saving applies the rules to existing records, and a record that cannot take its new value refuses the save (90908). A named field gets ctype computed, and input_type default or readonly becomes disabled. A rule cannot name a rollup field (90907). Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
   validation_rules: z.array(z.any()).optional().describe('Ordered list of {code, message, jsonlogic, description?} entries; each must evaluate truthy for the write to succeed. Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
   select_rule: z.record(z.string(), z.any()).optional()
     .describe('JsonLogic rule evaluated per row for the FOR SELECT RLS policy: true = the current user may see the record. Empty = no per-row rule. Setting a rule on an entity that a rollup aggregates over needs include_hidden_rows on that rollup (90269).'),
   entity_type: z.enum(['operational_workflow', 'operational_record', 'catalog', 'junction', 'computed', 'unclassified']).optional()
-    .describe('What kind of data this entity holds. operational_workflow: records move through a gated lifecycle (even one gated step such as draft to submitted counts). operational_record: everyday business records without such a lifecycle. catalog: reference or lookup data maintained by admins. junction: a pure link between entities with no fields of its own; the platform labels its rows by the records they link. computed: every field is derived and never written directly. unclassified: not classified yet (the default). Set it on create or change it on update like any other column.'),
+    .describe('What kind of data this entity holds. operational_workflow: records move through a gated lifecycle (even one gated step such as draft to submitted counts). operational_record: everyday business records without such a lifecycle. catalog: reference or lookup data maintained by admins. junction: a pure connecting record between entities with no fields of its own; the platform labels its rows by the records they relate. computed: every field is derived and never written directly. unclassified: not classified yet (the default). Set it on create or change it on update like any other column.'),
   catalog_entity_code: z.string().optional()
     .describe('Stable canonical identity this entity realizes (domain-map code, e.g. "vendors"); the rename/dialect/silo join key. table_name holds the deployed name. Write-once: set on create or filled once while empty, then never changed. Empty = not generated from a catalog spec.'),
   catalog_owner_module: z.string().optional()
