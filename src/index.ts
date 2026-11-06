@@ -22,6 +22,7 @@ import { pingCommand, whoamiCommand } from './commands/identity.js';
 import { infoCommand } from './commands/info.js';
 import { listCommand } from './commands/list.js';
 import { markdownCommand } from './commands/markdown.js';
+import { searchToolsCommand } from './commands/search-tools.js';
 import { toolsCommand } from './commands/tools.js';
 import {
   type AuthFlag,
@@ -78,6 +79,7 @@ interface ParsedArgs {
     | 'list'
     | 'info'
     | 'grep'
+    | 'search_tools'
     | 'tools'
     | 'call'
     | 'help'
@@ -129,6 +131,7 @@ interface ParsedArgs {
 const SUBCOMMANDS = [
   'info',
   'grep',
+  'search_tools',
   'tools',
   'call',
   'ping',
@@ -531,6 +534,20 @@ function parseArgs(args: string[]): ParsedArgs {
     return result;
   }
 
+  if (firstArg === 'search_tools') {
+    result.command = 'search_tools';
+    // One or more words: `search_tools entity relationship` is the same
+    // query as `search_tools "entity relationship"`.
+    result.pattern = positional.slice(1).join(' ').trim();
+    if (!result.pattern) {
+      console.error(
+        formatCliError(missingArgumentError('search_tools', 'query')),
+      );
+      process.exit(ErrorCode.CLIENT_ERROR);
+    }
+    return result;
+  }
+
   if (firstArg === 'tools') {
     const { server, tool } = parseServerTool(positional.slice(1));
     result.command = 'tools';
@@ -778,7 +795,8 @@ Usage:
   semantius [options]                              List all servers and tools
   semantius [options] info <server>                Show server details
   semantius [options] info <server> <tool>         Show tool schema
-  semantius [options] grep <pattern>               Search tools by glob pattern
+  semantius [options] grep <pattern>               Search tool names by glob pattern
+  semantius [options] search_tools <query>         Find tools by name or description (any word; most words first)
   semantius [options] tools [server] [tool]        Like info, without the header and instruction text: the local
                                                    servers' tools with parameters, or one tool's description
                                                    and input schema (compact JSON; the safe-integer bounds,
@@ -854,8 +872,8 @@ Options:
   -md, --markdown          Dump full documentation as markdown (README, SKILL, all tools)
   --diag                   (call) Output full JSON response instead of just response.data
                            (whoami) Also show the bearer token used for the request
-  --json                   (hosts only) Machine-readable output instead of the table
-  --all                    (list, info, grep) Also contact the configured remote servers. By default
+  --json                   (hosts, search_tools) Machine-readable output instead of the table or listing
+  --all                    (list, info, grep, search_tools) Also contact the configured remote servers. By default
                            only the local crud and utils servers are contacted, which is much faster
   --pretty                 (call, info, tools) Indent the JSON for reading; the default is compact
   --clear                  (use only) Unset the current host instead of setting one: "semantius use --clear"
@@ -921,6 +939,7 @@ Examples:
   semantius                                        # List all servers
   semantius -d                                     # List with descriptions
   semantius grep "*crud*"                          # Search for crud tools
+  semantius search_tools "entity relationship"     # Search names and descriptions
   semantius info crud                              # Show server tools
   semantius info crud create_record                # Show tool schema
   semantius call crud create_record '{}'           # Call tool
@@ -1416,6 +1435,15 @@ async function main(): Promise<void> {
         pattern: args.pattern ?? '',
         withDescriptions: args.withDescriptions,
         all: args.all,
+        configPath: args.configPath,
+      });
+      break;
+
+    case 'search_tools':
+      await searchToolsCommand({
+        query: args.pattern ?? '',
+        all: args.all,
+        json: args.json,
         configPath: args.configPath,
       });
       break;

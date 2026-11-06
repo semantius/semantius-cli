@@ -380,6 +380,9 @@ export function missingArgumentError(
     case 'grep':
       suggestion = `Use 'semantius grep \"*pattern*\"'`;
       break;
+    case 'search_tools':
+      suggestion = `Use 'semantius search_tools "<words>"'`;
+      break;
     case '-c/--config':
       suggestion = `Use 'semantius -c /path/to/mcp_servers.json'`;
       break;
@@ -434,14 +437,14 @@ export function unknownSubcommandError(subcommand: string): CliError {
     get: 'info',
     show: 'info',
     describe: 'info',
-    search: 'grep',
-    find: 'grep',
-    query: 'grep',
+    search: 'search_tools',
+    find: 'search_tools',
+    query: 'search_tools',
   };
 
   const suggested = suggestions[subcommand.toLowerCase()];
   const validCommands =
-    'info, grep, call, ping, whoami, login, logout, hosts, use';
+    'info, grep, search_tools, call, ping, whoami, login, logout, hosts, use';
 
   return {
     code: ErrorCode.CLIENT_ERROR,

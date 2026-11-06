@@ -189,6 +189,9 @@ async function showServers(
       `  semantius ${command} crud <tool>      one tool's definition`,
     );
     console.log('  semantius grep "<pattern>"      search tool names');
+    console.log(
+      '  semantius search_tools "<words>" search names and descriptions',
+    );
     if (remoteNames.length > 0) {
       console.log(
         '  --all                           also contact the remote servers',

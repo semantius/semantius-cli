@@ -317,9 +317,9 @@ describe('errors', () => {
       expect(error.suggestion).toContain('info');
     });
 
-    test('unknownSubcommandError suggests grep for search/find', () => {
+    test('unknownSubcommandError suggests search_tools for search/find', () => {
       const error = unknownSubcommandError('search');
-      expect(error.suggestion).toContain('grep');
+      expect(error.suggestion).toContain('search_tools');
     });
 
     test('unknownSubcommandError shows help for unknown alias', () => {

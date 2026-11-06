@@ -88,7 +88,7 @@ export function globToRegex(pattern: string): RegExp {
 /**
  * Process items with limited concurrency, preserving order
  */
-async function processWithConcurrency<T, R>(
+export async function processWithConcurrency<T, R>(
   items: T[],
   processor: (item: T, index: number) => Promise<R>,
   maxConcurrency: number,
