@@ -13,7 +13,7 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 const inputSchema = {
   id: oneOrMany(z.number().int()).describe(
     `ID of the module to delete, or a non-empty array of IDs to delete several modules in one request. If one fails, none is deleted. ` +
-    `Deleting a module automatically deletes ALL of its entities, fields, and business records. ` +
+    `Deleting a module automatically deletes ALL of its entities, fields, and business records, and its permissions. ` +
     `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
@@ -26,12 +26,12 @@ export const deleteModuleTool: Tool<typeof inputSchema, undefined> = {
   name: 'delete_module',
   options: {
     title: 'Delete Module',
-    description: `Permanently deletes a module by ID INCLUDING all of its entities, their fields, and all business records (automatic cascade, one request). ` +
+    description: `Permanently deletes a module by ID INCLUDING all of its entities, their fields, and all business records and its permissions (automatic cascade, one request). ` +
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several modules in one request). ` +
       `Do NOT delete entities first. ` +
-      `Before deleting: get explicit user confirmation and back up with \`export_module\`. ` +
-      `Refused with 90260 while a field of another module references one of its entities, and with 90266 while a rollup of another module aggregates over one: delete those fields or point them at another entity first. ` +
+      `Before deleting: get explicit user confirmation and back up with the semantius CLI \`export_module\` if available (it is not a tool of this server). ` +
+      `Refused with 90260 while a field of another module references one of its entities, and with 90266 while a rollup of another module aggregates over one: delete those fields or point them at another entity first. Also refused with 90247 while an is_a or has_a entity of the module has records, and with 90256 while an object of another author is built on the views of an is_a or has_a entity of the module. ` +
       `References between its own entities do not count; two modules that reference each other need one such field removed first. ` +
       `WARNING: Be extremely careful to avoid deleting unintended records.`,
     inputSchema,

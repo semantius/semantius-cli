@@ -32,6 +32,7 @@ export const createPermissionHierarchyTool: Tool<typeof inputSchema, undefined> 
     description: `Creates a new permission hierarchy record in the permission_hierarchy table. ` +
       `This tool validates input data and returns the complete created record. ` +
       `Auto-generated fields (like IDs) will be populated automatically. ` +
+      `Rejected when both names are equal, when it would create a cycle (code 90210), or when the chain would exceed 11 levels (code 90211). Both names must exist in permissions, and the pair must be new. ` +
       `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.`,
     inputSchema,
   },

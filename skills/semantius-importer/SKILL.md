@@ -74,7 +74,7 @@ The shared environment checks live in **[`../use-semantius/references/preflight.
 
 Preflight check 1 (**never `cd`**) binds this skill's helper scripts too, not only bare `semantius` commands: `create-fields.ts` and `import.ts` spawn `semantius call crud …`, a child process inherits the shell's cwd, and the CLI reads `.env` from that cwd. So every helper is run **from `<cwd>` by path** — `bun run <run-folder>/<helper>` with `<run-folder>` = `.tmp_import/run-<ts>` — never from inside the run folder; the one step that needs the run folder as its working directory is the dependency install, done as `bun add --cwd <run-folder> csv-parse`. Run from inside the run folder, the CLI never reads the session's `.env`: every field create and batch insert either fails with an auth error (exit 5) that reads like a CLI bug, or, worse, lands with whatever the global `.env` or the current host supplies. Mechanics and rationale: import-script-template.md → Workspace layout.
 
-Also confirm the CLI ships the introspection util: `semantius info utils` must list `get_csvschema`. If it is missing, re-run the installer first.
+Also confirm the CLI ships the introspection util: `semantius tools utils` must list `get_csvschema`. If it is missing, re-run the installer first.
 
 ## Step 0 (hard gate): load the essentials
 

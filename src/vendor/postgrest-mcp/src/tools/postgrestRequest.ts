@@ -5,7 +5,7 @@ import { handleToolError } from '../utils/errorHandler.ts'
 
 const inputSchema = {
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).describe('HTTP method'),
-  path: z.string().describe('PostgREST API path (e.g., /users, /posts?userId=eq.1)'),
+  path: z.string().describe('PostgREST API path (e.g., /modules, /entities?table_name=eq.orders, /rpc/list_api_keys)'),
   body: z
     .union([
       z.record(z.string(), z.unknown()),

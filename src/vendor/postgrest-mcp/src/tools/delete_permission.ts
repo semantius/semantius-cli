@@ -13,9 +13,8 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 const inputSchema = {
   permission_name: oneOrMany(z.string()).describe(
     `permission_name of the permission to delete, or a non-empty array of permission_names to delete several records in one request. If one fails, none is deleted. ` +
-    `A permission that an entity, module or queue still names is refused: those columns are foreign keys to it. ` +
-    `WARNING: This operation is permanent and cannot be undone. ` +
-    `Consider using an update to set a "deleted" flag instead of permanent deletion.`
+    `Refused (foreign key violation) while an entity's view_permission or edit_permission, a module's view_permission, or a queue's view_permission or manage_permission names it; a module's manage_permission or admin_permission naming it is cleared (set to null). ` +
+    `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
     .string()
@@ -28,10 +27,9 @@ export const deletePermissionTool: Tool<typeof inputSchema, undefined> = {
   options: {
     title: 'Delete Permission',
     description: `Permanently deletes a permission record by permission_name, which is the primary key of the permissions table. ` +
-      `This operation cannot be undone, and it is refused while an entity, module or queue still names the permission. ` +
+      `This operation cannot be undone. Also deletes all role grants, direct user grants and hierarchy entries of the permission. It is refused (foreign key violation) while an entity's view_permission or edit_permission, a module's view_permission, or a queue's view_permission or manage_permission names it; a module's manage_permission or admin_permission naming it is cleared (set to null). ` +
       `Returns the deleted record for confirmation (always an array; "permission_name" may be an array to delete several records in one request). ` +
-      `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead.`,
+      `WARNING: Be extremely careful to avoid deleting unintended records.`,
     inputSchema,
   },
   handler: async ({ permission_name, accept }, { authInfo }) => {

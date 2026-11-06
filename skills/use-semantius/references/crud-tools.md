@@ -22,6 +22,96 @@ sqlToRest            →  translating a SQL query into PostgREST path syntax
 
 ---
 
+## Quick reference
+
+Read this before the first call. For the full schema of one tool run `semantius tools crud <tool>`. `semantius tools crud` lists every tool with its parameters for about 1.8k tokens.
+
+### Required fields when creating (`data`)
+
+| Tool | Required | Also pass |
+|------|----------|-----------|
+| `create_module` | `module_name` | `module_slug` |
+| `create_permission` | `permission_name`, `module_id` | `description` |
+| `create_role` | `role_name` | `slug`, `module_id` |
+| `create_entity` | `table_name`, `module_id` | `singular_label` (pass it), `view_permission`, `edit_permission` |
+| `create_field` | `table_name`, `field_name`, `title` | `format`; `reference_table` for a `reference` / `parent` field; `rollup` for an aggregate over a child entity |
+| `create_permission_hierarchy` | `including_permission_name`, `included_permission_name` | |
+| `create_role_permission` | `role_id`, `permission_name` | |
+| `create_user` | `external_id` for a human user (an agent gets one) | `email` (optional) |
+| `create_user_role` | `user_id`, `role_id` | |
+| `create_webhook_receiver` | `label` | `table_name`, `auth_type` `hmac`, `secret` |
+| `create_webhook_receiver_log` | `webhook_receiver_id` | |
+
+### Keys for `update_*` and `delete_*` (one value or a non-empty array)
+
+| Tool family | Parameter | Type | Format |
+|-------------|-----------|------|--------|
+| entity | `table_name` | string | the table name |
+| field | `id` | string | `<table_name>.<field_name>` |
+| module, role, user, webhook_receiver, webhook_receiver_log | `id` | integer | read it with `read_*`; a role or user id never comes from a create response |
+| permission | `permission_name` | string | the permission name |
+| permission_hierarchy | `id` | string | `<including>.<included>` |
+| role_permission | `id` | string | `<role_id>.<permission_name>` |
+| user_role | `id` | string | `<user_id>.<role_id>` |
+
+### Order for a new module
+
+1. `read_module`, then `create_module` with `module_slug` (leave `view_permission` at its default).
+2. `create_permission`: `<slug>:read` and `<slug>:manage` in one call.
+3. `update_module`: point `view_permission` and `manage_permission` at those names.
+4. `create_permission_hierarchy`: `manage` includes `read`.
+5. `create_role` (viewer and manager in one call), then `create_role_permission` (one call), then `update_module` for the `default_*_role_id` columns with ids from `read_role`.
+6. `create_entity`: every entity in one call, each with `module_id`, `view_permission` and `edit_permission`, which must already exist. With `is_a` / `has_a` entities, one call per level, bases first.
+7. `create_field`: one call per entity, only after every entity exists.
+
+Details: `data-modeling.md` → "Mandatory Creation Order" and `rbac.md`.
+
+### Naming rules
+
+| What | Rule |
+|------|------|
+| `module_slug` | `^[a-z0-9][a-z0-9_-]*$`; hyphens allowed |
+| `permission_name` | `<module_slug>:<action>` by convention; the platform accepts one or more segments `[a-z0-9][a-z0-9_-]*` joined by `:` (so `admin` is valid); no spaces, commas or dots |
+| role `slug` | `^[a-z0-9_]+$`; underscores only, so turn the hyphens of a module slug into `_` |
+| `field_name` | `^[a-z_][a-z0-9_]*$`; a leading `_` is reserved for generated columns such as `_label` and refused (`90224`) |
+
+### Error to action
+
+| Error | Meaning | Do |
+|-------|---------|----|
+| `23503` | A foreign key target does not exist | Create it first: base before based entity, permission or role before module wiring |
+| `90212` | A field's `reference_table` names no entity | Create the referenced entity first |
+| `90260` | Delete refused: a field of another entity references it | `read_field` with `reference_table=eq.<table>`, then delete or repoint those fields |
+| `90266` | Delete refused: a rollup uses it | Remove or change the rollup field first |
+| `90247` | An `is_a` / `has_a` entity or a base still has records | Delete its records first |
+| `90248` | Entities are based on it | `read_entity` with `id_refentity=eq.<table>`, delete those first |
+| `90243` | A field name repeats the base's | Create only the entity's own fields |
+| `90241`, `90233` | `id_refentity` or `id_type` changed on update (an unchanged value is accepted) | Omit them on update |
+| `42703` | The column does not exist | Check the name with `read_field`; a webhook log filters on `webhook_receiver_id` |
+| `PGRST102` | A bulk array whose rows have different keys | Give every row the same keys |
+| `42P10` | Upsert on an `is_a` / `has_a` entity | Insert, then PATCH |
+
+### Wrong and right
+
+```bash
+# WRONG: one call per field
+semantius call crud create_field '{"data": {"table_name": "orders", "field_name": "total", "title": "Total", "format": "number"}}'
+semantius call crud create_field '{"data": {"table_name": "orders", "field_name": "note", "title": "Note", "format": "text"}}'
+# RIGHT: one call, an array
+semantius call crud create_field '{"data": [{"table_name": "orders", "field_name": "total", "title": "Total", "format": "number"}, {"table_name": "orders", "field_name": "note", "title": "Note", "format": "text"}]}'
+
+# WRONG: delete a module's entities one by one, then the module
+# RIGHT: back it up, then one delete_module (it cascades to entities, fields and records)
+semantius call crud delete_module '{"id": 12}'
+
+# WRONG: a scalar format with a reference_table
+{"field_name": "customer_id", "format": "text", "reference_table": "customers"}
+# RIGHT: format reference (or parent)
+{"field_name": "customer_id", "format": "reference", "reference_table": "customers"}
+```
+
+---
+
 ## Utility Tools
 
 ### `getCurrentUser`
@@ -154,7 +244,7 @@ Sends a transactional email via the Semantius email service. Provide `text`, `ht
 | `subject` | string | yes | Subject line (non-empty) |
 | `text` | string | no\* | Plain-text body |
 | `html` | string | no\* | HTML body |
-| `from` | string | no | Sender address. Defaults to the authenticated user's email. Must be on a verified Semantius sending domain when overridden. |
+| `from` | string | no | Sender address. Defaults to the authenticated user's email. |
 | `replyTo` | string | no | Reply-To address. Defaults to `from`. |
 | `cc` | string \| string[] | no | CC recipient(s) |
 | `bcc` | string \| string[] | no | BCC recipient(s) |
@@ -173,6 +263,14 @@ semantius call crud sendEmail '{"to":["a@x.com","b@x.com"],"cc":"manager@x.com",
 ```
 
 > **Quoting note:** subjects or bodies containing `!` will trigger bash history expansion in interactive shells. Use single-quoted JSON (as above) or `set +H` to disable.
+
+### Account and API key tools
+
+- `generate_api_key`: `p_user_id` is required. `0` means the caller. Another user's id needs admin. It returns `{api_key, key_id}`; the plaintext key is shown once.
+- `list_api_keys`: the keys of the caller (or, as admin, of `p_user_id`), without secrets.
+- `delete_api_key`: revokes a key by its public `p_key_id`. It cannot be undone.
+- `get_cli_config`: returns CLI setup text and **creates a new API key on every call**, so it is not read-only.
+- `get_cli_token`: exchanges the `x-api-key` header for a short-lived JWT; it fails without that header.
 
 ---
 
@@ -215,6 +313,7 @@ The typed tools accept a structured object instead of raw path strings:
 | `limit` | integer | Max records to return |
 | `offset` | integer | Records to skip, formula: `(page - 1) * limit` |
 | `order` | string | Sort, e.g. `"created_at.desc"` or `"name.asc,id.desc"` |
+| `accept` | string | Accept header forwarded to PostgREST, e.g. `application/vnd.pgrst.object+json` for exactly one row |
 
 ---
 
@@ -253,51 +352,6 @@ semantius call crud read_field '{"filters": "table_name=eq.services&field_name=i
 
 ---
 
-## Entity Tools
-
-### `create_entity`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | Entity fields — one object, or a **non-empty array** to create several entities in one request (all entities of a model go in one call, before any of their fields; items may have different keys; with `is_a` / `has_a` entities, one call per level, bases first). See data-modeling.md for required fields and auto-generated fields. Required: `table_name`, `singular_label` and `module_id` (a valid integer module id; `null` is rejected). `singular` is optional. Includes the optional JSON arrays `computed_fields` and `validation_rules` (default `[]`); see "Computed fields and validation rules" in jsonlogic.md. Also accepts the optional `label_parent` (the FK field name that is this entity's identity spine; must name a `reference`/`parent` FK, must not be set on a junction or target one). Also accepts the optional key type `id_type` and its `id_prefix` (see data-modeling.md → Key Entity Fields): set on create, locked afterward. With `id_type` `is_a` / `has_a` it also needs `id_refentity` (the base's `table_name`, create-only) and takes no `label_column`, `label_parent` or `order_column`; see entity-families.md. |
-
-### `read_entity`
-Accepts common read parameters (`filters`, `select`, `limit`, `offset`, `order`). Returns `computed_fields` and `validation_rules` as JSON arrays alongside the other entity properties, plus `label_parent` (the identity-spine FK field name, or null), `id_type`, `id_prefix` and `id_refentity` (the base of an `is_a` / `has_a` entity, or null). Filter `id_refentity=eq.<table_name>` to find the entities based on one.
-
-### `update_entity`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `table_name` | string \| string[] | yes | Identifier of the entity to update, or an array of `table_name`s to apply the same `data` to several entities in one request (`table_name=in.(...)`) |
-| `data` | object | yes | Fields to update (partial, omitted fields unchanged). `module_id` stays optional, but **when provided** must be a non-null integer (`null` is now rejected). `singular` is optional (unchanged). `computed_fields` and `validation_rules` are **replaced wholesale** when present in `data`, not merged; send the full intended array. Sending an empty array removes the per-record trigger. `label_parent` may be set or cleared here (re-points the identity spine; no data migration — `_label` is derived at read time). Never send `id_type`: it is locked once the table exists (`90233`). Never send `id_refentity` either (`90241`). `id_prefix` may be changed, except on an `is_a` entity (`90245`). |
-
-### `delete_entity`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `table_name` | string \| string[] | yes | ⚠️ Permanent. Check all field references first, and the entities based on this one (`read_entity` with `id_refentity=eq.<table_name>`; refused with `90248` while any exist). Also refused with `90260` while a field of another entity references it (whatever its delete mode) and with `90266` while a rollup aggregates over it. To remove a whole module use `delete_module`; never loop `delete_entity`. An array deletes several entities in one request. |
-
----
-
-## Field Tools
-
-### `create_field`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | Field definition — one object, or a **non-empty array** to create several fields in one request (all new fields of an entity go in one call; items may have different keys, e.g. `enum_values` on one and `precision` on another). Required: `table_name`, `field_name` and `title`; a `reference` / `parent` field also needs `reference_table`. An `enum_values` entry is a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`; `default_value` is always a value (for an enum the stored value, never the label). On an `is_a` / `has_a` entity create only its own fields (a base field name fails with `90243`). See data-modeling.md for formats and constraints. |
-
-### `read_field`
-Accepts common read parameters. Key filter: `"table_name=eq.<name>"` to get all fields for an entity.
-Also use to find cross-references before deletion: `"reference_table=eq.<table_name>"`.
-
-### `update_field`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Field ID (`"<table_name>.<field_name>"`), or an array of ids to apply the same `data` to several fields in one request |
-| `data` | object | yes | Fields to update. ⚠️ `format` can change only within the same Postgres primitive type (e.g. `text` → `multiline`), never across primitives and never on a core column; see data-modeling.md. |
-
-### `delete_field`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | ⚠️ Permanent data loss. Require user confirmation. Refused with `90266` while a rollup of another entity uses the field as its `link_field` or `value_field`. An array deletes several fields in one request. |
-
 ---
 
 ## Composed labels: `_label` and `<fk>_label` (read-only, select by name)
@@ -305,234 +359,15 @@ Also use to find cross-references before deletion: `"reference_table=eq.<table_n
 Every entity exposes a read-only **`_label`** — its composed, human-readable label, folded from its parent chain (the identity spine's `_label` ⧺ ` › ` ⧺ the local label). Every `reference`/`parent` FK named `X` exposes a read-only companion **`X_label`** = the referenced row's composed `_label` (e.g. `customer_id` → `customer_id_label`).
 
 - **Select them explicitly by name** — `select=id,_label,customer_id_label`. They are not authored fields (absent from the `fields` catalog; `read_field` never returns them) and are **not** included in `select=*`.
-- **Names are deterministic, so no discovery call is needed:** `_label` on the entity, and `<fk>_label` on each `reference`/`parent` FK (the FK field name + `_label`). (`get_schema` is a UI aggregation endpoint, not a skill tool — don't use it to find these.)
+- **Names are deterministic, so no discovery call is needed:** `_label` on the entity, and `<fk>_label` on each `reference`/`parent` FK (the FK field name + `_label`). (`get_schema` is a verbose database function, `POST /rpc/get_schema` with `p_table_name`, not a skill tool — don't use it to find these; a token-optimized tool is planned.)
 - **Read-only.** Never `create_field`, write, or import into `_label` / `<fk>_label`; the platform owns them and computes them at read time.
 
 **Displaying a parent's label — prefer `select=X_label` over embedding.** To show a parent's name beside a child row, select the FK companion (`select=id,interview_id_label`) rather than PostgREST resource embedding (`select=id,interviews(label)`). The companion returns the parent's *composed* `_label`, respects the caller's row-level read permissions, and avoids the join.
 
 ---
 
-## Module Tools
-
-### `create_module`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a non-empty array to create several modules in one request. Requires `module_name`; always pass `module_slug` too (see below). Optional: `description`, `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id`, `logo_color`, `home_page`, `settings`, `dashboard_config`. See field reference below. |
-
-#### `modules` field reference
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `module_name` | string | **Unique display name shown in the UI module selector and on the landing page header** (e.g. `CRM`, `ITSM`, `CMDB`). Keep acronyms as acronyms, this is the human-facing name. Required. |
-| `module_slug` | string | URL-safe slug. Optional in the schema (an empty value derives it from `module_name`), but always pass it explicitly. Lowercase letters, digits, `_`, and `-` only, starting with a letter or digit (regex `^[a-z0-9][a-z0-9_-]*$`). Used in URLs, permission prefixes, and as the foreign-key target when referenced from semantic-model files. Convention: matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). Accepted: `ben-admin`, `ben_admin`, `bm1`. Rejected: `Ben-Admin`, `ben admin`, `-x`. Violations error with `module_slug must be lowercase, start with a letter or digit, and contain only a-z, 0-9, '-' and '_'`. |
-| `description` | string | Compact tagline shown beside `module_name` in the selector dropdown and on the landing page (e.g. `Customer Relationship Management`, `IT Service Management`). For acronym `module_name`s use the plain English expansion; for non-acronyms use a 2-4 word disambiguating phrase. Aim for ≤40 characters. Optional. |
-| `icon_name` | string | The icon shown for the module in the UI: a Lucide icon name in kebab-case or an icon URL (see "Icons are Lucide icons" in data-modeling.md), like an entity's `icon_name`; distinct from the module `logo_url`. Optional. |
-| `domain_code` | string | Short uppercase business-domain code the module belongs to (e.g. `ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`. Optional. |
-| `access_scope` | enum | Permission structure of the module (its access level). `enum_values`: `custom` ("Custom permission structure"), `basic` ("Two permissions: view and edit"), `advanced` ("Three permissions: view, edit and admin."), `gated` ("Three permissions: view, edit and admin, plus a permission per process gate held by admins"), `raci` ("Three permissions: view, edit and admin, plus a permission per process gate held by RACI roles (and admins, except high-risk gates)"); default `custom`. Optional. |
-| `view_permission` | string | Permission name required to see the module in the selector (e.g. `crm:read`). FK to `permissions.permission_name`, so the permission must already exist when `create_module` runs (each request is its own transaction). Defaults to `user:read`: create the module with that default (or another existing permission), create the module's own permissions, then point the module at them with `update_module`. Optional. |
-| `manage_permission` / `admin_permission` | string | The module's manage and admin permission, by name (e.g. `crm:manage`). FKs to `permissions.permission_name`; same must-already-exist rule, so wire them with `update_module` after the permissions are created. Optional. |
-| `default_viewer_role_id` / `default_manager_role_id` / `default_admin_role_id` | integer | The module's default roles, as numeric role ids (FK to `roles.id`). Wire with `update_module` once the roles exist. Optional. |
-| `logo_color` | string | Color of the logo background tile, format `color` (write lowercase hex, e.g. `#4f46e5`). Optional. |
-| `home_page` | string | Path the module's landing button routes to (e.g. `/crm/dashboard`). Optional. |
-| `settings` | JSON | Module-specific configuration blob. Optional. |
-| `dashboard_config` | JSON | Module landing-page dashboard layout. Optional. |
-
-### `read_module`
-Accepts common read parameters.
-
-### `update_module`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Module ID, or an array of ids to apply the same `data` to several modules |
-| `data` | object | yes | Fields to update (partial — omit a field to leave it unchanged). `module_slug` stays optional here, but **when provided** it must match `^[a-z0-9][a-z0-9_-]*$`; same error as `create_module` on violation. |
-
-### `delete_module`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | ⚠️ Permanent. Cascades to all of the module's entities, fields and business records in one request: do **not** delete the entities first. Get explicit user confirmation and back up with `export_module` first. Refused with `90260` while a field of another module references one of its entities and with `90266` while a rollup of another module aggregates over one; delete those fields or point them at another entity first. An array deletes several modules in one request. |
-
 ---
 
-## Permission Tools
+## Tool parameters
 
-### `create_permission`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create several permissions in one request (a new module's `<slug>:read` + `<slug>:manage` go in one call). Requires `permission_name` (segments of lowercase letters, digits, `_` and `-` joined by `:`, in practice `<module>:<action>`; no spaces, commas or dots). `description` and `module_id` are optional in the schema; always pass them. `permission_name` is the primary key (there is no numeric id); every other table names a permission by it. |
-
-### `read_permission`
-Accepts common read parameters. Key filters: `"permission_name=eq.<code>"` for one permission, `"permission_name=ilike.<module>:*"` to find a module's permissions.
-
-### `update_permission`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `permission_name` | string \| string[] | yes | Permission name, or an array of names to apply the same `data` to several permissions (e.g. converge `module_id` on every drifted row in one call: `{"permission_name": ["crm:read", "crm:manage"], "data": {"module_id": 12}}`) |
-| `data` | object | yes | Fields to update. Setting `permission_name` renames the permission and cascades to every table that names it. |
-
-### `delete_permission`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `permission_name` | string \| string[] | yes | ⚠️ Check roles using this permission first. Refused while an entity, module or queue still names it. An array deletes several permissions in one request. |
-
----
-
-## Permission Hierarchy Tools
-
-### `create_permission_hierarchy`
-Creates an inheritance relationship: a broader permission includes a narrower one. Reads as `including_permission_name` ── *includes* ──▶ `included_permission_name` (e.g. `crm:manage` includes `crm:read`).
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create every relationship of a module's chain in one request. Each requires: `including_permission_name` (broader), `included_permission_name` (narrower); optional `origin` (leave unset by hand, defaults to `user`; `model` / `model_master` are set only by a spec deploy). `id` is auto-generated as `"<including_permission_name>.<included_permission_name>"` (e.g. `"crm:manage.crm:read"`). Example: `{"data": {"including_permission_name": "crm:manage", "included_permission_name": "crm:read"}}` |
-
-### `read_permission_hierarchy`
-Accepts common read parameters. Filter by `including_permission_name` or `included_permission_name`.
-
-### `update_permission_hierarchy`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Hierarchy record ID (`"<including_permission_name>.<included_permission_name>"`), or an array of ids (same `data` for all) |
-| `data` | object | yes | Fields to update (`including_permission_name`, `included_permission_name`). `origin` is immutable. |
-
-### `delete_permission_hierarchy`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Hierarchy record ID (`"<including_permission_name>.<included_permission_name>"`), or an array of ids to delete several relationships in one request |
-
----
-
-## Role Tools
-
-### `create_role`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to create several roles in one request (a module's viewer + manager [+ admin] go in one call). Each requires: `role_name`. Strongly recommended for a scaffold role: `slug` (snake_case `^[a-z0-9_]+$`; auto-derived from `role_name` when omitted — pass it explicitly to control the handle), `module_id` (owning module; omit and the role is an orphan). Optional: `description`, `origin` (leave unset by hand, it defaults to `"user"`; `"model"` for a domain-module role and `"model_master"` for a master-module role are set only by a spec deploy; `"system"` marks a platform built-in role, whose `slug` cannot be changed). **There is no `name` or `label` field** — use `role_name` / `slug`. |
-
-### `read_role`
-Accepts common read parameters.
-
-### `update_role`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Role ID, or an array of ids to apply the same `data` to several roles |
-| `data` | object | yes | Fields to update |
-
-### `delete_role`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | ⚠️ Check user_role assignments first. An array deletes several roles in one request (`{"id": [4, 5, 6]}`). |
-
----
-
-## Role Permission Tools
-
-### `create_role_permission`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to grant several permissions (or several roles) in one request — all `role_permission` rows of a role go in one call. Each requires: `role_id` (numeric role id), `permission_name` (e.g. `{"role_id": 7, "permission_name": "crm:read"}`). `id` is auto-generated as `"<role_id>.<permission_name>"` (e.g. `"7.crm:read"`). |
-
-### `read_role_permission`
-Accepts common read parameters. Key filters: `"role_id=eq.<id>"` or `"permission_name=eq.<code>"`.
-
-### `update_role_permission`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Role permission record ID (`"<role_id>.<permission_name>"`), or an array of ids (same `data` for all) |
-| `data` | object | yes | Fields to update |
-
-### `delete_role_permission`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | Role permission record ID (`"<role_id>.<permission_name>"`), or an array of ids to revoke several grants in one request |
-
----
-
-## User Tools
-
-### `create_user`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | User fields (`email` is required; `external_id` is the login identity and a human user must bring one, an agent saved without one gets `agent:<uuid>`; optional `display_name` / `first_name` / `last_name` / `is_agent` / `is_disabled`) — one object, or a non-empty array to create several users in one request |
-
-### `read_user`
-Accepts common read parameters. Key filter: `"email=eq.user@example.com"`.
-
-### `update_user`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | User ID, or an array of ids to apply the same `data` to several users (e.g. `is_disabled: true`) |
-| `data` | object | yes | Fields to update |
-
-### `delete_user`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | ⚠️ Permanent. Consider soft-delete instead. An array deletes several users in one request. |
-
----
-
-## User Role Tools
-
-### `create_user_role`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a **non-empty array** to assign several users (or several roles) in one request. Each requires: `user_id`, `role_id` (both numeric). `id` is auto-generated as `"<user_id>.<role_id>"` (e.g. `"1001.1"`). |
-
-### `read_user_role`
-Accepts common read parameters. Filter by `user_id` or `role_id`.
-
-### `update_user_role`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | User role record ID (`"<user_id>.<role_id>"`), or an array of ids (same `data` for all) |
-| `data` | object | yes | Fields to update |
-
-### `delete_user_role`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | string \| string[] | yes | User role record ID (`"<user_id>.<role_id>"`), or an array of ids to remove several assignments in one request |
-
----
-
-## Webhook Receiver Tools
-
-### `create_webhook_receiver`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | One object, or a non-empty array to create several receivers in one request. The schema requires only `label`; always also pass `table_name` (the hook inserts into it), `auth_type` `"hmac"` and a `secret` (random alphanumeric string). `auth_type` can also be `none` or `header`, but the hook authenticates only `hmac`: those two accept every request. |
-
-### `read_webhook_receiver`
-Accepts common read parameters. Key filter: `"label=eq.<label>&table_name=eq.<table>"`.
-
-### `update_webhook_receiver`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Receiver ID, or an array of ids (same `data` for all) |
-| `data` | object | yes | Fields to update |
-
-### `delete_webhook_receiver`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Receiver ID, or an array of ids |
-
----
-
-## Webhook Receiver Log Tools
-
-### `create_webhook_receiver_log`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | object \| object[] | yes | Log entry fields — one object, or a non-empty array |
-
-### `read_webhook_receiver_log`
-Accepts common read parameters. Key filter: `"webhook_receiver_id=eq.<id>"` (there is no `receiver_id` column). Use `"order": "created_at.desc"` to see recent calls.
-
-### `update_webhook_receiver_log`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Log record ID, or an array of ids (same `data` for all) |
-| `data` | object | yes | Fields to update |
-
-### `delete_webhook_receiver_log`
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `id` | integer \| integer[] | yes | Log record ID, or an array of ids to delete several log rows in one request |
+For the parameters of any tool, run `semantius tools crud <tool>`. It prints the description and the JSON input schema of that one tool.

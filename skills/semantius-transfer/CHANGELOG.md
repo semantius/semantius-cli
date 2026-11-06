@@ -6,6 +6,10 @@ Entries below are newest first.
 
 ---
 
+## Tool schemas are read with `semantius tools`
+
+2026-11-06. Asked for by Martin Amm: the skill reads a tool's parameters with `semantius tools <server> [<tool>]`, which prints the description and compact input schema without the server instructions, and no longer uses `semantius info`. The file format is unchanged; `version` stays `3.1`. The setup check (`semantius tools utils` lists `export_module`) uses the new command.
+
 ## Shared preflight and question files live in use-semantius
 
 2026-11-04. Asked for by Martin Amm: the pipeline skills consume shared files from `use-semantius` and no longer provide them to the generic skills, so a generic skill never depends on a pipeline skill. The file format is unchanged; `version` stays `3.1`. The Question format step is in `use-semantius/references/preflight.md`, and the description no longer names the pipeline skills.

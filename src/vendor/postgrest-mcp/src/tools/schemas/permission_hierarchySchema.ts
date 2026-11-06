@@ -13,6 +13,6 @@ export const permission_hierarchySchema = z.looseObject({
     .enum(['system', 'model', 'model_master', 'user'])
     .optional()
     .describe(
-      'How the hierarchy entry was created: system (platform built-in), model (declared in the model of a domain module), model_master (created by the deployer for a master module, inside it or between it and other modules) or user (added by an admin). Set on insert and never changed. Defaults to user when omitted.'
+      'How the hierarchy entry was created: system (reserved for the platform), model (declared in the model of a domain module), model_master (created by the deployer for a master module, inside it or between it and other modules) or user (added by an admin). Set on insert and never changed. Defaults to user when omitted.'
     ),
 })

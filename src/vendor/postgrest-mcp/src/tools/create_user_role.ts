@@ -32,6 +32,7 @@ export const createUserRoleTool: Tool<typeof inputSchema, undefined> = {
     description: `Creates a new user role record in the user_roles table. ` +
       `This tool validates input data and returns the complete created record. ` +
       `Auto-generated fields (like IDs) will be populated automatically. ` +
+      `Every user already has role 1 (User); do not assign it again. Requires admin. ` +
       `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.`,
     inputSchema,
   },

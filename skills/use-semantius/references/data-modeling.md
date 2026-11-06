@@ -59,7 +59,7 @@ Every entity **must** belong to a module.
 A module has two name fields with distinct jobs:
 
 - **`module_name`** is the unique, human-facing display name shown in the UI module selector and on the module landing page. Keep acronyms as acronyms (`CRM`, `ITSM`, `CMDB`), this is what users read. Matches the source model's `system_name`.
-- **`module_slug`** is the lowercase, URL-safe handle. Optional in the schema (an empty value derives it from `module_name`), but always pass it explicitly (regex `^[a-z0-9][a-z0-9_-]*$`; lowercase letters, digits, `_`, and `-`, starting with a letter or digit). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A malformed slug is rejected with `module_slug must be lowercase, start with a letter or digit, and contain only a-z, 0-9, '-' and '_'`.
+- **`module_slug`** is the lowercase, URL-safe handle. Optional in the schema (an empty value derives it from `module_name`: lowercased, every run of other characters replaced by `-`, leading and trailing `-` and `_` removed; a name with no ASCII letter or digit derives an empty slug, and a second such module collides), but always pass it explicitly (regex `^[a-z0-9][a-z0-9_-]*$`; lowercase letters, digits, `_`, and `-`, starting with a letter or digit). Used in URLs, in the permission prefix, and by other models that reference this module. Matches the source model's `system_slug` (e.g. `crm`, `itsm`, `ben-admin`). A malformed slug is rejected with `module_slug must be lowercase, start with a letter or digit, and contain only a-z, 0-9, '-' and '_'`.
 
 **Check before creating** (filter on `module_slug` for the URL handle, or on `module_name` for the display name):
 ```bash
@@ -77,11 +77,11 @@ semantius call crud create_permission '{"data": [
 
 The `description` field is a compact tagline (≤40 chars) shown beside `module_name` in the selector chip, for acronyms, the plain English expansion (`CRM` → `Customer Relationship Management`); for non-acronyms a 2-4 word disambiguating phrase. Long-form prose belongs elsewhere, not on the module record.
 
-Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `logo_color`, `home_page`, `settings`, `dashboard_config`, see the `crud-tools.md` reference for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
+Other optional fields on `modules`: `icon_name`, `domain_code`, `access_scope`, `view_permission`, `manage_permission`, `admin_permission`, `logo_color`, `home_page`, `settings`, `dashboard_config`, run `semantius tools crud create_module` for the full field list. Three of these are top-level module classification columns (set them on `create_module` / `update_module`, not inside `settings`):
 
 - **`icon_name`** — the module's UI icon: a Lucide icon name or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference), like an entity's `icon_name`; distinct from the module `logo_url`. The module's `logo_color` has format `color`.
 - **`domain_code`** — short uppercase business-domain code the module belongs to (`ATS`, `HCM`, `ITSM`, `CRM`). Groups related modules; many modules — and many `catalog_module_code`s — can share one `domain_code`.
-- **`access_scope`**: the permission structure of the module (its access level). `enum_values`: `custom` ("Custom permission structure"), `basic` ("Two permissions: view and edit"), `advanced` ("Three permissions: view, edit and admin."), `gated` ("Three permissions: view, edit and admin, plus a permission per process gate held by admins"), `raci` ("Three permissions: view, edit and admin, plus a permission per process gate held by RACI roles (and admins, except high-risk gates)"); default `custom`.
+- **`access_scope`**: the permission structure of the module (its access level). `enum_values`: `custom` ("Custom permission structure"), `basic` ("Two permissions: view and edit"), `advanced` ("Three permissions: view, edit and admin."), `gated` ("Three permissions: view, edit and admin and workflow_state gates"), `raci` ("Three permissions: view, edit and admin and enforced process gates"); default `custom`.
 
 Permission naming convention: **always `<module_slug>:<action>`** (e.g., `crm:read`, `crm:manage`). The permission prefix is the slug, not the display name, `crm:read`, never `CRM:read`.
 
@@ -95,8 +95,6 @@ Permission naming convention: **always `<module_slug>:<action>`** (e.g., `crm:re
 semantius call crud create_entity '{
   "data": {
     "table_name": "products",
-    "singular": "product",
-    "plural": "products",
     "singular_label": "Product",
     "plural_label": "Products",
     "description": "A catalog product available for sale",
@@ -109,6 +107,8 @@ semantius call crud create_entity '{
   }
 }'
 ```
+
+Required by the platform: `table_name` and `module_id`. `singular` is derived from `table_name` when blank, and `plural` is always set to `table_name`, so pass neither.
 
 ### Entity Naming Rules
 
@@ -124,14 +124,14 @@ The platform ships with built-in tables for authentication, RBAC, and integratio
 
 | Field | Format | Notes |
 |---|---|---|
-| `id` | int32 | PK |
+| `id` | int64 | PK |
 | `external_id` | text NOT NULL | Identifier from the auth provider (IdP) |
-| `email` | email NOT NULL | The user's email (login identifier) |
-| `display_name` | text NOT NULL | Human-readable name shown across the UI (use this — NOT `name`, `full_name`, `user_name`) |
+| `email` | email | The user's email (login identifier); default `''` |
+| `display_name` | text | Human-readable name shown across the UI (use this — NOT `name`, `full_name`, `user_name`); default `''` |
 | `first_name` | text | Given name, filled from the JWT `given_name` claim |
 | `last_name` | text | Family name, filled from the JWT `family_name` claim |
 | `is_agent` | boolean NOT NULL | TRUE for a service principal (agent) rather than a person; default FALSE |
-| `is_disabled` | boolean NOT NULL | True when the account is suspended (inverse of "is_active" — use this name, not `is_active` or `is_enabled`) |
+| `is_disabled` | boolean | True when the account is suspended; default FALSE (inverse of "is_active" — use this name, not `is_active` or `is_enabled`) |
 | `settings` | json | Per-user preferences blob |
 | `last_seen` | date-time | Last activity timestamp |
 | `created_at` / `updated_at` | date-time | Auto |
@@ -154,21 +154,21 @@ The platform ships with built-in tables for authentication, RBAC, and integratio
 
 | Field | Format | Notes |
 |---|---|---|
-| `id` | int32 | PK |
+| `id` | int64 | PK |
 | `role_name` | text NOT NULL | Human-readable display name (e.g. `"CRM Manager"`) |
-| `slug` | text NOT NULL UNIQUE | Stable snake_case handle (e.g. `crm_manager`); acts as a natural-key second primary key. **Regex `^[a-z0-9_]+$` — underscores only, NO hyphens.** This differs from `module_slug` (`^[a-z0-9_-]+$`, which DOES allow hyphens): when you build a role slug from a hyphenated module slug, convert `-`→`_` (module `ben-admin` → role `ben_admin_manager`, never `ben-admin_manager`). A hyphen fails the regex. |
-| `description` | multiline NOT NULL | What this role does |
+| `slug` | text NOT NULL UNIQUE | Stable snake_case handle (e.g. `crm_manager`); acts as a natural-key second primary key. **Regex `^[a-z0-9_]+$` — underscores only, NO hyphens.** This differs from `module_slug` (`^[a-z0-9][a-z0-9_-]*$`, which DOES allow hyphens): when you build a role slug from a hyphenated module slug, convert `-`→`_` (module `ben-admin` → role `ben_admin_manager`, never `ben-admin_manager`). A hyphen fails the regex. |
+| `description` | multiline | What this role does |
 | `origin` | enum NOT NULL | `system` / `model` / `model_master` / `user`. Strictly immutable after INSERT. Set by whoever creates the role; default `user`. |
 | `module_id` | reference → modules | Which module owns the role |
 
-> **Origin semantics.** `system` rows are platform built-ins (DB-init seeded, never deleted). `model` rows are created by a spec deploy on a domain module's scaffold. `model_master` rows are scaffold roles on a master module (see master-data promotion design). `user` rows are admin-created via the UI/API. **Slug rename is permitted for `model` / `model_master` / `user`; locked for `system`.**
+> **Origin semantics.** `system` rows are platform built-ins (seeded at database init; only their `origin` and `slug` are locked). `model` rows are created by a spec deploy on a domain module's scaffold. `model_master` rows are scaffold roles on a master module (see master-data promotion design). `user` rows are admin-created via the UI/API. **Slug rename is permitted for `model` / `model_master` / `user`; locked for `system`.**
 
 #### `permissions` — RBAC permissions, natural-key by name
 
 | Field | Format | Notes |
 |---|---|---|
 | `permission_name` | text PK | Code in form `<module_slug>:<action>` (e.g. `crm:read`). The primary key (there is no numeric id): every other table names a permission by it, and `update_permission` / `delete_permission` are keyed by it |
-| `description` | multiline NOT NULL | What this permission grants |
+| `description` | multiline | What this permission grants |
 | `module_id` | reference → modules | Owning module |
 
 #### `permission_hierarchy` — RBAC inclusion graph
@@ -196,21 +196,24 @@ Platform meta-schema. **Never declare in a domain model.** The deployer manages 
 | Field | Notes |
 |-------|-------|
 | `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. |
-| `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Field-level titles like "Product Name" belong on the auto-created `label` field, not here (see Customizing the `label` field's title below). |
+| `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Pass it: when blank it is derived from `label_column` (`product_name` becomes "Product Name"), which is not a singular noun. Field-level titles like "Product Name" belong on the label field (the field named in `label_column`), not here (see Customizing the label field's title below). |
 | `plural_label` | e.g. "Products" |
-| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`: set it on every entity that has a natural local label; omit it for a junction table, whose `_label` the platform composes from the parent legs (see "Junction tables" below). Never set it on an `is_a` / `has_a` entity: it comes from the base (`90242`). **Always single-line text:** `create_entity` creates this field as `text`, and as a core column its format can never change afterward (`90219`), so a label column is never an `enum`, number, date, boolean or FK. When the only identifying attribute is a type or category, pick another text field, or on a junction omit `label_column`. |
+| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`: set it on every entity that has a natural local label; omit it for a junction table, whose `_label` the platform composes from the parent legs (see "Junction tables" below). Never set it on an `is_a` / `has_a` entity: it comes from the base (on create the platform overwrites it; an update is refused with `90242`). **Always single-line text:** `create_entity` creates this field as `text`, and as a core column its format can never change afterward (`90219`), so a label column is never an `enum`, number, date, boolean or FK. When the only identifying attribute is a type or category, pick another text field, or on a junction omit `label_column`. |
 | `module_id` | Required on `create_entity` — must be a valid (non-null) integer module id; `null` is rejected. Find with `read_module`. On `update_entity` it stays optional, but a provided value must still be a non-null integer. |
-| `view_permission` | Required, name string (e.g. `"catalog:read"`) |
-| `edit_permission` | Required, name string (e.g. `"catalog:manage"`). Gates INSERT, UPDATE and DELETE alike; there is no separate delete permission. To restrict one operation (e.g. only some roles may delete), add a `validation_rules` entry that tests `$mode` (see `jsonlogic.md`, *Detecting the operation*). |
+| `view_permission` | Name string (e.g. `"catalog:read"`); defaults to `public:read` when omitted, so set it deliberately. The permission must already exist |
+| `edit_permission` | Name string (e.g. `"catalog:manage"`); defaults to `admin` when omitted, so set it deliberately. The permission must already exist. Gates INSERT, UPDATE and DELETE alike; there is no separate delete permission. To restrict one operation (e.g. only some roles may delete), add a `validation_rules` entry that tests `$mode` (see `jsonlogic.md`, *Detecting the operation*). |
 | `id_type` | Optional key type, **set on create and locked afterward**: changing it is refused with `90233`, so omit it on `update_entity`. `auto_increment` (default when omitted): a 64-bit number the database assigns. `bigint`: a 64-bit number the caller supplies on every insert. `text`: a text key the caller supplies. `uuid`: a time-ordered UUIDv7 the database assigns. `typeid`: a prefixed, sortable TypeID such as `acct_01h455vb4pex5vsknk084sn02q`, assigned by the database; requires `id_prefix`. `is_a` / `has_a`: a subtype or an optional extension of another entity, sharing its key; requires `id_refentity` (and `id_prefix` for `is_a`); see `entity-families.md` before choosing either. `computed`: system tables only, refused for a new entity (`90234`). A key type missed at create means rebuilding the entity, so decide it up front: `typeid` suits ids that users or other systems see, `auto_increment` internal tables. |
-| `id_prefix` | TypeID prefix: required when `id_type` is `typeid` or `is_a`, empty otherwise. Up to 63 lowercase letters and underscores, starting and ending with a letter (e.g. `acct`), **unique among entities**. A `typeid` prefix may be changed later: new ids take the new prefix, existing ids keep theirs, and an id with a former prefix can no longer be inserted. An `is_a` prefix never changes (`90245`). |
+| `id_prefix` | TypeID prefix: required when `id_type` is `typeid` or `is_a`, empty otherwise. Up to 63 lowercase letters and underscores, starting and ending with a letter (e.g. `acct`), **unique among entities**. A `typeid` prefix may be changed later: new ids take the new prefix, existing ids keep theirs, and an id with a former prefix can no longer be inserted. An `is_a` prefix never changes (`90245`), and a new `is_a` entity cannot take a prefix that records of its root still carry, such as one the root used before (`90254`). |
 | `id_refentity` | Only with `id_type` `is_a` / `has_a`, and then required: the `table_name` of the base this entity is based on. `is_a` needs a managed `typeid` or `is_a` base; `has_a` a managed `typeid` base (`90240`). Set on create only; never send it on `update_entity` (`90241`). See `entity-families.md`. |
+| `id_column` | Leave it unset: the key field is `id`. Like `id_type`, it is fixed on create; an update that changes it fails with `90253`. |
+| `managed` | Optional, default `true`. When `false`, automatic DDL for table and field changes is disabled: use it only for external or legacy tables whose DDL is managed outside the platform. |
+| `order_column` | Optional. Names an integer field that stores a fixed row order (drag-and-drop). Setting it creates the column, and an insert that sends no value gets the highest value below 900000 plus 10 (10 for the first record). Not available on an `is_a` / `has_a` entity (`90249`). |
 | `icon_name` | Optional. The icon shown for the entity in the UI: a Lucide icon name in kebab-case or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference). Leave it unset unless the user asks for a specific icon. |
 | `name_sort` | Optional text sort key that orders entities in navigation. Leave it unset unless the user wants a specific navigation order. |
 | `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
 | `cube_mode` | Optional. OLAP cube generation: `auto` (default, include in cube) or `disabled`. Set to `disabled` to exclude the entity from cube queries. |
 | `audit_log` | Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value. |
-| `label_parent` | Optional. Names the **one** FK field that is this entity's identity spine — the parent whose composed `_label` prefixes this record's `_label`. Must name a `reference`/`parent` FK; must **not** target a junction and must **not** be set on a junction or on an `is_a` / `has_a` entity (it comes from the base, `90242`). Omit for self-identifying records (then `_label` is just the local label). A spec carries it and a deploy stamps it. |
+| `label_parent` | Optional. Names the **one** FK field that is this entity's identity spine — the parent whose composed `_label` prefixes this record's `_label`. Must name a `reference`/`parent` FK; must **not** target a junction and must **not** be set on a junction or on an `is_a` / `has_a` entity (it comes from the base: overwritten on create, an update is refused with `90242`). Omit for self-identifying records (then `_label` is just the local label). A spec carries it and a deploy stamps it. |
 
 ### Auto-Generated Fields: NEVER Create These Manually
 
@@ -218,15 +221,28 @@ When `create_entity` is called, the system automatically creates:
 
 | Field | `ctype` | Notes |
 |-------|---------|-------|
-| `id` | `id` | Primary key (`is_pk: true`), typed by the entity's `id_type`. **Never** create it with `create_field` |
-| `label` | `label` | Display field reading computed value from `label_column` |
-| `<label_column>` | `label` | The actual named field (e.g. `product_name`), created as `text` with title from `singular_label`. Its format and default are locked (`90219`); it may be renamed |
+| `id` | `id` | Primary key (`is_pk: true`), typed by the entity's `id_type`: format `int64` for `auto_increment` and `bigint`, `text`, `uuid`, or `string` for `typeid`, `is_a` and `has_a`. An entity has exactly one `is_pk` field; a second one is refused (`90215`). **Never** create it with `create_field` |
+| `<label_column>` | `label` | The actual named field (e.g. `product_name`), created as `text` with the title `Name`. Its format is locked (`90219`); it may be renamed and its default value may be changed (the default of every other core column is locked, `90220`) |
 | `created_at` |, | Timestamp, auto-maintained |
 | `updated_at` |, | Timestamp, auto-maintained |
 | `_label` | `_label` | **Composed label** — the record's full human-readable label, folded from its parent chain (spine → … → local `label`). Read-only, read-time; **not** in the `fields` catalog. |
 | `<fk>_label` | `fk_label` | Companion of every `reference`/`parent` FK named `X` → `X_label` = the referenced row's composed `_label` (e.g. `customer_id` → `customer_id_label`). Read-only, read-time; **not** in the `fields` catalog. |
 
 > ⚠️ Calling `create_field` for any of these will fail or create duplicates.
+
+**`ctype` marks what kind of column a field is.** It is derived, never sent: a value sent on create is ignored, and changing it on update fails with `90214`.
+
+| `ctype` | Meaning | Protected |
+|---|---|---|
+| empty | Ordinary field | no |
+| `id` | Primary key | yes |
+| `label` | Display label | yes, but it may be renamed and its default value changed |
+| `audit` | `created_at` and `updated_at` | yes |
+| `core` | Other system columns | yes |
+| `rollup` | Value aggregated by the database from the field's `rollup` definition (see `rollup-fields.md`) | no |
+| `computed` | Value written by one of the entity's `computed_fields` rules | no |
+
+A protected column cannot be deleted (`90217`) or renamed (`90218`), and its format (`90219`) and default value (`90220`) cannot change; the label column is the exception for renaming and for its default value. A `rollup` or `computed` field can still be renamed, deleted, or moved to another format with the same column type; `get_schema` reports these two with `is_core: false`.
 
 > ℹ️ An `is_a` / `has_a` entity gets only `id`, `created_at` and `updated_at`. Its label field, and every other field of its base, are the base's, so create only the entity's **own** fields; a name that repeats a base field fails with `90243`. See `entity-families.md`.
 
@@ -236,7 +252,7 @@ When `create_entity` is called, the system automatically creates:
 
 ### Platform provenance / meta columns (core-provided; stamp VALUES only, never create)
 
-The base schema ships a set of **core provenance columns** on `entities`, `fields`, `modules`, and `roles`. They are **registered by core with `ctype = 'core'`** — there is **no `is_core` boolean**; `is_core` is *derived* as `ctype <> ''` and still surfaces in `get_schema()`, so anything reading `is_core` keeps working. Every column is **NOT NULL with an empty default** (`''` for text, `'{}'` for a json object, `'[]'` for a json array, `'unclassified'` for the `entity_type` enum); "absent" is the empty value, never SQL `NULL`.
+The base schema ships a set of **core provenance columns** on `entities`, `fields`, `modules`, and `roles`. They are **registered by core with `ctype = 'core'`** — there is **no `is_core` boolean**; `is_core` is *derived* (true unless `ctype` is empty, `rollup` or `computed`) and still surfaces in `get_schema()`, so anything reading `is_core` keeps working. Every column is **NOT NULL with an empty default** (`''` for text, `'{}'` for a json object, `'[]'` for a json array, `'unclassified'` for the `entity_type` enum); "absent" is the empty value, never SQL `NULL`.
 
 | Table | Column | Type / default | Meaning |
 |---|---|---|---|
@@ -252,12 +268,12 @@ The base schema ships a set of **core provenance columns** on `entities`, `field
 
 - **Never `create_field` these columns** — core provides them. Stamp **values only** (the deployer does this at provision time).
 - **Never write `ctype`** — it is privilege-locked. There is nothing to set to mark a column "core"; that is core's job.
-- The scalar codes (`catalog_entity_code` / `catalog_field_code` / `catalog_module_code`) are **write-once**: set on create, or filled once while empty, then never changed; a later rename touches `table_name` / `field_name` / `module_slug` only. `catalog_entity_aliases` is **append-only** (never rewrite or drop prior elements).
+- The scalar codes (`catalog_entity_code` / `catalog_field_code` / `catalog_module_code` / `catalog_role_code`) are **write-once**: set on create, or filled once while empty, then never changed; a later rename touches `table_name` / `field_name` / `module_slug` only. `catalog_entity_aliases` is **append-only** (never rewrite or drop prior elements).
 - Test emptiness as `= ''` / `= '{}'::jsonb` / `= '[]'::jsonb` / `= 'unclassified'`, **never `IS NULL`**.
 
-### Customizing the `label` field's title
+### Customizing the label field's title
 
-The auto-created `label` field's `title` defaults to `singular_label`. If the record's identifying value is more specific than the entity name, follow up with `update_field` on the `label` field to set its `title`. Example: an entity `cars` where each record is identified by its license plate, keep `singular_label: "Car"` / `plural_label: "Cars"` (symmetric), then update the `label` field's title to `"License Plate"`. See "Updating and Deleting Entities" below for the `update_field` call shape. Do **not** smuggle the field-level title into `singular_label` (e.g. `"Car License Plate"`), that breaks plural/singular symmetry and propagates "Name"/"License Plate" into every UI surface that renders the entity name.
+The title of the auto-created label field (the field named in `label_column`) is always `Name`, whatever `singular_label` says. If the record's identifying value is more specific than the entity name, follow up with `update_field` on the `<label_column>` field to set its `title`. Example: an entity `cars` where each record is identified by its license plate, keep `singular_label: "Car"` / `plural_label: "Cars"` (symmetric), then update the title of the `license_plate` field (the entity was created with `label_column: "license_plate"`) to `"License Plate"`. See "Updating and Deleting Entities" below for the `update_field` call shape. Do **not** smuggle the field-level title into `singular_label` (e.g. `"Car License Plate"`), that breaks plural/singular symmetry and propagates "Name"/"License Plate" into every UI surface that renders the entity name.
 
 ### Computed fields and validation rules (entity-level JsonLogic)
 
@@ -282,16 +298,16 @@ or removing a rule is medium-risk.
 
 ## Fields
 
-> ⚠️ **The #1 field-creation trap: there is no `required` column.** To make a field mandatory, set **`input_type: "required"`** — never `"required": true`. To make it unique, set **`unique_value: true`**. Sending a `required` key to `create_field` fails: the live tool schema has no such field (confirm any time with `semantius info crud create_field`). Likewise **never send `is_nullable`** — the platform computes nullability from `format`. These are the most common "wrote it from memory" errors; the rest of this section gives the full property list.
+> ⚠️ **The #1 field-creation trap: there is no `required` column.** To make a field mandatory, set **`input_type: "required"`** — never `"required": true`. To make it unique, set **`unique_value: true`**. Sending a `required` key to `create_field` fails: the live tool schema has no such field (confirm any time with `semantius tools crud create_field`). Likewise **never send `is_nullable`** — the platform computes nullability from `format`. These are the most common "wrote it from memory" errors; the rest of this section gives the full property list.
 
 ### Field Format Quick Reference
 
-Choose `format` carefully. Format **can** be changed after creation, but **only within the same Postgres primitive type**. Same-primitive transitions are allowed (`text → multiline → html`, all `TEXT`); cross-primitive transitions are rejected by the platform (`text → date`, `integer → number`, `date → boolean`). The primitive groupings are visible in the format-to-primitive table later in this reference (under `default_value`). **Core columns are the exception:** a field with a `ctype` (the key, the label column, `created_at` / `updated_at`) never changes format or default, not even within its primitive (`90219` "Cannot change format of core system field"). So a label column can never become an `enum`, even though both are `TEXT`. Still pick the format deliberately on the first pass: a later change re-renders the form (input shape) and may require republishing UI surfaces, even though the column data survives.
+Choose `format` carefully. Format **can** be changed after creation on a managed entity, but **only to a format that maps to the same physical Postgres column type**. Such transitions are allowed (`text → multiline → html`, all `TEXT`); any other is refused with `90223` (`text → date`, `integer → number`, `int32 → int64`, `date → boolean`): drop and recreate the field instead. The mapping is visible in the format-to-type table later in this reference (under `default_value`). A reference takes the type of the key it points at, so `text → reference` of a TEXT-keyed entity is allowed. **Core columns are the exception:** a field with a core `ctype` (the key, the label column, `created_at` / `updated_at`) never changes format, not even to a format with the same type (`90219` "Cannot change format of core system field"), and its default value is locked too (`90220`), except the label column's. So a label column can never become an `enum`, even though both are `TEXT`. Still pick the format deliberately on the first pass: a later change re-renders the form (input shape) and may require republishing UI surfaces, even though the column data survives.
 
 | Category | `format` values |
 |----------|----------------|
 | Text | `string`, `text`, `multiline`, `html`, `code` |
-| Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (arbitrary-precision, maps to Postgres `NUMERIC`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
+| Numbers | `integer`, `int32`, `int64`, `number`, `float`, `double`, use `number` (stored as `NUMERIC(18, scale)`) for all monetary/currency/amount fields (`price`, `cost`, `amount`, `total`, `balance`, `revenue`, `fee`, `rate`, `salary`, `budget`, `discount`). Pair with `precision` (digits after the decimal; default `2` suits money, set `4`–`6` for tax/FX rates, `0` for integer-like NUMERIC counts). `float`/`double` are binary IEEE-754 and lose cents on rounding, only use them when the user explicitly requests them or the value is inherently imprecise (scientific measurements, ML scores, GPS coordinates) |
 | Dates/Time | `date`, `time`, `date-time`, `duration` |
 | Boolean | `boolean` |
 | Choice | `enum` (also set `enum_values`: each entry is a value or a `{"value", "label"}` object that may also carry an optional `description`, `color` and `icon`, e.g. `[{"value": "draft", "label": "Draft", "color": "#64748b"}, {"value": "on_hold", "label": "On hold", "color": "#f59e0b"}]`; see "Enum values and labels" below) |
@@ -316,7 +332,7 @@ Choose `format` carefully. Format **can** be changed after creation, but **only 
 
 Heuristic: field names like `*_name`, `*_title`, `*_label`, `*_code`, `*_id` (string identifier), `email_address`, `phone_number`, `url` → single-line (`string` or `text`). Field names like `description`, `notes`, `body`, `comment`, `concerns`, `strengths`, `feedback`, `summary`, `details`, `rationale`, `instructions` → multi-line (`multiline`).
 
-> 🛑 **Reserved field names.** A `field_name` must **not** start with `_` (reserves the entity's own `_label`) or end with `_id_label` (reserves the `<fk>_label` companions). The platform rejects both on create and on rename. Plain `*_label` names (e.g. `status_label`) remain allowed.
+> 🛑 **Reserved field names.** A `field_name` must **not** start with `_` (reserves the entity's own `_label`); the platform rejects it on create and on rename (`90224`). A name ending in `_id_label` is accepted, but it shadows the generated `<fk>_label` companion of the FK `<fk>` when both exist, so avoid it. Plain `*_label` names (e.g. `status_label`) remain allowed.
 
 ### `width` Values
 
@@ -344,7 +360,8 @@ Heuristic: field names like `*_name`, `*_title`, `*_label`, `*_code`, `*_id` (st
 Every field carries an optional `input_type_rule` JsonLogic object that overrides the
 static `input_type` per record at form-render time. UI-only and fails open — a field
 rendered `hidden` / `readonly` is still writable via API; server-side enforcement
-belongs in `validation_rules` (see `jsonlogic.md`).
+belongs in `validation_rules` (see `jsonlogic.md`). A non-empty rule also removes the
+database check of `required` for that field, because the rule can turn `required` off per record.
 → Full reference: `jsonlogic.md`.
 
 ### `unique_value`
@@ -355,27 +372,30 @@ Set `unique_value: true` only when duplicates would cause data integrity issues 
 
 ### `default_value`: auto-filled by the platform; authors only override
 
-The Semantius column-add trigger picks a sensible default automatically based on `format` and whether the field is required (`input_type: "required"`):
+When `default_value` is blank, the column-add trigger gives a NOT NULL column the zero value of its type, chosen by `format`:
 
-| Format | PostgreSQL type | Auto-default when required |
+| Format | PostgreSQL type | Auto-default when `default_value` is blank |
 |---|---|---|
 | `string`, `text`, `multiline`, `email`, `url`, `color`, `icon`, …  | `TEXT` | `''` |
 | `int32`, `int64`, `integer` | `INTEGER` / `BIGINT` | `0` |
-| `rating` | `INTEGER` | `0` (not rated). The 0–5 range is checked by the platform, not a database constraint; a required rating needs a value from 1 to 5 |
-| `number`, `float`, `double` | `NUMERIC` / `REAL` | `0.0` |
+| `rating` | `INTEGER` | `0` (not rated). The database does not check the 0–5 range (a client library does) and refuses only `0` on a required rating; a required rating needs a value from 1 to 5 |
+| `number` | `NUMERIC(18, scale)` | `0.0` |
+| `float` | `REAL` | `0.0` |
+| `double` | `DOUBLE PRECISION` | `0.0` |
 | `boolean` | `BOOLEAN` | `FALSE` |
-| `json`, `object`, `array` | `JSONB` | `'{}'` |
-| `date-time` | `TIMESTAMPTZ` | `CURRENT_TIMESTAMP` |
-| `date` | `DATE` | `CURRENT_DATE` |
-| `enum` | `TEXT` (with CHECK) | the value of the first entry in `enum_values` |
+| `json`, `jsonlogic`, `object` | `JSONB` | `'{}'` |
+| `array` | `JSONB` | `'[]'` |
+| `uuid`, `time`, `duration`, `binary` | `UUID` / `TIME` / `INTERVAL` / `BYTEA` | none: no zero value, so every insert must send one |
+| `date-time`, `date`, `reference` | `TIMESTAMPTZ` / `DATE` / key type | none: the column allows NULL |
+| `enum` | `TEXT` (with CHECK) | `''`: a required enum refuses it (`90258`), so give it a `default_value` |
 
-Nullability is also computed by format (via the platform's `is_nullable()` rule): **only `reference`, `date`, and `date-time` allow NULL**. Every other format is `NOT NULL` with the auto-default above when required. Non-required fields accept `''`/null as a backfill.
+Nullability is also computed by format (via the platform's `is_nullable()` rule): **only `reference`, `date`, and `date-time` allow NULL**. Every other format is `NOT NULL`, with the zero value above when `default_value` is blank. Non-required fields accept `''`/null as a backfill.
 
-**Rule:** you do **not** need to send `default_value` on `create_field`. Only set it explicitly when the auto-default is wrong for the domain, e.g. a non-zero starting balance, a non-initial enum state (`archived` instead of `draft`), a specific seed string.
+**Rule:** `default_value` is optional on `create_field`. Set it when the zero value is wrong for the domain (a non-zero starting balance, a specific seed string) and always on a required `enum`.
 
-- **Enum lifecycle ordering matters.** The auto-default for a required enum is `enum_values[0]` (the first entry's value, never its label), so list values in lifecycle order (`draft`, `pending`, `new`, `open`, `active` first). If the natural starting value isn't first, either reorder the list or pass `default_value` explicitly. An explicit `default_value` is always a value too.
+- **A required enum has no automatic default.** With no `default_value` the default is `''`, which a required enum refuses (`90258`): every write must send a value, and adding the field to a table with rows fails (`90259`). Pass `default_value` (the value, never the label). The order of `enum_values` only affects display; list values in lifecycle order (`draft`, `pending`, `new`, `open`, `active` first) for that reason.
 - **`default_value` is stored as text**, whatever the format. A number or boolean is converted (`1` is stored as `"1"`, `true` as `"true"`), and a JSON array or object as its JSON text. Give a value that fits the format: a whole number for an integer field, `true` or `false` for a boolean, valid JSON for a JSON field. Example: a required `integer` field `seats_purchased` with a `>= 1` rule takes `"default_value": "1"` (or `1`), because the auto-default `0` would break the rule.
-- **There is no settable `is_nullable` flag** — nullability is computed purely from `format` (the `is_nullable()` rule above): only `reference`, `date`, and `date-time` are nullable. For every other format the column is NOT NULL with the auto-default regardless of `input_type`; declaring the field optional doesn't make it nullable.
+- **There is no settable `is_nullable` flag** — nullability is computed purely from `format` (the `is_nullable()` rule above): only `reference`, `date`, and `date-time` are nullable. For every other format the column is NOT NULL regardless of `input_type`; declaring the field optional doesn't make it nullable.
 
 ```bash
 # Required enum on a possibly-non-empty entity — always include default_value
@@ -527,10 +547,10 @@ Three separate `create_field` calls for the three fields would be three round tr
 | `field_name` | string | Snake_case identifier. Renaming is supported but think twice: views, integrations, and saved queries reference the field by name. |
 | `title` | string | Human-readable label shown in UI |
 | `description` | string | Explains what the field represents |
-| `format` | string | Changeable only within the same underlying database base type (e.g., one string format can swap to another string format). Cannot cross base-type families (string, number, date, boolean, reference). See format table above. |
+| `format` | string | Changeable only to a format with the same physical database type (e.g., one string format can swap to another string format; `int32` to `int64` is refused with `90223`). See format table above. |
 | `width` | string | `default` (default), `s`, `m`, `w` |
 | `input_type` | string | `default`, `required`, `readonly`, `disabled`, `hidden` |
-| `field_order` | integer | Display position in the UI. **Omit it on create**: the platform gives each new field the next position after the entity's existing fields, in array order. Set it only to put a field at a specific position (on create, or later with `update_field`), and read the entity's live `field_order` values first: the auto-created fields already hold positions (the label field sits at 20), and a tie is not an error, the UI just renders the tied fields in an unpredictable order. Choose a value strictly between the two live neighbors the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 990000 to put it last. Values from 990000 up are reserved for system columns; every other field stays below 990000. |
+| `field_order` | integer | Display position in the UI. **Omit it on create**: the platform gives each new field the next position after the entity's existing fields, in array order. Set it only to put a field at a specific position (on create, or later with `update_field`), and read the entity's live `field_order` values first: the auto-created fields already hold positions (the label field sits at 20), and a tie is not an error, the UI just renders the tied fields in an unpredictable order. Choose a value strictly between the two live neighbors the field should sit between (e.g. 25 between 20 and 30), or above the highest value below 900000 to put it last. The automatic numbering ignores values from 900000 up (`created_at` and `updated_at` sit at 999998 and 999999); keep every other field below 900000. |
 | `searchable` | boolean | Adds this field to the entity's full-text search index |
 | `unique_value` | boolean | Enforces uniqueness at database level |
 | `enum_values` | array | Required when `format: "enum"`: the allowed entries, each a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`. Records and `default_value` hold the value, never the label; never an object map. See "Enum values and labels" above. |
@@ -550,9 +570,9 @@ Three separate `create_field` calls for the three fields would be three round tr
 
 ### Choosing the Right Format
 
-The platform manages nullability internally based on format and delete-mode; there is no `is_nullable` flag to pass. A `reference` with `clear` is optional (can be null); a `parent` with `cascade` is required.
+The platform manages nullability from the format; there is no `is_nullable` flag to pass. A `reference` column allows NULL; a `parent` column is NOT NULL whatever its delete mode. A `reference` becomes mandatory with `input_type: required` and delete mode `restrict`; `required` with `clear` is refused (`90257`).
 
-**Exception: fields of an `is_a` entity never cascade** (`90249`). The rows below that say `cascade` become `restrict` (or `clear`) there, set explicitly, because `parent` defaults to `cascade`. See `entity-families.md`.
+**Exception: fields of an `is_a` entity never cascade** (`90249`). The rows below that say `cascade` become `restrict` (or `clear` on a `reference`) there, set explicitly. See `entity-families.md`.
 <!-- DUPLICATE of canonical copy in entity-families.md ("Creating a family", step 5). Edit both. -->
 
 **Read order:** the divergent-permission-scope rule (last two rows) **overrides** the "child is owned by parent" and "M:N junction FK" rows whenever the child's edit tier differs from the parent's. Always evaluate divergence first; fall through to the same-tier rows only when tiers match.
@@ -563,10 +583,10 @@ The platform manages nullability internally based on format and delete-mode; the
 | Required relationship to independent entity | `reference` | `restrict` |
 | Child is owned by parent (**shared permission scope** — child tier == parent tier) | `parent` | `cascade` (`restrict` on an `is_a` child) |
 | M:N junction FK, **both parents share the junction's tier** (per-leg test, not table-wide) | `parent` | `cascade` (`restrict` on an `is_a` junction) |
-| **Lifecycle-bound child with divergent permission scope** — overrides the two rows above | `reference` | `restrict` (default) or `clear` |
-| Lifecycle-bound child with divergent permission scope, accepting silent cascade-delete (high-risk) — overrides the two rows above | `reference` | `cascade` |
+| **Lifecycle-bound child with divergent permission scope** — overrides the two rows above | `parent` | `restrict` |
+| Lifecycle-bound child with divergent permission scope, accepting that deleting the parent deletes the child without the child's own permission check (high-risk) — overrides the two rows above | `parent` | `cascade` |
 
-**Divergent-permission-scope rule.** `format: parent` semantically asserts that the child shares the parent's permission model. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `has_permission` or `require_permission` (see `jsonlogic.md`) against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), `parent` is the wrong shape. Use `format: reference` instead. Pick the delete mode by lifecycle behavior: `restrict` when children must be explicitly cleaned up before the parent (recommended default for audit-logged decision evidence like scorecards or signed offers), `clear` when orphan-survival is acceptable (e.g. an authored note may survive its application being deleted), `cascade` only when the user explicitly accepts the silent cascade-delete trade-off (the shape says "permission scope is divergent" but the platform deletes anyway when the lifecycle owner goes). A junction is the exception: every leg stays `parent`, including a leg to an entity another module owns, because a junction row is only a relationship and its permission comes from the module that created it.
+**Divergent-permission-scope rule.** This is the rare case: most children share their parent's permissions, and `parent` + `cascade` is right. A cascade deletes the children without checking the child's own delete permission (a Postgres referential action does not apply row-level security); `restrict` refuses the parent's deletion while any child exists, so each child is removed first through its own delete permission. When a child has its own conditional permission gate (a `validation_rules` rule whose JsonLogic invokes `has_permission` or `require_permission` (see `jsonlogic.md`) against a workflow permission that the parent does not require, or a §3 `**Edit permission:**` annotation that differs from the parent's tier), keep `format: parent` and set `reference_delete_mode: restrict` (recommended for audit-logged decision evidence like scorecards or signed offers). Use `cascade` only when the user explicitly accepts that deleting the parent deletes the child without that check. `clear` never works on a `parent`: the column is NOT NULL, so every delete of the parent would fail. A child that must survive its parent is not a `parent`: use `reference` with `clear` (first row). Never change a `parent` to a `reference` to protect the child's permissions; that makes the field optional and removes it from the parent's child listing. A junction is the exception: every leg stays `parent`, including a leg to an entity another module owns, because a junction row is only a relationship and its permission comes from the module that created it.
 
 ### `reference`: Cross-Entity Relationship (Independent Lifecycle)
 
@@ -625,7 +645,7 @@ semantius call crud create_field '{"data": [
 ]}'
 ```
 
-> **Do not set `label_column` on a junction.** `label_column` is optional — the live `create_entity` requires only `table_name`, `singular_label`, `module_id` — and a junction has no natural label field: the platform composes `_label` from the `parent` legs automatically. Setting `label_column` to `id` (or any auto-generated column — `label`, `created_at`, `updated_at`) makes `create_entity` fail with *column 'id' specified more than once*, because that column already exists. Omit `label_column` (as the example above does), and likewise omit `label_parent`.
+> **Do not set `label_column` on a junction.** `label_column` is optional — `create_entity` requires only `table_name` and `module_id` — and a junction has no natural label field: the platform composes `_label` from the `parent` legs automatically. Setting `label_column` to `id` (or any auto-generated column — `created_at`, `updated_at`) makes `create_entity` fail with *column 'id' specified more than once*, because that column already exists. Omit `label_column` (as the example above does), and likewise omit `label_parent`.
 
 > **Junctions aren't binary-only.** `entity_type = junction` combines **all** `parent` legs, so an N-ary relationship works the same way — e.g. `(user, role, tenant)`. But an N-ary relationship that carries its **own attributes or lifecycle** is an association class → classify it `operational_record` / `operational_workflow`, **not** `junction`.
 
@@ -673,14 +693,16 @@ This rule applies uniformly to every blueprint shape (`hiring-starter`, `ats-rec
 - Add `searchable: true` to fields
 - Create new entities in new or existing modules
 - Add new permissions/roles/assignments
-- Add a new `input_type_rule` to a field (pure UI behavior, fails open) — see `jsonlogic.md`
+- Add a new `input_type_rule` to a field that is not `required` (pure UI behavior, fails open) — see `jsonlogic.md`
 
 ### ⚠️ Medium-Risk (warn user first)
 - Changing `reference_delete_mode`
 - Adding `view_permission`/`edit_permission` to previously open entities
 - Changing `enum_values` (values; a change to only labels, descriptions, colors or icons is cosmetic, since records store values)
 - Adding `unique_value: true` to an existing field (fails if duplicates exist)
-- Adding, modifying, or removing a `select_rule` on an entity (changes read visibility; rows may suddenly disappear or reappear for current users) — see `select-rule.md`
+- Adding, modifying, or removing a `select_rule` on an entity (it replaces `view_permission` for reads: rows may suddenly disappear or reappear for current users, and a rule without a permission test shows its rows to every user who can reach the table) — see `select-rule.md`
+- Adding an `input_type_rule` to a `required` field (the database stops enforcing `required` for it)
+- Adding or changing a `rollup` definition or `computed_fields` (recalculates existing records with no audit row; the tables written take no other writes until the save commits) — see `rollup-fields.md`
 - Modifying or removing an existing `input_type_rule` (forms suddenly show, hide, or unlock a field mid-workflow) — see `jsonlogic.md`
 
 ### 🛑 High-Risk (require explicit confirmation)
@@ -690,6 +712,8 @@ This rule applies uniformly to every blueprint shape (`hiring-starter`, `ats-rec
 - Changing primary key fields (`id_type` cannot change at all, `90233`; a record's key value cannot change either, `90236`)
 - Choosing `is_a` or `has_a` (`id_refentity` and an `is_a` prefix are fixed at creation; a record's type cannot change later)
 - Deleting an entity that others are based on (refused with `90248`; check `id_refentity=eq.<table_name>` first)
+- Deleting an entity that fields of other entities reference (refused with `90260`; check `reference_table=eq.<table_name>` first)
+- Setting `include_hidden_rows: true` on a rollup (readers see an aggregate over rows they cannot read) — see `rollup-fields.md`
 - Always check dependencies before deletion
 
 ---
@@ -727,7 +751,9 @@ semantius call crud read_entity '{"filters": "id_refentity=eq.<table_name>", "se
 semantius call crud delete_entity '{"table_name": "<table_name>"}'
 ```
 
-An `is_a` / `has_a` entity, or the base of one, cannot be deleted while it has records (`90247`): delete the records through the entity first. See `entity-families.md`.
+An entity cannot be deleted while a field of another entity references it (`90260`), whatever that field's `reference_delete_mode`: the mode governs deleting records, not the entity. Delete those fields or point them at another entity first. It is also refused while a rollup of another entity aggregates over it (`90266`). An `is_a` / `has_a` entity, or the base of one, cannot be deleted while it has records (`90247`): delete the records through the entity first. See `entity-families.md`.
+
+`delete_module` removes the module with all its entities, fields and records in one request, so do not delete its entities first; confirm with the user and back up with `export_module` first. It is refused with `90260` while a field of another module references one of its entities, and with `90266` while a rollup of another module aggregates over one; references between its own entities do not count. Two modules that reference each other need one such field removed first. While an `is_a` / `has_a` entity in the module has records it is refused with `90247`; entities of the same module that are based on each other do not block it.
 
 ---
 

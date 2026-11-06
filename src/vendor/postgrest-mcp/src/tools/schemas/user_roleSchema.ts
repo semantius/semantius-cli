@@ -10,5 +10,5 @@ export const user_roleSchema = z.looseObject({
   user_id: z.number().int().describe('User this role is assigned to'),
   role_id: z.number().int().describe('Role assigned to the user'),
   assigned_at: z.string().optional().describe('Timestamp when role was assigned (ISO 8601)'),
-  assigned_by: z.number().int().optional().nullable().describe('User who assigned this role'),
+  assigned_by: z.number().int().optional().nullable().describe('User who assigned this role. Defaults to the calling user.'),
 })

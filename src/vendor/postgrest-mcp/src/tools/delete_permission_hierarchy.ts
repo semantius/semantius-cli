@@ -12,9 +12,8 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   id: oneOrMany(z.string()).describe(
-    `ID of the permission hierarchy to delete, or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. ` +
-    `WARNING: This operation is permanent and cannot be undone. ` +
-    `Consider using an update to set a "deleted" flag instead of permanent deletion.`
+    `ID of the permission hierarchy to delete (a string of the form <including_permission_name>.<included_permission_name>), or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. ` +
+    `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
     .string()
@@ -29,8 +28,7 @@ export const deletePermissionHierarchyTool: Tool<typeof inputSchema, undefined> 
     description: `Permanently deletes a permission hierarchy record by ID. ` +
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
-      `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead.`,
+      `WARNING: Be extremely careful to avoid deleting unintended records.`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo }) => {

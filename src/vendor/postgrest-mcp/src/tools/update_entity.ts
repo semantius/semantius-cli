@@ -17,7 +17,8 @@ const inputSchema = {
   data: entitySchema.partial().describe(
     `Object containing the fields to update and their new values. ` +
     `All fields are optional for partial updates. ` +
-    `Only include fields you want to change - omitted fields remain unchanged.`
+    `Only include fields you want to change - omitted fields remain unchanged. ` +
+    `Immutable after create: id_type, id_column, id_refentity, and the id_prefix of an is_a entity. table_name in data renames the table; do not combine it with an array of table_names.`
   ),
   accept: z
     .string()

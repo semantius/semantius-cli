@@ -17,10 +17,10 @@ const inputSchema = {
       `PostgREST query filter string to specify which records to retrieve. ` +
       `Uses PostgREST operators: eq (equals), neq (not equals), gt (greater than), gte (>=), lt (<), lte (<=), ` +
       `like (pattern match), ilike (case-insensitive pattern), in (list), is (null check). ` +
-      `Examples: "id=eq.1" (get by ID), "email=eq.user@example.com" (exact match), ` +
-      `"is_active=eq.true" (boolean), "name=ilike.*smith*" (case-insensitive search), ` +
+      `Examples: "id=eq.5" (get by ID), "email=eq.user@example.com" (exact match), ` +
+      `"is_disabled=eq.false" (boolean), "display_name=ilike.*smith*" (case-insensitive search), ` +
       `"id=in.(1,2,3)" (multiple values). ` +
-      `Multiple filters can be combined with "&": "is_active=eq.true&role=eq.admin". ` +
+      `Multiple filters can be combined with "&": "is_disabled=eq.false&is_agent=eq.false". ` +
       `Leave empty to retrieve all records (subject to limit).`
     ),
   select: z
@@ -28,7 +28,7 @@ const inputSchema = {
     .optional()
     .describe(
       `Comma-separated list of columns to include in the response. ` +
-      `Examples: "id,name,email" (specific columns), "*" (all columns - default if omitted). ` +
+      `Examples: "id,display_name,email" (specific columns), "*" (all columns - default if omitted). ` +
       `Supports nested resources and related data using PostgREST embedded resource syntax. Composed labels _label and <fk>_label (one per reference or parent field) are read-only, not part of * and must be selected by name. ` +
       `Leave empty to select all columns.`
     ),
@@ -57,8 +57,8 @@ const inputSchema = {
     .optional()
     .describe(
       `Column(s) to sort results by. Use ".desc" suffix for descending order, ".asc" for ascending (default). ` +
-      `Examples: "created_at.desc" (newest first), "name.asc" (alphabetical), ` +
-      `"priority.desc,created_at.asc" (multiple columns). ` +
+      `Examples: "last_seen.desc" (most recently active first), ` +
+      `"display_name.asc,id.asc" (multiple columns). ` +
       `Default order depends on database implementation.`
     ),
   accept: z

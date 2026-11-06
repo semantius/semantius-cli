@@ -31,6 +31,7 @@ export const updateRoleTool: Tool<typeof inputSchema, undefined> = {
     description: `Updates an existing role record by ID. ` +
       `Provide the id and the fields to update. ` +
       `Only the fields included in "data" will be updated; other fields remain unchanged. ` +
+      `origin cannot be changed on update, and neither can the slug of a system role. ` +
       `Returns the updated record with all current field values. ` +
       `"id" may also be an array to apply the same update to several records in one request; the response is always an array of updated records.`,
     inputSchema,

@@ -16,5 +16,5 @@ export const permissionSchema = z.looseObject({
       'The permission itself, and the key other tables use to name it. Colon-separated segments of a-z, 0-9, - and _, each starting with a letter or digit, e.g. crm:read or service-catalog:view. No spaces, commas or dots: scope strings are split on commas and whitespace, and a dot would make permission_hierarchy ids ambiguous.'
     ),
   description: z.string().optional().describe('What the permission allows'),
-  module_id: z.number().int().optional().nullable().describe('Module this permission belongs to'),
+  module_id: z.number().int().describe('Module this permission belongs to. Required. Deleting the module deletes its permissions.'),
 })

@@ -10,7 +10,7 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 |---------|-------------|
 | **Permission** | Atomic capability, named `<module>:<action>` (e.g., `crm:read`, `crm:manage`) |
 | **Bundle** | A permission that exists to include others through the hierarchy (e.g., `crm:manage`). Roles hold bundles; see *Per-entity permissions and bundles* |
-| **Permission Hierarchy** | `manage` implicitly includes `read`, set up so users don't need both assigned separately |
+| **Permission Hierarchy** | `manage` implicitly includes `read`, set up so users don't need both assigned separately; a row that would make a cycle is refused (`90210`), and so is a chain deeper than 11 levels (`90211`) |
 | **Role** | Named bundle of permissions (e.g., `crm_viewer`, `crm_manager`) |
 | **Role Permission** | M:N join: grants a permission to a role |
 | **User Role** | M:N join: assigns a role to a user |
@@ -26,7 +26,7 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 - `leads:write`, specific write-only on leads
 - `service_catalog:read`
 
-Never use free-form names like `"can_edit"` or `"admin"`, always scope to a module.
+Don't invent free-form names like `"can_edit"`; scope every permission to a module. A bare `admin` is also a valid name (it is the default `edit_permission`).
 
 **The prefix names the module that owns the capability, which may not be installed yet.** `ats-candidate-crm:write_candidates` is a valid permission in a tenant that only has `hiring-starter`. The platform checks only the shape of the name: a permission's prefix does not have to match its `module_id`, a hierarchy row can cross modules, and `has_permission` compares names without looking at modules.
 
@@ -113,9 +113,11 @@ semantius call crud create_permission_hierarchy '{
 
 ### 3. Create Roles
 
-The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$` — **underscores only, NO hyphens**, unlike a `module_slug`, which DOES allow hyphens; the two formats differ, so when you build a role slug from a hyphenated module slug you must convert `-`→`_`, e.g. module `hvac-svc-mgmt` → role `hvac_svc_mgmt_viewer`, never `hvac-svc-mgmt_viewer`. A hyphen in the slug fails the regex. Auto-derived from `role_name` if omitted, but pass it explicitly so the handle is deploy-controlled and not left to slugify). There is **no `name` and no `label` field** — those are a common mistake. For a role that belongs to a module you MUST also pass **`module_id`**, the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and not related to the module record's `default_*_role_id`.
+The role fields are **`role_name`** (the human display name) and **`slug`** (snake_case handle, `^[a-z0-9_]+$` — **underscores only, NO hyphens**, unlike a `module_slug`, which DOES allow hyphens; the two formats differ, so when you build a role slug from a hyphenated module slug you must convert `-`→`_`, e.g. module `hvac-svc-mgmt` → role `hvac_svc_mgmt_viewer`, never `hvac-svc-mgmt_viewer`. A hyphen in the slug fails the regex. Derived from `role_name` if omitted: every run of characters outside `a-z`, `A-Z` and `0-9` becomes one `_`, leading and trailing `_` are removed, then it is lowercased; a name with no ASCII letter or digit derives an empty slug, and a second such role collides. Pass it explicitly so the handle is deploy-controlled and not left to the derivation). There is **no `name` and no `label` field** — those are a common mistake. For a role that belongs to a module you MUST also pass **`module_id`**, the owning module. Omit it and the role is an **orphan**: it exists but is invisible in the module's governance panel and not related to the module record's `default_*_role_id`.
 
-**`origin`** records who provisioned a role or hierarchy relationship, and it cannot change after creation. Leave it unset when you create RBAC by hand; it defaults to `"user"`. `"model"` and `"model_master"` are set only by a spec deploy (a domain module and a master module respectively), and `"system"` only by the platform.
+**`origin`** records who provisioned a role or hierarchy relationship, and it cannot change after creation. Leave it unset when you create RBAC by hand; it defaults to `"user"`. `"model"` and `"model_master"` are set only by a spec deploy (a domain module and a master module respectively), and `"system"` only by the platform. `origin` is set on INSERT; a change is refused (`90203` on a role, `90205` on a `permission_hierarchy` row). The `system` roles are the platform built-ins seeded at database init (e.g. `Administrator`, `User`); the `slug` of a `system` role cannot be changed (`90204`), while roles of any other origin can be renamed.
+
+**Module columns.** A module carries `module_type` (`"domain"`, the default, or `"master"` for a module promoted for sharing; its `input_type` is `readonly`, which the database does not enforce), `manage_permission` and `admin_permission` (the names of the module's manage and admin permissions), and `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id` (the module's default roles). The last five are ordinary fields set with `create_module` or `update_module`; they are foreign keys, so the permissions and roles they name must already exist.
 
 ```bash
 # Viewer (read only) and manager (full access) roles — in ONE call

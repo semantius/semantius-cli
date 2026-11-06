@@ -17,7 +17,7 @@ const inputSchema = {
     `Array items may have different keys; a key omitted from an item takes the column default and an explicit null inserts NULL. All items are inserted in one transaction: if one is rejected, none is created. ` +
     `All fields are defined with their types and descriptions. ` +
     `Required fields must be provided. Optional fields can be omitted. ` +
-    `permission_name is the primary key and is always required: permissions has no auto-generated id.`
+    `permission_name (the primary key) and module_id are required: permissions has no auto-generated id.`
   ),
   accept: z
     .string()
@@ -32,6 +32,7 @@ export const createPermissionTool: Tool<typeof inputSchema, undefined> = {
     description: `Creates a new permission record in the permissions table. ` +
       `This tool validates input data and returns the complete created record. ` +
       `Auto-generated fields (like IDs) will be populated automatically. ` +
+      `Every new permission is also granted to the Administrator role automatically. ` +
       `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.`,
     inputSchema,
   },

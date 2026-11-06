@@ -8,7 +8,7 @@ import { z } from 'zod/v4'
 export const webhook_receiver_logSchema = z.looseObject({
   id: z.number().int().optional().describe('Internal identifier, assigned automatically'),
   webhook_receiver_id: z.number().int().describe('Parent webhook receiver this log belongs to (FK to webhook_receivers.id)'),
-  message_id: z.string().optional().describe('The sender\'s webhook-id header, or a key derived from the request when it sends none. A delivery whose message_id already succeeded is skipped.'),
+  message_id: z.string().optional().describe('Idempotency key. The sender\'s webhook-id header for hmac receivers; for other receivers a key derived from the webhook-id/secret, the webhook-signature header, or the request content. A delivery whose message_id already has a successful log (result 10) is acknowledged and skipped.'),
   label: z.string().optional().describe('Name that identifies this webhook receiver log'),
   webhook_timestamp: z.string().optional().describe('Timestamp from webhook source (ISO 8601)'),
   received_timestamp: z.string().optional().describe('Timestamp when webhook was received (ISO 8601)'),

@@ -10,5 +10,5 @@ export const role_permissionSchema = z.looseObject({
   role_id: z.number().int().describe('Role this permission is granted to'),
   permission_name: z.string().describe('Permission granted to the role, by name (permissions is keyed by permission_name)'),
   granted_at: z.string().optional().describe('Timestamp when permission was granted (ISO 8601)'),
-  granted_by: z.number().int().optional().nullable().describe('User who granted this permission'),
+  granted_by: z.number().int().optional().nullable().describe('User who granted this permission. Not set automatically: send it if you want it recorded.'),
 })

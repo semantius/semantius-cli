@@ -31,6 +31,7 @@ export const updateUserTool: Tool<typeof inputSchema, undefined> = {
     description: `Updates an existing user record by ID. ` +
       `Provide the user ID and the fields to update. ` +
       `Only the fields included in "data" will be updated; other fields remain unchanged. ` +
+      `Requires user:manage. Setting is_disabled to true on the last enabled Administrator is refused (hint code 90104). ` +
       `Returns the updated record with all current field values. ` +
       `"id" may also be an array to apply the same update to several records in one request; the response is always an array of updated records.`,
     inputSchema,

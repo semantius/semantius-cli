@@ -17,10 +17,10 @@ const inputSchema = {
       `PostgREST query filter string to specify which records to retrieve. ` +
       `Uses PostgREST operators: eq (equals), neq (not equals), gt (greater than), gte (>=), lt (<), lte (<=), ` +
       `like (pattern match), ilike (case-insensitive pattern), in (list), is (null check). ` +
-      `Examples: "id=eq.1" (get by ID), "email=eq.user@example.com" (exact match), ` +
-      `"is_active=eq.true" (boolean), "name=ilike.*smith*" (case-insensitive search), ` +
+      `Examples: "id=eq.1" (get by ID), "table_name=eq.orders" (exact match), "auth_type=eq.hmac" (enum), ` +
+      `"label=ilike.*orders*" (case-insensitive search), ` +
       `"id=in.(1,2,3)" (multiple values). ` +
-      `Multiple filters can be combined with "&": "is_active=eq.true&role=eq.admin". ` +
+      `Multiple filters can be combined with "&": "auth_type=eq.hmac&table_name=eq.orders". ` +
       `Leave empty to retrieve all records (subject to limit).`
     ),
   select: z
@@ -28,7 +28,7 @@ const inputSchema = {
     .optional()
     .describe(
       `Comma-separated list of columns to include in the response. ` +
-      `Examples: "id,name,email" (specific columns), "*" (all columns - default if omitted). ` +
+      `Examples: "id,label,table_name" (specific columns), "*" (all columns - default if omitted). ` +
       `Supports nested resources and related data using PostgREST embedded resource syntax. Composed labels _label and <fk>_label (one per reference or parent field) are read-only, not part of * and must be selected by name. ` +
       `Leave empty to select all columns.`
     ),
@@ -57,8 +57,8 @@ const inputSchema = {
     .optional()
     .describe(
       `Column(s) to sort results by. Use ".desc" suffix for descending order, ".asc" for ascending (default). ` +
-      `Examples: "created_at.desc" (newest first), "name.asc" (alphabetical), ` +
-      `"priority.desc,created_at.asc" (multiple columns). ` +
+      `Examples: "label.asc" (alphabetical), ` +
+      `"auth_type.asc,label.asc" (multiple columns). ` +
       `Default order depends on database implementation.`
     ),
   accept: z
@@ -74,7 +74,8 @@ export const readWebhookReceiverTool: Tool<typeof inputSchema, undefined> = {
     description: `Reads and queries webhook receivers from the webhook_receivers table. ` +
       `Supports flexible filtering, column selection, pagination, and sorting using PostgREST query syntax. ` +
       `Returns an array of matching records. Use filters to narrow results, select to choose columns, ` +
-      `limit/offset for pagination, and order for sorting.`,
+      `limit/offset for pagination, and order for sorting. ` +
+      `Requires the admin permission. select=* returns secret and header_value in plain text; select specific columns to avoid exposing them.`,
     inputSchema,
   },
   handler: async ({ filters, select, limit, offset, order, accept }, { authInfo }) => {

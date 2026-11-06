@@ -12,9 +12,8 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   id: oneOrMany(z.string()).describe(
-    `ID of the user role to delete, or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. ` +
-    `WARNING: This operation is permanent and cannot be undone. ` +
-    `Consider using an update to set a "deleted" flag instead of permanent deletion.`
+    `ID of the user role to delete (a string of the form <user_id>.<role_id>), or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. ` +
+    `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
     .string()
@@ -30,7 +29,7 @@ export const deleteUserRoleTool: Tool<typeof inputSchema, undefined> = {
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead.`,
+      `Role 1 (User) cannot be removed from a user (90103), and the Administrator role (role 2) cannot be removed from the last enabled Administrator (90104).`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo }) => {

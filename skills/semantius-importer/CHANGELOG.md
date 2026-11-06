@@ -2,6 +2,10 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Tool schemas are read with `semantius tools`
+
+2026-11-06. Asked for by Martin Amm: the skill reads a tool's parameters with `semantius tools <server> [<tool>]`, which prints the description and compact input schema without the server instructions, and no longer uses `semantius info`. The file format is unchanged; `version` stays `3.1`. The essentials file and the setup check (`semantius tools utils` lists `get_csvschema`) use the new command.
+
 ## Shared preflight and question files live in use-semantius
 
 2026-11-04. Asked for by Martin Amm: the pipeline skills consume shared files from `use-semantius` and no longer provide them to the generic skills, so a generic skill never depends on a pipeline skill. The file format is unchanged; `version` stays `3.1`. The checks are `use-semantius/references/preflight.md`, without yq or the customizations path, which this skill never used. It no longer names the pipeline skills; its stage tasks block an in-progress unprefixed task when `TaskList` shows one.

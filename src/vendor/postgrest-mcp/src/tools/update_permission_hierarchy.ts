@@ -13,7 +13,7 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   id: oneOrMany(z.string()).describe('ID of the permission hierarchy to update, or a non-empty array of IDs. When an array is given, the same "data" is applied to every matching record.'),
-  data: permission_hierarchySchema.partial().describe(
+  data: permission_hierarchySchema.omit({ origin: true }).partial().describe(
     `Object containing the fields to update and their new values. ` +
     `All fields are optional for partial updates. ` +
     `Only include fields you want to change - omitted fields remain unchanged.`
@@ -31,6 +31,7 @@ export const updatePermissionHierarchyTool: Tool<typeof inputSchema, undefined> 
     description: `Updates an existing permission hierarchy record by ID. ` +
       `Provide the id and the fields to update. ` +
       `Only the fields included in "data" will be updated; other fields remain unchanged. ` +
+      `origin is not part of an update: it is set on insert and never changed. Changing a name can be rejected like a create: equal names, a cycle (code 90210) or a chain over 11 levels (code 90211). ` +
       `Returns the updated record with all current field values. ` +
       `"id" may also be an array to apply the same update to several records in one request; the response is always an array of updated records.`,
     inputSchema,

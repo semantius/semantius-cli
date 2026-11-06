@@ -81,7 +81,7 @@
    3. **Security by default** – Set `view_permission` and `edit_permission` deliberately on new entities (the defaults are `public:read` and `admin`)
    4. **Additive changes first** – Prefer adding over deleting/renaming unless impact is understood
    5. **Validate before runtime** – Ensure one PK field (`is_pk=true`; a second one is refused with `90215`) and one label field (`ctype='label'`) per entity
-   6. **Never create auto-generated fields** – When creating an entity, the system automatically creates `id`, `label`, and the field named in `label_column`. Do **not** call `create_field` for any of these.
+   6. **Never create auto-generated fields** – When creating an entity, the system automatically creates `id`, the field named in `label_column` (the entity's label field), `created_at` and `updated_at`. Do **not** call `create_field` for any of these.
    7. **Every entity needs a module** – Always assign a `module_id`. If no suitable module exists, create one first (see Module Workflow below).
    8. **Modules need baseline permissions** – By convention every new module has at least `<module>:read` and `<module>:manage` permissions.
    9. **CRUD tools have priority** – Always use the typed CRUD tools (`create_*`, `read_*`, `update_*`, `delete_*`) for standard operations. Only use `postgrestRequest` or `sqlToRest` for complex queries, filter-based bulk mutations, or updates where each row needs different values.
@@ -171,17 +171,16 @@
 
       **The system automatically creates these fields — do NOT create them manually:**
       - `id` — primary key field (`ctype: "id"`, `is_pk: true`), typed from `id_type`: format `int64` for `auto_increment` and `bigint`, `text`, `uuid`, or `string` for `typeid`, `is_a` and `has_a`
-      - `label` — display field (`ctype: "label"`) that reads from `label_column`
       - The field named in `label_column` (e.g., `service_name`) with the title "Name"
       - `created_at` and `updated_at` timestamp fields
 
-      > ⚠️ **Never call `create_field` for `id`, `label`, `created_at`, `updated_at`, or the field named in `label_column`. They already exist.**
+      > ⚠️ **Never call `create_field` for `id`, `created_at`, `updated_at`, or the field named in `label_column`. They already exist.**
 
       > ℹ️ An `is_a` or `has_a` entity gets only `id`, `created_at` and `updated_at`: its label field, and every other field of its base, is its base's. Its `label_column` is set from the base.
 
       > ℹ️ `searchable` and `is_child` on the entity are **read-only** and computed automatically (`searchable` when any field has `searchable: true`; `is_child` when any field uses `format: "parent"` — for an `is_a` or `has_a` entity, a field of its base's levels counts too). Never set these manually.
 
-      > ℹ️ **`is_nullable` and `default_value` are computed automatically from `format` — never set them manually.** The system trigger assigns NOT NULL + a sensible default to every format except `reference`, `date`, and `date-time`, which allow NULL. Setting these manually will be ignored or conflict with the trigger.
+      > ℹ️ **There is no `is_nullable` field: nullability follows `format`.** Only `reference`, `date` and `date-time` allow NULL. `default_value` is optional and may be set; when it is blank, a NOT NULL column gets the zero value of its type (see *Nullability and Default Values*).
 
    4. **Add domain fields** based on user requirements (see Field Format Quick Reference below). Pass all fields of the entity to a single `create_field` call as an array in `data`.
       - Omit `field_order`: the platform appends each new field after the entity's existing ones in array order. A hand-picked value can sit above the label field's 20 or tie with a neighbor; values from 900000 up are outside the automatic numbering.
@@ -195,12 +194,11 @@
    - `read_module` → find or create `service_catalog` module
    - `read_permission` → find or create `service_catalog:read` and `service_catalog:manage`
    - `create_entity` with `table_name: "services"`, `singular_label: "Service"`, `label_column: "service_name"`, `module_id: <id>`, `audit_log: false`, etc.
-   - System auto-creates: `id`, `label`, `service_name`, `created_at`, `updated_at`
+   - System auto-creates: `id`, `service_name`, `created_at`, `updated_at`
    - `create_field` once with `data: [ { table_name: "services", field_name: "description", title: "Description", format: "text", searchable: true }, { table_name: "services", field_name: "cost", title: "Cost", format: "number" } ]` (both fields in one bulk call)
 
    **What NOT to do:**
    - ❌ Don't call `create_field` for `id` — auto-generated
-   - ❌ Don't call `create_field` for `label` — auto-generated
    - ❌ Don't call `create_field` for `service_name` (the label_column field) — auto-generated
    - ❌ Don't call `create_field` for `created_at` / `updated_at` — auto-generated
    - ❌ Don't manually set `searchable` on the entity — it is computed
@@ -285,7 +283,7 @@
 
    **Creating one:**
    1. Create the base as a `typeid` entity (or use an existing one), with its fields.
-   2. `create_entity` with `id_type: "is_a"` (plus `id_prefix`) or `"has_a"`, and `id_refentity: "<base table_name>"`. Do not set `label_column` or `label_parent`: they come from the base (`90242`), and a later change of the root's `label_column` reaches every entity based on it. The entity's table is `<table_name>_ext`, so that name must be free too (`90250`).
+   2. `create_entity` with `id_type: "is_a"` (plus `id_prefix`) or `"has_a"`, and `id_refentity: "<base table_name>"`. Do not set `label_column` or `label_parent`: they come from the base (on create the platform overwrites them; changing them later is refused with `90242`), and a later change of the root's `label_column` reaches every entity based on it. The entity's table is `<table_name>_ext`, so that name must be free too (`90250`).
    3. Add only the entity's **own** fields with `create_field`. A field belongs to the entity that owns it: an inherited field is changed through its owner, and a field name may not repeat one of the base's or of an entity based on this one (`90243`); siblings (emails and tasks) may share names.
 
    **Reading and writing:** each entity is read and written at its own `table_name`, which shows the whole record — the base's fields and its own. `get_schema` lists the inherited properties with `"inherited_from": "<owner>"`, and a has_a base lists its `extensions: [{table, properties, required}]`. A reader needs the view permission of every level, a writer the edit permission of every level it writes; a record the caller cannot write whole is skipped, never half-written.
@@ -314,7 +312,7 @@
 
    **Trigger lifecycle.** When both arrays are empty or null, no entity trigger function exists. As soon as one becomes non-empty, the platform generates a BEFORE INSERT/UPDATE/DELETE function on the table. When both arrays go back to empty, or the entity is deleted, the function is dropped.
 
-   **Saving applies the rules to existing records.** Adding or changing `computed_fields` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with `90908`, whose `record_id` and `problem` say why. The pass moves no `updated_at` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps `$user_id` or `$now` unconditionally moves on this pass, as on any update; make such a stamp insert-only: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.created_by"}]}`. Removing a rule keeps the last values as ordinary data.
+   **Saving `computed_fields` recalculates existing records.** A validation rule added later is not applied retroactively; it checks later writes only. Adding or changing `computed_fields` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with `90908`, whose `record_id` and `problem` say why. The pass moves no `updated_at` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps `$user_id` or `$now` unconditionally moves on this pass, as on any update; make such a stamp insert-only: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.created_by"}]}`. Removing a rule keeps the last values as ordinary data.
 
    **Derived marker.** A field a rule names gets `ctype: "computed"`, and its `input_type` `default` or `readonly` becomes `disabled` (and stays `disabled` when the rule goes). The label column keeps `ctype: "label"`. Rules match fields by name and a rename does not rewrite them, so a renamed field loses the marker: update the rule too. A rule cannot name a rollup field (`90907`), and a computed field cannot become a rollup (`90261`).
 
@@ -322,7 +320,7 @@
 
    | Property | Type | Required | Purpose |
    |----------|------|----------|---------|
-   | `name` | string | yes | Must reference an existing scalar field on the same entity. The computed result is written into this slot. Dotted paths (e.g. `metadata.name`) write into nested JSONB properties. |
+   | `name` | string | yes | The scalar field of the same entity that receives the result. It is not checked when the rule is saved: a rule may name a field that does not exist yet, and it fills the field in once the field is added. The computed result is written into this slot. Dotted paths (e.g. `metadata.name`) write into nested JSONB properties. |
    | `jsonlogic` | object | yes | Evaluated against the record being written. |
    | `description` | string | no | Human note for future readers and agents. |
 
@@ -458,7 +456,7 @@
    - `required`, `searchable` and `unique_value` are refused (`90261`), and so is a definition on a key, a core field, a `reference` or `parent` field, or a field a `computed_fields` rule names.
    - Neither side can be an `is_a` or `has_a` entity (`90249`). On an unmanaged entity the definition is kept as metadata, and takes effect once both sides are managed.
 
-   **The filter** is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, timestamp, UUID or TypeID column of the child. Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record.
+   **The filter** is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and `<` and `<=` take three operands). Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record.
 
    **How it behaves:**
    - The value cannot be written by hand. On create it starts as the empty aggregate, and on update a changed value is recomputed, with no error. Change the child records instead.
@@ -485,7 +483,7 @@
 
    Writes keep `edit_permission`: UPDATE and DELETE require `edit_permission` AND the rule on the existing row (a row the rule hides cannot be updated or deleted), `WITH CHECK` is `edit_permission` only (a write may move a row out of its own rule), and INSERT needs `edit_permission` only.
 
-   - **Result:** the row is visible when the result is truthy: `false`, `0`, `null` and the empty string hide it; non-zero numbers, non-empty strings, arrays and objects show it. Write the rule to return a boolean. A rule that raises an error hides the row; the query still runs.
+   - **Result:** the row is visible when the result is truthy: `false`, `0`, `null` and the empty string hide it; non-zero numbers, non-empty strings, non-empty arrays and objects show it. Write the rule to return a boolean. A rule that raises an error hides the row; the query still runs.
    - **Trigger lifecycle:** When `select_rule` is non-empty, the platform generates the SELECT, UPDATE and DELETE policies of the table. When the rule is cleared (back to `{}`) the default `view_permission` policies replace them; when the entity is deleted they are dropped.
    - **Reserved variables:** only `$today`, `$now` and `$user_id`; there is no `$old` and no `$mode` on a read. `$user_id` is the typical anchor for ownership checks.
    - **Use sparingly:** Per-row evaluation runs on every read, so keep the JsonLogic simple — prefer direct comparisons to columns and reserved variables over deep traversals. `set_record` (cross-entity lookup) works here but runs an extra SELECT per row of every read.
@@ -541,7 +539,7 @@
       - Use `read_role` to check if role exists
       - Create with `create_role` if needed
       - Leave `origin` unset on manual creation — it defaults to `"user"`. Never set `origin` to `"system"`, `"model"`, or `"model_master"` from the agent; those values are reserved for the platform (DB init seed, semantic-model deploys, and the promotion / master-model deploy flow respectively).
-      - `slug` is optional: when blank the database derives it from `role_name` (lowercased, every run of characters outside `a-z`, `A-Z` and `0-9` replaced by `_`), and it must match `^[a-z0-9_]+$`. A role name with no ASCII letter or digit derives an empty slug and a second such role collides, so pass `slug` in that case or when the user requests a specific one.
+      - `slug` is optional: when blank the database derives it from `role_name` (every run of characters outside `a-z`, `A-Z` and `0-9` becomes one `_`, leading and trailing `_` are removed, then it is lowercased), and it must match `^[a-z0-9_]+$`. A role name with no ASCII letter or digit derives an empty slug and a second such role collides, so pass `slug` in that case or when the user requests a specific one.
 
    3. **Grant permissions to role**:
       - Use `create_role_permission` to grant permissions to the role
@@ -559,7 +557,7 @@
 
    - **`slug`** — snake_case, unique, NOT NULL. Auto-derived from `role_name` via slugify on INSERT when omitted. Always populated. Cannot be changed after creation when `origin` is `"system"` (`90204`); roles of any other origin can be renamed.
    - **`origin`** — one of `"system"`, `"model"`, `"model_master"`, or `"user"`. Defaults to `"user"` for manually created roles. The other three values are reserved for the platform and must never be set by the agent:
-     - `"system"` — platform built-ins seeded at DB init (e.g. `Administrator`, `User`). Strictly immutable.
+     - `"system"` — platform built-ins seeded at DB init (e.g. `Administrator`, `User`). Only its `origin` and `slug` are locked.
      - `"model"` — scaffold role on a domain module, created by a `*-semantic-model.md` deploy. The deployer names its slugs `<module_slug>_viewer` / `_manager` / `_admin` (a deployer convention, not a platform rule).
      - `"model_master"` — scaffold role on a master module, created by promotion or master-model deploy. Same deployer convention.
 
@@ -571,7 +569,7 @@
    - **`manage_permission`** / **`admin_permission`** — names of the module's manage and admin permissions.
    - **`default_viewer_role_id`** / **`default_manager_role_id`** / **`default_admin_role_id`** — FKs to `roles.id` for the module's default viewer, manager and admin roles.
 
-   The last five are regular fields: set them with `create_module` or `update_module`. They are foreign keys with delete mode `clear`, so the permissions and roles they name must already exist.
+   The last five are regular fields: set them with `create_module` or `update_module`. They are foreign keys, so the permissions and roles they name must already exist.
 
    ### Permission hierarchy columns
 
@@ -584,7 +582,7 @@
    - **`including_permission_name`** — the broader permission, the one doing the including (e.g. `crm:manage` in `crm:manage includes crm:read`).
    - **`included_permission_name`** — the narrower permission, the one being included (e.g. `crm:read`).
 
-   Whether a row is intra-master or cross-module is derivable from the `module_id` of each side.
+   Whether a row is intra-master or cross-module is derivable from the `module_id` of each side. A row that would make a cycle is refused (`90210`), and so is a chain deeper than 11 levels (`90211`).
 
    ### Permission hierarchy `origin`
 
@@ -605,9 +603,9 @@
 
    A webhook receiver accepts one signed HTTP `POST {api_baseurl}/hook/{webhook_receiver_id}` per record and writes it to one table (`api_baseurl` comes from `getCurrentUser`).
 
-   1. `read_entity` / `read_field` for the target table: the payload is matched to fields by name, unknown keys are ignored, and a `readonly` field is dropped. For `bigint` and `text` keys the sender supplies the `id`; for generated keys it omits it.
-   2. `create_webhook_receiver` with `label` (the producing system), `table_name`, `auth_type: "hmac"` and a `secret` of at least 32 random characters (`openssl rand -hex 32`); give the secret to the sender. The receiver verifies a signature only for `hmac` and accepts every request for `none` and `header`. Optional: `jsonata`, an expression that reshapes the payload first.
-   3. The sender signs `{webhook-id}.{webhook-timestamp}.{body}` with HMAC-SHA256 (a secret starting `whsec_` is base64-decoded first) and sends `webhook-id` (unique per message; a repeat of one that succeeded is ignored), `webhook-timestamp` and `webhook-signature: v1,{base64 signature}`.
+   1. `read_entity` / `read_field` for the target table: the payload is matched to fields by name, unknown keys are ignored, and a `readonly` field is dropped. For `bigint` and `text` keys the sender supplies the `id`. A generated key is omitted; a payload that does carry it is used as the record's key and written.
+   2. `create_webhook_receiver` with `label` (the producing system), `table_name`, `auth_type: "hmac"` and a `secret` of at least 32 random characters (`openssl rand -hex 32`); give the secret to the sender. The receiver verifies a signature only for `hmac` and accepts every request for `none` and `header`; an `hmac` receiver with no secret, or a request without `webhook-id` or `webhook-signature`, is answered 401. Optional: `jsonata`, an expression that reshapes the payload first.
+   3. The sender signs `{webhook-id}.{webhook-timestamp}.{body}` with HMAC-SHA256 (a secret starting `whsec_` is base64-decoded first and the decoded bytes are read as UTF-8 text, so use such a secret only when they are text) and sends `webhook-id` (unique per message; with `hmac`, a repeat of one that succeeded is ignored), `webhook-timestamp` and `webhook-signature: v1,{base64 signature}`.
    4. The receiver upserts by the entity's key, then by a `unique_value` field. `read_webhook_receiver_log` (filter `webhook_receiver_id`) shows each delivery: `result` 10 success, 20 signature failed, 30 invalid JSON, 40 table not found, 50 write failed, 60 JSONata error, and `error_message`.
 
    ---
@@ -738,8 +736,10 @@
    | `string`, `text`, `multiline`, `html`, `code`, `email`, `url`, `uri`, `password`, `color`, `icon` | TEXT | `''` | NOT NULL |
    | `enum` | TEXT | `''`, which a required enum refuses, so a required enum with no `default_value` must be sent on every write | NOT NULL |
    | `integer`, `int32` / `int64` | INTEGER / BIGINT | `0` | NOT NULL |
-   | `rating` | INTEGER | `0` (not rated) | NOT NULL — the 0–5 range is checked by the platform, not a database constraint; a required rating needs a value from 1 to 5 |
-   | `number`, `float`, `double` | NUMERIC / REAL | `0.0` | NOT NULL |
+   | `rating` | INTEGER | `0` (not rated) | NOT NULL — the database does not check the 0–5 range (a client library does) and refuses only `0` on a required rating; a required rating needs a value from 1 to 5 |
+   | `number` | NUMERIC(18, scale) | `0.0` | NOT NULL |
+   | `float` | REAL | `0.0` | NOT NULL |
+   | `double` | DOUBLE PRECISION | `0.0` | NOT NULL |
    | `boolean` | BOOLEAN | `FALSE` | NOT NULL |
    | `json`, `jsonlogic`, `object` | JSONB | `'{}'` | NOT NULL |
    | `array` | JSONB | `'[]'` | NOT NULL |
@@ -883,8 +883,8 @@
    ### Bulk Operations
    **Rule: if more than one record of the same kind is pending, send them in ONE call. Never loop single-record calls.** One array call is one HTTP request and one database transaction; N single calls are N round trips with partial-failure risk and no atomicity.
    - **`create_*`**: `data` is either one object or a **non-empty array of objects**. **Items do not need the same keys**: the server sends the union of keys and keys omitted from an item take the column default. All rows are inserted in one request and one transaction (all-or-nothing). Example: `create_field` with `data: [ {...description}, {...cost} ]`.
-   - **`update_*`**: `id` is either one value or a **non-empty array of ids** (for `update_entity` the key is `table_name`). The **same** `data` is applied to every listed record. For per-record values, call once per record.
-   - **`delete_*`**: `id` (or `table_name` for entities) is either one value or a **non-empty array**; all listed records are deleted in one request.
+   - **`update_*`**: `id` is either one value or a **non-empty array of ids** (for `update_entity` the key is `table_name`, for `update_permission` it is `permission_name`). The **same** `data` is applied to every listed record. For per-record values, call once per record.
+   - **`delete_*`**: `id` (or `table_name` for entities, `permission_name` for permissions) is either one value or a **non-empty array**; all listed records are deleted in one request.
    - **Responses** are always an array of the created/updated/deleted records. Never combine an array input with `accept: application/vnd.pgrst.object+json` (that Accept value requests exactly one row and fails otherwise).
    - **Duplicate checks still apply**: before a bulk `create_*`, run one `read_*` with an `in.(...)` filter covering all items (e.g. `field_name=in.(description,cost)&table_name=eq.services`).
    - Keep batches reasonable (roughly up to 100 rows or ids per call); split larger sets.
@@ -895,13 +895,13 @@
    - **read_entity** — Query entities (use `filters` to find by `table_name` before creating)
    - **create_entity** — Define a new domain concept
    - **update_entity** — Modify entity metadata or permissions
-   - **delete_entity** — Remove entity (check all dependencies first!). Refused with `90260` while fields of other entities reference it, whatever their `reference_delete_mode`, which governs deleting records rather than the entity: find them with `read_field(filters: "reference_table=eq.<table_name>")`, then delete them or point them at another entity. Refused with `90266` while a rollup of another entity aggregates over it.
+   - **delete_entity** — Remove entity (check all dependencies first!). Refused with `90260` while fields of other entities reference it, whatever their `reference_delete_mode`, which governs deleting records rather than the entity: find them with `read_field(filters: "reference_table=eq.<table_name>")`, then delete them or point them at another entity. Refused with `90266` while a rollup of another entity aggregates over it. It drops the entity's table with all its records.
 
    ### Field Management
    - **read_field** — Query fields (filter by `table_name`; also use to find cross-references before deletion)
    - **create_field** — Add an attribute to an entity, or an aggregate over a child entity (`rollup`)
    - **update_field** — Modify field properties. ⚠️ `format` can only be changed to a format with the same physical database type (`90223` otherwise).
-   - **delete_field** — Remove field (warn user about data loss; require confirmation)
+   - **delete_field** — Remove field and drop its column with all stored values (warn user about data loss; require confirmation). Core fields are refused (`90217`)
 
    ### Module Management
    - **read_module** — Check if a module exists before creating one
@@ -914,23 +914,24 @@
    - **read_permission_hierarchy** / **create_permission_hierarchy** — Set up permission inheritance
    - **read_role** / **create_role** — Manage permission bundles
    - **read_role_permission** / **create_role_permission** — Grant permissions to roles
-   - **update_permission** / **delete_permission** — keyed by `permission_name`; renaming one cascades to every table that names it, and deleting is refused while an entity, module or queue still names it
+   - **update_permission** / **delete_permission** — keyed by `permission_name`; renaming one cascades to every table that names it, and deleting is refused (foreign key violation) while an entity's `view_permission` or `edit_permission`, a module's `view_permission`, or a queue's `view_permission` or `manage_permission` names it; a module's `manage_permission` and `admin_permission` are cleared instead. Role grants, user grants and hierarchy entries of the permission are deleted with it
    - **update_permission_hierarchy** / **delete_permission_hierarchy** — keyed by `id` (`"<including>.<included>"`); `origin` never changes
-   - **update_role** / **delete_role** — keyed by `id`; the `origin` never changes and the `slug` of a `system` role is fixed
+   - **update_role** / **delete_role** — keyed by `id`; the `origin` never changes and the `slug` of a `system` role is fixed. Deleting a role also deletes its user assignments and permission grants; it is refused (`90104`) for the last enabled Administrator, and by a foreign key violation while a module names it as a default role
    - **update_role_permission** / **delete_role_permission** — keyed by `id` (`"<role_id>.<permission_name>"`)
-   - **read_user** / **create_user** / **update_user** / **delete_user** — User identity management
-   - **read_user_role** / **create_user_role** / **update_user_role** / **delete_user_role** — Assign roles to users; `id` is `"<user_id>.<role_id>"`
+   - **read_user** / **create_user** / **update_user** / **delete_user** — User identity management. Deleting a user also deletes their role assignments, direct permission grants and API keys, and is refused (`90104`) for the last enabled Administrator
+   - **read_user_role** / **create_user_role** / **update_user_role** / **delete_user_role** — Assign roles to users; `id` is `"<user_id>.<role_id>"`. Every user already holds role 1, which cannot be removed (`90103`); the Administrator role cannot be removed from the last enabled Administrator (`90104`)
 
    ### Utilities
    - **getCurrentUser** — Get current user's profile and effective permissions. Also returns `api_baseurl` (for webhook/hook endpoints), `semantius_org` (the org slug), and `ui_baseurl` (the web UI base, e.g. `https://<org>.semantius.app`) for building links to the web user interface:
      - List of records for an entity: `{ui_baseurl}/{module_slug}/{table_name}` (e.g. `https://mytest.semantius.app/hiring-starter/job_applications`)
      - A specific record: `{ui_baseurl}/{module_slug}/{table_name}/{id}` (e.g. `https://mytest.semantius.app/hiring-starter/job_applications/719`)
-   - **create_webhook_receiver** / **read_webhook_receiver** / **update_webhook_receiver** / **delete_webhook_receiver** — Inbound HTTP endpoints for external systems (see *Receive Records from an External System*)
+   - **create_webhook_receiver** / **read_webhook_receiver** / **update_webhook_receiver** / **delete_webhook_receiver** — Inbound HTTP endpoints for external systems; deleting a receiver deletes its logs (see *Receive Records from an External System*)
    - **create_webhook_receiver_log** / **read_webhook_receiver_log** / **update_webhook_receiver_log** / **delete_webhook_receiver_log** — The delivery log of a receiver; the receiver writes it, you read it
-   - **generate_api_key** / **list_api_keys** / **delete_api_key** — API keys of the caller (an admin may act for another user); the plaintext key is shown once
+   - **generate_api_key** / **list_api_keys** / **delete_api_key** — API keys of the caller (an admin may act for another user); `generate_api_key` returns `{api_key, key_id}` and the plaintext key is shown once
    - **get_cli_config** / **get_cli_token** — CLI setup text (creates a new API key on every call) and a short-lived JWT for the `x-api-key` header
    - **refresh_schema_cache** — Reloads PostgREST's schema cache; the cache refreshes by itself after structural changes, so call it only when a just-created entity or field is missing from `postgrestRequest` responses
    - **sendEmail** — Sends a transactional email (`to`, `subject`, and `text` or `html`; `from` defaults to the caller's email)
+   - **get_schema** is not a tool of this server: it is the database function `get_schema(p_table_name)`, called with `postgrestRequest` as `POST /rpc/get_schema` and `{"p_table_name": "<table>"}`. It returns the entity's JSON schema (properties, `inherited_from`, `ctype`, `is_core`, `rollup`) and is verbose; a token-optimized tool is planned.
    - **postgrestRequest**: Direct PostgREST API for complex queries, filter-based bulk mutations, or per-row differing updates (typed tools already cover array creates and id-list updates/deletes)
    - **sqlToRest** — Convert SQL to PostgREST format for complex operations
 

@@ -20,7 +20,7 @@ const inputSchema = {
       `Examples: "permission_name=eq.crm:read" (get by key, which is the permission name), ` +
       `"module_id=eq.3" (permissions of one module), "permission_name=ilike.crm:*" (prefix search), ` +
       `"permission_name=in.(crm:read,crm:manage)" (multiple values). ` +
-      `Multiple filters can be combined with "&": "is_active=eq.true&role=eq.admin". ` +
+      `Multiple filters can be combined with "&": "module_id=eq.3&permission_name=ilike.crm:*". ` +
       `Leave empty to retrieve all records (subject to limit).`
     ),
   select: z
@@ -28,7 +28,7 @@ const inputSchema = {
     .optional()
     .describe(
       `Comma-separated list of columns to include in the response. ` +
-      `Examples: "id,name,email" (specific columns), "*" (all columns - default if omitted). ` +
+      `Examples: "permission_name,module_id,description" (specific columns), "*" (all columns - default if omitted). ` +
       `Supports nested resources and related data using PostgREST embedded resource syntax. Composed labels _label and <fk>_label (one per reference or parent field) are read-only, not part of * and must be selected by name. ` +
       `Leave empty to select all columns.`
     ),
@@ -57,8 +57,8 @@ const inputSchema = {
     .optional()
     .describe(
       `Column(s) to sort results by. Use ".desc" suffix for descending order, ".asc" for ascending (default). ` +
-      `Examples: "created_at.desc" (newest first), "name.asc" (alphabetical), ` +
-      `"priority.desc,created_at.asc" (multiple columns). ` +
+      `Examples: "permission_name.asc" (alphabetical), ` +
+      `"module_id.asc,permission_name.asc" (multiple columns). ` +
       `Default order depends on database implementation.`
     ),
   accept: z

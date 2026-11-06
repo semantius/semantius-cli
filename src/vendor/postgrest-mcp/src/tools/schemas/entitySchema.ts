@@ -6,10 +6,10 @@
 import { z } from 'zod/v4'
 
 export const entitySchema = z.looseObject({
-  table_name: z.string().describe('Physical table name in database: lowercase letters, digits and _, starting with a letter or _. Primary key.'),
-  singular: z.string().optional().describe('Singular form of table name (auto-derived from table_name when blank)'),
+  table_name: z.string().describe('Physical table name: lowercase letters, digits and _, starting with a letter or _, and not ending in _ext (reserved). Primary key. Changing it on update renames the physical table.'),
+  singular: z.string().optional().describe('Singular form of table name (on create, auto-derived from table_name when blank)'),
   plural: z.string().optional().describe('Plural form of table name, auto-assigned to table_name'),
-  singular_label: z.string().optional().describe('Human-readable singular noun for UI/reports (e.g. Customer), symmetric with plural_label. When blank it is derived from label_column (service_name becomes "Service Name"), so pass it. It does not set the title of the label field, which is always "Name".'),
+  singular_label: z.string().optional().describe('Human-readable singular noun for UI/reports (e.g. Customer), symmetric with plural_label. On create, when blank it is derived from label_column (service_name becomes "Service Name"), so pass it. It does not set the title of the label field, which is always "Name".'),
   plural_label: z.string().optional().describe('Human-readable plural label for UI/reports (e.g. Customers)'),
   icon_name: z.string().optional().describe('Icon shown for the entity: a Lucide icon name in kebab-case (e.g. "users"; latest Lucide release, names searchable in https://cdn.jsdelivr.net/npm/lucide-static/tags.json) or an icon URL'),
   name_sort: z.string().optional().describe('Sort key that orders entities in navigation'),
@@ -27,7 +27,7 @@ export const entitySchema = z.looseObject({
     .describe(
       'Permission required to INSERT/UPDATE/DELETE from this table, by name. Same foreign key as view_permission: the permission must already exist. A permission an entity names cannot be deleted while the entity stands.'
     ),
-  id_column: z.string().optional().describe('Name of the primary key column, created automatically'),
+  id_column: z.string().optional().describe('Name of the primary key column (default id), created automatically. Set on create and locked afterwards (a change is refused with 90253); omit it on update.'),
   // Optional rather than .default(): this schema also serves update_entity, and
   // a default would send id_type with every update, which the database refuses
   // for any entity whose key type is not the default.
@@ -43,15 +43,15 @@ export const entitySchema = z.looseObject({
   label_parent: z.string().optional()
     .describe('Reference or parent field of this entity whose record label the composed _label is built from (the identity spine). Empty = self-identifying: the composed label is the local label. Not allowed on a junction entity, and the spine must stay acyclic. Changing it re-points the composed label; no data is migrated.'),
   order_column: z.string().optional()
-    .describe('Name of an integer column that stores a fixed row order. Setting it creates the column, and a record inserted without a value gets MAX + 10. Empty = no fixed order.'),
+    .describe('Name of an integer column that stores a fixed row order. Setting it creates an INTEGER NOT NULL column (default 0) on a managed entity, and a record inserted with no value or 0 gets MAX + 10 (10 for the first). Renaming or clearing it drops the old column and its data. Not available for is_a or has_a entities (90249). Empty = no fixed order.'),
   managed: z.boolean().optional().describe('When false, automatic DDL execution for table and field changes is disabled'),
   searchable: z.boolean().optional().describe('Whether table is included in full-text search (auto-computed)'),
   is_child: z.boolean().optional().describe('Whether table has any parent relationships (auto-computed)'),
   edit_mode: z.enum(['auto', 'sidebar', 'modal', 'page']).optional().describe('UI edit mode for records of this table: auto, sidebar, modal, or page'),
   cube_mode: z.enum(['disabled', 'auto']).optional().describe('Cube mode for OLAP cube generation. Default auto.'),
   audit_log: z.boolean().optional().describe('When TRUE, DML operations on this table are logged to audit_record_logs'),
-  computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries, evaluated and stored on every insert and update: each entry derives the named field from the same record before the write. Saving applies the rules to existing records, and a record that cannot take its new value refuses the save (90908). A named field gets ctype computed, and input_type default or readonly becomes disabled. A rule cannot name a rollup field (90907). Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
-  validation_rules: z.array(z.any()).optional().describe('Ordered list of {code, message, jsonlogic, description?} entries; each must evaluate truthy for the write to succeed. Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
+  computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries (name and jsonlogic are required), evaluated and stored on every insert and update: each entry derives the named field from the same record before the write. Saving applies the rules to existing records, and a record that cannot take its new value refuses the save (90908). A named field gets ctype computed, and input_type default or readonly becomes disabled. A rule cannot name a rollup field (90907). Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
+  validation_rules: z.array(z.any()).optional().describe('Ordered list of {code, message, jsonlogic, hint?, description?} entries. code, message and jsonlogic are required; code must be a five-digit class 99 code such as "99001" (otherwise refused with 90905). Each rule must evaluate truthy for the write to succeed. Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
   select_rule: z.record(z.string(), z.any()).optional()
     .describe('JsonLogic rule evaluated per row for the FOR SELECT RLS policy: true = the current user may see the record. Empty = no per-row rule. Setting a rule on an entity that a rollup aggregates over needs include_hidden_rows on that rollup (90269).'),
   entity_type: z.enum(['operational_workflow', 'operational_record', 'catalog', 'junction', 'computed', 'unclassified']).optional()

@@ -12,9 +12,8 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 
 const inputSchema = {
   id: oneOrMany(z.number().int()).describe(
-    `ID of the role to delete, or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. Check its user_role assignments first. ` +
-    `WARNING: This operation is permanent and cannot be undone. ` +
-    `Consider using an update to set a "deleted" flag instead of permanent deletion.`
+    `ID of the role to delete, or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. Deleting a role also deletes all its user assignments and permission grants. ` +
+    `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
     .string()
@@ -30,7 +29,7 @@ export const deleteRoleTool: Tool<typeof inputSchema, undefined> = {
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead.`,
+      `Refused (90104) when this would leave the system without an enabled Administrator, and refused (foreign key violation) while a module names the role as its default_viewer_role_id, default_manager_role_id or default_admin_role_id.`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo }) => {

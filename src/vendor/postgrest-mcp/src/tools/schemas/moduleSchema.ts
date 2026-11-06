@@ -6,14 +6,14 @@
 import { z } from 'zod/v4'
 
 export const moduleSchema = z.looseObject({
-  id: z.number().int().optional().describe('Internal identifier, assigned automatically'),
+  id: z.number().int().optional().describe('Internal identifier, assigned automatically and never changed'),
   module_name: z.string().describe('Unique module name'),
   description: z.string().optional().describe('What the module covers'),
   module_type: z
     .enum(['domain', 'master'])
     .optional()
     .describe(
-      'Module type: domain (normal) or master (promoted for sharing). Read-only.'
+      'Module type: domain (normal, the default) or master (promoted for sharing); any other value is rejected. Normally set when the module is created.'
     ),
   view_permission: z
     .string()

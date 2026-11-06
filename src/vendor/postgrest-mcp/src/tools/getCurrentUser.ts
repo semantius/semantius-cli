@@ -9,7 +9,7 @@ export const getCurrentUserTool: Tool<typeof inputSchema, undefined> = {
   name: 'getCurrentUser',
   options: {
     title: 'Get Current User',
-    description: 'Retrieves comprehensive profile information for the authenticated user, including email, roles, permissions, accessible modules, and user metadata. On success the response data also includes api_baseurl (service origin for hook endpoints: append /hook/{webhook_receiver_id}; null if unresolvable), semantius_org (organization slug from the request hostname, or null) and ui_baseurl (https://{semantius_org}.semantius.app, or null when the org is unknown)',
+    description: 'Retrieves comprehensive profile information for the authenticated user (also creates the user record on first call and updates last_seen), including email, roles, permissions, accessible modules, and user metadata. On success the response data also includes api_baseurl (service origin for hook endpoints: append /hook/{webhook_receiver_id}; null if unresolvable), semantius_org (organization slug from the request hostname, or null) and ui_baseurl (https://{semantius_org}.semantius.app, or null when the org is unknown)',
     inputSchema,
   },
   handler: async (_, { authInfo, request }) => {

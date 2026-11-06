@@ -13,9 +13,8 @@ import { resetSchemaCache } from '../utils/resetSchemaCache.ts'
 
 const inputSchema = {
   id: oneOrMany(z.string()).describe(
-    `ID of the field to delete, or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. ` +
-    `WARNING: This operation is permanent and cannot be undone. ` +
-    `Consider using an update to set a "deleted" flag instead of permanent deletion.`
+    `ID of the field to delete (a string of the form <table_name>.<field_name>, e.g. "tickets.status"), or a non-empty array of IDs to delete several records in one request. If one fails, none is deleted. ` +
+    `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
     .string()
@@ -27,12 +26,11 @@ export const deleteFieldTool: Tool<typeof inputSchema, undefined> = {
   name: 'delete_field',
   options: {
     title: 'Delete Field',
-    description: `Permanently deletes a field record by ID. ` +
+    description: `Permanently deletes a field by ID (<table_name>.<field_name>) and drops its database column with all stored values. ` +
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
-      `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Consider using update operations with a "deleted" or "archived" flag for soft deletes instead. ` +
-      `Refused with 90266 while a rollup of another entity uses the field as its link_field or value_field.`,
+      `WARNING: Be extremely careful to avoid deleting unintended records. ` +
+      `Core fields (id, label and audit columns) cannot be deleted (90217). Refused with 90266 while a rollup field names it as its link_field or as its value_field, and with 90256 while an object of another author is built on the views of an is_a or has_a entity.`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo, request }) => {

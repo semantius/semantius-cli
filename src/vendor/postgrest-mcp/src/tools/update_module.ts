@@ -16,7 +16,8 @@ const inputSchema = {
   data: moduleSchema.partial().describe(
     `Object containing the fields to update and their new values. ` +
     `All fields are optional for partial updates. ` +
-    `Only include fields you want to change - omitted fields remain unchanged.`
+    `Only include fields you want to change - omitted fields remain unchanged. ` +
+    `id cannot be changed; catalog_module_code cannot be changed once set.`
   ),
   accept: z
     .string()

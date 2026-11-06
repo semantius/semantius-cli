@@ -173,8 +173,8 @@ A `.env` beside the config file in use (given with `-c` or `SEMANTIUS_CONFIG_PAT
 
 ```bash
 semantius [options]                             # List all servers and tools
-semantius [options] info <server>               # Show server tools and parameters
-semantius [options] info <server> <tool>        # Show tool schema
+semantius [options] tools [server]              # Show the local servers' tools and parameters
+semantius [options] tools <server> <tool>       # Show tool description and input schema (compact JSON)
 semantius [options] grep <pattern>              # Search tools by glob pattern
 semantius [options] call <server> <tool>        # Call tool (reads JSON from stdin)
 semantius [options] call <server> <tool> <json> # Call tool with inline JSON args
@@ -187,13 +187,13 @@ semantius [options] login                       # Sign in and store a session fo
 semantius [options] logout                      # Revoke and delete the session; clears the current host if it was this one
 ```
 
-Both `info <server> <tool>` and `info <server>/<tool>` work interchangeably. There is no `list`, `help` or `version` subcommand: `list` is rejected with `UNKNOWN_SUBCOMMAND`, and `help` / `version` are read as server names (`SERVER_NOT_FOUND`). Use `-h` / `-v`.
+Both `tools <server> <tool>` and `tools <server>/<tool>` work interchangeably. There is no `list`, `help` or `version` subcommand: `list` is rejected with `UNKNOWN_SUBCOMMAND`, and `help` / `version` are read as server names (`SERVER_NOT_FOUND`). Use `-h` / `-v`.
 
 The ten forms fall into three tiers:
 
 | Tier | Commands | Agent rule |
 |---|---|---|
-| **Working set** | (bare), `info`, `grep`, `call` | Use freely. |
+| **Working set** | (bare), `tools`, `grep`, `call` | Use freely. |
 | **Diagnostics** (read-only) | `whoami`, `ping`, `hosts` | Use freely, and reach for them first when unsure which host, org or identity is in play. |
 | **Changes this machine's state** | `use`, `login`, `logout` | `login` whenever a host needs a sign-in; `use` only for the host the user named to work against; both as "Signing the user in" describes. `logout` never. |
 
@@ -269,40 +269,30 @@ crud/read_entity - Reads and queries entities from the entities table
 
 ### View Server / Tool Details
 ```bash
-$ semantius info crud
-Server: crud
-Tools:
+$ semantius tools crud
+Tools (54):
   create_entity
-    Creates a new entity record in the entities table … Accepts a single object or an array of objects (bulk insert)
     Parameters:
-      • data (object | object[], required) - Data object containing fields for the new entity, or a non-empty array of such objects …
-  read_entity
-    ...
+      • data (object | object[], required)
+      • accept (string, optional)
+  update_entity
+    Parameters:
+      • table_name (string | string[], required)
+      • data (object, required)
+      • accept (string, optional)
+  ...
 
 # Both formats work:
-$ semantius info crud create_entity
-$ semantius info crud/create_entity
+$ semantius tools crud create_entity
+$ semantius tools crud/create_entity
 
-Tool: create_entity
-Server: crud
 Description:
-  Creates a new entity record in the entities table … Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.
+Creates a new entity record in the entities table … Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.
 Input Schema:
-  {
-    "type": "object",
-    "properties": {
-      "data": {
-        "anyOf": [
-          { "type": "object", "properties": { ... } },
-          { "type": "array", "minItems": 1, "items": { "type": "object", "properties": { ... } } }
-        ],
-        "description": "Data object ... or a non-empty array of such objects to create several entity records in one request ..."
-      },
-      "accept": { "type": "string", "description": "..." }
-    },
-    "required": ["data"]
-  }
+{"type":"object","properties":{"data":{"anyOf":[{"type":"object","properties":{ ... }},{"minItems":1,"type":"array","items":{"type":"object","properties":{ ... }}}],"description":"..."},"accept":{"type":"string","description":"..."}},"required":["data"]}
 ```
+
+`semantius tools crud` lists every tool with its parameters for about 1.8k tokens. One tool's schema costs 0.6k to 3.9k.
 
 The `anyOf` is how every bulk-capable parameter appears: `data` on `create_*` is `object | object[]`, `id` on `update_*` / `delete_*` (and `table_name` on the entity tools) is `<scalar> | <scalar>[]`, and the parameter listing renders that union as `object | object[]`.
 
@@ -319,9 +309,9 @@ The `anyOf` is how every bulk-capable parameter appears: `data` on `create_*` is
 
 Always follow this order:
 
-1. **Discover**, `semantius info` to see available servers
-2. **Explore**, `semantius info <server>` to see tools + parameters
-3. **Inspect**, `semantius info <server> <tool>` to get the full JSON schema
+1. **Discover**, `semantius tools` to see the local servers and their tools
+2. **Explore**, `semantius tools <server>` to see tools + parameters
+3. **Inspect**, `semantius tools <server> <tool>` to get the full JSON schema
 4. **Execute**, `semantius call <server> <tool> '<json>'`
 
 ---
@@ -524,9 +514,9 @@ The `crud` tools run inside the CLI and call PostgREST directly, so there is no 
 
 **Control via environment:**
 ```bash
-SEMANTIUS_NO_DAEMON=1 semantius info        # Force a fresh connection every time (Linux/macOS)
+SEMANTIUS_NO_DAEMON=1 semantius tools       # Force a fresh connection every time (Linux/macOS)
 SEMANTIUS_DAEMON_TIMEOUT=120 semantius      # 2-minute idle timeout
-SEMANTIUS_DEBUG=1 semantius info            # Show daemon spawn/reuse decisions on stderr
+SEMANTIUS_DEBUG=1 semantius tools           # Show daemon spawn/reuse decisions on stderr
 ```
 
 ### Other Environment Variables
@@ -555,10 +545,10 @@ SEMANTIUS_DEBUG=1 semantius info            # Show daemon spawn/reuse decisions 
 
 | Command | Servers Connected |
 |---------|-------------------|
-| `semantius info` | All N servers in parallel |
+| `semantius tools` | The local servers; `--all` also contacts the remote servers |
 | `semantius grep "*pattern*"` | All N servers in parallel |
-| `semantius info <server>` | Only the specified server |
-| `semantius info <server> <tool>` | Only the specified server |
+| `semantius tools <server>` | Only the specified server |
+| `semantius tools <server> <tool>` | Only the specified server |
 | `semantius call <server> <tool> '{}'` | Only the specified server |
 
 ---
@@ -577,10 +567,10 @@ The CLI automatically retries transient failures with exponential backoff.
 
 | Error Code | Cause | Fix |
 |------------|-------|-----|
-| `AMBIGUOUS_COMMAND` | `semantius server tool` (missing subcommand) | Use `call server tool` or `info server tool` |
-| `UNKNOWN_SUBCOMMAND` | Used `run`, `list`, etc. | Use `call` or `info` |
-| `SERVER_NOT_FOUND` | Server name not in config | Check `semantius info` for available servers |
-| `TOOL_NOT_FOUND` | Tool not in server | Run `semantius info <server>` to see all tools |
+| `AMBIGUOUS_COMMAND` | `semantius server tool` (missing subcommand) | Use `call server tool` or `tools server tool` |
+| `UNKNOWN_SUBCOMMAND` | Used `run`, `list`, etc. | Use `call` or `tools` |
+| `SERVER_NOT_FOUND` | Server name not in config | Check `semantius tools` for available servers |
+| `TOOL_NOT_FOUND` | Tool not in server | Run `semantius tools <server>` to see all tools |
 | `INVALID_JSON_ARGUMENTS` | Malformed JSON | Use valid JSON with double-quoted keys, pass via stdin to avoid shell escaping |
 | `MISSING_ARGUMENT` | `semantius call server` (no tool) | Add tool name |
 | `MISSING_ENV_VAR` | No host from any source (exit `1`) | "Checking the connection": ask the user which host, then `semantius use <host>` (or `SEMANTIUS_ORG` / `SEMANTIUS_HOST` for automation) |

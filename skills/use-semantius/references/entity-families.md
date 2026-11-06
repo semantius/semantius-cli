@@ -64,7 +64,7 @@ Choosing either type is high-risk: `id_type`, `id_refentity` and an `is_a` prefi
 2. **Create each based entity** with `create_entity`:
    - `id_type: "is_a"` plus its own `id_prefix`, or `id_type: "has_a"` (no prefix);
    - `id_refentity: "<base table_name>"`;
-   - **no** `label_column` or `label_parent`: they come from the base (`90242`);
+   - **no** `label_column` or `label_parent`: they come from the base (overwritten on create, refused on update with `90242`);
    - **no** `order_column` (`90249`).
 
    The entity's storage table is `<table_name>_ext`, so that name must be free too (`90250`).
@@ -72,7 +72,7 @@ Choosing either type is high-risk: `id_type`, `id_refentity` and an `is_a` prefi
 4. **Only then the fields**, each entity's own fields in one `create_field` call, after every level exists. FK targets never change the levels.
    - A field name may not repeat one of the base's or of an entity based on this one (`90243`); siblings (emails and tasks) may share names.
    - An inherited field belongs to its owner and is changed through the owner.
-5. **On an `is_a` entity, set `reference_delete_mode` explicitly on every `reference` and `parent` field**: `restrict` or `clear`, never `cascade` (`90249`). `parent` defaults to `cascade`, so leaving it out fails.
+5. **On an `is_a` entity, set `reference_delete_mode` explicitly on every `reference` and `parent` field**: `restrict`, or `clear` on a `reference`, never `cascade` (`90249`).
 
 The platform creates only `id`, `created_at` and `updated_at` for a based entity. Its label field, and every other field of its base, are the base's.
 
@@ -140,14 +140,16 @@ Never send `id_refentity` on `update_entity` (`90241`). The one change it takes 
 
 | Not available | Error | Instead |
 |---|---|---|
-| `cascade` on a `reference` / `parent` field of an `is_a` entity | `90249` | `restrict` or `clear`, set explicitly |
+| `cascade` on a `reference` / `parent` field of an `is_a` entity | `90249` | `restrict` (or `clear` on a `reference`), set explicitly |
+| Either side of a rollup on an `is_a` / `has_a` entity | `90249` | none (see `rollup-fields.md`) |
 | `order_column` on an `is_a` / `has_a` entity | `90249` | none |
 | Queue mappings (`queue_table_events`) on an `is_a` / `has_a` entity | `90249` | none |
 | RACI process gates (`process_gates`) on an `is_a` / `has_a` entity | `90249` | none |
-| `label_column` / `label_parent` on an `is_a` / `has_a` entity | `90242` | they come from the base |
+| `label_column` / `label_parent` changed on an `is_a` / `has_a` entity (on create they are overwritten) | `90242` | they come from the base |
 | Switching a base to `managed: false` while entities are based on it | `90252` | none |
 | Upsert (`merge-duplicates`, `on_conflict`, `PUT`) on an `is_a` / `has_a` entity | `42P10` | insert, then `PATCH` |
 | Changing `id_type`, `id_refentity`, or an `is_a` prefix | `90233`, `90241`, `90245` | rebuild the entity |
+| A field, rename, root prefix change, rule change or entity delete while a view, function or policy built by hand sits on the family's view | `90256` (the hint names the objects) | drop them, make the change, create them again |
 
 Names generated from a long entity name (`<entity>_ext_<field>_fkey`, `record_write_<entity>`) are truncated at 63 bytes, so keep family table names short.
 

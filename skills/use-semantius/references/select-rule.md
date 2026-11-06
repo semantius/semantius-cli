@@ -12,14 +12,14 @@ Every entity carries a `select_rule` property: a single JsonLogic object that, w
 |---|---|---|---|
 | `select_rule` | `object` (JsonLogic) | `{}` | Per-row predicate that must evaluate truthy for the row to be visible to the caller. Evaluated by the platform's RLS policy on every `SELECT`. |
 
-**Storage and lifecycle.** JSONB object, NOT NULL, default `'{}'::jsonb`; the platform's `select_rule_is_object` constraint rejects anything that isn't a JSON object. When the rule is non-empty, the platform generates a `FOR SELECT` RLS policy function for the table; when the rule is reset to `{}` or the entity is deleted, the policy is dropped. The same `select_rule` predicate is **also** referenced in the `UPDATE` / `DELETE` `USING` clause (AND-ed with `edit_permission` — see *Relationship to `view_permission` / `edit_permission`* below), so it constrains which rows a caller may **modify** as well, not only which it may read. It is absent from `WITH CHECK`, which gates writes on `edit_permission` alone.
+**Storage and lifecycle.** JSONB object, NOT NULL, default `'{}'::jsonb`; the platform's `select_rule_is_object` constraint rejects anything that isn't a JSON object. When the rule is non-empty, the platform generates a `FOR SELECT` RLS policy function for the table; when the rule is reset to `{}` the default `has_permission(view_permission)` policies replace it, and when the entity is deleted the policy is dropped. The same `select_rule` predicate is **also** referenced in the `UPDATE` / `DELETE` `USING` clause (AND-ed with `edit_permission` — see *Relationship to `view_permission` / `edit_permission`* below), so it constrains which rows a caller may **modify** as well, not only which it may read. It is absent from `WITH CHECK`, which gates writes on `edit_permission` alone.
 
-**Return contract.** The JsonLogic expression must return a **boolean**:
+**Return contract.** The JsonLogic expression should return a **boolean**; the platform tests the result for truthiness:
 
 - `true` — the row is visible to the current caller.
 - `false` — the row is filtered out of the result set (the caller can neither read nor see its existence via this entity's table; FK joins from other tables that surface the row will hit the same gate).
 
-A non-boolean result is treated as falsy, so the row is hidden — that fails closed, which is the safer direction, but the rule is malformed and should be corrected.
+A non-boolean result is tested for truthiness: `false`, `0`, `null` and the empty string hide the row; non-zero numbers, non-empty strings, non-empty arrays and objects show it. A rule that returns a non-boolean can therefore show rows by accident, so write it to return a boolean. A rule that raises an error hides the row, and the query still runs.
 
 **Reserved variables** (same vocabulary as `computed_fields` / `validation_rules`, available via `{"var": "$name"}`):
 
@@ -27,10 +27,11 @@ A non-boolean result is treated as falsy, so the row is hidden — that fails cl
 |---|---|---|
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
-| `$user_id` | `integer` | The `users.id` of the authenticated user performing the read. |
-| `$old` | `object` or `null` | Not meaningful on reads; present for vocabulary parity with validation_rules. Do not rely on it in `select_rule`. |
+| `$user_id` | number (`int64`) | The `users.id` of the authenticated user performing the read. |
 
-**Platform-extension operators usable in `select_rule`.** The `has_permission` operator (documented in `jsonlogic.md` § Platform-extension operators) is the canonical way to broaden row visibility for elevated roles. It returns boolean (never throws), which is essential — a throwing operator like `require_permission` would fail per-row during a SELECT scan and is not the right shape for read context. `value_changed` and `$old` are also available syntactically but are not meaningful for read rules.
+There is no `$old` and no `$mode` on a read; do not use them in `select_rule`.
+
+**Platform-extension operators usable in `select_rule`.** The `has_permission` operator (documented in `jsonlogic.md` § Platform-extension operators) is the canonical way to broaden row visibility for elevated roles. It returns boolean (never throws), which is essential — a throwing operator like `require_permission` makes the rule raise an error, and a rule that raises hides the row (the query still runs), so a caller missing the permission would see no rows from that clause even when other clauses of the rule would have admitted them. `value_changed` is not meaningful for read rules.
 
 **Relationship to `view_permission` (reads) and `edit_permission` (writes) — reads REPLACE, writes AND (frozen design decision D8).** The two sides are deliberately asymmetric; do not generalize one onto the other.
 
@@ -122,7 +123,7 @@ A regular caller sees only the rows the first three clauses cover; a `helpdesk:v
 }
 ```
 
-**Use `has_permission`, not `require_permission`, in `select_rule`.** Both are documented in `jsonlogic.md` § Platform-extension operators. The throwing semantics of `require_permission` are wrong for SELECT: a throw per row of a scan would fail the whole query for any caller missing the permission, even when other clauses of the rule would have admitted some rows. `has_permission` returns boolean, which composes correctly with `or` to broaden visibility.
+**Use `has_permission`, not `require_permission`, in `select_rule`.** Both are documented in `jsonlogic.md` § Platform-extension operators. The throwing semantics of `require_permission` are wrong for SELECT: a rule that raises hides the row, so a caller missing the permission loses every row that relied on a clause after the throw, even when other clauses of the rule would have admitted them. `has_permission` returns boolean, which composes correctly with `or` to broaden visibility.
 
 **Out-of-rule alternatives are still useful when in-rule encoding doesn't fit.** Some access patterns are easier or cleaner outside the rule body:
 

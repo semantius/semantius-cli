@@ -27,7 +27,7 @@ export const generateApiKeyTool: Tool<typeof inputSchema, undefined> = {
   options: {
     title: 'Generate API Key',
     description:
-      `Generates a new API key and returns the full plaintext key. ` +
+      `Generates a new API key and returns the JSON object {api_key, key_id}; api_key is the full plaintext key (format uk-<12 hex>-<32 hex>, or sk-... when generated for another user). ` +
       `IMPORTANT: The key is only shown once at creation time and cannot be retrieved later — ` +
       `make sure to copy and store it securely immediately. ` +
       `By default (p_user_id=0) a personal key is generated for the currently authenticated user. ` +

@@ -18,7 +18,7 @@ const inputSchema = {
     `Array items may have different keys; a key omitted from an item takes the column default and an explicit null inserts NULL. All items are inserted in one transaction: if one is rejected, none is created. ` +
     `All fields are defined with their types and descriptions. ` +
     `Required fields must be provided. Optional fields can be omitted. ` +
-    `Auto-generated fields (like IDs) will be populated automatically and should not be included in the input.`
+    `The server fills created_at, updated_at, plural (always table_name), searchable and is_child, and derives singular and singular_label when blank; do not include them.`
   ),
   accept: z
     .string()
@@ -32,7 +32,8 @@ export const createEntityTool: Tool<typeof inputSchema, undefined> = {
     title: 'Create Entity',
     description: `Creates a new entity record in the entities table. ` +
       `This tool validates input data and returns the complete created record. ` +
-      `Auto-generated fields (like IDs) will be populated automatically. ` +
+      `The server fills created_at, updated_at, plural, searchable and is_child, and derives singular and singular_label when blank. ` +
+      `Unless managed is false this creates the physical table with its row-level security policies and its id, label, created_at and updated_at fields (never create them with create_field). Defaults: view_permission public:read, edit_permission admin, id_column id, label_column label. ` +
       `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.`,
     inputSchema,
   },

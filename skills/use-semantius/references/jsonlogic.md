@@ -32,7 +32,7 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 }
 ```
 
-- `name` (string, required) — must reference an existing scalar field on the same entity. The result is written into this field. May reference a JSONB sub-property via dotted notation (e.g. `"metadata.rice"`).
+- `name` (string, required) — the scalar field of the same entity that receives the result. It is not checked when the rule is saved: a rule may name a field that does not exist yet, and it fills the field in once the field is added. May reference a JSONB sub-property via dotted notation (e.g. `"metadata.rice"`).
 - `jsonlogic` (object, required) — evaluated against the merged record (caller payload + values written by earlier `computed_fields` entries).
 - `description` (string, optional) — human note for future readers and agents.
 
@@ -51,6 +51,7 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 - `code` (string, required): a class-99 SQLSTATE code of exactly five characters, `99` followed by three digits (`^99[0-9]{3}$`, e.g. `"99001"`). It is the error code the caller receives and branches on. The platform does not require it to be unique, but by convention codes are assigned sequentially per module starting at `99001` in spec order, so every rule in a module has a distinct code. (The platform's own rules use class-90 codes such as `"90201"` and carry `source_module: "platform"`; never author those.)
 - `name` (string, required by convention): snake_case, unique within the entity. The rule's stable natural key: agents diff and merge rules on `name`, never on `code`.
 - `message` (string, required) — default English text returned to the caller on failure.
+- `hint` (string, optional) — extra text added to the error hint of the failure.
 - `jsonlogic` (object, required) — must evaluate truthy for the record to be valid.
 - `description` (string, optional) — human note explaining *why* this rule exists.
 
@@ -60,6 +61,10 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 2. **Validate pass.** Iterate `validation_rules` in array order against the post-compute record. A rule passes when the result is truthy. The first rule that fails stops the write; the rules after it are not evaluated. A falsy rule raises its own `code` as the SQLSTATE, with its `message` as the error text. If `jsonlogic` throws instead (`throw_error`, `require_permission`), the caller gets that error's own SQLSTATE and message. Except for platform `90xxx` errors, the error's hint also names the entity (`hint.entity`) and the rule's code (`hint.rule`).
 3. **Atomicity.** Compute and validate run inside the same transaction as the write — either the record lands with all derivations applied and all rules passing, or nothing changes.
 4. **DELETE.** Both passes run against the row being deleted: the record and `$old` are the same row, so `value_changed` is `false` for every field. Computed results are discarded, but a failing rule or a throwing computed field aborts the delete. Every rule therefore also runs on delete unless it is guarded with `$mode` (below): a rule that reads `$today`, `$now` or `$user_id` ("the due date must be in the future") can refuse the delete of an old row.
+
+**Saving `computed_fields` recalculates existing records.** A validation rule added later is not applied retroactively; it checks later writes only. Adding or changing `computed_fields` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with `90908`, whose `record_id` and `problem` say why. The pass moves no `updated_at` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps `$user_id` or `$now` unconditionally moves on this pass, as on any update; make such a stamp insert-only: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.created_by"}]}`. Removing a rule keeps the last values as ordinary data.
+
+**Derived marker.** A field a rule names gets `ctype: "computed"`, and its `input_type` `default` or `readonly` becomes `disabled` (and stays `disabled` when the rule goes). The label column keeps `ctype: "label"`. Rules match fields by name and a rename does not rewrite them, so a renamed field loses the marker: update the rule too. A rule cannot name a rollup field (`90907`), and a computed field cannot become a rollup (`90261`); a value aggregated from child records is a rollup (see `rollup-fields.md`).
 
 During an UPDATE, rules run before `updated_at` is refreshed, so `updated_at` still holds the stored value unless the caller sent one.
 
@@ -71,7 +76,7 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 |---|---|---|
 | `$today` | `date` | Server date at evaluation time. |
 | `$now` | `date-time` | Server timestamp at evaluation time. |
-| `$user_id` | `integer` | The `users.id` of the authenticated user performing the write (`null` for system writes). |
+| `$user_id` | number (`int64`) | The `users.id` of the authenticated user performing the write (`null` for system writes). |
 | `$old` | `object` or `null` | Stored row as JSON on UPDATE and DELETE; `null` on INSERT. Use to express transition rules ("the workflow state cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
 | `$mode` | `string` | The operation being evaluated: `"insert"`, `"update"` or `"delete"`. Always present. Use it to gate one operation without constraining the others. |
 
@@ -127,7 +132,7 @@ Inserts and updates pass untouched; a delete passes only for holders of `sales:d
 
 #### Platform-extension operators
 
-In addition to standard JsonLogic operators, the platform provides four extension operators usable in `computed_fields`, `validation_rules`, `select_rule` (see `select-rule.md`), and `input_type_rule`:
+In addition to standard JsonLogic operators, the platform provides extension operators usable in `computed_fields`, `validation_rules`, `select_rule` (see `select-rule.md`), and `input_type_rule`:
 
 | Operator | Shape | Returns | Use in |
 |---|---|---|---|
@@ -243,8 +248,8 @@ Three JsonLogic operators bind values into the data context **before** the rest 
 | Operator | Shape | Effect |
 |---|---|---|
 | `let` | `{"let": ["<name>", <value-expression>, <body-expression>]}` | Evaluates `<value-expression>`, binds it under `<name>` for the duration of `<body-expression>`, returns the body's result. Nest `let` calls to bind several names. Useful for naming a sub-expression you reference more than once. |
-| `set_record` | `{"set_record": ["<name>", "<entity_name>", <id-expression>, <body-expression>]}` | Resolves `<id-expression>` against the data context, calls `get_record_by_id(<entity_name>, <id>)`, binds the resulting row (JSONB object, or `null` when no row matches) under `<name>` for the duration of `<body-expression>`, returns the body's result. Inside the body, `{"var": "<name>.<column>"}` reads any column of the loaded row, exactly like `$old.<column>` for the post-write record. |
-| `throw_error` | `{"throw_error": "<message>"}` | Raises a PostgreSQL exception with SQLSTATE `99000` and the supplied message. The platform surfaces the message back to the caller verbatim, bypassing the rule's static `message` field. Place inside an `if` so the throw is conditional. |
+| `set_record` | `{"set_record": ["<name>", "<entity_name>", <id-expression>, <body-expression>]}` | Resolves `<id-expression>` against the data context, calls `get_record_by_id(<entity_name>, <id>)`, binds the resulting row (JSONB object, or `null` when no row matches or the caller may not read the row) under `<name>` for the duration of `<body-expression>`, returns the body's result. Inside the body, `{"var": "<name>.<column>"}` reads any column of the loaded row, exactly like `$old.<column>` for the post-write record. |
+| `throw_error` | `{"throw_error": "<message>"}` | Raises a PostgreSQL exception with SQLSTATE `99000` and the supplied message. A long form `{"throw_error": [message, code, [name, value, ...]]}` takes its own class-99 `code` (`90911` otherwise) and a flat list of named parameters (`90914` if nested; names `90912` and `90913` are reserved). The platform surfaces the message back to the caller verbatim, bypassing the rule's static `message` field. Place inside an `if` so the throw is conditional. |
 
 `let` and `set_record` are evaluated before the bulk argument-evaluation pass inside `evaluate_json_logic`, so the body sees an augmented data context. The bindings disappear when the body returns.
 
@@ -381,7 +386,7 @@ In `computed_fields`, this writes the margin into a derived field while throwing
 
 #### Null-handling and error shape
 
-`get_record_by_id` returns `NULL` when no row matches (the FK is null, or the id points at a deleted row). Inside `set_record`'s body:
+`get_record_by_id` returns `NULL` when no row matches (the FK is null, or the id points at a deleted row) and also when the caller may not read the row (`view_permission` and the entity's `select_rule` apply), so a parent the writer cannot read looks like a missing parent. Inside `set_record`'s body:
 
 - `{"var": "<name>"}` returns `null` (the row is null).
 - `{"var": "<name>.<column>"}` returns `null` (you're reading a column off a null object).
@@ -407,14 +412,14 @@ A `throw_error` raises a SQL exception, which the platform surfaces back with SQ
 When `create_entity` / `update_entity` accepts these properties, the platform verifies:
 
 - Both values are arrays (objects of any other shape are rejected).
-- Every `computed_fields[].name` resolves to an existing field on the entity.
+- Every `computed_fields[]` entry carries a `name` and a `jsonlogic`, and none names a rollup field (`90907`). The field need not exist yet: a rule may name a field that is added later, and it fills the field in then.
 - Every `validation_rules[].code` is a class-99 code matching `^99[0-9]{3}$`; anything else (`"9900A"`, `"990010"`, a snake_case string) is rejected with `90905` (`validation_rules[i] on <table> must carry a class 99 code`). Uniqueness is not enforced; keep `name` unique within the entity and `code` distinct within the module by convention.
 - Extra keys on a rule entry (such as `name`) are preserved as written.
-- Every `jsonlogic` expression parses; malformed expressions are rejected.
+- A `jsonlogic` expression is stored as written. Its operators are checked when it is evaluated: an unknown operator raises `90910` on the first write that reaches it.
 
-JsonLogic-level column references (`{"var": "<name>"}`) are NOT checked against the entity's field list at parse time when they live under a `set_record` / `let` binding — the binding name is known only at evaluation time. A typo in `{"var": "order.staus"}` (a missing `t`) returns `null` at runtime rather than failing the deploy. Test cross-entity rules end-to-end before relying on them; the platform catches grosser malformations (the operator name itself, the binding name shape) at parse time.
+JsonLogic-level column references (`{"var": "<name>"}`) are NOT checked against the entity's field list at parse time when they live under a `set_record` / `let` binding — the binding name is known only at evaluation time. A typo in `{"var": "order.staus"}` (a missing `t`) returns `null` at runtime rather than failing the deploy. Test cross-entity rules end-to-end before relying on them.
 
-Errors at evaluation time point at the offending entry's index so authoring agents can correct in place.
+Errors at evaluation time name the entity and the rule (`hint.entity`, `hint.rule`) or the computed field (`hint.field`), so authoring agents can correct in place.
 
 #### Testing a rule
 
@@ -511,7 +516,7 @@ Every field carries an optional `input_type_rule` property: a JsonLogic object t
 
 **Fallback.** If the rule is empty (`{}`), if the expression throws, or if it returns a value that is not a valid `input_type`, the static `input_type` column is used. This is fail-open in the UI-mode sense: a malformed rule degrades to the declared baseline rather than locking or hiding the field unexpectedly.
 
-**Where it runs.** Evaluated **client-side against the current form record** at render time. Server-side reads / writes still respect the field's actual nullability and validation rules — `input_type_rule` is purely a UI control. A field rendered `hidden` is still writable via API; a field rendered `readonly` is still mutable via API. Anything that must be enforced server-side belongs in `validation_rules`, not `input_type_rule`.
+**Where it runs.** Evaluated **client-side against the current form record** at render time. Server-side reads / writes still respect the field's actual nullability and validation rules — `input_type_rule` is a UI control that never blocks a write. One exception: a non-empty rule removes the database check of `input_type: "required"` for that field, because the rule can turn `required` off per record, so `required` is then enforced by the client only. A field rendered `hidden` is still writable via API; a field rendered `readonly` is still mutable via API. Anything that must be enforced server-side belongs in `validation_rules`, not `input_type_rule`.
 
 **Reserved variables** (where the client supplies them):
 
@@ -519,7 +524,7 @@ Every field carries an optional `input_type_rule` property: a JsonLogic object t
 |---|---|---|
 | `$today` | `date` | Client date at evaluation time. |
 | `$now` | `date-time` | Client timestamp at evaluation time. |
-| `$user_id` | `integer` | The `users.id` of the user viewing the form. |
+| `$user_id` | number (`int64`) | The `users.id` of the user viewing the form. |
 
 `$old` is not meaningful here (there's no prior-row context client-side); do not reference it in `input_type_rule`.
 
@@ -590,4 +595,4 @@ semantius call crud update_field '{
 }'
 ```
 
-**Risk.** Adding an `input_type_rule` is **low-risk** — it changes UI behavior only, no data effect, fails open. Modifying or removing one is **medium-risk** in the user-experience sense: forms suddenly show, hide, or unlock a field, which can surprise users mid-workflow. Coordinate the change with whoever owns the forms.
+**Risk.** Adding an `input_type_rule` is **low-risk** — it changes UI behavior only, fails open, with one data effect: on a `required` field it stops the database from refusing a missing value. Modifying or removing one is **medium-risk** in the user-experience sense: forms suddenly show, hide, or unlock a field, which can surprise users mid-workflow. Coordinate the change with whoever owns the forms.

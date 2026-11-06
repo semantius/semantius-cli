@@ -17,10 +17,10 @@ const inputSchema = {
       `PostgREST query filter string to specify which records to retrieve. ` +
       `Uses PostgREST operators: eq (equals), neq (not equals), gt (greater than), gte (>=), lt (<), lte (<=), ` +
       `like (pattern match), ilike (case-insensitive pattern), in (list), is (null check). ` +
-      `Examples: "table_name=eq.1" (get by ID), "email=eq.user@example.com" (exact match), ` +
-      `"is_active=eq.true" (boolean), "name=ilike.*smith*" (case-insensitive search), ` +
-      `"id=in.(1,2,3)" (multiple values). ` +
-      `Multiple filters can be combined with "&": "is_active=eq.true&role=eq.admin". ` +
+      `Examples: "table_name=eq.customers" (one entity), "module_id=eq.3" (entities of a module), ` +
+      `"managed=eq.false" (boolean), "singular_label=ilike.*cust*" (case-insensitive search), ` +
+      `"table_name=in.(customers,orders)" (multiple values). ` +
+      `Multiple filters can be combined with "&": "module_id=eq.3&managed=eq.true". ` +
       `Leave empty to retrieve all records (subject to limit).`
     ),
   select: z
@@ -28,7 +28,7 @@ const inputSchema = {
     .optional()
     .describe(
       `Comma-separated list of columns to include in the response. ` +
-      `Examples: "id,name,email" (specific columns), "*" (all columns - default if omitted). ` +
+      `Examples: "table_name,singular_label,module_id" (specific columns), "*" (all columns - default if omitted). ` +
       `Supports nested resources and related data using PostgREST embedded resource syntax. Composed labels _label and <fk>_label (one per reference or parent field) are read-only, not part of * and must be selected by name. ` +
       `Leave empty to select all columns.`
     ),
@@ -57,8 +57,8 @@ const inputSchema = {
     .optional()
     .describe(
       `Column(s) to sort results by. Use ".desc" suffix for descending order, ".asc" for ascending (default). ` +
-      `Examples: "created_at.desc" (newest first), "name.asc" (alphabetical), ` +
-      `"priority.desc,created_at.asc" (multiple columns). ` +
+      `Examples: "updated_at.desc" (most recently changed first), "table_name.asc" (alphabetical), ` +
+      `"module_id.asc,table_name.asc" (multiple columns). ` +
       `Default order depends on database implementation.`
     ),
   accept: z
