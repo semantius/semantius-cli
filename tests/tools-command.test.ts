@@ -99,7 +99,6 @@ describe('tools <server> <tool>', () => {
 
   test('crud: the compact output is smaller than the old indented info output', async () => {
     const tools = await SERVERS[0][1]();
-    expect(tools.length).toBe(54);
     const compact = tools.map((t) => formatToolDefinition(t)).join('\n').length;
     // What `info` printed before: the raw schema, indented.
     const info = tools

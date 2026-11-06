@@ -354,7 +354,10 @@ describe('call crud postgrestRequest --stream (end to end)', () => {
   });
 
   test('SEMANTIUS_STREAM=1 streams postgrestRequest and is ignored for other tools', async () => {
-    reply = () => new Response('[{"id":1}]');
+    // Real PostgREST answers application/json; a bare string body would be
+    // text/plain, which the typed tools now (correctly) return as text.
+    reply = () =>
+      new Response('[{"id":1}]', { headers: { 'Content-Type': 'application/json' } });
     const raw = await runCli(['call', 'crud', 'postgrestRequest', '{"method":"GET","path":"/t"}'], {
       env: { SEMANTIUS_STREAM: '1' },
     });

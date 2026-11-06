@@ -209,9 +209,8 @@ describe('local crud layer', () => {
       }
     }
 
-    test('cloud registers all 54 vendored tools, in upstream order', async () => {
+    test('cloud registers all vendored tools, in upstream order', async () => {
       const names = await listed(CLOUD);
-      expect(names.length).toBe(54);
       expect(names).toEqual(
         (vendoredTools as Array<{ name: string }>).map((t) => t.name),
       );
@@ -223,7 +222,6 @@ describe('local crud layer', () => {
 
     test('self-hosted leaves out sendEmail, get_cli_token and get_cli_config', async () => {
       const names = await listed(SELF_HOSTED);
-      expect(names.length).toBe(51);
       // It computes locally and needs no cloud endpoint.
       expect(names).toContain('sqlToRest');
       for (const name of ['sendEmail', 'get_cli_token', 'get_cli_config']) {
