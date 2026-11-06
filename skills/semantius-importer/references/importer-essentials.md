@@ -49,8 +49,8 @@ Every `crud` tool returns a JSON **array** by default — including `create_*`/`
 
 ```bash
 semantius call crud create_module '{"data": {"module_name": "CRM", "module_slug": "crm", "description": "Customer Relationship Management"}}'
-semantius call crud create_permission '{"data": [{"permission_name": "crm:read", "description": "Read CRM data", "module_id": <id>}, {"permission_name": "crm:manage", "description": "Manage CRM data", "module_id": <id>}]}'
-semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "crm:read", "manage_permission": "crm:manage"}}'
+semantius call crud create_permission '{"data": [{"permission_name": "crm:read", "description": "Read CRM data", "module_id": <id>}, {"permission_name": "crm:manage", "description": "Manage CRM data", "module_id": <id>}, {"permission_name": "crm:admin", "description": "Administer CRM settings", "module_id": <id>}]}'
+semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "crm:read", "manage_permission": "crm:manage", "admin_permission": "crm:admin", "access_scope": "advanced"}}'
 ```
 
 - `module_slug`: always pass it, `^[a-z0-9][a-z0-9_-]*$`. Permission names are always `<module_slug>:<action>` (slug, never display name).
@@ -60,8 +60,10 @@ semantius call crud update_module '{"id": <module_id>, "data": {"view_permission
 ### Entity
 
 ```bash
-semantius call crud create_entity '{"data": {"table_name": "products", "singular_label": "Product", "plural_label": "Products", "description": "...", "label_column": "product_name", "module_id": 3, "view_permission": "catalog:read", "edit_permission": "catalog:manage"}}'
+semantius call crud create_entity '{"data": {"table_name": "products", "singular_label": "Product", "plural_label": "Products", "description": "...", "label_column": "product_name", "module_id": 3, "entity_type": "operational_record", "view_permission": "catalog:read", "edit_permission": "catalog:manage"}}'
 ```
+
+- `entity_type`, `view_permission` and `edit_permission` come from the entity's class and write tier; the rules are in `use-semantius` (`data-modeling.md` → "Classifying an entity", `rbac.md` → "Choosing an entity's permissions"). Never leave the class at `unclassified`.
 
 - `table_name` is **plural snake_case**. `module_id` is required and non-null. `singular_label`/`plural_label` are grammatically symmetric bare nouns ("Product"/"Products", never "Product Name").
 - **Auto-created on `create_entity`** — never `create_field` these: `id`, `label`, the `<label_column>` field, `created_at`, `updated_at`. `_label` and `<fk>_label` are read-time projections (absent from the fields catalog, never writable, never import targets). The computed `label` is likewise **not a PostgREST column**: `select=label` fails with `42703` (verified live) — to verify labels, select the `<label_column>` field instead.

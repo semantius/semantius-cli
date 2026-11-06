@@ -2,6 +2,10 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Imported entities are classified and permissioned through use-semantius
+
+2026-11-06. Asked for by Martin Amm: a created module gets `<slug>:read`, `<slug>:manage` and `<slug>:admin` with `access_scope: advanced`, and a created entity carries `entity_type`, `view_permission` and `edit_permission` as `use-semantius` gives them. The class is chosen without a question and named in the summary. The file format is unchanged; `version` stays `3.1`.
+
 ## Tool schemas are read with `semantius tools`
 
 2026-11-06. Asked for by Martin Amm: the skill reads a tool's parameters with `semantius tools <server> [<tool>]`, which prints the description and compact input schema without the server instructions, and no longer uses `semantius info`. The file format is unchanged; `version` stays `3.1`. The essentials file and the setup check (`semantius tools utils` lists `get_csvschema`) use the new command.

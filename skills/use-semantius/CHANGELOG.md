@@ -1,0 +1,7 @@
+# use-semantius CHANGELOG
+
+This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
+
+## Entity classification and write permissions live here
+
+2026-11-06. Asked for by Martin Amm: `use-semantius` owns the whole concept of classifying an entity and of giving it the right permissions, so an entity built without the architect, analyst or modeler is classified and permissioned correctly. `data-modeling.md` gains "Classifying an entity" (the six classes, the derivation ladder, the class-to-write-tier table, junction rules, reclassification, the read-back check); `rbac.md` gains "Choosing an entity's permissions" (write tier to `view_permission` and `edit_permission`, for hand-built and spec-deployed modules) and its setup steps create `<slug>:admin`, an admin role and `access_scope: advanced`. Every `create_entity` example and the creation-order steps carry `entity_type`, `view_permission` and `edit_permission`. The pipeline skills reference these sections. The class is chosen without a question and named in the summary. `rbac.md` also gains "Restricted steps (gates)": a module with a restricted step is `gated` (or stays `raci`), each gate is a `<slug>:<verb>_<noun>` permission included by `<slug>:admin`, and a validation rule checks it with `has_permission`. The file format is unchanged; `version` stays `3.1`.

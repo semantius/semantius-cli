@@ -54,6 +54,8 @@ import { deleteApiKeyTool } from './src/tools/delete_api_key.ts'
 import { getCliConfigTool } from './src/tools/get_cli_config.ts'
 import { getCliTokenTool } from './src/tools/get_cli_token.ts'
 import { sendEmailTool } from './src/tools/send_email.ts'
+import { generateModuleDiagramTool } from './src/tools/generate_module_diagram.ts'
+import { generateSpecTool } from './src/tools/generate_spec.ts'
 
 export const tools = [
   getCurrentUserTool,
@@ -110,4 +112,6 @@ export const tools = [
   getCliConfigTool,
   getCliTokenTool,
   sendEmailTool,
+  generateModuleDiagramTool,
+  generateSpecTool,
 ]

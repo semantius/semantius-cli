@@ -64,6 +64,7 @@ Choosing either type is high-risk: `id_type`, `id_refentity` and an `is_a` prefi
 2. **Create each based entity** with `create_entity`:
    - `id_type: "is_a"` plus its own `id_prefix`, or `id_type: "has_a"` (no prefix);
    - `id_refentity: "<base table_name>"`;
+   - its own `entity_type`, `view_permission` and `edit_permission`: the class and the write tier belong to each entity, never to the family, and the key type says nothing about them (`data-modeling.md` → "Classifying an entity"; a family base is never `catalog`);
    - **no** `label_column` or `label_parent`: they come from the base (overwritten on create, refused on update with `90242`);
    - **no** `order_column` (`90249`).
 
@@ -81,20 +82,20 @@ The platform creates only `id`, `created_at` and `updated_at` for a based entity
 semantius call crud create_entity '{"data": [
   {"table_name": "business_partners", "singular_label": "Business Partner", "plural_label": "Business Partners",
    "label_column": "partner_name", "id_type": "typeid", "id_prefix": "bp",
-   "module_id": 7, "view_permission": "crm:read", "edit_permission": "crm:manage"},
+   "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"},
   {"table_name": "activities", "singular_label": "Activity", "plural_label": "Activities",
    "label_column": "subject", "id_type": "typeid", "id_prefix": "act",
-   "module_id": 7, "view_permission": "crm:read", "edit_permission": "crm:manage"}
+   "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"}
 ]}'
 
 # Level 1: entities based on level 0, one call; no label_column / label_parent / order_column
 semantius call crud create_entity '{"data": [
   {"table_name": "customers", "singular_label": "Customer", "plural_label": "Customers",
    "id_type": "has_a", "id_refentity": "business_partners",
-   "module_id": 7, "view_permission": "crm:read", "edit_permission": "crm:manage"},
+   "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"},
   {"table_name": "emails", "singular_label": "Email", "plural_label": "Emails",
    "id_type": "is_a", "id_prefix": "eml", "id_refentity": "activities",
-   "module_id": 7, "view_permission": "crm:read", "edit_permission": "crm:manage"}
+   "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"}
 ]}'
 
 # Then fields: each entity's OWN fields only

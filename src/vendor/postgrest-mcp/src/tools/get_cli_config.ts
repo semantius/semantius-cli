@@ -1,11 +1,10 @@
 /**
  * Get CLI Config Tool
- * Generates a fresh API key for the current user and returns markdown
- * configuration instructions for the Semantius CLI.
+ * Returns markdown configuration instructions for the Semantius CLI.
+ * Does not create an API key; use generate_api_key for that.
  */
 
 import type { Tool } from '../../types.ts'
-import { makePostgrestRequest } from '../utils/postgrest.ts'
 import { handleToolError } from '../utils/errorHandler.ts'
 import { getSemantiusOrg } from '../utils/semantiusOrg.ts'
 
@@ -17,33 +16,25 @@ export const getCliConfigTool: Tool<typeof inputSchema, undefined> = {
     title: 'Get CLI Config',
     description:
       `Returns markdown-formatted configuration instructions for the Semantius CLI, ` +
-      `including a freshly generated API key and the user's organization slug. ` +
-      `The API key is only shown once, so store it securely.`,
+      `including the user's organization slug. Read-only: it does not create an API key. ` +
+      `Call generate_api_key to get one.`,
     inputSchema,
   },
-  handler: async (_, { authInfo, request }) => {
+  handler: async (_, { request }) => {
     try {
-      const result = await makePostgrestRequest({
-        path: '/rpc/generate_api_key',
-        method: 'POST',
-        body: { p_user_id: 0, p_description: 'Semantius CLI' },
-        token: authInfo?.token,
-        apiBaseUrl: authInfo?.apiBaseUrl,
-      })
-
-      const apiKey = result.response.data
       const org = getSemantiusOrg(request)
 
       const markdown =
-        `**A new API key has been generated for the Semantius CLI. ` +
-        `It is only shown once below and cannot be retrieved later, ` +
-        `so copy and store it securely immediately.**\n\n` +
         `Use the following values to configure your Semantius CLI:\n\n` +
-        `SEMANTIUS_API_KEY=${apiKey}\n` +
-        `SEMANTIUS_ORG=${org}\n\n` +
-        `You can store them in your environment with the following commands\n` +
-        `export SEMANTIUS_API_KEY=${apiKey}\n` +
-        `export SEMANTIUS_ORG=${org}\n`
+        `SEMANTIUS_ORG=${org}\n` +
+        `SEMANTIUS_API_KEY=<your API key>\n\n` +
+        `This tool does not create an API key. To get one, call the ` +
+        `\`generate_api_key\` tool: it returns \`{api_key, key_id}\` and the ` +
+        `plaintext key is shown only once, so store it securely. ` +
+        `Use \`list_api_keys\` and \`delete_api_key\` to review or remove keys.\n\n` +
+        `You can store the values in your environment with the following commands\n` +
+        `export SEMANTIUS_ORG=${org}\n` +
+        `export SEMANTIUS_API_KEY=<your API key>\n`
 
       return {
         content: [

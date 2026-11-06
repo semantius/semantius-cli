@@ -74,14 +74,62 @@ The names are the same in every install order: when `ats-candidate-crm` installs
 
 ---
 
+## Choosing an entity's permissions
+
+An entity's `view_permission` and `edit_permission` follow from its class (`data-modeling.md` → "Classifying an entity"). The class gives the **write tier**, the permission level that gates INSERT, UPDATE and DELETE. Choose the class first, then take the permissions from this section, and send all three in the `create_entity` payload.
+
+| Write tier | Entities | Hand-built module (module-wide) | Spec-deployed module (per entity) |
+|---|---|---|---|
+| `:read` | `computed` | `view_permission = <slug>:read`; omit `edit_permission` (it defaults to `admin`) | `view_permission = <owner>:read_<entity>`; omit `edit_permission` |
+| `:manage` | `operational_record`, `operational_workflow`, `junction` | `view_permission = <slug>:read`, `edit_permission = <slug>:manage` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:manage` |
+| `:admin` | `catalog`; a `junction` whose parent legs are all `catalog` | `view_permission = <slug>:read`, `edit_permission = <slug>:admin` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:admin` |
+
+- **Hand-built modules** (the steps below) have three module-wide permissions, `<slug>:read`, `<slug>:manage` and `<slug>:admin`, and `access_scope: advanced`, or `gated` when the module has a restricted step (see "Restricted steps (gates)" below). `basic` has no admin level, so a module with a `catalog` entity is never `basic`. The entity's `edit_permission` must already exist when `create_entity` runs.
+- **Spec-deployed modules** (`semantius-modeler`) keep the per-entity permissions above, derived from the same tier; the bundle table above lists what each bundle includes.
+- **A `junction`** follows its parent legs: `:manage`, or `:admin` only when every leg is a `catalog` entity.
+- **Entities with a restricted step** (`operational_workflow`) stay at `:manage`; the restriction is a gate, see "Restricted steps (gates)" below. A narrow tier (an external participant who writes one entity without `<slug>:manage`) exists only in the per-entity shape.
+- **Direct creation acts as the master** of every entity it creates: it writes the entity's own read and write permissions and nothing for entities another module masters.
+- **After a reclassification** (`update_entity` on `entity_type`), update the entity's `edit_permission` to the new tier in the same call (see "Update entity-level permission gates" below).
+
+### Restricted steps (gates)
+
+A **gate** is a step that only some users may take: moving a record into an authorization state (`approved`, `signed`, `released`, `published`, `posted`, `committed`), closing or voiding a record that has contractual or financial weight, or creating a record that is restricted. An entity with a gate is an `operational_workflow`. Its `edit_permission` stays at its write tier (`<slug>:manage`), because everyone who edits the record still needs it; the gate is a separate permission plus a validation rule. A step that every holder of `<slug>:manage` may take is not a gate.
+
+| Module situation | `access_scope` | What the gate is |
+|---|---|---|
+| No gate | `advanced` | Nothing to enforce |
+| One or more gates, no RACI matrix | `gated` | One permission per gate, held by the admin role: `<slug>:admin` includes every gate |
+| The module is already `raci` | stays `raci` | The new gate is created like a `gated` one; the RACI matrix names its Accountable role, and the direct path never writes or changes that matrix (tell the user the gate has no Accountable role yet and that the matrix is extended through `semantius-architect`) |
+
+To add a gate to a module:
+
+1. **Name it** `<slug>:<verb>_<noun>`: the verb names the step and the noun is the singular record (`spend:approve_purchase_request`, `spend:sign_contract`, `spend:release_budget`, `spend:post_invoice`, `spend:close_contract`, `spend:void_invoice`, `spend:open_period`, `spend:issue_po`). `create_permission` it in the same call as the baseline permissions, or alone after a `read_permission`.
+2. **Hold it through admin:** `create_permission_hierarchy` with `<slug>:admin` including the gate. Roles keep holding `<slug>:read`, `<slug>:manage` and `<slug>:admin` only, never the gate itself.
+3. **Set the access level:** `update_module` with `access_scope: gated`, unless it is already `raci`.
+4. **Enforce it with a validation rule on the entity** (`validation_rules` on `create_entity` or `update_entity`), checked with `has_permission` so the rule's own `code` and `message` surface; the message names who may take the step ("Only an admin can approve a purchase request"). A transition into a state:
+
+   ```json
+   {"if": [
+     {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "approved"]}]},
+     {"has_permission": "spend:approve_purchase_request"},
+     true]}
+   ```
+
+   A restricted create tests `$old` for `null` instead: `{"if": [{"==": [{"var": "$old"}, null]}, {"has_permission": "<gate>"}, true]}`. Operators and the rule shape (`code`, `name`, `message`, `jsonlogic`) are in `jsonlogic.md`.
+5. **Name the gate in the summary** so the user knows who can take the step (the admin role) and can ask for another holder.
+
+Create the gate permission before the rule that names it: a `has_permission` argument must exist. The direct path marks no gate as high risk and writes no `raci` data.
+
+---
+
 ## Step-by-Step: Full RBAC Setup for a New Module
 
-Every step below writes a **set** of records of one kind, so each is **one** call with an array in `data` (Golden Rule 7): both permissions in one `create_permission`, both roles in one `create_role`, both grants in one `create_role_permission`. Duplicate-check each set with one `read_*` using an `in.(...)` filter first (`read_permission '{"filters": "permission_name=in.(crm:read,crm:manage)"}'`). A permission is keyed by its `permission_name`, so every reference to it (hierarchy relationships, grants, module wiring) writes the name directly; only roles and users carry a numeric `id`, and those ids come from that read, never from the create response.
+Every step below writes a **set** of records of one kind, so each is **one** call with an array in `data` (Golden Rule 7): both permissions in one `create_permission`, both roles in one `create_role`, both grants in one `create_role_permission`. Duplicate-check each set with one `read_*` using an `in.(...)` filter first (`read_permission '{"filters": "permission_name=in.(crm:read,crm:manage,crm:admin)"}'`). A permission is keyed by its `permission_name`, so every reference to it (hierarchy relationships, grants, module wiring) writes the name directly; only roles and users carry a numeric `id`, and those ids come from that read, never from the create response.
 
 ### 1. Create Permissions
 
 ```bash
-# Baseline: always create both read and manage — in ONE call
+# Baseline: always create read, manage and admin — in ONE call
 semantius call crud create_permission '{
   "data": [
     {
@@ -93,23 +141,30 @@ semantius call crud create_permission '{
       "permission_name": "crm:manage",
       "description": "Create, update, and delete CRM data",
       "module_id": 3
+    },
+    {
+      "permission_name": "crm:admin",
+      "description": "Maintain CRM settings and reference data",
+      "module_id": 3
     }
   ]
 }'
 ```
 
-### 2. Set Up Permission Hierarchy (optional but recommended)
+### 2. Set Up Permission Hierarchy (recommended)
 
-Make `crm:manage` implicitly include `crm:read`, so assigning `manage` is sufficient (with an admin tier, both relationships — `admin → manage` and `manage → read` — go in one call):
+Make `crm:admin` include `crm:manage` and `crm:manage` include `crm:read`, so assigning `admin` is sufficient (both relationships go in one call):
 
 ```bash
 semantius call crud create_permission_hierarchy '{
-  "data": {
-    "including_permission_name": "crm:manage",
-    "included_permission_name": "crm:read"
-  }
+  "data": [
+    {"including_permission_name": "crm:manage", "included_permission_name": "crm:read"},
+    {"including_permission_name": "crm:admin", "included_permission_name": "crm:manage"}
+  ]
 }'
 ```
+
+Then point the module at the three permissions and set `access_scope` to `advanced` with `update_module` (`data-modeling.md` → "Mandatory Creation Order", step 3).
 
 ### 3. Create Roles
 
@@ -120,7 +175,7 @@ The role fields are **`role_name`** (the human display name) and **`slug`** (sna
 **Module columns.** A module carries `module_type` (`"domain"`, the default, or `"master"` for a module promoted for sharing; its `input_type` is `readonly`, which the database does not enforce), `manage_permission` and `admin_permission` (the names of the module's manage and admin permissions), and `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id` (the module's default roles). The last five are ordinary fields set with `create_module` or `update_module`; they are foreign keys, so the permissions and roles they name must already exist.
 
 ```bash
-# Viewer (read only) and manager (full access) roles — in ONE call
+# Viewer (read only), manager (everyday records) and admin (settings and reference data) roles — in ONE call
 semantius call crud create_role '{
   "data": [
     {
@@ -134,6 +189,12 @@ semantius call crud create_role '{
       "slug": "crm_manager",
       "description": "Can manage all CRM data",
       "module_id": 3
+    },
+    {
+      "role_name": "CRM Admin",
+      "slug": "crm_admin",
+      "description": "Can maintain CRM settings and reference data",
+      "module_id": 3
     }
   ]
 }'
@@ -142,7 +203,7 @@ semantius call crud create_role '{
 ### 4. Grant Permissions to Roles
 
 ```bash
-# crm:read → crm_viewer, crm:manage → crm_manager (inherits crm:read via hierarchy) — in ONE call
+# crm:read → crm_viewer, crm:manage → crm_manager, crm:admin → crm_admin (each inherits the lower levels via hierarchy) — in ONE call
 semantius call crud create_role_permission '{
   "data": [
     {
@@ -152,6 +213,10 @@ semantius call crud create_role_permission '{
     {
       "role_id": <crm_manager id>,
       "permission_name": "crm:manage"
+    },
+    {
+      "role_id": <crm_admin id>,
+      "permission_name": "crm:admin"
     }
   ]
 }'
@@ -265,5 +330,7 @@ semantius call crud update_entity '{
   }
 }'
 ```
+
+After `update_entity` on `entity_type`, set `edit_permission` to the new write tier in the same call (see "Choosing an entity's permissions" above).
 
 `edit_permission` covers insert, update and delete alike. A gate on one operation (only some roles may delete) is a validation rule on the entity, not a third permission column; see `jsonlogic.md` § *Detecting the operation*.

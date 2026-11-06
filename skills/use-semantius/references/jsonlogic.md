@@ -446,6 +446,7 @@ semantius call crud create_entity '{
     "plural_label": "Features",
     "label_column": "feature_title",
     "module_id": 12,
+    "entity_type": "operational_record",
     "view_permission": "product_roadmap:read",
     "edit_permission": "product_roadmap:manage",
     "computed_fields": [

@@ -33,7 +33,7 @@ Read this before the first call. For the full schema of one tool run `semantius 
 | `create_module` | `module_name` | `module_slug` |
 | `create_permission` | `permission_name`, `module_id` | `description` |
 | `create_role` | `role_name` | `slug`, `module_id` |
-| `create_entity` | `table_name`, `module_id` | `singular_label` (pass it), `view_permission`, `edit_permission` |
+| `create_entity` | `table_name`, `module_id` | `singular_label` (pass it), `entity_type`, `view_permission`, `edit_permission` |
 | `create_field` | `table_name`, `field_name`, `title` | `format`; `reference_table` for a `reference` / `parent` field; `rollup` for an aggregate over a child entity |
 | `create_permission_hierarchy` | `including_permission_name`, `included_permission_name` | |
 | `create_role_permission` | `role_id`, `permission_name` | |
@@ -57,11 +57,11 @@ Read this before the first call. For the full schema of one tool run `semantius 
 ### Order for a new module
 
 1. `read_module`, then `create_module` with `module_slug` (leave `view_permission` at its default).
-2. `create_permission`: `<slug>:read` and `<slug>:manage` in one call.
-3. `update_module`: point `view_permission` and `manage_permission` at those names.
-4. `create_permission_hierarchy`: `manage` includes `read`.
-5. `create_role` (viewer and manager in one call), then `create_role_permission` (one call), then `update_module` for the `default_*_role_id` columns with ids from `read_role`.
-6. `create_entity`: every entity in one call, each with `module_id`, `view_permission` and `edit_permission`, which must already exist. With `is_a` / `has_a` entities, one call per level, bases first.
+2. `create_permission`: `<slug>:read`, `<slug>:manage` and `<slug>:admin` in one call.
+3. `update_module`: point `view_permission`, `manage_permission` and `admin_permission` at those names and set `access_scope` to `advanced` (`gated` when the module has a restricted step, `rbac.md` → "Restricted steps (gates)").
+4. `create_permission_hierarchy`: `manage` includes `read`, `admin` includes `manage` (one call).
+5. `create_role` (viewer, manager and admin in one call), then `create_role_permission` (one call), then `update_module` for the `default_*_role_id` columns with ids from `read_role`.
+6. `create_entity`: every entity in one call, each with `module_id`, `entity_type`, `view_permission` and `edit_permission`, which must already exist. Choose the class and the permissions first (`data-modeling.md` → "Classifying an entity", `rbac.md` → "Choosing an entity's permissions"). With `is_a` / `has_a` entities, one call per level, bases first.
 7. `create_field`: one call per entity, only after every entity exists.
 
 Details: `data-modeling.md` → "Mandatory Creation Order" and `rbac.md`.

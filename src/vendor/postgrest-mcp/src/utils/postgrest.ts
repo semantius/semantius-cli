@@ -100,6 +100,20 @@ function getHeaders(
 }
 
 /**
+ * Reads a successful response body by content type: JSON is parsed, other
+ * types (e.g. text/csv) are returned as text, an empty body yields null.
+ */
+export async function parseResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text()
+  if (text === '') return null
+  const contentType = response.headers.get('content-type') ?? ''
+  if (/\bjson\b/i.test(contentType) || contentType === '') {
+    return JSON.parse(text)
+  }
+  return text
+}
+
+/**
  * Makes a request to the PostgREST API
  * @param options - Request options including path, method, body, token
  * @returns An object containing request details, response data, and response headers
@@ -144,7 +158,7 @@ export async function makePostgrestRequest(options: PostgrestRequestOptions): Pr
     throw new Error(errmsg)
   }
 
-  const responseData = await response.json()
+  const responseData = await parseResponseBody(response)
 
   // Convert response headers to a plain object
   const responseHeaders: Record<string, string> = {}
