@@ -9,13 +9,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { version as VERSION } from '../../package.json' with { type: 'json' };
 import exportEntities from './export-entities.js';
 import exportModule from './export-module.js';
+import generateModuleSchema from './generate-module-schema.js';
 import getCsvSchema from './get-csvschema.js';
 import importEntities from './import-entities.js';
 import importModule from './import-module.js';
 import type { LocalTool } from './types.js';
 
 export const UTILS_INSTRUCTIONS =
-  "Built-in utility tools bundled with the semantius CLI. get_csvschema works on local files only; export_entities, export_module, import_entities and import_module move entities and modules between hosts through the host's PostgREST (--host picks the host). File paths are resolved relative to the current working directory.";
+  "Built-in utility tools bundled with the semantius CLI. get_csvschema and generate_module_schema work locally and make no request to a host; export_entities, export_module, import_entities and import_module move entities and modules between hosts through the host's PostgREST (--host picks the host). File paths are resolved relative to the current working directory.";
 
 export const localTools: LocalTool[] = [
   getCsvSchema,
@@ -23,6 +24,7 @@ export const localTools: LocalTool[] = [
   exportModule,
   importEntities,
   importModule,
+  generateModuleSchema,
 ];
 
 export function createUtilsServer(): McpServer {

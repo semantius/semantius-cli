@@ -5,6 +5,9 @@
  *
  * Used by generate_module_diagram and generate_spec.
  *
+ * - Outgoing references of the selected entities are always drawn; incoming references (fields of
+ *   other entities pointing at a selected one) are added unless include_incoming is false. Entities
+ *   that are only on the other end of such a reference count as referenced-only.
  * - Selected entities and referenced-only entities get different colors (fill).
  * - The border width and dash pattern follow the entity_type, for both kinds of node.
  * - Every node is one plain line: the entity label, or the table_name with show_table_name.
@@ -23,6 +26,8 @@ export interface RelationshipDiagramParams {
   table_names?: string[]
   /** Show the table_name on the nodes instead of the entity label (default false). */
   show_table_name?: boolean
+  /** Also include entities that reference a selected entity, and those references (default true). */
+  include_incoming?: boolean
 }
 
 export interface RelationshipDiagram {
@@ -91,7 +96,16 @@ export async function buildRelationshipDiagram(
 
   const selected = new Set(entities.map((e) => e.table_name as string))
   const relationships = (await fetchFields([...selected], authInfo)).filter(isRelationship)
-  const referencedNames = [...new Set(relationships.map((f) => f.reference_table as string))].filter((t) => !selected.has(t))
+  if (params.include_incoming !== false) {
+    // Fields of non-selected entities that point at a selected entity.
+    const incoming = await pgGet(
+      `/fields?reference_table=${inList([...selected])}&format=in.(reference,parent)&order=table_name.asc,field_order.asc&limit=10000`,
+      authInfo,
+    )
+    relationships.push(...incoming.filter((f: Row) => isRelationship(f) && !selected.has(f.table_name)))
+  }
+  const referencedNames = [...new Set(relationships.flatMap((f) => [f.reference_table as string, f.table_name as string]))]
+    .filter((t) => !selected.has(t))
   const referenced = await fetchEntitiesByName(referencedNames, authInfo)
 
   const label = (e: Row | undefined, table: string) =>
@@ -99,7 +113,7 @@ export async function buildRelationshipDiagram(
 
   const lines: string[] = [
     '```mermaid',
-    'flowchart LR',
+    'flowchart TD',
     // Fill, border color and text color: selected vs referenced-only.
     '  classDef module fill:#dbeafe,stroke:#1d4ed8,color:#1e3a8a;',
     '  classDef external fill:#d4f4dd,stroke:#27ae60,color:#1a4d2e;',

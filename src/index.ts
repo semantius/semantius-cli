@@ -827,6 +827,8 @@ Built-in servers:
   JSON file; import_entities / import_module replay it onto another host as an upsert, e.g.
     semantius --host stage.example.com call utils/export_module '{"name":"CRM","path":"crm.json"}'
     semantius --host prod.example.com call utils/import_module '{"path":"crm.json"}'
+  utils/generate_module_schema writes the JSON Schema of that file (it makes no request to the host), e.g.
+    semantius call utils/generate_module_schema '{"path":"transfer.schema.json"}'
 
 Credentials (first match wins):
   1. ${'--token/--token-file'.padEnd(22)} A JWT for this invocation only (see below); not affected by --auth

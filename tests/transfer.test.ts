@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Ajv from 'ajv';
 import { setEnvPrefix, setHostFlag } from '../src/config';
 import { resolveHost } from '../src/host';
 import { setHostsIndexDirForTests } from '../src/hosts-index';
@@ -24,6 +25,7 @@ import {
   planWrites,
 } from '../src/local-tools/transfer/graph';
 import { PostgrestClient } from '../src/local-tools/transfer/postgrest';
+import { buildTransferSchema } from '../src/local-tools/transfer/schema';
 import {
   FakePostgrest,
   type Row,
@@ -556,6 +558,31 @@ describe('export', () => {
     const schema = JSON.parse(await readFile(schemaOnly, 'utf8')).entities[0];
     expect(schema.entity.fields).toHaveLength(7);
     expect(schema).not.toHaveProperty('records');
+  });
+
+  test('every export validates against the schema generate_module_schema writes', async () => {
+    const source = fake('source.example.test');
+    seedCrm(source);
+    const validate = new Ajv({ allErrors: true, strict: false }).compile(
+      buildTransferSchema('test'),
+    );
+    const cases: Array<[string, Row]> = [
+      ['export_module', { name: 'CRM' }],
+      ['export_module', { name: 'CRM', exclude_data: true }],
+      ['export_entities', { names: 'accounts' }],
+      ['export_entities', { names: 'accounts', exclude_schema: true }],
+      ['export_entities', { names: 'accounts', exclude_data: true }],
+    ];
+    for (const [i, [tool, args]] of cases.entries()) {
+      const path = join(dir, `case-${i}.json`);
+      await call(source, tool, { ...args, path });
+      const doc = JSON.parse(await readFile(path, 'utf8'));
+      if (!validate(doc)) {
+        throw new Error(
+          `${tool} ${JSON.stringify(args)} does not validate: ${JSON.stringify(validate.errors)}`,
+        );
+      }
+    }
   });
 
   test('refuses both excludes, unknown names and system tables, writing nothing', async () => {

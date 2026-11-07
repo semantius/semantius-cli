@@ -84,9 +84,10 @@ describe('local-tools', () => {
     'export_module',
     'import_entities',
     'import_module',
+    'generate_module_schema',
   ];
 
-  test('registry contains get_csvschema and the transfer tools', () => {
+  test('registry contains get_csvschema, the transfer tools and generate_module_schema', () => {
     expect(localTools.map((t) => t.name)).toEqual(TOOL_NAMES);
   });
 
