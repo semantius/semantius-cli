@@ -1,30 +1,27 @@
 /**
  * Generate Module Diagram Tool
- * Builds a Mermaid entity relationship diagram for a module from the live
- * entities and fields (see utils/moduleDiagram.ts for the rules).
+ * Builds a Mermaid entity relationship diagram for selected entities (or all entities of
+ * selected modules) from the live entities and fields (see utils/relationshipDiagram.ts for the rules).
  */
 
 import type { Tool } from '../../types.ts'
 import { z } from 'zod/v4'
 import { handleToolError } from '../utils/errorHandler.ts'
-import { loadModuleModel } from '../utils/moduleModel.ts'
-import { buildModuleDiagram } from '../utils/moduleDiagram.ts'
+import { buildRelationshipDiagram } from '../utils/relationshipDiagram.ts'
 
 const inputSchema = {
-  module: z
-    .string()
-    .describe(`The module to diagram: its module_slug (e.g. "crm"), its module_name, or its numeric id.`),
-  include_incoming: z
+  module_slugs: z
+    .array(z.string())
+    .optional()
+    .describe(`Module slugs (e.g. ["crm"]) whose entities are diagrammed. Ignored when table_names is provided.`),
+  table_names: z
+    .array(z.string())
+    .optional()
+    .describe(`Entity table names (e.g. ["contacts", "companies"]) to diagram. When provided, module_slugs is ignored.`),
+  show_table_name: z
     .boolean()
     .optional()
-    .describe(
-      `Also draw relationships from entities of OTHER modules that reference an entity of this module ` +
-      `(default true). Set false to show only what the module's own entities reference.`
-    ),
-  direction: z
-    .enum(['LR', 'TB', 'RL', 'BT'])
-    .optional()
-    .describe(`Mermaid flowchart direction (default LR).`),
+    .describe(`When true, nodes show the table_name; when false/default they show the entity label.`),
 }
 
 export const generateModuleDiagramTool: Tool<typeof inputSchema, undefined> = {
@@ -32,25 +29,22 @@ export const generateModuleDiagramTool: Tool<typeof inputSchema, undefined> = {
   options: {
     title: 'Generate Module Diagram',
     description:
-      `Generates a Mermaid entity relationship diagram (database model) for a module. ` +
-      `Reads the module's entities and all their reference and parent fields. ` +
-      `Entities of the module and external entities (referenced from, or referencing, other modules) get different colors, ` +
-      `external nodes also show their module, every node shows its entity type, and each arrow is labelled with the ` +
-      `field's relationship_label. Arrows run from the referenced (one) side to the entity holding the field (many side); ` +
+      `Generates a Mermaid entity relationship diagram (database model). ` +
+      `Provide module_slugs and/or table_names; at least one is required, and table_names take precedence. ` +
+      `The diagram contains the selected entities (all entities of the modules, or the given table_names) ` +
+      `and the entities they reference through reference and parent fields. ` +
+      `Selected and referenced-only entities get different colors, every node is a single line with the entity label ` +
+      `(or the table_name with show_table_name), and each arrow is labelled with the field's relationship_label. ` +
+      `Arrows run from the referenced (one) side to the entity holding the field (many side); ` +
       `a flat line marks a unique (one-to-one) reference. ` +
       `Returns the diagram as a mermaid code block, ready to paste into a spec or markdown document.`,
     inputSchema,
   },
-  handler: async ({ module, include_incoming, direction }, { authInfo }) => {
+  handler: async ({ module_slugs, table_names, show_table_name }, { authInfo }) => {
     try {
-      const model = await loadModuleModel(module, authInfo, include_incoming !== false)
-      if (!model) {
-        return { content: [{ type: 'text' as const, text: `Module not found: ${module}` }], isError: true }
-      }
-      const d = buildModuleDiagram(model, direction)
+      const d = await buildRelationshipDiagram({ module_slugs, table_names, show_table_name }, authInfo)
       const summary =
-        `Module "${model.module.module_name}" (${model.module.module_slug}): ${d.entityCount} entities, ` +
-        `${d.externalCount} external entities, ${d.relationshipCount} relationships` +
+        `${d.entityCount} entities, ${d.referencedCount} referenced entities, ${d.relationshipCount} relationships` +
         (d.unlabelledCount ? ` (${d.unlabelledCount} without a relationship_label, drawn as bare arrows)` : '') + '.'
       return { content: [{ type: 'text' as const, text: `${summary}\n\n${d.mermaid}` }] }
     } catch (error: any) {

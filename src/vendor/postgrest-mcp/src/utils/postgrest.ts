@@ -181,3 +181,55 @@ export async function makePostgrestRequest(options: PostgrestRequestOptions): Pr
     },
   }
 }
+
+export type Row = Record<string, any>
+
+export interface AuthInfoLike {
+  token?: string
+  apiBaseUrl?: string
+}
+
+// ---------- read helpers for the semantic model ----------
+
+export async function pgGet(path: string, authInfo: AuthInfoLike | undefined): Promise<Row[]> {
+  const result = await makePostgrestRequest({
+    path,
+    method: 'GET',
+    token: authInfo?.token,
+    apiBaseUrl: authInfo?.apiBaseUrl,
+  })
+  const data = result.response.data
+  return Array.isArray(data) ? data : []
+}
+
+/** PostgREST `in.(...)` list with each value URL-encoded. */
+export const inList = (values: Array<string | number>) =>
+  `in.(${values.map((v) => encodeURIComponent(String(v))).join(',')})`
+
+/** Resolves a module by slug, name or numeric id. Returns null when none matches. */
+export async function findModule(ref: string, authInfo: AuthInfoLike | undefined): Promise<Row | null> {
+  const trimmed = ref.trim()
+  const enc = encodeURIComponent(trimmed)
+  const filter = /^\d+$/.test(trimmed) ? `id=eq.${enc}` : `or=(module_slug.eq.${enc},module_name.eq.${enc})`
+  const rows = await pgGet(`/modules?${filter}&limit=1`, authInfo)
+  return rows[0] ?? null
+}
+
+/** All fields of the given entities, in display order. */
+export async function fetchFields(tableNames: string[], authInfo: AuthInfoLike | undefined): Promise<Row[]> {
+  if (!tableNames.length) return []
+  return await pgGet(`/fields?table_name=${inList(tableNames)}&order=table_name.asc,field_order.asc&limit=10000`, authInfo)
+}
+
+/** The entities with the given table names, by table_name. */
+export async function fetchEntitiesByName(
+  tableNames: string[],
+  authInfo: AuthInfoLike | undefined,
+): Promise<Map<string, Row>> {
+  const byName = new Map<string, Row>()
+  if (!tableNames.length) return byName
+  for (const r of await pgGet(`/entities?table_name=${inList(tableNames)}&limit=10000`, authInfo)) {
+    byName.set(r.table_name, r)
+  }
+  return byName
+}

@@ -182,11 +182,14 @@ export async function searchToolsCommand(
     getConcurrencyLimit(),
   );
 
-  const failed = serverResults.filter((r) => r.error).map((r) => r.serverName);
+  const failed = serverResults.filter((r) => r.error);
   if (failed.length > 0) {
     console.error(
-      `Warning: ${failed.length} server(s) failed to connect: ${failed.join(', ')}`,
+      `Warning: ${failed.length} server(s) failed to connect: ${failed.map((r) => r.serverName).join(', ')}`,
     );
+    for (const r of failed) {
+      console.error(`  ${r.serverName}: ${r.error}`);
+    }
   }
 
   const matches = serverResults.flatMap((r) => r.matches).sort(compareMatches);
