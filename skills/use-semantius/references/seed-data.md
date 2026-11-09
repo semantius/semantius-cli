@@ -88,7 +88,8 @@ await runSeed(async () => {
 - `assertSeedCounts(counts, expected)`, `assertSeedDistinct(table, rows, columns, minDistinct?)`: halt on a wrong count, or on a column that should vary and does not.
 - `patchById(table, id, body)`: fixes one row.
 - `clearSeeded([[path, count], …])`: empties tables, children first, after checking that each holds `count` rows. See "Changing what was seeded".
-- `rng("<table>")` with `.pick(pool)`, `.int(min, max)`, `.chance(p)`, `.deal(pool, n)`, `.distinct(pool, n)`, `.tuples(n, [poolA, poolB])`; `days(n)` (a date n days from today), `uniq("INV-", i)`, `exampleDomain(company)`, `slugify(text)`.
+- `rng("<table>")` with `.pick(pool)`, `.int(min, max)`, `.chance(p)`, `.deal(pool, n)`, `.distinct(pool, n)`, `.tuples(n, [poolA, poolB])`: the only source of random values in the script, never `Math.random()` or a helper of your own: an unchanged script draws the same values again (dates are relative to the run day).
+- `days(n)` (a date n days from today), `uniq("INV-", i)`, `exampleDomain(company)`, `slugify(text)`.
 - `runSeed(async () => { … })`: wraps the script; any thrown error exits non-zero and prints `SEED HALTED`.
 
 ## Parents and children
@@ -130,7 +131,6 @@ await runSeed(async () => {
 - Nothing a person reads is a base plus an index (`100 + i`, `Slack 0`, `days(-7 * i)`). Write it or draw it (`r.int`, `r.pick`). An index belongs only in a code-like unique field, through `uniq("INV-", i)`.
 - Names, cities and companies vary. `assertSeedDistinct(table, rows, [columns])` fails when a column that should vary does not; use `r.tuples` for names built from two pools.
 - Real company and product names are fine. Every email address is at a subdomain of `example.com`, which never receives mail: build it with `exampleDomain(company)` (`support@adobe.example.com`), never with the company's real domain. The insert refuses any other address, in any text column. A US phone uses `555-0100` to `555-0199` behind the area code; a phone in any other country stays empty.
-- Draw from `rng("<table>")`, never `Math.random()`: an unchanged script draws the same values again (dates are relative to the run day).
 
 ## Computed and rollup columns
 

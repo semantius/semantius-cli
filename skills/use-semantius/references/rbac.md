@@ -109,9 +109,14 @@ semantius call crud create_permission_hierarchy '{"data": [
   {"including_permission_name": "procurement:read", "included_permission_name": "procurement:read_vendors"},
   {"including_permission_name": "spend:read", "included_permission_name": "procurement:read_vendors"}
 ]}'
-# 3. Only now point the entity at it
+# 3. Find the rollups that would block step 4, and set include_hidden_rows on each
+semantius call crud read_field '{"filters": "ctype=eq.rollup", "select": "id,title,rollup"}'
+semantius call crud update_field '{"id": "<rollup id>", "data": {"rollup": {<its whole definition>, "include_hidden_rows": true}}}'
+# 4. Only now point the entity at it
 semantius call crud update_entity '{"table_name": "vendors", "data": {"view_permission": "procurement:read_vendors"}}'
 ```
+
+Step 3 applies to each rollup whose `id` or `rollup.link_field` starts with `<entity>.` (here `vendors.`) and whose `rollup` does not have `include_hidden_rows: true`, one `update_field` call each; with none, skip it. Without it, step 4 fails with `90269`. Do not ask first: the entity's readers see the total, and the records behind it stay hidden. Name each such rollup in the final response.
 
 The entity list the user confirms says when a reused entity gets its own view permission (`build-module.md` → "Confirm the entity list").
 
@@ -261,6 +266,8 @@ semantius call crud create_role_permission '{
 ```
 
 The three role ids come from one `read_role` with `"filters": "slug=in.(crm_viewer,crm_manager,crm_admin)"`, matched by `slug`, never by the position of a row in the `create_role` response.
+
+The built-in `Administrator` role already holds every permission of a new module, granted by the platform, so grant only to the module's own roles.
 
 ### 5. Assign Roles to Users
 

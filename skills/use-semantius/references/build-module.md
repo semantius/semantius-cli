@@ -133,7 +133,7 @@ When the user did ask for one, produce exactly that, with the built-in tool (`SK
 
 - One line: what was built, the mechanism the user's goal turned on, and, when the module follows leading products, which ones (with any deliberate difference), saying a search verified them only when one did.
 - The UI links: the module (`{ui_baseurl}/{module_slug}`), then each entity list (`{ui_baseurl}/{module_slug}/{table_name}`). Take `ui_baseurl` from `getCurrentUser`, never hardcode the host (`SKILL.md` → "Linking to the web UI").
-- When the build reused entities from other modules: one line naming them and any view permission added to one, and anything left out because a match or a field question went unanswered.
+- When the build reused entities from other modules: one line naming them, any view permission added to one and each rollup switched to show hidden rows (`rbac.md` → "Viewing an entity of another module"), and anything left out because a match or a field question went unanswered.
 - When sample data was seeded: one line with the row counts per table, naming any computed or rollup column left out of the check as constant by design.
 - Two or three next steps, including any entities left out of the confirmed scope, such as "Add your first record", "Import a CSV", "Assign roles", "Ask me for a reminder when you want one".
 - No "what the data says" section, unless the user asked for analytics.

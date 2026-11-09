@@ -71,7 +71,7 @@ The date operators (`date_add`, `date_diff`, `date_part`, `date_trunc`, `to_date
 
 ## Hidden child rows (`90269`)
 
-The aggregate covers every child record, and every reader of the parent sees it. When the child has a `select_rule`, or a `view_permission` other than the parent's, the rollup is refused unless its definition sets `include_hidden_rows: true`. That setting shows those readers a sum, count, minimum or maximum over rows they cannot see, so ask the user before setting it. The refusal also applies later: adding a `select_rule` to the child, or changing a `view_permission` on either side, fails while it would affect a rollup without the flag.
+The aggregate covers every child record, and every reader of the parent sees it. When the child has a `select_rule`, or a `view_permission` other than the parent's, the rollup is refused unless its definition sets `include_hidden_rows: true`. That setting shows those readers a sum, count, minimum or maximum over rows they cannot see, so ask the user before setting it, except when a reused entity gets its own view permission (`rbac.md` → "Viewing an entity of another module"), where it is set without asking and reported. The refusal also applies later: adding a `select_rule` to the child, or changing a `view_permission` on either side, fails while it would affect a rollup without the flag.
 
 ## Changing and removing
 

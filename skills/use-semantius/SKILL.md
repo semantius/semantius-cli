@@ -257,12 +257,14 @@ semantius call <server> <tool> '{}'   # Call tool with inline JSON
 semantius call <server> <tool>        # Call tool — reads JSON from stdin
 ```
 
-**Windows (PowerShell): always pass inline JSON, or pipe empty input if the tool takes no arguments.** Omitting the JSON argument makes the CLI block reading stdin until EOF. In a persistent PowerShell session (state kept alive across calls, as some agent harnesses do) that stdin pipe is never closed, so the call hangs forever with no error and no timeout — it is not a network or auth issue, and retrying will not help. Always supply the JSON explicitly, even if empty:
+**Windows (PowerShell): always give the CLI its JSON, inline or piped, or pipe empty input if the tool takes no arguments.** Omitting the JSON argument makes the CLI block reading stdin until EOF. In a persistent PowerShell session (state kept alive across calls, as some agent harnesses do) that stdin pipe is never closed, so the call hangs forever with no error and no timeout — it is not a network or auth issue, and retrying will not help. Always supply the JSON explicitly, even if empty:
 
 ```powershell
 semantius call crud getCurrentUser '{}'     # inline JSON, never blocks
 "" | semantius call crud getCurrentUser     # or explicitly pipe stdin closed
 ```
+
+Windows PowerShell 5.1 strips the quotes from inline JSON (`INVALID_JSON_ARGUMENTS`), so pipe it there: `'{"limit": 1}' | semantius call crud read_role`. `$PSVersionTable.PSVersion` shows the version.
 
 Never invoke a no-argument `semantius call ...` bare on Windows/PowerShell without one of the two forms above.
 

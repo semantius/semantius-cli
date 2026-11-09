@@ -52,7 +52,7 @@ Settle two things first:
 | Verify | Rule in |
 |---|---|
 | `icon_name` is set (`box` when no icon fits) and passes the checker | `data-modeling.md` → "Mandatory Creation Order" |
-| `description` is a tagline of at most 40 characters | `data-modeling.md` → "Modules" |
+| `description` is a tagline of at most 60 characters | `data-modeling.md` → "Modules" |
 | `view_permission`, `manage_permission` and `admin_permission` name this module's permissions, not `user:read` or nothing | `data-modeling.md` → "Mandatory Creation Order" |
 | `access_scope` fits: `advanced` with no gate, `gated` with one, a `raci` module stays `raci`, never `basic` with a `catalog` entity. `custom` goes under To confirm | `rbac.md` → "Choosing an entity's permissions", "Restricted steps (gates)" |
 | `default_viewer_role_id`, `default_manager_role_id` and `default_admin_role_id` are set, each to a role of this module | `data-modeling.md` → "Mandatory Creation Order" |
@@ -104,7 +104,8 @@ Settle two things first:
 
 | Verify | Rule in |
 |---|---|
-| `format` and `reference_delete_mode` match the table, tier divergence first: optional `reference` with `clear`, required `reference` with `restrict`, owned `parent` with `cascade`, and `parent` with `restrict` when the child's permission scope differs. A child that must survive its parent is not a `parent` | `data-modeling.md` → "Choosing the Right Format" |
+| `format` and `reference_delete_mode` match the table, tier divergence first: optional `reference` with `clear`, required `reference` with `restrict`, owned `parent` with `cascade`, and `parent` with `restrict` when the child has a permission gate of its own or a junction or association class leg's tier differs. A child that must survive its parent is not a `parent` | `data-modeling.md` → "Choosing the Right Format" |
+| A `parent` passes both tests: the people who work on the parent create the child as part of that work (an unknown creator or a different `edit_permission` from the parent's makes it a `reference`), the child is not self-identifying, people do not open and work on it by itself from its own list, and its states drive no work unrelated to completing the parent. A `workflow_state` alone, a gated step on the child, who moves it through its states, or a later creation date proves nothing. Junction and association class legs skip the tests, and an association class with its own `workflow_state` has `restrict` on every leg. A record with retention value of its own (an invoice, a payment, a signed document) never has `cascade` | `data-modeling.md` → "Choosing the Right Format" |
 | Every field that refers to another record is a relationship. `vendor_name` beside a `vendors` entity, or a `*_id` with no `reference_table`, is a missing relationship; an external system's identifier stays text | `data-modeling.md` → "Field Naming Rules" |
 | A relationship field is `<target_singular>_id`, or names the record's part in the relationship and ends in `_id` (`assigned_user_id`, `manager_id`). A name with no `_id`, such as `owner`, fails | `data-modeling.md` → "Field Naming Rules" |
 | `relationship_label` is set and is a domain verb, not `has`, `references`, `belongs to` or `relates to`. Write each one out as the sentence `<Referenced Entity> <label> <Holding Entity>`: one that is not true is written from the wrong side ("Employee is held by License"). Fields from one entity to the same target take different verbs | `data-modeling.md` → "Relationship labels" |

@@ -487,6 +487,7 @@ semantius call crud postgrestRequest '{"method": "POST", "path": "/rpc/evaluate_
 - It prints the rule's result (`false` above for a caller without the permission); a truthy result means the write would pass. A throw comes back as the error the write would get, e.g. `(99000) <message>` or `(42501) Permission denied: ${permission} required`.
 - `data` is only what you send. No reserved variable is added, so include every one the rule reads: `$mode`, `$old`, `$today`, `$now`, `$user_id` (your own is `user_id` from `getCurrentUser`). For a DELETE, send the stored row as both the record and `$old`.
 - `has_permission` and `require_permission` check your own permissions, `set_record` reads real rows, and `value_changed` compares against the `$old` you pass.
+- Several cases, or a long rule: write a Bun script that sends each case over stdin (`cli-usage.md` → "Building a bulk payload in Bun"), so no shell parses the JSON. Test a rule that maps values on every combination of its inputs, and a rule that guards with `$mode` on the delete path too.
 
 #### Example: pass both on `create_entity`
 

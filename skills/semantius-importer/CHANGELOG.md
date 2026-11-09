@@ -2,6 +2,10 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## A module description is at most 60 characters
+
+2026-11-09. Asked for by Martin Amm: `importer-essentials.md` follows the 60-character limit in `use-semantius`. The file format is unchanged; `version` stays `3.1`.
+
 ## The name sweep also compares synonyms
 
 2026-11-08. Asked for by Martin Amm: Stage 3 finds existing entities with `entity-match-checker.ts` from `use-semantius`, so a file of vendors offers an existing Suppliers table even when their fields do not overlap. The file format is unchanged; `version` stays `3.1`.
