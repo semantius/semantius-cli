@@ -2,7 +2,12 @@
 name: use-semantius
 description: >-
   Use this skill for anything involving the Semantius platform via the semantius CLI. us1-9d4f2a7b   Trigger when the user wants to: create, read, update, or delete entities,
-  fields, modules, permissions, roles, users, or business records; build or query
+  fields, modules, permissions, roles, users, or business records; build or set up
+  something new that needs its own records, however it is phrased (a module, app,
+  platform, system, tracker, tool, or "a way to see and manage X", e.g. "build my
+  SaaS management platform"; adding a field, entity or permission to an existing
+  module is not a build); review or audit an existing module, or ask what it is
+  missing or how to improve it; build or query
   a semantic data model, including subtypes and extensions of an entity (emails
   and calls as kinds of activities, customers and suppliers as business
   partners) and enum values with labels; set up RBAC; insert or import data into Semantius
@@ -19,7 +24,7 @@ description: >-
 
 **Semantius** is a low-code platform that lets you define a semantic data model, entities, fields, relationships, and access rules, and instantly get a fully managed PostgreSQL database with a REST API, auto-generated UI, and an analytics layer behind it. You define *what* your data looks like (Layer 1), and Semantius handles storage, querying (Layer 2), and cross-table analytics (Layer 3).
 
-`semantius` is the official CLI that gives shell and agent access to three servers: `crud` (schema management + record operations), `cube` (CubeJS-compatible analytics), and the built-in `utils` (CSV introspection, moving entities and modules between hosts).
+`semantius` is the official CLI that gives shell and agent access to servers. `crud` (schema management + record operations) and the built-in `utils` (CSV introspection, moving entities and modules between hosts) are always available; the plan can add more, such as `cube` (CubeJS-compatible analytics). `semantius` lists the servers the instance has.
 
 ---
 
@@ -54,10 +59,16 @@ Understanding which layer you're working with determines which tools to use:
 
 ## Reference Files
 
+`<skill-folder>` in a command in this skill is the directory this `SKILL.md` was read from, as an absolute path.
+
 | File | When to read |
 |------|-------------|
 | `references/cli-usage.md` | CLI commands and their tiers, credentials and hosts, options, shell patterns, chaining, installation; § "Moving Entities and Modules Between Hosts" |
 | `references/data-modeling.md` | Layer 1, entities, fields, modules, relationships, safe evolution; § "Enum values and labels" |
+| `references/build-module.md` | A request to build or set up something new that needs its own records: the default deliverable, the sample-data question and size, what not to produce unasked, verification, the final response |
+| `references/review-module.md` | A request to review, audit or check an existing module, or to say what it is missing: what to read, what to verify, the optional additions, the report, applying what the user picks |
+| `references/seed-data.md` | Writing generated rows (the sample data of a build, or any request for made-up records): the seed script, mapping children to parents by label, the checks, values and rows that read as records, clearing what was seeded |
+| `references/seed-lib.ts` | Copy it next to the seed script and import it; don't retype it and don't read it, `seed-data.md` lists its functions and shows how: bulk insert, parent lookup by label, relationship read-back, count, distinctness, scale and computed-column guards, clearing a seed, seeded random generator |
 | `references/entity-families.md` | Layer 1, subtypes and extensions (`id_type: is_a` / `has_a`, `id_refentity`): when to use them, create order, reads and writes across levels, limits, deletes, error codes. Read before the first `create_entity` of such an entity |
 | `references/jsonlogic.md` | Layer 1, JsonLogic rules: `computed_fields`, `validation_rules`, extension operators, cross-entity lookups, dynamic `input_type_rule` (conditional readonly/hidden/required) |
 | `references/rollup-fields.md` | Layer 1, rollup fields: a `sum`, `count`, `min`, `max` or `avg` over child records that the database keeps current; definition keys, filter subset, format fit, hidden child rows, change and removal |
@@ -69,7 +80,8 @@ Understanding which layer you're working with determines which tools to use:
 | `references/webhooks.md` | Receiving records from external systems through signed webhook receivers: setup, signing, logs |
 | `references/lucide-icon-finder.ts` | Run it (`bun`), don't read it: `<query…>` (one or more words each, most specific first) lists Lucide icon names per query, in that order; `--batch -` takes a JSON object on stdin mapping labels to their queries and answers every label in one call; see `data-modeling.md` → "Icons are Lucide icons" |
 | `references/lucide-icon-checker.ts` | Run it (`bun`), don't read it: `<name…>` confirms Lucide icon names before an icon is written, exit 1 names the unknown ones; see `data-modeling.md` → "Icons are Lucide icons" |
-| `references/vendor-names.ts` | Run it (`bun`), don't read it: `entity:<Name>…` and `field:<Name>…` convert a followed product's record and field names (singular, spelled the product's way) into `table_name` and labels, or `field_name` and label; never convert them by hand |
+| `references/entity-match-checker.ts` | Run it (`bun`), don't read it: `--batch -` takes a JSON object on stdin mapping each new entity's `table_name` to other words for it, and compares them with every entity on the instance; exit 1 names the matches to settle; see "Before any new entity: compare it with the instance" |
+| `references/vendor-names.ts` | Run it (`bun`), don't read it: `entity:<Name>…` and `field:<Name>…` convert a product's record and field names (singular, spelled the product's way) into `table_name` and labels, or `field_name` and label, only when the user asks to follow that product's names; never convert them by hand |
 | `references/preflight.md` | The environment checks a skill runs before doing work: stay in the repo root, Bun and jq, CLI install and sign-in, and when to read the two question-format files below |
 | `references/muse-questions.md`, `references/dot-questions.md` | How to ask questions where `AskUserQuestion` is not available; `preflight.md` says when to read them |
 
@@ -82,6 +94,15 @@ Understanding which layer you're working with determines which tools to use:
 
 **The request lacks a value it needs ("add a field": to which kind of record)?**
 → Ask for it, see "Asking the user to pick a value" below
+
+**About to create a new entity, on any path?**
+→ Compare it with every entity on the instance first, see "Before any new entity: compare it with the instance" below. Nothing is created until each match is settled
+
+**Asked to build or set up something new that needs its own records, however it is phrased (a module, app, platform, system, tracker, tool, "a way to see and manage X"; adding a field, entity or permission to an existing module is not a build)?**
+→ Read `references/build-module.md`. Follow the leading products when the domain is well known, in the order of a build. Default: module, entities, fields, relationships, permissions, roles and the UI links. Compare the outline with the instance, confirm the entity list, then ask about sample data (5 to 10 rows per parent entity, never seeded without a yes; seeded as `references/seed-data.md` says). No spec, diagram, report, export or analytics unless asked
+
+**Asked to review, audit or check an existing module, or what it is missing or how to improve it?**
+→ Read `references/review-module.md`. Read the whole live module, verify it against this skill's rules, suggest optional entities and other additions from the leading products, and report. Nothing is written until the user picks what to apply
 
 **Managing schema, create/modify entities, fields, modules?**
 → Layer 1, read `references/data-modeling.md`, follow mandatory creation order. Every entity you create carries its class (`entity_type`) and the permissions its write tier gives (`references/data-modeling.md` → "Classifying an entity", `references/rbac.md` → "Choosing an entity's permissions")
@@ -110,8 +131,14 @@ Understanding which layer you're working with determines which tools to use:
 **Creating, updating, or deleting several records of the same kind (many fields, many permissions, many rows)?**
 → One call, never a loop: an array in `data` for `create_*`, an array in `id` / `table_name` for `update_*` / `delete_*`, an array `body` (uniform keys) for `postgrestRequest` POST. Golden Rule 7 and `references/crud-tools.md` § "Bulk operations"
 
+**Adding made-up sample or demo records to tables?**
+→ Read `references/seed-data.md`: one seed script on `references/seed-lib.ts`, children mapped to parents by label, never by id or position. Only after an explicit yes to the sample-data question (`references/build-module.md`)
+
 **Querying across multiple tables, aggregating, trending over time, top-N, metrics?**
-→ Layer 3, use `cube`, read `references/cube-queries.md` + `references/cube-tools.md`
+→ Layer 3, use `cube`, read `references/cube-queries.md` + `references/cube-tools.md`. Answer only the question asked, briefly; an analytics request never changes the schema or creates a module. When nothing matches, say there is no data for it and stop, without offering to build a module
+
+**About to build a script, diagram, document, report or export from the model?**
+→ Only when the user asked for that artifact; a build request alone is not one. "Show me the data model", an ERD or a schema picture asks for the diagram. Then find the built-in tool first, see "Find the built-in tool before building" under Core CLI Commands
 
 **Writing shell scripts or chaining CLI commands?**
 → Read `references/cli-usage.md`
@@ -127,6 +154,33 @@ Understanding which layer you're working with determines which tools to use:
 
 **A baked recipe (e.g. from a `semantius-skill-maker`-generated skill) hit an unexpected 409/422 and you suspect schema drift?**
 → Live introspect with `read_entity` / `read_field`, see `references/data-modeling.md` § "Runtime schema introspection (live FK / shape lookup)". Do not silently adapt the recipe; abort, surface the drift, recommend regenerating the domain skill.
+
+---
+
+## Before any new entity: compare it with the instance
+
+One real-world thing is one entity. A second entity for something the instance already holds splits its records across two tables and is costly to undo, so this section outranks every limit on questions and every no-answer default, on every path that creates an entity. `table_name` identifies an entity across the whole instance, so two modules cannot each have their own `vendors`.
+
+1. **List other words for each new entity**, the words people use for the same thing (vendors: suppliers, providers, merchants). At least one each.
+2. **Run the check** before the first `create_entity`. It reads every entity on the instance, built-ins included, and compares names, labels and your words:
+
+   ```bash
+   echo '{"vendors":["suppliers","providers"],"contracts":["agreements"]}' | bun "<skill-folder>/references/entity-match-checker.ts" --batch -
+   ```
+
+   Exit `0` means nothing to settle, exit `1` lists each match, exit `2` is a bad call or an unreadable instance. It can only match the words it was given, so also read the `Existing entities:` line it prints: an entity that means the same thing is a similar name even when the script did not list it.
+3. **Settle each match before anything is written**, one question at a time, in the question format the preflight sets:
+
+   | Found | Ask | When the user declines | With no answer |
+   |---|---|---|---|
+   | Same name | "\<Plural Label\> already exists in \<Module Name\>. Use the existing one?": use it (recommended), or keep a separate one under a different name | The new entity takes a name that states its concept in full | Use the existing one |
+   | Similar name | "\<Existing Plural Label\> in \<Module Name\> looks like the \<New Plural Label\> you need. Are they the same thing?": yes, use the existing one, or no, they are different | On "different", create the new entity and pass `--separate <table_name>` on the next run | Do not create it; name it as a next step |
+
+   A built-in such as `users` is always reused, with no question.
+4. **Run the check again** after the answers, with reused and left-out entities removed, and whenever the list changes. No `create_entity` until it exits `0`.
+5. **Reusing an entity** means a relationship to it and no new entity. The module's users can view it and cannot edit it (`references/rbac.md` → "Viewing an entity of another module"). When the module needs a field the entity lacks, ask before adding it: one question per entity, naming each field and saying it also appears in the other module. An approved field is added as optional, and a field not approved is named as a next step. No sample rows go into a reused entity.
+
+Never create a renamed or prefixed copy to get past a name clash. A separate entity for the same thing exists only when the user chose it, after hearing that its records will stay apart from the existing ones, and before anything is built. A duplicate-key error on `create_entity` is a match like any other: stop and settle it.
 
 ---
 
@@ -174,6 +228,8 @@ The plugin's sample prompts use `[blank]` where the user puts a name from the li
 
 ## Environment Setup
 
+**0. Not the Semantius agent?** Before anything else, read `references/preflight.md` and run it. It also sets the question format for every question this skill asks.
+
 **1. Is semantius installed?** Run `semantius --version`. If the shell cannot find it (POSIX `command not found` / exit code 127, PowerShell `CommandNotFoundException`), it may be installed but not yet on this session's PATH. Look in `%LOCALAPPDATA%\Programs\Semantius\semantius.exe` (Windows) or `/usr/local/bin/semantius` and `~/.local/bin/semantius` (Linux / macOS). If it is there, call it by that full path wherever these skills write `semantius` (`references/cli-usage.md` § "Installing from an agent"). If it is in none of those places, STOP: run no semantius command, and tell the user it is not installed, with the install command for their shell from `references/cli-usage.md` § "Installation" and the guide at **https://www.semantius.com/docs/cli/use-semantius/**.
 
 **2. Is it connected?** Follow `references/cli-usage.md` § "Checking the connection". In short:
@@ -196,7 +252,7 @@ semantius                              # List all servers and tools
 semantius -d                           # List with descriptions
 semantius tools <server>              # Show tools and parameters for a server
 semantius tools <server> <tool>       # Get tool description and JSON schema
-semantius grep "<pattern>"            # Search tools by glob
+semantius search_tools "<words>"      # Find tools by name or description
 semantius call <server> <tool> '{}'   # Call tool with inline JSON
 semantius call <server> <tool>        # Call tool — reads JSON from stdin
 ```
@@ -212,9 +268,24 @@ Never invoke a no-argument `semantius call ...` bare on Windows/PowerShell witho
 
 Both `tools <server> <tool>` and `tools <server>/<tool>` work interchangeably.
 
+### Find the built-in tool before building
+
+The CLI's tool list is the inventory of what the platform can do, and it grows. This skill names only some of it. Before you write a script, diagram, document, report or export that reads the model, check whether a tool already produces it. A built-in tool knows the module's relationships, entity types, external references and rules; rebuilding the result from `read_entity` / `read_field` duplicates that and gets details wrong.
+
+```bash
+semantius search_tools "<words>"      # tools whose name or description contains any word, best match first
+semantius tools <server> <tool>       # the signature of a candidate
+```
+
+Search with the artifact the user named and its synonyms (diagram, erd, spec, document, export, report), not with a tool name you already know. Add `--all` to include the remote servers. Use the tool's output as the deliverable; build by hand only when no tool fits.
+
+A generator returns its artifact as text (for example a markdown document or a Mermaid code block), not JSON: it arrives on stdout as-is, so do not pipe it through `jq`. To keep it, redirect stdout to a file. Render it to an image only when the user asks for one.
+
 ---
 
-## The Two Servers
+## The Servers
+
+Only `crud` and `utils` are always there. Run `semantius` to see which others the instance has, and use only the ones listed.
 
 ### `crud`: Schema Management + Record Operations (Layers 1 & 2)
 
@@ -265,20 +336,22 @@ Full detail: `references/crud-tools.md` § `getCurrentUser`.
 
 ## Golden Rules
 
-1. **Read before writing**, Before any `create_*`, call `read_*` to check for duplicates. ALWAYS first.
+1. **Never model one real-world thing twice, and read before writing.** A new entity is compared with the whole instance first, see "Before any new entity: compare it with the instance". Before any `create_*`, call `read_*` to check for duplicates. ALWAYS first.
    - Before `create_module` → run `read_module` first
    - Before `create_entity` → run `read_entity` first
    - Before `create_permission` → run `read_permission` first
    - Before `create_role` → run `read_role` first
-   - If the read returns results, use those IDs instead of creating duplicates. Only create if it returns empty.
+   - If the read returns results, use those IDs instead of creating duplicates (an entity is settled as that section says). Only create if it returns empty.
    - For a bulk create, **one** `read_*` with an `in.(...)` filter covers every item (`"filters": "field_name=in.(description,cost)&table_name=eq.services"`); never one `--single` read per record.
-2. **Schema first**, Module → Permissions → **all** Entities → Fields. Never skip steps, and create every entity of a model before any of its fields, so each field's `reference_table` (self-references included) already exists. **Exception:** with `is_a` / `has_a` entities, create bases before the entities based on them, one `create_entity` call per level; fields still come after every level (`references/entity-families.md`). Every `create_entity` item carries `entity_type`, `view_permission` and `edit_permission`, chosen together from the entity's class and write tier: the platform default `unclassified` is a defect, not a class. Classify without asking, state the result in the summary, and check it with a read-back after the create (`references/data-modeling.md` → "Classifying an entity", `references/rbac.md` → "Choosing an entity's permissions").
+2. **Schema first**, follow "Mandatory Creation Order" in `references/data-modeling.md`, the single source for the order, the `is_a` / `has_a` exception, and how every entity is classified and read back.
 3. **Never create auto-generated fields**, `id`, `created_at`, `updated_at` and the `label_column` field are created automatically by `create_entity`. On an `is_a` / `has_a` entity also never create a field of its base: create only the entity's own fields. Leave `field_order` out of `create_field` too: the platform appends new fields in array order, while a hand-picked value can silently tie with an auto-created field (the label field sits at 20). Set it only when the user wants a specific position, after reading the entity's live `field_order` values.
 4. **`reference_table` mandates relational format**, Any field with `reference_table` MUST use `format: "reference"` or `format: "parent"`. No exceptions.
 5. **Warn before risky changes**, Renaming `table_name`/`field_name`, deleting entities/fields requires explicit user confirmation.
 6. **Surface a UI link whenever it helps the user**, after schema changes *and* after record operations (create / find / update). Pattern: `{ui_baseurl}/{module_slug}/{table_name}`, append `/{id}` for one record. See "Linking to the web UI" above for the rules (derive `ui_baseurl` from `getCurrentUser`; use the lowercase `module_slug`).
 7. **Always batch: one call per set of records, never a loop of single calls.** Whenever more than one record of the same kind is pending (several fields for an entity, several permissions for a module, several `role_permission` rows, several ids to update or delete, several rows for a table), send them **in one call**: pass an array in `data` to `create_*` (`'{"data": [{...}, {...}]}'`), or an array in `id` (`table_name` for entities, `permission_name` for permissions) to `update_*` / `delete_*` (`'{"id": [4, 5, 6]}'`, the same `data` applied to every id). Array items do **not** need the same keys (a key omitted from one item takes the column default). One call is one request and one transaction (all-or-nothing); the response is always an array of the affected records. Keep a call to roughly 100 rows / ids. Issuing N single-record calls where one array call would do is a mistake. The one ordering exception is entities of a family: one `create_entity` call per level, bases first. `postgrestRequest` also takes an array `body`, but under raw PostgREST rules (identical keys per item, or `?columns=` on the path with omitted keys becoming NULL). See `references/crud-tools.md` § "Bulk operations".
 8. **Aggregates over child records are rollups**, A value summed, counted or otherwise aggregated from child records is a field with a `rollup` definition, never a `computed_fields` rule or a value the client maintains. See `references/rollup-fields.md`.
+9. **Deliver the smallest result that satisfies the request.** A build request is schema, permissions, roles and UI links, not a spec, report or analytics run. Sample data is offered, capped and seeded only after an explicit yes; specs, diagrams, exports and analytics are produced only when asked. Verification is one read of the new entities (class and permissions) and, when seeded, the real seed run's output (every table at its count, each child relationship read back, each computed and rollup column checked) and a rollup value if the module has rollups, not an analysis. An analytics request answers only the question asked and writes nothing to the schema. Smallest means narrowest scope, never a compressed rendering of a result: when the answer is an artifact, deliver the whole artifact (Golden Rule 10). See `references/build-module.md`.
+10. **Generated artifacts are used exactly as the tool returned them.** What a tool returns (a diagram, spec, document, report, export or CSV schema) is the artifact; the bytes are not raw material to summarize. A diagram is pasted into the reply verbatim: the status line, every `classDef` and `class` line and the node order, because the styling states which entities were selected and which are only referenced. A document is saved by redirecting stdout to a file and handed over as that file. The tool's output already carries its own ```` ```mermaid ```` fence; do not add a second one. Length is no reason to shorten it; if the output was truncated, redirect stdout to a file, read the file in parts and paste it in full. Never retype, condense, re-style, re-order or tidy it, and never put a hand-made version beside it. Quoting part of an artifact counts as retyping: to answer a question about it, use prose, or paste the whole artifact. A subset or a view across several modules is not a reason to edit the diagram: call the tool with `module_slugs` and/or `table_names`. Every time an artifact is sent, including a repeat later in the session, it is pasted from a tool result in that same turn: run the generator again for a different selection, read the saved file for the same one. Never reproduce it from an earlier message. A table or prose that adds information (fields from `read_field`, an explanation) may sit outside the artifact; a second diagram, or a table that only restates the diagram's nodes and arrows, may not. If the tool fails, report the failure; do not draw a substitute by hand.
 
 ## Response handling: exit code is not enough
 
@@ -294,14 +367,16 @@ The typed Layer-1 tools return arrays too: `read_entity`,
 `read_module`, and the **`create_*` / `update_*` / `delete_*`** tools all
 emit `[{...}]`, not a bare object — and a bulk call (array `data`, array
 `id`) emits every affected record in that array. So `jq -r '.id'` on a
-`create_role` response fails with `Cannot index array with string` —
+`read_role` response fails with `Cannot index array with string` —
 index the array: `jq -r '.[0].id'`, or pass `--single` to get a bare
 object (single-record calls only; `--single` is rejected when `data` /
-`body` / `id` / `table_name` is an array). Better still, do **not** read
-a new row's `id` off its own create response at all: the echoed
-representation is not a dependable carrier of the id/natural key.
-Re-read by natural key after the create (one `in.(...)` read for a whole
-batch), so the array-vs-object shape never reaches your `jq`.
+`body` / `id` / `table_name` is an array).
+
+**Never read a new row's `id` off its own create response.** The echoed
+representation is not a dependable carrier of the id/natural key, and a
+position in a bulk response is not a mapping back to your input. Re-read
+by natural key after the create (one `in.(...)` read for a whole batch)
+and take the id from that read.
 
 There are **two ways** to read against `crud`. Pick the one that
 matches the intent of the call:

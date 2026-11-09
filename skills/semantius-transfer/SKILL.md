@@ -12,7 +12,7 @@ description: >-
   to <host>", "seed test from prod", "import crm.json into the test host". Do
   NOT trigger for loading a CSV or xlsx file (semantius-importer), exporting a
   table to CSV (semantius-importer), producing a markdown spec from a live
-  module (semantius-optimizer), or webhook receivers.
+  module, or webhook receivers.
 ---
 
 # semantius-transfer Skill
@@ -117,4 +117,4 @@ semantius --host <target> call utils/import_entities '{"path":"accounts.json"}'
 - runs `logout` or `use`, or writes credentials to a `.env`;
 - imports without the Stage 3 gate, or into a host whose `whoami` it has not seen this run;
 - deletes anything on either host, or edits a transfer file;
-- loads CSV or xlsx files (route to `semantius-importer`) or produces a markdown spec (route to `semantius-optimizer`).
+- loads CSV or xlsx files (route to `semantius-importer`) or produces a markdown spec.

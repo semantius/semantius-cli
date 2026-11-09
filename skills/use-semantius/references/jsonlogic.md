@@ -74,8 +74,8 @@ JsonLogic expressions may read these injected variables via `{"var": "$name"}`:
 
 | Var | Type | Meaning |
 |---|---|---|
-| `$today` | `date` | Server date at evaluation time. |
-| `$now` | `date-time` | Server timestamp at evaluation time. |
+| `$today` | `date` | Current date in UTC at evaluation time. |
+| `$now` | `date-time` | Current timestamp in UTC at evaluation time. |
 | `$user_id` | number (`int64`) | The `users.id` of the authenticated user performing the write (`null` for system writes). |
 | `$old` | `object` or `null` | Stored row as JSON on UPDATE and DELETE; `null` on INSERT. Use to express transition rules ("the workflow state cannot move from `released` back to `planned`") and "set-once" invariants ("`account_number` is immutable after first save"). |
 | `$mode` | `string` | The operation being evaluated: `"insert"`, `"update"` or `"delete"`. Always present. Use it to gate one operation without constraining the others. |
@@ -132,7 +132,7 @@ Inserts and updates pass untouched; a delete passes only for holders of `sales:d
 
 #### Platform-extension operators
 
-In addition to standard JsonLogic operators, the platform provides extension operators usable in `computed_fields`, `validation_rules`, `select_rule` (see `select-rule.md`), and `input_type_rule`:
+In addition to standard JsonLogic operators, the platform provides extension operators usable in `computed_fields`, `validation_rules` and `select_rule` (see `select-rule.md`). An `input_type_rule` runs in the browser, which has `has_permission`, `is_match`, `concat`, `let` and the date operators. It does not have `value_changed`, `require_permission`, `is_raci_actor` or `has_consultation`, which need the database or a previous row, or `set_record`; a rule using one of them falls back to the static `input_type`.
 
 | Operator | Shape | Returns | Use in |
 |---|---|---|---|
@@ -240,6 +240,58 @@ The role assigned `accountable` for the process that gates `offers` → `approve
 ```
 
 **Difference from `cat`.** `cat` is the standard JsonLogic string operator and also concatenates, but uses `jl_to_text` coercion (which returns `''` for null and the raw text for strings). `concat` is functionally similar for most inputs; the explicit distinction is the SQL-`CONCAT`-style framing and explicit handling of all JSON types via `::text` for non-strings. Reach for `concat` when the intent is "build a label or message" with mixed-type inputs and predictable null handling; `cat` remains fine for plain string-only joins.
+
+#### Date operators
+
+Six operators compute with dates. They work in `computed_fields`, `validation_rules`, `select_rule` and `input_type_rule`, and as values in a rollup filter (see `rollup-fields.md` for what a filter allows as their arguments).
+
+**Everything is UTC**, whatever the session's or the browser's time zone. Results that carry a time are written with an explicit `+00:00`.
+
+| Operator | Returns |
+|---|---|
+| `{"date_add": [date, amount, unit]}` | The date moved by a whole `amount` of `unit`, the same type as the input. A negative amount subtracts. |
+| `{"date_add": [date, duration]}` | The date moved by an ISO 8601 duration such as `P1M2DT3H`, or a `duration` field. Months apply first, then days, then time. |
+| `{"date_diff": [end, start, unit]}` | Whole elapsed units as an integer, truncated toward zero, in the argument order of `-`. |
+| `{"date_part": [date, part]}` | One field as an integer. |
+| `{"date_trunc": [date, unit]}` | The start of the period, the same type as the input. A week starts on Monday. |
+| `{"to_date": value}` | An ISO date. `value` is a date, a date-time or an epoch number, read as UTC. |
+| `{"date_format": [date, pattern]}` | Text. |
+
+- **Units:** `year`, `quarter`, `month`, `week`, `day`, `hour`, `minute`, `second`.
+- **Parts:** `year`, `iso_year`, `quarter`, `month`, `week` (ISO), `day`, `weekday` (Monday is 1), `day_of_year`, `hour`, `minute`, `second`, `epoch`.
+- **Pattern tokens:** `YYYY`, `YY`, `Q`, `MM`, `Mon`, `Month`, `DD`, `Dy`, `Day`, `HH24`, `MI`, `SS`, separated by nothing or by a space or any of `- / . : ,`. Names are English.
+
+**Values.**
+
+- Null or `""` for the date, the amount or the duration gives `null`, so a record with no date saves and has no result.
+- Dates are ISO 8601 only: `2026-12-31`, `2026-12-31T10:00:00Z`, `2026-12-31T10:00:00+02:00`. A date-time with no offset is read as UTC. Fractions of a second are dropped.
+- A date-only value has no time of day, so `date_add`, `date_trunc`, `date_part` and `date_format` refuse sub-day units, parts and tokens on it. `date_diff` reads it as midnight UTC and allows every unit.
+- An amount is a whole JSON number or a numeric string.
+
+**Month ends.** `date_add` clamps to the end of the month: Jan 31 + 1 month is Feb 28. `date_diff` counts a month only when the day of the month has been reached again, so Jan 31 to Feb 28 is 0 months. For the last day of a month, truncate to the month, add a month and subtract a day.
+
+**Example: a stored renewal deadline.** A computed `date` field that depends only on the row's own fields can be filtered and sorted, and it cannot go stale.
+
+```json
+{
+  "name": "notice_deadline",
+  "jsonlogic": {"date_add": [{"var": "term_end"}, {"-": [0, {"var": "notice_period_days"}]}, "day"]}
+}
+```
+
+**Do not store a value computed from `$today` or `$now`.** Computed fields run only when the row is written, so a stored "days until the deadline" is wrong from the next day until something touches the row. Store the date and compare it with `$today` where it is read, in a filter, a `select_rule` or a validation rule.
+
+| Error | Raised for |
+|---|---|
+| `90915` | A value that is not an ISO 8601 date, including `today` and locale formats. |
+| `90916` | An unknown or missing unit or part, or a sub-day unit, part or duration on a date-only value. |
+| `90917` | A `date_format` pattern outside the token list, or a time-of-day token on a date-only value. |
+| `90918` | An amount or duration that is not valid. |
+| `22008` | A well-formed date that does not exist, such as `2026-02-30`. |
+
+The error fails the write. In a `select_rule` it hides the row instead. In the browser the form keeps what it had, and the server refuses the save.
+
+**Dates without these operators.** Arithmetic and a comparison with a number read a date as epoch seconds: `{"-": [{"var": "term_end"}, 86400]}` is an integer, and a date column refuses it with `22008`. Wrap the result in `to_date` to get a date back, or use `date_add`, because in the browser arithmetic on a date string gives `NaN`. Arithmetic also reads a null date as 0, which is 1970, so `{"<": [{"var": "term_end"}, {"var": "$today"}]}` is `true` when `term_end` is null: guard for null first. Two date strings compare as text, which is correct for dates and for date-times in UTC. A literal with another offset is not converted, so write literals in UTC.
 
 #### Cross-entity lookups inside JsonLogic (`let`, `set_record`, `throw_error`)
 
@@ -492,7 +544,7 @@ semantius call crud create_entity '{
 }'
 ```
 
-Both arrays default to `[]` and may be omitted entirely. To remove a rule or recompute, send the full replacement array on `update_entity` — the platform replaces, not merges.
+Both arrays default to `[]` and may be omitted entirely. To add, change or remove a rule, or to recompute, read the current list with `read_entity` and send the full list on `update_entity` — the platform replaces, not merges.
 
 #### Out of scope
 
@@ -523,8 +575,8 @@ Every field carries an optional `input_type_rule` property: a JsonLogic object t
 
 | Var | Type | Meaning |
 |---|---|---|
-| `$today` | `date` | Client date at evaluation time. |
-| `$now` | `date-time` | Client timestamp at evaluation time. |
+| `$today` | `date` | Current date in UTC, not the user's local date, so near midnight the two can differ. |
+| `$now` | `date-time` | Current timestamp in UTC. |
 | `$user_id` | number (`int64`) | The `users.id` of the user viewing the form. |
 
 `$old` is not meaningful here (there's no prior-row context client-side); do not reference it in `input_type_rule`.
@@ -543,35 +595,40 @@ Every field carries an optional `input_type_rule` property: a JsonLogic object t
 
 When the current record's `workflow_state` is `approved`, the form renders `approved_at` as `readonly`; otherwise as the standard editable input.
 
-**Example — show `approved_at` only when workflow_state crosses into approved.** The classic "housekeeping field appears at the right moment" pattern: `approved_at` starts hidden, surfaces as a required input once the user is moving the record into `approved`, and locks to readonly after the record is saved approved:
+**Example — show a field only in one state and require it there.** `sold_date` and `sale_price` stay hidden until the record is sold, then become required. The form re-evaluates the rule after each change, so choosing the state shows the fields before the record is saved. Both fields keep the static `input_type` `default`, and each carries this rule:
 
 ```json
 {
   "if": [
-    { "==": [{ "var": "workflow_state" }, "approved"] },
-    "readonly",
+    { "==": [{ "var": "workflow_state" }, "sold"] },
+    "required",
     "hidden"
   ]
 }
 ```
 
-If you need a third state ("required while transitioning"), nest:
+The rule only shapes the form, so the entity also carries a validation rule that refuses the state without the values. What counts as empty depends on the format (`data-modeling.md` → "Fields that apply only to some enum or boolean values"): here a `date` is `null` and a `number` is `0`. The `$mode` guard keeps a record written before the rule deletable:
 
 ```json
 {
-  "if": [
-    { "==": [{ "var": "workflow_state" }, "approved"] },
-    "readonly",
-    { "if": [
-      { "==": [{ "var": "$old.workflow_state" }, "approved"] },
-      "readonly",
-      "hidden"
-    ]}
-  ]
+  "code": "99010",
+  "name": "sold_needs_date_and_price",
+  "message": "A sold record needs a sold date and a sale price.",
+  "jsonlogic": {
+    "if": [
+      { "and": [
+        { "!=": [{ "var": "$mode" }, "delete"] },
+        { "==": [{ "var": "workflow_state" }, "sold"] }
+      ]},
+      { "and": [
+        { "!=": [{ "var": "sold_date" }, null] },
+        { "!=": [{ "var": "sale_price" }, 0] }
+      ]},
+      true
+    ]
+  }
 }
 ```
-
-Be aware that `$old` is not reliably available in the client-side render context per the contract above; if the form library does supply it, the pattern works, otherwise prefer a simpler two-state rule (`approved` → `readonly`, else `hidden`) and let `validation_rules` enforce "must be set on the approve transition" server-side.
 
 **Setting and removing.** Pass `input_type_rule` on `create_field` or `update_field` under `data`. Sending `{}` removes the rule and the static `input_type` resumes.
 

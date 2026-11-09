@@ -2,6 +2,14 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## The name sweep also compares synonyms
+
+2026-11-08. Asked for by Martin Amm: Stage 3 finds existing entities with `entity-match-checker.ts` from `use-semantius`, so a file of vendors offers an existing Suppliers table even when their fields do not overlap. The file format is unchanged; `version` stays `3.1`.
+
+## Every enum entry gets an icon that fits
+
+2026-11-07. Asked for by Martin Amm: `schema-mapping.md` says an enum field the import creates gets an icon on every entry that has a fitting one, by `use-semantius` "Enum values and labels". The file format is unchanged; `version` stays `3.1`.
+
 ## Imported entities are classified and permissioned through use-semantius
 
 2026-11-06. Asked for by Martin Amm: a created module gets `<slug>:read`, `<slug>:manage` and `<slug>:admin` with `access_scope: advanced`, and a created entity carries `entity_type`, `view_permission` and `edit_permission` as `use-semantius` gives them. The class is chosen without a question and named in the summary. The file format is unchanged; `version` stays `3.1`.

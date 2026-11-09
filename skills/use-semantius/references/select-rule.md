@@ -25,8 +25,8 @@ A non-boolean result is tested for truthiness: `false`, `0`, `null` and the empt
 
 | Var | Type | Meaning |
 |---|---|---|
-| `$today` | `date` | Server date at evaluation time. |
-| `$now` | `date-time` | Server timestamp at evaluation time. |
+| `$today` | `date` | Current date in UTC at evaluation time. |
+| `$now` | `date-time` | Current timestamp in UTC at evaluation time. |
 | `$user_id` | number (`int64`) | The `users.id` of the authenticated user performing the read. |
 
 There is no `$old` and no `$mode` on a read; do not use them in `select_rule`.

@@ -292,7 +292,14 @@ Input Schema:
 {"type":"object","properties":{"data":{"anyOf":[{"type":"object","properties":{ ... }},{"minItems":1,"type":"array","items":{"type":"object","properties":{ ... }}}],"description":"..."},"accept":{"type":"string","description":"..."}},"required":["data"]}
 ```
 
-`semantius tools crud` lists every tool with its parameters for about 1.8k tokens. One tool's schema costs 0.6k to 3.9k.
+`semantius tools crud` lists every tool with its parameters for about 1.8k tokens. One tool's schema costs from under 0.1k up to about 5k (`create_entity`, `create_field`).
+
+To see only the property names, or one property, of a `create_*` or `update_*` tool, filter the schema with `jq`:
+
+```bash
+semantius tools crud create_field | jq -Rc 'fromjson? | (.properties.data.anyOf[0] // .properties.data).properties | keys_unsorted'
+semantius tools crud update_field | jq -Rc 'fromjson? | (.properties.data.anyOf[0] // .properties.data).properties.format'
+```
 
 The `anyOf` is how every bulk-capable parameter appears: `data` on `create_*` is `object | object[]`, `id` on `update_*` / `delete_*` (and `table_name` on the entity tools) is `<scalar> | <scalar>[]`, and the parameter listing renders that union as `object | object[]`.
 

@@ -400,8 +400,8 @@
 
    | Var | Type | Meaning |
    |-----|------|---------|
-   | `$today`   | date      | Server date at evaluation time. |
-   | `$now`     | date-time | Server timestamp at evaluation time. |
+   | `$today`   | date      | Current date in UTC at evaluation time. |
+   | `$now`     | date-time | Current timestamp in UTC at evaluation time. |
    | `$user_id` | number    | `users.id` of the authenticated user performing the write (null when the write is system-initiated). |
    | `$old`     | object    | Previous row as JSON on UPDATE and DELETE; null on INSERT. |
    | `$mode`    | text      | The operation: `insert`, `update` or `delete`. |
@@ -456,7 +456,7 @@
    - `required`, `searchable` and `unique_value` are refused (`90261`), and so is a definition on a key, a core field, a `reference` or `parent` field, or a field a `computed_fields` rule names.
    - Neither side can be an `is_a` or `has_a` entity (`90249`). On an unmanaged entity the definition is kept as metadata, and takes effect once both sides are managed.
 
-   **The filter** is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and `<` and `<=` take three operands). Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record.
+   **The filter** is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and `<` and `<=` take three operands). Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record. The date operators (`date_add`, `date_diff`, `date_part`, `date_trunc`, `to_date`, `date_format`) can be used as values: their date is a date or date-time column, an ISO 8601 literal or another date operator, and their unit, part or pattern is a literal. A date literal compared with a date or date-time column must be ISO 8601 and is read in UTC.
 
    **How it behaves:**
    - The value cannot be written by hand. On create it starts as the empty aggregate, and on update a changed value is recomputed, with no error. Change the child records instead.

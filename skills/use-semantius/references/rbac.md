@@ -85,11 +85,35 @@ An entity's `view_permission` and `edit_permission` follow from its class (`data
 | `:admin` | `catalog`; a `junction` whose parent legs are all `catalog` | `view_permission = <slug>:read`, `edit_permission = <slug>:admin` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:admin` |
 
 - **Hand-built modules** (the steps below) have three module-wide permissions, `<slug>:read`, `<slug>:manage` and `<slug>:admin`, and `access_scope: advanced`, or `gated` when the module has a restricted step (see "Restricted steps (gates)" below). `basic` has no admin level, so a module with a `catalog` entity is never `basic`. The entity's `edit_permission` must already exist when `create_entity` runs.
-- **Spec-deployed modules** (`semantius-modeler`) keep the per-entity permissions above, derived from the same tier; the bundle table above lists what each bundle includes.
+- **Modules deployed from a spec** keep the per-entity permissions above, derived from the same tier; the bundle table above lists what each bundle includes.
 - **A `junction`** follows its parent legs: `:manage`, or `:admin` only when every leg is a `catalog` entity.
 - **Entities with a restricted step** (`operational_workflow`) stay at `:manage`; the restriction is a gate, see "Restricted steps (gates)" below. A narrow tier (an external participant who writes one entity without `<slug>:manage`) exists only in the per-entity shape.
-- **Direct creation acts as the master** of every entity it creates: it writes the entity's own read and write permissions and nothing for entities another module masters.
+- **Direct creation acts as the master** of every entity it creates: it writes the entity's own read and write permissions and nothing for entities another module masters, except view access to an entity it reuses ("Viewing an entity of another module" below).
 - **After a reclassification** (`update_entity` on `entity_type`), update the entity's `edit_permission` to the new tier in the same call (see "Update entity-level permission gates" below).
+
+### Viewing an entity of another module
+
+A module that reuses another module's entity gets view access to that entity and nothing more: never its `edit_permission`, and never the other module's whole `read` permission. Read the entity's `view_permission`, then which entities use it (`read_entity '{"filters": "view_permission=eq.<permission>", "select": "table_name"}'`):
+
+| The entity's `view_permission` | What to write |
+|---|---|
+| `public:read` or `user:read` | Nothing: it is a platform-level permission |
+| Used by this entity alone, and not the owner's `<owner>:read` | One hierarchy row: `<slug>:read` includes it |
+| The owner's `<owner>:read`, or shared with other entities | Give the entity its own, in the order below, so no existing user loses access |
+
+```bash
+# 1. The entity's own view permission, in the owner's module
+semantius call crud create_permission '{"data": {"permission_name": "procurement:read_vendors", "description": "View vendors", "module_id": <owner_module_id>}}'
+# 2. The shared permission keeps its access through it; the reusing module gets it too
+semantius call crud create_permission_hierarchy '{"data": [
+  {"including_permission_name": "procurement:read", "included_permission_name": "procurement:read_vendors"},
+  {"including_permission_name": "spend:read", "included_permission_name": "procurement:read_vendors"}
+]}'
+# 3. Only now point the entity at it
+semantius call crud update_entity '{"table_name": "vendors", "data": {"view_permission": "procurement:read_vendors"}}'
+```
+
+The entity list the user confirms says when a reused entity gets its own view permission (`build-module.md` → "Confirm the entity list").
 
 ### Restricted steps (gates)
 
@@ -99,7 +123,7 @@ A **gate** is a step that only some users may take: moving a record into an auth
 |---|---|---|
 | No gate | `advanced` | Nothing to enforce |
 | One or more gates, no RACI matrix | `gated` | One permission per gate, held by the admin role: `<slug>:admin` includes every gate |
-| The module is already `raci` | stays `raci` | The new gate is created like a `gated` one; the RACI matrix names its Accountable role, and the direct path never writes or changes that matrix (tell the user the gate has no Accountable role yet and that the matrix is extended through `semantius-architect`) |
+| The module is already `raci` | stays `raci` | The new gate follows the module's RACI matrix: see "A gate in a `raci` module" below |
 
 To add a gate to a module:
 
@@ -118,7 +142,21 @@ To add a gate to a module:
    A restricted create tests `$old` for `null` instead: `{"if": [{"==": [{"var": "$old"}, null]}, {"has_permission": "<gate>"}, true]}`. Operators and the rule shape (`code`, `name`, `message`, `jsonlogic`) are in `jsonlogic.md`.
 5. **Name the gate in the summary** so the user knows who can take the step (the admin role) and can ask for another holder.
 
-Create the gate permission before the rule that names it: a `has_permission` argument must exist. The direct path marks no gate as high risk and writes no `raci` data.
+Create the gate permission before the rule that names it: a `has_permission` argument must exist. The direct path marks no gate as high risk, so every gate it creates is included in `<slug>:admin`.
+
+#### A gate in a `raci` module
+
+The matrix is platform data: `processes`, `raci_assignments` and `process_gates` are ordinary entities, read and written with `postgrestRequest`. A new gate joins it like this:
+
+1. **Read the mode.** `living` when the instance has any `processes` row or the module's `settings.raci_mode` is `living`; otherwise `documentation`.
+2. **Ask once** which role is Accountable for the new step. Name the step in plain words and offer the module's existing roles. If the user cannot name one, treat the gate as `gated` (the admin role alone holds it) and say so in the summary.
+3. **Create the gate permission** and the `<slug>:admin` hierarchy row, exactly as in steps 1 and 2 above.
+4. **Write the matrix for the mode.**
+   - `living`: insert a `processes` row (`name`, `module_id`, `process_key` `<verb>_<noun>`); a `raci_assignments` row (`process_id`, `role_id` of the Accountable role, `raci: accountable`); and a `process_gates` row (`process_id`, `entity`, `gate_kind` `approval` for a transition into an authorization state, `create` for a restricted create, otherwise `transition`; `to_state`; `state_column` the name of the entity's state field, since the default is `status`). The Accountable role is not granted the gate: the rule resolves it live.
+   - `documentation`: nothing is stored. Grant the gate permission to the Accountable role with `create_role_permission`.
+5. **Write the rule for the mode.** `living`: the same rule as above with the permission check widened to `{"or": [{"is_raci_actor": ["<entity>", "<to_state>", "accountable"]}, {"has_permission": "<gate>"}]}`. `documentation`: `{"has_permission": "<gate>"}` as in step 4 above.
+
+The Accountable role still needs the entity's write tier (`<slug>:manage`) to change the record at all; the gate only decides who may take the step.
 
 ---
 
@@ -164,7 +202,7 @@ semantius call crud create_permission_hierarchy '{
 }'
 ```
 
-Then point the module at the three permissions and set `access_scope` to `advanced` with `update_module` (`data-modeling.md` → "Mandatory Creation Order", step 3).
+The module is pointed at the three permissions with `update_module` right after they exist, before the hierarchy (`data-modeling.md` → "Mandatory Creation Order" → "Wire the module's permission references").
 
 ### 3. Create Roles
 
@@ -221,6 +259,8 @@ semantius call crud create_role_permission '{
   ]
 }'
 ```
+
+The three role ids come from one `read_role` with `"filters": "slug=in.(crm_viewer,crm_manager,crm_admin)"`, matched by `slug`, never by the position of a row in the `create_role` response.
 
 ### 5. Assign Roles to Users
 
