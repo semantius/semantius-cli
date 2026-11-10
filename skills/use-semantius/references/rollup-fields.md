@@ -31,7 +31,7 @@ The rollup field's `format` must fit the result (`90268`):
 
 ## Creating one
 
-The child entity, `link_field` and `value_field` must already exist, so create the rollup field last. Several rollups can go in one `create_field` array.
+The child entity must already exist, and `link_field` and `value_field` must exist or come earlier in the same `create_field` array, so a rollup goes last, in the model's one `create_field` call or a later one. A rollup ahead of them fails with `90264`, and nothing in the call lands. Several rollups can go in one `create_field` array.
 
 `.tmp_deploy/orders-rollups.json`:
 
@@ -77,7 +77,7 @@ The date operators (`date_add`, `date_diff`, `date_part`, `date_trunc`, `to_date
 
 ## Hidden child rows (`90269`)
 
-The aggregate covers every child record, and every reader of the parent sees it. When the child has a `select_rule`, or a `view_permission` other than the parent's, the rollup is refused unless its definition sets `include_hidden_rows: true`. That setting shows those readers a sum, count, minimum or maximum over rows they cannot see, so ask the user before setting it, except when a reused entity gets its own view permission (`rbac.md` → "Viewing an entity of another module"), where it is set without asking and reported. The refusal also applies later: adding a `select_rule` to the child, or changing a `view_permission` on either side, fails while it would affect a rollup without the flag.
+The aggregate covers every child record, and every reader of the parent sees it. When the child has a `select_rule`, or a `view_permission` other than the parent's, the rollup is refused unless its definition sets `include_hidden_rows: true`. That setting shows those readers a sum, count, minimum or maximum over rows they cannot see, so ask the user before setting it, except when a reused entity gets its own view permission (`rbac.md` → "Viewing an entity of another module"), or when the child shows exactly when its parent does because a role sees only its own records (`rbac.md` → "Controls on a gate", control 7, and "Roles that do part of the work"); there it is set without asking and reported. The refusal also applies later: adding a `select_rule` to the child, or changing a `view_permission` on either side, fails while it would affect a rollup without the flag.
 
 ## Changing and removing
 

@@ -8,8 +8,8 @@ One script writes everything. It uses `seed-lib.ts`, which halts on every failur
 
 Read what you are about to fill; column names, enum values and the key type come from the platform, never from memory:
 
-- `read_entity` with `table_name=in.(<the tables>)` and `select: "table_name,id_type,label_column"`. An entity whose `id_type` is `bigint` or `text` needs its own `id` on every row, and foreign key values into it are those ids. For any other key type never send `id`, except to attach a `has_a` row to an existing base record (below).
-- `read_field` for the same tables, with `select: "table_name,field_name,format,input_type,enum_values,reference_table,ctype"`. `ctype` marks the `computed` and `rollup` columns.
+- `read_entity` with `table_name=in.(<the tables>)` and `select: "table_name,id_type,label_column,computed_fields"`. An entity whose `id_type` is `bigint` or `text` needs its own `id` on every row, and foreign key values into it are those ids. For any other key type never send `id`, except to attach a `has_a` row to an existing base record (below).
+- `read_field` for the same tables, with `select: "table_name,field_name,format,input_type,enum_values,reference_table,ctype"`. `ctype` marks the `computed` and `rollup` columns. A label column that a `computed_fields` rule fills keeps `ctype` `label`: the rule's `name` in the entity read marks it.
 
 ## Set up and run
 
@@ -30,10 +30,12 @@ The check run records every insert and sends no write. It does prove that each t
 
 Never retype `seed-lib.ts` and never read it: the functions are listed below. No other write path: no hand-run `postgrestRequest` inserts, no probe or test rows.
 
+To change your own script, after a halt or for a new value, edit it in place with your file-edit tool and change only the lines that need it; never write the whole script again. Without a file-edit tool, change it with Bun (`cli-usage.md` → "Ad-hoc JSON and file work in Bun"), never with Python.
+
 ## The pattern
 
 ```typescript
-import { seedEnsureMany, idsByKey, assertParents, assertComputedVary, assertSeedCounts, assertSeedDistinct, days, exampleDomain, rng, runSeed } from "./seed-lib";
+import { seedEnsureMany, idsByKey, assertParents, assertStatesAgree, assertComputedVary, assertSeedCounts, assertSeedDistinct, days, exampleDomain, rng, runSeed } from "./seed-lib";
 
 await runSeed(async () => {
   const counts: Record<string, number> = {};
@@ -78,12 +80,14 @@ await runSeed(async () => {
 
 ## The functions
 
-- `seedEnsureMany(path, rows, keyField)`: the insert for every table. `keyField` is a column that differs on every row (the label column, or a code); the platform need not enforce it. It reads the rows whose key is already there, inserts only the missing ones in one POST and returns all rows with their ids in input order. Use it only on entities this build created.
+- `seedEnsureMany(path, rows, keyField)`: the insert for every table. `keyField` is a column the seed sends and the platform does not compute, and it differs on every row: the label column when no `computed_fields` rule fills it, or a code. The platform need not enforce it. A `computed` or `rollup` column, or a column a rule fills, is refused before the first read, because the platform overwrites what the seed sends there and no stored row would match its key. When the label is computed, key on a code from `uniq` or another column the seed writes that differs on every row. It reads the rows whose key is already there, inserts only the missing ones in one POST and returns all rows with their ids in input order. Use it only on entities this build created.
 - `postMany(path, rows)`: a plain bulk insert, for a table with no column that differs on every row. A re-run appends a second set.
-- `idsByKey(path, keyField, rows)`: returns `(label) => id`, read back from the platform by natural key. Halts on a label that is missing or appears twice.
+- `idsByKey(path, keyField, rows)`: returns `(label) => id`, read back from the platform by natural key. Halts on a label that is missing or appears twice. Its `.labelOf(key)` gives the parent's stored label, for a parent whose label a rule composes.
 - `assertParents(path, keyField, fkField, rows, parentLabels)`: reads the child rows back with their `<fk>_label` and halts, naming the rows, if one names a different parent than `parentLabels[i]` (`null` for an optional relationship meant to be empty).
 - `assertJunction(path, fkA, fkB, pairs)`: for a connecting record. Reads the whole table back with both `<fk>_label` columns and halts on an intended `[labelA, labelB]` pair that is missing or wrong, and on a stored row that was not intended.
-- `assertComputedVary(path, keyField, rows, columns)`: reads `computed` and `rollup` columns back for the seeded rows and halts when a column holds one value on every row. A check run only proves the columns exist.
+- `assertStatesAgree(name, parents, rules)`: before the first write, for a parent table and a child table that both carry `workflow_state`. Each entry is `[parent label, parent state, child states]`, and `rules` maps a parent state to the child states it allows (`only`, `[]` for no child rows) and the child states it needs one of (`needs`). Halts, naming the parents, when a parent's state and its children's states disagree, or when a rule names a state no parent has.
+- `assertStamped(path, keyField, rows, columns, states)`: for an entity with an approval gate. Reads the seeded rows back and halts, naming them, when a row in one of `states` (the gated state and the states after it) has an empty stamp column.
+- `assertComputedVary(path, keyField, rows, columns)`: reads `computed` and `rollup` columns back for the seeded rows and halts when a column holds one value on every row. A `$user_id`, `$now` or `$today` stamp that holds this run's user, time or date on every row is constant by design: it is left out with a printed line, not a halt. A check run only proves the columns exist.
 - `assertItemized(column, parents)`: before the first write. Each entry is `[parent label, figure, number of child rows]`, as in `assertItemized("subscriptions.seats_purchased", plan.map((p) => [p.name, p.seats_purchased, p.seats.length]))`. Halts, naming the parents, when a figure is below its child count or above twice it.
 - `assertSeedCounts(counts, expected)`, `assertSeedDistinct(table, rows, columns, minDistinct?)`: halt on a wrong count, or on a column that should vary and does not.
 - `patchById(table, id, body)`: fixes one row.
@@ -96,7 +100,8 @@ await runSeed(async () => {
 
 - Parents first, children after. A child names its parent by label in the plan, and `idsByKey` turns the label into the id. Never type an id, never map by array position, never take an id from an insert response (`SKILL.md` → "Response handling").
 - Give every parent its own label. `idsByKey` halts on a repeated label or a label it cannot find.
-- After each child table, `assertParents` reads the rows back with their `<fk>_label` (`crud-tools.md` § "Composed labels") and compares each with the parent from the same plan. `keyField` is a column that differs on every child row (its label or a code). A mismatch halts and names the rows; fix them with `patchById`.
+- After each child table, `assertParents` reads the rows back with their `<fk>_label` (`crud-tools.md` § "Composed labels") and compares each with the parent from the same plan. `keyField` is a column the seed sends that differs on every child row (its label when no rule fills it, or a code). A mismatch halts and names the rows; fix them with `patchById`.
+- A parent whose label a `computed_fields` rule composes (an interview labeled from its candidate) is keyed on a column the seed sends, and the plan cannot know its stored label. Give `assertParents` the label `idsByKey` read back, one per child row: `scorecardPlan.map((s) => interviewId.labelOf(s.interview))`, where each scorecard in the plan names its interview by that key.
 - A child with no name, or whose label repeats across parents (one person holding seats on two subscriptions), keys on any column that differs on every row of the table, such as a date or a code, or gets labels that differ in the sample data. `assertParents` takes that same column. `assertJunction` is only for connecting records.
 - A connecting record (junction) has no column that differs on every row. Seed it with `postMany`, each row carrying the ids of its two parents from their `idsByKey` lookups, and keep the intended `[labelA, labelB]` pairs in the plan. Then `assertJunction(path, fkA, fkB, pairs)` instead of `assertParents`:
 
@@ -113,7 +118,7 @@ await runSeed(async () => {
 
 - Every table goes through one `seedEnsureMany` (or `postMany`) call: one POST for the whole table. Every row carries the same keys: a column you send on one row you send on every row. Only `reference`, `date` and `date-time` accept `null`. Every other format is NOT NULL, required or not, so an empty one is `""` (text, email, url, …) or `0` (numbers); a column you leave out of every row takes the platform's zero value. Never leave a key `undefined`.
 - Tally each table from its own insert (`counts.vendors = (await seedEnsureMany(…)).length`) and end with `assertSeedCounts` using the per-table counts the sample-data question named. A lower count needs a stated reason in the report.
-- After a halt, fix the cause and run the script again: `seedEnsureMany` skips the rows that landed. A fix to a value in a row that landed needs `patchById` or a reset ("Changing what was seeded"). A table seeded with `postMany` needs a look at what landed first, because a re-run appends a second set.
+- After a halt, fix the cause and run the script again: `seedEnsureMany` skips the rows that landed, found by their key. That holds only while each row keeps the key it had on the run that halted. A changed key inserts the row a second time, so clear the table with `clearSeeded` first. A fix to a value in a row that landed needs `patchById` or a reset ("Changing what was seeded"). A table seeded with `postMany` needs a look at what landed first, because a re-run appends a second set.
 
 ## Values
 
@@ -122,7 +127,16 @@ await runSeed(async () => {
 
 ## Rows that read as records
 
-- Decide a row's drivers first (its state, its parent, its place), then derive every field that must agree with them. A terminal state (revoked, canceled, expired, closed) gets a note that says so or no note, never an ongoing one such as "still billing"; an active state never a note about ending; an end date is after its start date; a closed date exists only on a closed row.
+- Decide where each chain of records stands first: the state each parent ends in, and the states of its children that agree with it (an application at `hired` has an `accepted` offer; an application at `applied` has no offer). The plan holds each parent with its children and their states. When a parent table and a child table both carry `workflow_state`, check the plan with `assertStatesAgree` before the first write, with a rule for each parent state that limits its children:
+
+  ```typescript
+  assertStatesAgree("applications.offers", plan.map((a) => [a.name, a.state, a.offers.map((o) => o.state)]), {
+    applied: { only: [] },
+    offer: { needs: ["approved", "sent"] },
+    hired: { needs: ["accepted"], only: ["accepted"] },
+  });
+  ```
+- Then decide each row's drivers (its state, its parent, its place) and derive every field that must agree with them. A terminal state (revoked, canceled, expired, closed) gets a note that says so or no note, never an ongoing one such as "still billing"; an active state never a note about ending; an end date is after its start date; a closed date exists only on a closed row.
 - A parent's stored figure that its child rows itemize (a number a person enters, such as seats purchased over seat rows) stays at the scale of those rows, since a small dataset cannot carry a real company's numbers: at least the number of child rows and at most twice that, so with 3 seat rows, 3 to 6 seats purchased, never 120. Set the figure in the plan next to the parent's children, vary the gap between parents (none on one, a few on another), and check the plan with `assertItemized` before the first write. A figure the platform counts from the child rows is a `rollup`, not a stored figure: it needs no such check and is not in the plan.
 - Give parents different numbers of children (1 to 5, about 3 on average), never the same number each: a rollup that counts them would be identical on every parent and halt the run. Check it before the first write with `assertSeedDistinct` over the per-parent counts, as the example does.
 - When a computed or rollup column depends on a state of the children (inactive seats, overdue invoices), give some parents children in that state and others none, so the column differs between parents.
@@ -134,7 +148,7 @@ await runSeed(async () => {
 
 ## Computed and rollup columns
 
-Every `computed` and `rollup` column of a seeded table (`ctype` in the read under "Before you write") goes through `assertComputedVary`, at the very end of the script, immediately before `assertSeedCounts`:
+Every `computed` and `rollup` column of a seeded table (`ctype` in the read under "Before you write", and every column a `computed_fields` rule names, a composed label included) goes through `assertComputedVary`, at the very end of the script, immediately before `assertSeedCounts`. Pass them all: a `$user_id`, `$now` or `$today` stamp that is constant on a seed is left out by the function itself, which prints a line for it to name in the report.
 
 ```typescript
 await assertComputedVary("/subscriptions", "subscription_name", subscriptionRows, ["used_seats", "wasted_annual_cost"]);
@@ -142,9 +156,11 @@ await assertComputedVary("/subscriptions", "subscription_name", subscriptionRows
 
 On a connecting record, which has no column that differs on every row, pass the rows `postMany` returned and key on `id`: `await assertComputedVary("/seats", "id", seats, ["annual_cost"])`. This reads those rows back as a set, so it is not the position mapping that "Parents and children" rules out.
 
-A `computed` or `rollup` column never goes in a row and is never patched: the platform writes it and overwrites what you send. Change its inputs instead.
+A `computed` or `rollup` column never goes in a row and is never patched: the platform writes it and overwrites what you send. Change its inputs instead. The one exception is an approval stamp on a row seeded at or past its step.
 
-A column with one value on every row halts the run. Fix the inputs in the plan, clear the seed and write it again (next section). Constant by design means the formula gives the same value for every possible row; a column that came out 0 on every row never qualifies. A `$user_id` stamp such as `requested_by_user_id` (`rbac.md` → "Controls on a gate") qualifies too, because a seed run creates every row as one user. Leave a column out only in those cases, never because it halted, and name it in the report.
+**Approval stamps on rows past the step.** A row seeded straight into a state at or past an approval (`approved`, `ordered`, `signed`) carries its `<step>_by_user_id` and `<step>_at` in the row, because the rule keeps what an insert sends there (`rbac.md` → "Controls on a gate", control 5). The date follows from the plan and falls after the row's own earlier dates. The approver is the user the record names as its approver (`approver_user_id`) when it names one, and otherwise a user read from `users` other than the user running the seed (`user_id` from `getCurrentUser`), since a requester never approves their own record (see "Parents and children" for a relationship into an existing entity). A row before the step sends `null` in both. At the end of the script, before `assertComputedVary`, check them: `await assertStamped("/offers", "offer_code", offerRows, ["approved_by_user_id", "approved_at"], ["approved", "sent", "accepted", "declined"])`. Only an admin may create a record at or past an approval (`rbac.md` → "Restricted steps (gates)", step 5), so the seed user must hold `<slug>:admin` (in the `permissions` from `getCurrentUser`). When the seed user does not hold it, or is the only user, seed no row at or past an approval step, leave its stamps out of `assertComputedVary`, and say in the report why no sample record is past the approval.
+
+A column with one value on every row halts the run. Fix the inputs in the plan, clear the seed and write it again (next section). Constant by design means the formula gives the same value for every possible row, or a `$user_id`, `$now` or `$today` stamp such as `requested_by_user_id`, which a seed run writes as one user, on one day; `assertComputedVary` leaves such a stamp out by itself. A column that came out 0 on every row never qualifies, and neither does an approval stamp, which the seed sends. Leave a column out yourself only for a formula that is constant for every possible row, or for the approval stamps when no row is past the approval (above), never because it halted, and name every column left out in the report.
 
 ## Changing what was seeded
 
@@ -168,4 +184,4 @@ Write it as `.tmp_deploy/clear_<module_slug>.ts` and run it the way the seed scr
 
 ## Report
 
-Report a seed only from the real run's output: it ends `Seed finished: <n> write call(s) applied with no errors.`, shows every table at its count and a `✓ <table>.<fk>: all <n> row(s) name the intended parent` line for each child table (`… name the intended parents` for a connecting record) and a `✓ <table>.<column>: <n> distinct value(s)` line for each computed or rollup column (a one-row table prints `one row, so … cannot be compared` instead). State how many rows landed in each table, and name any column left out as constant by design. A check run, a run that ended `SEED HALTED` or one that ended `Clear finished` seeded nothing you can report. Do not summarize the data's meaning: that is analytics, which is a separate request.
+Report a seed only from the real run's output: it ends `Seed finished: <n> write call(s) applied with no errors.`, shows every table at its count and a `✓ <table>.<fk>: all <n> row(s) name the intended parent` line for each child table (`… name the intended parents` for a connecting record), a `✓ <name>: <n> parent(s) agree with their children` line for each `assertStatesAgree`, a `✓ <table>: all <n> row(s) past the step carry …` line for each `assertStamped`, and a `✓ <table>.<column>: <n> distinct value(s)` line for each computed or rollup column (a one-row table prints `one row, so … cannot be compared` instead, and a stamp left out prints `… constant by design: left out of the check`). State how many rows landed in each table, and name every column left out as constant by design. A check run, a run that ended `SEED HALTED` or one that ended `Clear finished` seeded nothing you can report. Do not summarize the data's meaning: that is analytics, which is a separate request.

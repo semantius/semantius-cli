@@ -44,7 +44,7 @@ A module deployed from a spec names each entity's permissions after the catalog,
 | Entity write | `<owner>:write_<entity>` | The entity's master |
 | Workflow gate | `<owner>:<verb>` | The module that realizes the state, if the catalog names one; otherwise the entity's master |
 | Override (`view_all_`, `manage_all_`, `submit_`, `bypass_submit_lock`) | `<owner>:<verb>` | The entity's master |
-| Bundle (`read`, `manage`, `admin`, a narrow tier such as `interview`, and a role that takes gates such as `hiring_manager`) | `<unit>:<tier>` | The module that declares it |
+| Bundle (`read`, `manage`, `admin`, a role that does part of the work such as `interviewer`, and a role that takes gates such as `hiring_manager`) | `<unit>:<tier>` | The module that declares it |
 
 An entity's `view_permission` and `edit_permission` point at its own read and write permissions, and never change. Roles hold bundles, and the bundles include the entity permissions through `permission_hierarchy`:
 
@@ -53,7 +53,7 @@ An entity's `view_permission` and `edit_permission` point at its own read and wr
 | `<unit>:read` | `read_<entity>` for every entity the module provisions, consumes or contributes to |
 | `<unit>:manage` | `<unit>:read`, and `write_<entity>` for each entity written at the `manage` tier |
 | `<unit>:admin` | `<unit>:manage`, `write_<entity>` for each entity written at the `admin` tier, plus gates and overrides |
-| Narrow tier | `write_<entity>` for the entities it covers. `<unit>:manage` includes it |
+| Role that does part of the work | `<unit>:read`, and `write_<entity>` for each entity it writes ("Roles that do part of the work" below). `<unit>:manage` includes each of those |
 | Role that takes gates | `<unit>:manage` and each gate its role takes ("Roles that take gates" below) |
 | `write_<entity>` | `read_<entity>`, because a write without read is unusable under row-level security |
 
@@ -85,10 +85,11 @@ An entity's `view_permission` and `edit_permission` follow from its class (`data
 | `:manage` | `operational_record`, `operational_workflow`, `junction` | `view_permission = <slug>:read`, `edit_permission = <slug>:manage` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:manage` |
 | `:admin` | `catalog`; a `junction` whose parent legs are all `catalog` | `view_permission = <slug>:read`, `edit_permission = <slug>:admin` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:admin` |
 
-- **Hand-built modules** (created with `module-rbac-setup.ts`) have three module-wide permissions, `<slug>:read`, `<slug>:manage` and `<slug>:admin`, plus a permission per gate and a bundle per role that takes gates, and `access_scope: advanced`, or `gated` when the module has a gate (see "Restricted steps (gates)" below). `basic` has no admin level, so a module with a `catalog` entity is never `basic`. The entity's `edit_permission` must already exist when `create_entity` runs.
+- **Hand-built modules** (created with `module-rbac-setup.ts`) have three module-wide permissions, `<slug>:read`, `<slug>:manage` and `<slug>:admin`, plus a permission per gate, a bundle per role that takes gates or does part of the work, and a write permission per entity such a role writes, and `access_scope: advanced`, or `gated` when the module has a gate (see "Restricted steps (gates)" below). `basic` has no admin level, so a module with a `catalog` entity is never `basic`. The entity's `edit_permission` must already exist when `create_entity` runs.
 - **Modules deployed from a spec** keep the per-entity permissions above, derived from the same tier; the bundle table above lists what each bundle includes.
 - **A `junction`** follows its parent legs: `:manage`, or `:admin` only when every leg is a `catalog` entity.
-- **Entities with a restricted step** (`operational_workflow`) stay at `:manage`; the restriction is a gate, see "Restricted steps (gates)" below. A narrow tier (an external participant who writes one entity without `<slug>:manage`) exists only in the per-entity shape.
+- **Entities with a restricted step** (`operational_workflow`) stay at `:manage`; the restriction is a gate, see "Restricted steps (gates)" below.
+- **An entity a role that does part of the work writes** (an interviewer's scorecards) takes `edit_permission = <slug>:write_<entity>` in place of `<slug>:manage`. `<slug>:manage` includes it, so the write tier is unchanged ("Roles that do part of the work" below).
 - **Direct creation acts as the master** of every entity it creates: it writes the entity's own read and write permissions and nothing for entities another module masters, except view access to an entity it reuses ("Viewing an entity of another module" below).
 - **After a reclassification** (`update_entity` on `entity_type`), update the entity's `edit_permission` to the new tier in the same call (see "Update entity-level permission gates" below).
 
@@ -153,7 +154,7 @@ To add a gate to a module:
      true]}
    ```
 
-   A gate with controls (every approval gate, and a gate with a named person) puts the gate's check in place of `has_permission` ("Controls on a gate" below, with complete rules). A restricted create tests `$old` for `null` instead: `{"if": [{"==": [{"var": "$old"}, null]}, {"has_permission": "<gate>"}, true]}`. Operators and the rule shape (`code`, `name`, `message`, `jsonlogic`) are in `jsonlogic.md`.
+   A gate with controls (every approval gate, and a gate with a named person) puts the gate's check in place of `has_permission` ("Controls on a gate" below, with complete rules). A restricted create tests `$mode` instead: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"has_permission": "<gate>"}, true]}`. Operators and the rule shape (`code`, `name`, `message`, `jsonlogic`) are in `jsonlogic.md`.
 5. **Stop a skip past the gate.** The states after the gate are the states a record reaches only after it was in the gated state (`received` and `closed` after `issued`; `ordered` after `approved`; `active`, `expired` and `terminated` after `signed`). When there are any, add a second validation rule with two lists: the states after the gate, and the gated state together with those states. A record enters a state of the first list only when its old state is in the second list, or when the user passes the gate's check, because a skip takes the step. A record created straight into a later state passes only with the gate's check, which on an approval gate means only an admin (imports and seed rows). The message names the step that cannot be skipped ("A purchase order must be issued before it is received"):
 
    ```json
@@ -163,14 +164,14 @@ To add a gate to a module:
      true]}
    ```
 
-   The `has_permission` branch is the gate's check, here for a gate without controls; an approval gate puts its whole check there ("Controls on a gate"), so a requester cannot skip past their own approval. A state the record can also reach without the gate (`rejected` beside `approved`, `canceled` before signing) is not in the lists. A state after the gate stays in the lists when it has a gate of its own (`terminated` after `signed`, `ordered` after `approved`): its own gate rule still decides who takes it.
+   The `has_permission` branch is the gate's check, here for a gate without controls; an approval gate puts its whole check there ("Controls on a gate"), so a requester cannot skip past their own approval. A state the record can also reach without the gate (`rejected` beside `approved`, `canceled` before signing) is not in the lists, even when it can be reached after the gate too. For an offer whose gate is `approved`, with `draft`, `submitted`, `approved`, `rejected`, `sent`, `accepted` and `declined`: an offer is sent only once approved, and accepted or declined only once sent, so the first list is `sent`, `accepted`, `declined` and the second `approved`, `sent`, `accepted`, `declined`; `rejected` is reached instead of `approved`, so it is in neither. A state after the gate stays in the lists when it has a gate of its own (`terminated` after `signed`, `ordered` after `approved`): its own gate rule still decides who takes it.
 6. **Name the gate in the summary:** the step and the roles that take it. When the user names another role for it, that role takes it through its bundle: add the hierarchy row to the bundle of a role the module has, or create the role as below. Naming the module's Manager role means every editor may take the step, so it is not a gate: drop it. Once it exists, drop it in this order: its gate rule, its sequence rule and its controls (below) first, then its permission and its hierarchy rows. When a role takes no other gate, move its users to the Manager role after the user agrees, then delete its grant, the role, its bundle and the bundle's hierarchy rows. The entity becomes `operational_record` when it has no gate left, and the module `advanced` when it has none.
 
-Create the gate permission before the rule that names it: a `has_permission` argument must exist. The direct path marks no gate as high risk, so every gate it creates is included in `<slug>:admin`.
+Create the gate permission before the rule that names it: a `has_permission` argument must exist. The platform does not check it. It saves a rule that names a permission that does not exist, and that check is then false for every caller, admins included, so the step is closed to everyone. Before writing rules, collect every `has_permission` and `require_permission` name in the `validation_rules` and `select_rule`s about to be written, for every entity, and read them in one `read_permission` with `permission_name=in.(…)`. Every name must come back; a missing one is a typo, fixed before the rule is written. The module's tier permissions are `<slug>:read`, `<slug>:manage` and `<slug>:admin`; viewer, manager and admin are role names, so `recruiting:manager` and `recruiting:viewer` are never permissions. The direct path marks no gate as high risk, so every gate it creates is included in `<slug>:admin`.
 
 #### Roles that take gates
 
-A role beyond the module's viewer, manager and admin exists to take gated steps: a Hiring Manager who approves offers, an Approver who approves purchase requests, a Buyer who issues orders. It does the everyday work too, so its bundle includes `<slug>:manage`. One role can take several gates, and two roles can take the same gate. Create all of them together, one call per kind:
+A role beyond the module's viewer, manager and admin either takes gated steps while it does the everyday work, as in this section, or does only part of the work ("Roles that do part of the work" below). A role that takes gates is a Hiring Manager who approves offers, an Approver who approves purchase requests, a Buyer who issues orders. It does the everyday work too, so its bundle includes `<slug>:manage`. One role can take several gates, and two roles can take the same gate. Create all of them together, one call per kind:
 
 1. **The bundle** `<slug>:<role_key>`, with `role_key` in snake_case (`recruiting:hiring_manager`), described by the steps it adds ("Manage Recruiting data and approve offers"), with `module_id`. It goes in the same `create_permission` as the gates.
 2. **Its hierarchy rows:** the bundle includes `<slug>:manage` and each gate the role takes, in the same `create_permission_hierarchy` as the `<slug>:admin` rows.
@@ -179,9 +180,97 @@ A role beyond the module's viewer, manager and admin exists to take gated steps:
 
 In the per-entity shape the bundle is `<unit>:<role_key>` and includes `<unit>:manage`. The module's default roles stay viewer, manager and admin. A user who takes a gated step is given the role for it.
 
+#### Roles that do part of the work
+
+Some people use a module without doing its everyday work: they write only some entities and, where the leading products limit them, see only the records that name them. Most domains have such a role:
+
+| Domain | Role | Writes | Sees only |
+|---|---|---|---|
+| Service desk | Requester | tickets, comments on them | the tickets they requested |
+| Field service | Technician | service reports, time entries | the work orders assigned to them |
+| Expenses | Employee | expense reports and their lines | their own reports |
+| Recruiting | Interviewer | scorecards | the interviews they are on |
+
+Such a role never gets `<slug>:manage`, which writes every entity of the module. It has five parts:
+
+1. **Reads.** Its bundle includes `<slug>:read`, so its holders see the module and its catalog data.
+2. **Writes.** Each entity it writes takes `edit_permission = <slug>:write_<entity>`. `<slug>:manage` includes it, so the module's managers lose nothing, and so does the role's bundle.
+3. **Rows.** On each entity the products limit the role to, its holders see the records a user field names them in, and the records below those. The field names the person who requested the record (`requested_by_user_id`, stamped on insert as in "Controls on a gate", control 1) or the person assigned to it (`technician_user_id`, `interviewer_user_id`: a `reference` to `users` with `reference_delete_mode: clear`). The `select_rule` has the shape of control 7, with this role's bundle in its `!` and `<slug>:manage` in place of `<slug>:admin`, so a person who also does the everyday work sees every record. An entity the products hide from the role (offers from an interviewer, internal notes from a requester) gets a `select_rule` that hides it from the role's holders.
+4. **Writes stay within those rows.** A `select_rule` limits which records the role's holders change, not which they create, and the platform checks a new row only against `edit_permission`. A validation rule on each entity the role writes therefore refuses a write by a holder without `<slug>:manage` unless the record, or its parent read with `set_record`, names them after the write.
+5. **Fields it may not change.** A field the products leave to the everyday workers (a ticket's priority and its assignee) gets a validation rule that, for a holder without `<slug>:manage`, refuses any value but the default on insert and any change on update.
+
+The records above the one that names the person (the application and candidate above an interview, the customer above a ticket) cannot be narrowed to the role's records: `set_record` reads one row by id, so no rule can look for the rows below it that name the user. They stay visible to the role's holders, and the access line says so. An entity above that the products hide from the role is hidden whole, as in part 3.
+
+A role of this kind can also take a gate (a customer who accepts a quote). Its bundle then includes that gate, still without `<slug>:manage`, and `<slug>:admin` includes the gate as it includes every gate.
+
+Create these roles with the gates and the roles that take them, in the same calls:
+
+1. **The permissions:** each `<slug>:write_<entity>` ("Write scorecards") and the bundle `<slug>:<role_key>`, described by what it does ("Write the scorecards of the interviews you are on"), each with `module_id`, in the same `create_permission` as the gates.
+2. **The hierarchy rows:** `<slug>:manage` includes each `<slug>:write_<entity>`; the bundle includes `<slug>:read`, each `<slug>:write_<entity>` the role writes and each gate it takes. They go in the same `create_permission_hierarchy` as the gates' rows.
+3. **The role and its grant,** as for a role that takes gates: `role_name` "<Module Name> <Role Title>" ("Recruiting Interviewer"), `slug` `<module slug with - as _>_<role_key>`, `module_id`.
+4. **The entities:** each entity's `edit_permission`, `select_rule` and validation rules go in its `create_entity` payload, and the named field in its `create_field` call. A rollup over an entity with such a `select_rule` needs `include_hidden_rows: true` before the rule is set (`90269` otherwise). On the entity that holds the field, over an entity below it, it is set without asking, as in control 7, and the final response names it; any other such rollup follows `rollup-fields.md` → "Hidden child rows".
+
+In the per-entity shape the bundle is `<unit>:<role_key>` and includes `<unit>:read` and the role's `write_<entity>` permissions, and `<unit>:manage` includes each of those.
+
+**Complete rules for an interviewer.** Recruiters schedule interviews and name the interviewer on each (`interviewer_user_id`); the interviewer writes the scorecards of those interviews and never sees offers. The role is `recruiting:interviewer`, its bundle includes `recruiting:read` and `recruiting:write_scorecards`, and `scorecards.edit_permission` is `recruiting:write_scorecards`.
+
+The `select_rule` of `interviews`, which holds the field:
+
+```json
+{"and": [{"has_permission": "recruiting:read"}, {"or": [
+  {"!": [{"has_permission": "recruiting:interviewer"}]},
+  {"has_permission": "recruiting:manage"},
+  {"and": [{"!=": [{"var": "interviewer_user_id"}, null]}, {"==": [{"var": "interviewer_user_id"}, {"var": "$user_id"}]}]}]}]}
+```
+
+The `select_rule` of `scorecards`, below it, which shows a scorecard when its interview is visible:
+
+```json
+{"and": [{"has_permission": "recruiting:read"}, {"or": [
+  {"!": [{"has_permission": "recruiting:interviewer"}]},
+  {"has_permission": "recruiting:manage"},
+  {"set_record": ["interview", "interviews", {"var": "interview_id"}, {"!=": [{"var": "interview"}, null]}]}]}]}
+```
+
+The `validation_rules` of `scorecards`:
+
+```json
+[
+  {"code": "99010", "name": "scorecard_of_own_interview",
+   "message": "An interviewer can only write the scorecards of interviews they are on.",
+   "jsonlogic": {"if": [{"has_permission": "recruiting:manage"}, true,
+     {"set_record": ["interview", "interviews", {"var": "interview_id"},
+       {"and": [{"!=": [{"var": "interview"}, null]}, {"!=": [{"var": "interview.interviewer_user_id"}, null]},
+         {"==": [{"var": "interview.interviewer_user_id"}, {"var": "$user_id"}]}]}]}]}}
+]
+```
+
+The `select_rule` of `offers`, which the role does not see:
+
+```json
+{"and": [{"has_permission": "recruiting:read"}, {"or": [
+  {"!": [{"has_permission": "recruiting:interviewer"}]},
+  {"has_permission": "recruiting:manage"}]}]}
+```
+
+Where control 7 also narrows an entity, its `select_rule` is one `and` of the entity's `view_permission`, control 7's `or` and this `or`.
+
+**A field the role may not change.** A requester writes `tickets` (`edit_permission = service_desk:write_tickets`) but leaves the assignee and the priority to the agents:
+
+```json
+{"code": "99011", "name": "requester_leaves_triage",
+ "message": "Only an agent can set a ticket's assignee or priority.",
+ "jsonlogic": {"if": [{"has_permission": "service_desk:manage"}, true,
+   {"if": [{"==": [{"var": "$mode"}, "insert"]},
+     {"and": [{"==": [{"var": "assigned_user_id"}, null]}, {"==": [{"var": "priority"}, "medium"]}]},
+     {"!": [{"or": [{"value_changed": "assigned_user_id"}, {"value_changed": "priority"}]}]}]}]}}
+```
+
+On a delete `value_changed` is `false` for every field, so the rule passes, and the ticket's own write rule (part 4) decides.
+
 #### The access line
 
-A build's entity list and final response, and a review's access section, describe a module's access the same way, in plain words: its access level; what each role of the module can do (viewer, manager, admin, and each role that takes gates, with its steps); the entities only an admin can change; each gated step with who takes it, any named person and an approval gate's controls; and, when an entity has a lifecycle and no step is gated, "No step is gated: anyone who can edit a record can move it through every state."
+A build's entity list and final response, and a review's access section, describe a module's access the same way, in plain words: its access level; what each role of the module can do (viewer, manager, admin, each role that takes gates, with its steps, and each role that does part of the work, with what it writes, which records it sees, what is hidden from it and the records above that stay visible to it); the entities only an admin can change; each gated step with who takes it, any named person, an approval gate's controls and a payout gate's requester check; and, for each entity with a `workflow_state` and no gate, "<Plural label>: no step is gated; anyone who can edit one can move it through every state."
 
 #### Controls on a gate
 
@@ -189,15 +278,17 @@ Purchasing, finance and hiring products guard a step with more than a permission
 
 | Control | Goes with |
 |---|---|
-| 1. The requester may not approve | Every approval gate |
-| 2. Lock while waiting and after approval | Every approval gate |
-| 3. Approved stays approved | Every approval gate |
-| 4. A named person | A gate the leading products assign to one person per record (the request's approver, the job opening's hiring manager) |
-| 5. Named people see only their records | A named person whose role the leading products limit to its own records (hiring managers see only their own job openings). Not purchasing approvers, who see every request |
+| 1. The requester may not approve or pay out | Every approval gate and every payout gate |
+| 2. Approve only a waiting record | Every approval gate |
+| 3. Lock while waiting and after approval | Every approval gate |
+| 4. Approved stays approved | Every approval gate |
+| 5. Record who approved | Every approval gate |
+| 6. A named person | A gate the leading products assign to one person per record (the request's approver, the job opening's hiring manager) |
+| 7. Named people see only their records | A named person whose role the leading products limit to its own records (hiring managers see only the job openings they are named on). Not purchasing approvers, who see every request |
 
-An **approval gate** is a gate into `approved`, `signed`, `posted`, `released` or `verified`: a step where one person authorizes what someone else prepared. `issued`, `ordered`, `hired`, `committed`, `void` and `terminated` are gates but not approval gates. The **waiting state** is the state a record sits in until the approval (`submitted`, `pending`, `in_review`). An approval gate also decides the rejection: the move from the waiting state into `rejected` takes the same check, with no permission of its own.
+An **approval gate** is a gate into `approved`, `signed`, `posted`, `released` or `verified`: a step where one person authorizes what someone else prepared. `issued`, `ordered`, `hired`, `committed`, `void` and `terminated` are gates but not approval gates. A **payout gate** is a gate into `paid`, `reimbursed` or `disbursed`: a step that releases money. It takes control 1 and none of the other approval controls. The **waiting state** is the state a record sits in until the approval (`submitted`, `pending`, `in_review`), and the state before it is where the record was prepared (`draft`). An approval gate also decides the rejection: the move from the waiting state into `rejected` takes the same check, with no permission of its own.
 
-**The gate's check.** Every rule of a gate uses one check, so skipping the step, undoing it or changing what it covered takes the same check as the step itself. It has two parts:
+**The gate's check.** Every rule of a gate uses one check, so skipping the step, undoing it or changing what it covered takes the same check as the step itself. The locks (control 3) also admit any admin, so an admin can correct or clear a locked record, as an admin can in the products. The check has two parts:
 
 - **Who may take it:** an admin, or a holder of the gate who, when the record names a person, is that person. Without a named person it is `{"has_permission": "<gate>"}`. With one:
 
@@ -208,7 +299,7 @@ An **approval gate** is a gate into `approved`, `signed`, `posted`, `released` o
   ```
 
   The named person needs the gate too, so naming yourself or a colleague without it opens no way past the gate. A system write has no user (`$user_id` is null), so it never counts as the named person.
-- **Not the requester,** on an approval gate only. A record created straight into the gated state or a state after it is an import or a seed, which only an admin may do. On any other write, the user who created the record may not take the step, admins included:
+- **Not the requester,** on an approval or payout gate only. A record created straight into the gated state or a state after it is an import or a seed, which only an admin may do. On any other write, the user who created the record may not take the step, admins included:
 
   ```json
   {"if": [{"==": [{"var": "$mode"}, "insert"]},
@@ -216,30 +307,25 @@ An **approval gate** is a gate into `approved`, `signed`, `posted`, `released` o
     {"!=": [{"var": "$old.requested_by_user_id"}, {"var": "$user_id"}]}]}
   ```
 
-The check is who may take it; on an approval gate it is `{"and": [<who may take it>, <not the requester>]}`. In a `living` `raci` module, who may take it also admits `{"is_raci_actor": ["<entity>", "<to_state>", "accountable"]}` in its `or`.
+The check is who may take it; on an approval or payout gate it is `{"and": [<who may take it>, <not the requester>]}`. In a `living` `raci` module, who may take it also admits `{"is_raci_actor": ["<entity>", "<to_state>", "accountable"]}` in its `or`.
 
 **When the person is on a parent.** When the products keep the named person on a parent (the hiring manager on the job opening, the gate on the application), the rule reads the parent with `set_record` and uses `<binding>.<role_key>_user_id` in place of `$old.<role_key>_user_id`, where `<binding>` is the name `set_record` gives the parent (`job_opening`). Two levels up (an offer of an application of a job opening), nest one `set_record` in the other (`jsonlogic.md` → "Canonical patterns", Pattern 6). A parent the user cannot read binds as `null`, and then only an admin passes: `{"if": [{"==": [{"var": "job_opening"}, null]}, {"has_permission": "recruiting:admin"}, <the check>]}`.
 
-1. **The requester may not approve.** Add `requested_by_user_id` (`reference` to `users`, `reference_delete_mode: clear`, title "Requested By") and stamp it on insert in `computed_fields`:
+1. **The requester may not approve or pay out.** Add `requested_by_user_id` (`reference` to `users`, `reference_delete_mode: clear`, title "Requested By") and stamp it on insert in `computed_fields` (the complete rules below). It keeps its value when the platform clears it, so a user who requested records may not be deletable: set the user's `is_disabled` instead. Added to an entity that already has records, it leaves those records with no requester, which the check cannot protect: a review's fix says so.
+2. **Approve only a waiting record.** A record enters the gated state only from the waiting state, or back from a state after the gate (rule `approve_purchase_request` below). Only its requester or an admin moves a waiting or rejected record back to the state before the waiting state (`draft`), which ends the lock; to change it, move it back and submit it again.
+3. **Lock while waiting and after approval.** The lock states are the waiting state, the gated state and the states after the gate (step 5). In a lock state, only an admin or someone who passes the gate's check may delete the record or change its fields. List every field of the entity except `workflow_state`, rollups, computed fields and fields a later step fills (a PO number, an order date, a received quantity); the complete rules name only some. The named person's field is locked too.
 
-   ```json
-   {"name": "requested_by_user_id", "jsonlogic": {"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.requested_by_user_id"}]}}
-   ```
-
-   A seed run creates every row as one user, so this column is the same on every seeded row (`seed-data.md` → "Computed and rollup columns"), and the user who seeded cannot approve a sample record: say so in the seed report. The stamp keeps its value when the platform clears it, so a user who requested records may not be deletable: set the user's `is_disabled` instead.
-2. **Lock while waiting and after approval.** The lock states are the waiting state, the gated state and the states after the gate (step 5). In a lock state, only an admin or someone who passes the gate's check may delete the record or change the fields the approval covers: the fields people type (amounts, quantities, prices, the counterparty, the dates of the request) and the named person's field. Never lock a rollup or a computed field (the lock on the lines covers a rollup total), nor a field a later step fills (a PO number, an order date, a received quantity). A record in the waiting state goes back to the state before it (`draft`) without a check, which ends the lock; to change it, move it back and submit it again.
-
-   Lines the approval covers (purchase request lines, invoice lines) get the lock on the child entity. It fires when a line is added or deleted, moved to another parent, or a field people type on it changes (a quantity, a unit price; not a received quantity), and it reads each parent with `set_record`. It admits an admin, or someone who passes the gate's check read from the parent (`request.approver_user_id`, `request.requested_by_user_id`). A parent that reads as `null` on a delete is being deleted itself, which its own lock already checked; otherwise a `null` parent admits only an admin.
-3. **Approved stays approved.** A move out of the gated state or a state after it, to a state outside the second list of step 5 (`approved` or `ordered` back to `draft` or to `rejected`), takes the gate's check. Moving a waiting record back is the only move back without a check.
-4. **A named person.** Add `<role_key>_user_id` (`reference` to `users`, `reference_delete_mode: clear`) to the record, or to the parent where the products keep it, and use it in who may take the step (above). Control 2 locks it from the waiting state on.
-5. **Named people see only their records.** A holder of the role (`<slug>:<role_key>`) sees only the records they are named on and the records nobody is named on; everyone else who holds the entity's `view_permission` sees every record. It is a `select_rule` (`select-rule.md`) on the entity that holds the field, and on each entity below it, which shows a record to a holder of the role when its parent is visible to them:
+   Lines the approval covers (purchase request lines, invoice lines) get the lock on the child entity. It fires when a line is added or deleted, moved to another parent, or any of its fields changes except a field a later step fills, and it reads each parent with `set_record`. It admits an admin, or someone who passes the gate's check read from the parent (`request.approver_user_id`, `request.requested_by_user_id`). A parent that reads as `null` on a delete is being deleted itself, which its own lock already checked; otherwise a `null` parent admits only an admin.
+4. **Approved stays approved.** A move out of the gated state or a state after it, to a state outside the second list of step 5 (`approved` or `ordered` back to `draft` or to `rejected`), takes the gate's check. Recalling a waiting or rejected record (control 2) is the only move back without it.
+5. **Record who approved.** Stamp `<step>_by_user_id` (`reference` to `users`, `reference_delete_mode: clear`) and `<step>_at` (`date-time`), named for the step (`approved_by_user_id` and `approved_at`, `signed_by_user_id` and `signed_at`), in `computed_fields` when the record enters the gated state from outside the second list of step 5. They keep the last approval when a record moves back. A record created straight into the gated state or a state after it (an import or a seed, which only an admin may do) never passes that move, so each stamp first keeps what such an insert sends: `{"if": [{"and": [{"==": [{"var": "$mode"}, "insert"]}, {"in": [{"var": "workflow_state"}, [<the second list of step 5>]]}, {"!=": [{"var": "<stamp>"}, null]}]}, {"var": "<stamp>"}, <the stamp rule>]}`. Every other write ignores a value sent for a stamp.
+6. **A named person.** Add `<role_key>_user_id` (`reference` to `users`, `reference_delete_mode: clear`) to the record, or to the parent where the products keep it, and use it in who may take the step (above). Control 3 locks it from the waiting state on.
+7. **Named people see only their records.** A holder of the role (`<slug>:<role_key>`) sees only the records they are named on; a record nobody is named on stays hidden from them until someone is named. Everyone else who holds the entity's `view_permission` sees every record. It is a `select_rule` (`select-rule.md`) on the entity that holds the field, and on each entity below it, which shows a record to a holder of the role when its parent is visible to them:
 
    ```json
    {"and": [{"has_permission": "recruiting:read"}, {"or": [
      {"!": [{"has_permission": "recruiting:hiring_manager"}]},
      {"has_permission": "recruiting:admin"},
-     {"==": [{"var": "hiring_manager_user_id"}, {"var": "$user_id"}]},
-     {"==": [{"var": "hiring_manager_user_id"}, null]}]}]}
+     {"and": [{"!=": [{"var": "hiring_manager_user_id"}, null]}, {"==": [{"var": "hiring_manager_user_id"}, {"var": "$user_id"}]}]}]}]}
    ```
 
    ```json
@@ -249,22 +335,47 @@ The check is who may take it; on an approval gate it is `{"and": [<who may take 
      {"set_record": ["job_opening", "job_openings", {"var": "job_opening_id"}, {"!=": [{"var": "job_opening"}, null]}]}]}]}
    ```
 
+   - Managers, and everyone else without the narrowed role, see every record through the first clause (`{"!": [{"has_permission": "recruiting:hiring_manager"}]}`), so they need no clause of their own. `recruiting:admin` admits a person who holds the narrowed role too. The clause is never `recruiting:manage`: the narrowed role's bundle includes it, so every holder of the role would see every record. (A role that does part of the work is different: its bundle never includes `<slug>:manage`, so there `<slug>:manage` is the clause; see "Roles that do part of the work".)
    - `recruiting:read` stands for the entity's `view_permission`.
    - When the entity has `requested_by_user_id`, add `{"==": [{"var": "requested_by_user_id"}, {"var": "$user_id"}]}` to the `or`, so a holder of the role still sees what they requested.
-   - Each other bundle of the module whose holders must see every record gets its own `{"has_permission": "<slug>:<role_key>"}` in the `or`. Without one, holding the narrowed role narrows what a person sees even when they hold another role, so a person who must see every record and also take the step gets the admin role.
+   - Each other bundle of the module whose holders must see every record gets its own `{"has_permission": "<slug>:<role_key>"}` in the `or`; never `<slug>:read` or `<slug>:manage`, which the narrowed role's bundle includes. Without one, holding the narrowed role narrows what a person sees even when they hold another role, so a person who must see every record and also take the step gets the admin role.
    - The rule also limits which records the role's holders may change, but not which they may create.
    - Reading the parent with `set_record` here is the case `select-rule.md` → "Performance note" reserves it for: one parent row by its id, in a module with light read traffic.
-   - A rollup over an entity with this rule needs `include_hidden_rows: true` (`rollup-fields.md` → "Hidden child rows").
+   - A rollup on the entity that holds the field, over an entity below it, needs `include_hidden_rows: true`. Set it without asking, because the child shows exactly when its parent does, and name it in the final response. Any other rollup over these entities follows `rollup-fields.md` → "Hidden child rows".
+   - A role that does part of the work narrows rows with the same rule ("Roles that do part of the work"). Where both narrow one entity, its `select_rule` is one `and` of the entity's `view_permission` and both `or`s.
 
-**Complete rules for a purchase request.** Its states are `draft`, `submitted`, `approved`, `rejected` and `ordered`. An Approver approves or rejects it, and a Buyer orders it. The products name an approver per request (`approver_user_id`). `total_amount` is a rollup of the lines, and `po_number` is filled when the request is ordered. The `validation_rules` of `purchase_requests`:
+**Complete rules for a purchase request.** Its states are `draft`, `submitted`, `approved`, `rejected` and `ordered`. An Approver approves or rejects it, and a Buyer orders it. The products name an approver per request (`approver_user_id`). `total_amount` is a rollup of the lines, and `po_number` is filled when the request is ordered. The `computed_fields` of `purchase_requests`:
+
+```json
+[
+  {"name": "requested_by_user_id", "jsonlogic": {"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.requested_by_user_id"}]}},
+  {"name": "approved_by_user_id", "jsonlogic": {"if": [
+    {"and": [{"==": [{"var": "$mode"}, "insert"]}, {"in": [{"var": "workflow_state"}, ["approved", "ordered"]]}, {"!=": [{"var": "approved_by_user_id"}, null]}]},
+    {"var": "approved_by_user_id"},
+    {"if": [
+      {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "approved"]}, {"!": [{"in": [{"var": "$old.workflow_state"}, ["approved", "ordered"]]}]}]},
+      {"var": "$user_id"}, {"var": "$old.approved_by_user_id"}]}]}},
+  {"name": "approved_at", "jsonlogic": {"if": [
+    {"and": [{"==": [{"var": "$mode"}, "insert"]}, {"in": [{"var": "workflow_state"}, ["approved", "ordered"]]}, {"!=": [{"var": "approved_at"}, null]}]},
+    {"var": "approved_at"},
+    {"if": [
+      {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "approved"]}, {"!": [{"in": [{"var": "$old.workflow_state"}, ["approved", "ordered"]]}]}]},
+      {"var": "$now"}, {"var": "$old.approved_at"}]}]}}
+]
+```
+
+Each approval stamp starts with the insert branch of control 5: a record created in `approved` or `ordered` keeps the approver and the date the insert sends.
+
+The `validation_rules` of `purchase_requests`:
 
 ```json
 [
   {"code": "99001", "name": "approve_purchase_request",
-   "message": "Only the named approver, or an Approver when none is named, can approve a purchase request, and never the person who requested it.",
+   "message": "Only the named approver, or an Approver when none is named, can approve a submitted purchase request, and never the person who requested it.",
    "jsonlogic": {"if": [
      {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "approved"]}]},
      {"and": [
+       {"or": [{"==": [{"var": "$mode"}, "insert"]}, {"in": [{"var": "$old.workflow_state"}, ["submitted", "ordered"]]}]},
        {"or": [{"has_permission": "spend:admin"},
          {"and": [{"has_permission": "spend:approve_purchase_request"},
            {"or": [{"==": [{"var": "$old.approver_user_id"}, null]}, {"==": [{"var": "$user_id"}, {"var": "$old.approver_user_id"}]}]}]}]},
@@ -280,13 +391,20 @@ The check is who may take it; on an approval gate it is `{"and": [<who may take 
            {"or": [{"==": [{"var": "$old.approver_user_id"}, null]}, {"==": [{"var": "$user_id"}, {"var": "$old.approver_user_id"}]}]}]}]},
        {"if": [{"==": [{"var": "$mode"}, "insert"]}, {"has_permission": "spend:admin"}, {"!=": [{"var": "$old.requested_by_user_id"}, {"var": "$user_id"}]}]}]},
      true]}},
-  {"code": "99003", "name": "order_purchase_request",
+  {"code": "99003", "name": "recall_purchase_request",
+   "message": "Only the person who requested it, or an admin, can move a submitted or rejected purchase request back to draft.",
+   "jsonlogic": {"if": [
+     {"and": [{"value_changed": "workflow_state"}, {"in": [{"var": "$old.workflow_state"}, ["submitted", "rejected"]]}, {"==": [{"var": "workflow_state"}, "draft"]}]},
+     {"or": [{"has_permission": "spend:admin"},
+       {"and": [{"!=": [{"var": "$old.requested_by_user_id"}, null]}, {"==": [{"var": "$old.requested_by_user_id"}, {"var": "$user_id"}]}]}]},
+     true]}},
+  {"code": "99004", "name": "order_purchase_request",
    "message": "Only a Buyer can order a purchase request.",
    "jsonlogic": {"if": [
      {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "ordered"]}]},
      {"has_permission": "spend:order_purchase_request"},
      true]}},
-  {"code": "99004", "name": "approve_before_order",
+  {"code": "99005", "name": "approve_before_order",
    "message": "A purchase request must be approved before it is ordered.",
    "jsonlogic": {"if": [
      {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "ordered"]}]},
@@ -298,7 +416,7 @@ The check is who may take it; on an approval gate it is `{"and": [<who may take 
              {"or": [{"==": [{"var": "$old.approver_user_id"}, null]}, {"==": [{"var": "$user_id"}, {"var": "$old.approver_user_id"}]}]}]}]},
          {"if": [{"==": [{"var": "$mode"}, "insert"]}, {"has_permission": "spend:admin"}, {"!=": [{"var": "$old.requested_by_user_id"}, {"var": "$user_id"}]}]}]}]},
      true]}},
-  {"code": "99005", "name": "approved_stays_approved",
+  {"code": "99006", "name": "approved_stays_approved",
    "message": "Only the approver can move an approved or ordered purchase request back.",
    "jsonlogic": {"if": [
      {"and": [{"value_changed": "workflow_state"},
@@ -310,8 +428,8 @@ The check is who may take it; on an approval gate it is `{"and": [<who may take 
            {"or": [{"==": [{"var": "$old.approver_user_id"}, null]}, {"==": [{"var": "$user_id"}, {"var": "$old.approver_user_id"}]}]}]}]},
        {"if": [{"==": [{"var": "$mode"}, "insert"]}, {"has_permission": "spend:admin"}, {"!=": [{"var": "$old.requested_by_user_id"}, {"var": "$user_id"}]}]}]},
      true]}},
-  {"code": "99006", "name": "lock_submitted_purchase_request",
-   "message": "Only its approver or an admin can change or delete a submitted, approved or ordered purchase request; move a submitted one back to draft to change it.",
+  {"code": "99007", "name": "lock_submitted_purchase_request",
+   "message": "Only its approver or an admin can change or delete a submitted, approved or ordered purchase request; its requester can move a submitted one back to draft to change it.",
    "jsonlogic": {"if": [
      {"and": [
        {"in": [{"var": "$old.workflow_state"}, ["submitted", "approved", "ordered"]]},
@@ -329,7 +447,7 @@ The `validation_rules` of `purchase_request_lines`:
 
 ```json
 [
-  {"code": "99007", "name": "lock_lines_of_submitted_request",
+  {"code": "99008", "name": "lock_lines_of_submitted_request",
    "message": "Only the request's approver or an admin can change the lines of a submitted, approved or ordered purchase request.",
    "jsonlogic": {"and": [
      {"if": [
@@ -362,7 +480,7 @@ The `validation_rules` of `purchase_request_lines`:
 **A step whose named person sits on the parent** (not an approval, so no requester part):
 
 ```json
-{"code": "99008", "name": "hire_application",
+{"code": "99009", "name": "hire_application",
  "message": "Only the job opening's hiring manager, or a Hiring Manager when none is named, can hire.",
  "jsonlogic": {"if": [
    {"and": [{"value_changed": "workflow_state"}, {"==": [{"var": "workflow_state"}, "hired"]}]},

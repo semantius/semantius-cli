@@ -13,6 +13,9 @@
  *     with the parent the script meant.
  *   - Numbers fit the rows: `assertItemized` halts before the first write on a stored figure out of scale with
  *     its child rows, and `assertComputedVary` halts on a computed or rollup column with one value on every row.
+ *   - States agree: `assertStatesAgree` halts before the first write on a parent whose state its child rows'
+ *     states contradict.
+ *   - A key the seed owns: `seedEnsureMany` refuses a `keyField` the platform writes.
  *   - One call per table: `postMany` sends a whole table in one `postgrestRequest` POST
  *     (array `body`, at most `BATCH_SIZE` rows per call). A failed call landed nothing.
  *
@@ -29,7 +32,7 @@
  *     subdomain of example.com.
  *
  * Not a CLI — import it:
- *   import { postMany, seedEnsureMany, idsByKey, assertParents, assertJunction, assertItemized, assertComputedVary, assertSeedCounts, assertSeedDistinct,
+ *   import { postMany, seedEnsureMany, idsByKey, assertParents, assertJunction, assertItemized, assertStatesAgree, assertStamped, assertComputedVary, assertSeedCounts, assertSeedDistinct,
  *            rng, days, uniq, slugify, exampleDomain, patchById, clearSeeded, runSeed } from "./seed-lib";
  */
 
@@ -70,9 +73,11 @@ export const setTransport = (t: Transport | null): void => { transport = t ?? sp
 const dryRows = new Map<string, any[]>();   // `pg:/<table>` → rows a check run "inserted"
 let dryId = 0;
 const dryWarned = new Set<string>();
+const rulesRead = new Map<string, any[]>();   // table → its computed_fields, read once by assertComputedVary
+let seedUserId: string | undefined;           // the seeding user's id, read once by assertComputedVary
 
 /** Clears what a check run recorded (tests only). */
-export const resetCheckRun = (): void => { dryRows.clear(); dryWarned.clear(); dryId = 0; writeCount = 0; clearStarted = false; rowsInserted = false; };
+export const resetCheckRun = (): void => { dryRows.clear(); dryWarned.clear(); dryId = 0; writeCount = 0; clearStarted = false; rowsInserted = false; rulesRead.clear(); seedUserId = undefined; };
 
 /** `col=op.value` triples of a PostgREST query string (`select`, `order`, `limit`, `offset` dropped); `null` when a part is not of that form. */
 function parseFilters(query: string): Array<[string, string, string]> | null {
@@ -285,16 +290,39 @@ export async function postMany(path: string, rows: ReadonlyArray<Row>, size = BA
 }
 
 /**
+ * Halts when `keyField` is a column the platform writes: a `computed` or `rollup` column, or a column a
+ * `computed_fields` rule fills (a composed label keeps `ctype` "label", so the rule is read too). The platform
+ * overwrites what the seed sends there, so no stored row ever matches its key. Reads the live host on a check
+ * run as well, so the mistake surfaces before anything is written.
+ */
+async function assertSeedOwnsKey(table: string, keyField: string): Promise<void> {
+  const name = table.slice(1);
+  const [field] = (await pgRequest("GET", `/fields?select=ctype&table_name=eq.${encodeURIComponent(name)}&field_name=eq.${encodeURIComponent(keyField)}`)) ?? [];
+  const [entity] = (await pgRequest("GET", `/entities?select=computed_fields&table_name=eq.${encodeURIComponent(name)}`)) ?? [];
+  const ruled = Array.isArray(entity?.computed_fields) && entity.computed_fields.some((c: any) => c?.name === keyField);
+  const why = ruled ? "a computed_fields rule fills it" : ["computed", "rollup"].includes(field?.ctype) ? `it is a ${field.ctype} column` : "";
+  if (why) {
+    throw new Error(
+      `seedEnsureMany ${table}: "${keyField}" cannot be the key, because ${why}: the platform overwrites what the seed sends, ` +
+      `so the rows stored never match the rows in the plan. Key on a column the seed sends and the platform does not compute ` +
+      `(a code from uniq(), or a value that differs on every row).`,
+    );
+  }
+}
+
+/**
  * The default insert for a table. Reads the rows whose `keyField` is already present (`in.()`, chunked), posts
  * only the missing rows, and returns ALL rows with ids in INPUT order, found by key, so a re-run after a halt
- * converges instead of appending a second set. `keyField` is the column that differs on every row (the label
- * column, or a code), present on every row and stable across runs; the database need not enforce it. Use it
- * only on entities the build just created: a row that already exists under that key is reused, not replaced.
- * Never an upsert.
+ * converges instead of appending a second set. `keyField` is a column the seed sends and the platform does not
+ * compute (the label column when no rule fills it, or a code), differing on every row, present on every row and
+ * stable across runs; the database need not enforce it. A column the platform writes is refused before the first
+ * read (`assertSeedOwnsKey`). Use it only on entities the build just created: a row that already exists under that
+ * key is reused, not replaced. Never an upsert.
  */
 export async function seedEnsureMany(path: string, rows: ReadonlyArray<Row>, keyField: string): Promise<any[]> {
   const table = tableOf(path);
   const keys = keysOf("seedEnsureMany", table, keyField, rows);
+  await assertSeedOwnsKey(table, keyField);
   const byKey = new Map<string, any>();
   for (const part of chunk(keys)) {
     for (const r of await pgRequest("GET", `${table}?${inFilter(keyField, part)}`)) byKey.set(String(r[keyField]), r);
@@ -362,15 +390,18 @@ export async function clearSeeded(tables: ReadonlyArray<readonly [path: string, 
  *   vendor_id: vendorId("Adobe")
  * The function throws on a label that was not seeded, so a typo is a halt, not a wrong id. Throws here when
  * a seeded label is absent from the table or matches more than one row (a repeated label from an earlier run).
+ * `labelOf(key)` gives the parent's stored `_label`, for `assertParents` when a rule composes the parent's label
+ * and the plan cannot know it: `assertParents(…, plan.map((p) => interviewId.labelOf(p.interview)))`. A check run
+ * gives the key back, since its rows have no label yet.
  */
 export async function idsByKey(
   path: string, keyField: string, rows: ReadonlyArray<Row>,
-): Promise<(key: string) => string | number> {
+): Promise<((key: string) => string | number) & { labelOf: (key: string) => string }> {
   const table = tableOf(path);
   const keys = keysOf("idsByKey", table, keyField, rows);
   const found = new Map<string, any[]>();
   for (const part of chunk(keys)) {
-    for (const r of await pgRequest("GET", `${table}?select=id,${keyField}&${inFilter(keyField, part)}`)) {
+    for (const r of await pgRequest("GET", `${table}?select=id,_label,${keyField}&${inFilter(keyField, part)}`)) {
       const k = String(r[keyField]);
       found.set(k, [...(found.get(k) ?? []), r]);
     }
@@ -379,11 +410,14 @@ export async function idsByKey(
   if (absent.length) throw new Error(`idsByKey ${table}: ${absent.length} seeded ${keyField} value(s) not found on read-back: ${preview(absent)}`);
   const repeated = keys.filter((k) => found.get(k)!.length > 1);
   if (repeated.length) throw new Error(`idsByKey ${table}: ${keyField} matches more than one row for ${preview(repeated)}; clear the earlier rows with clearSeeded or rename`);
-  return (key: string) => {
+  const rowOf = (key: string) => {
     const hit = found.get(key);
     if (!hit) throw new Error(`idsByKey ${table}: no seeded ${keyField} "${key}"; seeded: ${preview(keys)}`);
-    return hit[0].id;
+    return hit[0];
   };
+  return Object.assign((key: string) => rowOf(key).id, {
+    labelOf: (key: string): string => (isCheckRun() && rowOf(key)._label === undefined ? key : String(rowOf(key)._label ?? "")),
+  });
 }
 
 const SPINE = " › ";
@@ -612,9 +646,57 @@ export function assertItemized(column: string, parents: ReadonlyArray<readonly [
 }
 
 /**
+ * Lifecycle guard, before the first write: a parent's state and the states of its child rows tell one story (a
+ * hired application has an accepted offer; an application still at applied has no offer). Each entry is the
+ * parent's label, its state and its child rows' states; `rules` maps a parent state to the child states it allows
+ * (`only`, empty for no child rows) and the child states it needs at least one of (`needs`):
+ *   assertStatesAgree("applications.offers", plan.map((a) => [a.name, a.state, a.offers.map((o) => o.state)]), {
+ *     applied: { only: [] },
+ *     hired: { needs: ["accepted"], only: ["accepted"] },
+ *   });
+ * A parent state the rules do not name allows any children; a rule whose state no parent has halts (a typo, or a
+ * state the plan never deals). Throws naming every parent that disagrees. It reads nothing, so a check run applies
+ * it the same way.
+ */
+export function assertStatesAgree(
+  name: string,
+  parents: ReadonlyArray<readonly [label: string, state: string, childStates: ReadonlyArray<string>]>,
+  rules: Readonly<Record<string, { only?: ReadonlyArray<string>; needs?: ReadonlyArray<string> }>>,
+): void {
+  if (!parents.length) throw new Error(`assertStatesAgree ${name}: no parents given`);
+  if (!Object.keys(rules).length) throw new Error(`assertStatesAgree ${name}: no rules given; name each parent state that limits its children`);
+  const emptyNeeds = Object.keys(rules).filter((s) => rules[s].needs?.length === 0);
+  if (emptyNeeds.length) throw new Error(`assertStatesAgree ${name}: "needs" is empty for ${emptyNeeds.join(", ")}; name the child states, or leave "needs" out`);
+  const states = new Set(parents.map(([, state]) => state));
+  const unused = Object.keys(rules).filter((s) => !states.has(s));
+  if (unused.length) throw new Error(`assertStatesAgree ${name}: no parent is in state ${unused.join(", ")}; fix the state name, give a parent that state in the plan, or drop that rule`);
+  const wrong: string[] = [];
+  for (const [label, state, children] of parents) {
+    const rule = rules[state];
+    if (!rule) continue;
+    const outside = rule.only ? [...new Set(children.filter((c) => !rule.only!.includes(c)))] : [];
+    if (outside.length) {
+      wrong.push(`${label} (${state}): ${outside.join(", ")} not allowed, ${rule.only!.length ? `only ${rule.only!.join(", ")}` : "no child rows"}`);
+    }
+    if (rule.needs && !children.some((c) => rule.needs!.includes(c))) {
+      wrong.push(`${label} (${state}): needs a child in ${rule.needs.join(" or ")}, has ${children.length ? children.join(", ") : "none"}`);
+    }
+  }
+  if (wrong.length) {
+    throw new Error(
+      `SEED LIFECYCLE FAILURE, ${name}: ${wrong.length} problem(s):\n  - ${wrong.join("\n  - ")}\n` +
+      `Set each parent's state and its children's states together in the plan.`,
+    );
+  }
+  console.log(`  ${tag()}✓ ${name}: ${parents.length} parent(s) agree with their children`);
+}
+
+/**
  * Read-back guard for `computed` and `rollup` columns: the platform writes them, so only a read shows them. Reads
  * `columns` for the seeded `rows` (`keyField` is a column unique across them) and halts when a column holds one
- * value on every row, which means its inputs do not differ between the rows. Call it at the very end of the script,
+ * value on every row, which means its inputs do not differ between the rows. A `$user_id`, `$now` or `$today` stamp is
+ * constant on a seed by design (one user, one day): such a column is left out with a printed line instead (`stampOf`).
+ * Call it at the very end of the script,
  * before `assertSeedCounts`. A check run only proves the columns exist: the values appear on the real run.
  */
 export async function assertComputedVary(
@@ -642,16 +724,84 @@ export async function assertComputedVary(
   const fails: string[] = [];
   for (const c of columns) {
     const values = new Set(keys.map((k) => String(stored.get(k)[c] ?? "")));
-    if (values.size > 1) console.log(`  ✓ ${table}.${c}: ${values.size} distinct value(s) across ${keys.length} row(s)`);
-    else fails.push(`${table}.${c}: "${[...values][0]}" on all ${keys.length} row(s)`);
+    if (values.size > 1) { console.log(`  ✓ ${table}.${c}: ${values.size} distinct value(s) across ${keys.length} row(s)`); continue; }
+    const value = [...values][0];
+    const stamp = await stampOf(table, c, value);
+    if (stamp) console.log(`  ${table}.${c}: "${value}" on every row, a ${stamp} stamp, so constant by design: left out of the check; name it in the report`);
+    else fails.push(`${table}.${c}: "${value}" on all ${keys.length} row(s)`);
   }
   if (fails.length) {
     throw new SeedPlanError(
       `SEED COMPUTED VALUE FAILURE, ${fails.length} column(s) hold one value on every row:\n  - ${fails.join("\n  - ")}\n` +
       `Give the rows different inputs in the plan (for a rollup that counts children, different numbers of children), then ` +
-      `clearSeeded and seed again. Never drop the column and never patch it: the platform writes it.`,
+      `clearSeeded and seed again. A $user_id, $now or $today stamp is left out by this check itself; never drop any other ` +
+      `column and never patch it: the platform writes it.`,
     );
   }
+}
+
+/**
+ * Approval-stamp guard, at the end of the script: every seeded row in one of `states` (the gated state and the states
+ * after it) holds a value in each stamp column, read back from the platform. A row past the step without its stamp
+ * means the seed did not send it, or the entity's rule does not keep what an insert sends (`rbac.md` → "Controls on a
+ * gate", control 5). A check run only proves the columns exist.
+ *   await assertStamped("/offers", "offer_code", offerRows, ["approved_by_user_id", "approved_at"], ["approved", "sent", "accepted", "declined"]);
+ */
+export async function assertStamped(
+  path: string, keyField: string, rows: ReadonlyArray<Row>, columns: ReadonlyArray<string>, states: ReadonlyArray<string>,
+): Promise<void> {
+  const table = tableOf(path);
+  const keys = keysOf("assertStamped", table, keyField, rows);
+  if (!columns.length || !states.length) throw new Error(`assertStamped ${table}: name the stamp columns and the states past the step`);
+  const select = [keyField, "workflow_state", ...columns].join(",");
+  if (isCheckRun()) {
+    await pgRequest("GET", `${table}?select=${select}&limit=0`);   // a missing column fails here, before the real run
+    console.log(`  [check run] ${table}: ${columns.join(", ")} are read back on the real run`);
+    return;
+  }
+  const past: any[] = [];
+  for (const part of chunk(keys)) {
+    for (const r of await pgRequest("GET", `${table}?select=${select}&${inFilter(keyField, part)}`)) if (states.includes(r.workflow_state)) past.push(r);
+  }
+  if (!past.length) { console.log(`  ${table}: no seeded row is in ${states.join(", ")}, so no stamp to check`); return; }
+  const empty = past.flatMap((r) => columns.filter((c) => r[c] === null || r[c] === undefined || r[c] === "").map((c) => `${r[keyField]} (${r.workflow_state}): ${c} is empty`));
+  if (empty.length) {
+    throw new SeedPlanError(
+      `SEED STAMP FAILURE, ${table}: ${empty.length} stamp(s) missing on rows past the step:\n  - ${empty.join("\n  - ")}\n` +
+      `Send each stamp on the rows past the step (seed-data.md, "Approval stamps on rows past the step"), check that the ` +
+      `entity's stamp rules keep what an insert sends, then clearSeeded and seed again.`,
+    );
+  }
+  console.log(`  ✓ ${table}: all ${past.length} row(s) past the step carry ${columns.join(", ")}`);
+}
+
+/**
+ * The variable (`$user_id`, `$now`, `$today`) that makes `column` constant on a seed, or "" when it is no such stamp: its
+ * rule reads the variable and not its own field, and its one value is what the variable gives on this run (the seeding
+ * user, a time today, today's date). A rule that reads its own field keeps what the seed sent (an approval stamp on a row
+ * past its step), so that column is still checked.
+ */
+async function stampOf(table: string, column: string, value: string): Promise<string> {
+  if (!rulesRead.has(table)) {
+    const [entity] = (await pgRequest("GET", `/entities?select=computed_fields&table_name=eq.${encodeURIComponent(table.slice(1))}`)) ?? [];
+    rulesRead.set(table, Array.isArray(entity?.computed_fields) ? entity.computed_fields : []);
+  }
+  const rule = rulesRead.get(table)!.find((r: any) => r?.name === column);
+  if (!rule) return "";
+  const text = JSON.stringify(rule.jsonlogic ?? null);
+  if (text.includes(`"var":"${column}"`) || text.includes(`"var":["${column}"`)) return "";
+  const today = days(0);
+  if (text.includes('"$today"') && value === today) return "$today";
+  if (text.includes('"$now"') && value.startsWith(today)) return "$now";
+  if (text.includes('"$user_id"')) {
+    if (seedUserId === undefined) {
+      const { code, out, err } = await transport(["semantius", "call", "crud", "getCurrentUser"], "{}");
+      if (code !== 0) throw new Error(`getCurrentUser failed (exit ${code}): ${err}`);
+      seedUserId = String(JSON.parse(out).user_id ?? "");
+    }
+    if (value === seedUserId) return "$user_id";
+  }
+  return "";
 }
 
 /**
@@ -715,14 +865,14 @@ export async function runSeed(body: () => Promise<void>): Promise<void> {
     console.error(`\nSEED HALTED after ${writeCount} write call(s): ${err instanceof Error ? err.message : String(err)}`);
     console.error(
       isCheckRun()
-        ? "Nothing was sent. Fix the script and check-run it again."
+        ? "Nothing was sent. Edit the script in place (never retype it) and check-run it again."
         : err instanceof SeedPlanError
-          ? "Every table landed, so a plain re-run changes nothing. Fix the plan, run clearSeeded, then seed again."
+          ? "Every table landed, so a plain re-run changes nothing. Edit the plan in the script (never retype it), run clearSeeded, then seed again."
           : clearStarted && !rowsInserted
             ? writeCount
               ? "The clear is INCOMPLETE: the tables listed before the failing one are already empty. Stop and tell the user."
               : "Nothing was deleted. Stop and tell the user."
-            : "The seed is INCOMPLETE. Tables written before this call have landed. Inspect them before a re-run: only a table seeded with seedEnsureMany converges.",
+            : "The seed is INCOMPLETE. Tables written before this call have landed. Inspect them, then edit the script in place (never retype it) and run it again: only a table seeded with seedEnsureMany converges.",
     );
     process.exit(1);
   }

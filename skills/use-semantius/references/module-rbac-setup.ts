@@ -123,6 +123,29 @@ function checkedPermissions(value: unknown, out = new Set<string>()): Set<string
   return out;
 }
 
+/** A value for a PostgREST `in.()` list: plain when safe, else double-quoted with `\` and `"` escaped. */
+const pgValue = (s: string): string => (/^[A-Za-z0-9_$.\-:@]+$/.test(s) ? s : `"${s.replace(/[\\"]/g, "\\$&")}"`);
+
+/** The entry of `pool` nearest to `name` by edit distance, when it is at most 3 edits away. */
+function closest(name: string, pool: ReadonlyArray<string>): string | undefined {
+  const distance = (a: string, b: string): number => {
+    let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const next = [i];
+      for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      row = next;
+    }
+    return row[b.length];
+  };
+  let best: string | undefined;
+  let bestDistance = 4;
+  for (const p of new Set(pool)) {
+    const d = distance(name, p);
+    if (d < bestDistance) [best, bestDistance] = [p, d];
+  }
+  return best;
+}
+
 /** `created a, b; kept c`, with `to create` in a dry run. */
 const summary = (dryRun: boolean, created: string[], kept: string[]): string =>
   [created.length ? `${dryRun ? "to create" : "created"} ${created.join(", ")}` : "", kept.length ? `kept ${kept.join(", ")}` : ""].filter(Boolean).join("; ") || "none";
@@ -157,7 +180,7 @@ async function setup(o: Options, transport: Transport, print: (line: string) => 
   const roleSlugs = TIERS.map((t) => roleSlugOf(t.tier));
   const hierarchy = [[permissionOf("manage"), permissionOf("read")], [permissionOf("admin"), permissionOf("manage")]];
 
-  const entities = live ? await read("read_entity", { filters: `module_id=eq.${live.id}`, select: "table_name,entity_type,validation_rules" }) : [];
+  const entities = live ? await read("read_entity", { filters: `module_id=eq.${live.id}`, select: "table_name,entity_type,validation_rules,select_rule" }) : [];
   const livePermissions = await read("read_permission", { filters: `permission_name=in.(${permissionNames.join(",")})`, select: "permission_name,module_id" });
   const roleColumns = { filters: `slug=in.(${roleSlugs.join(",")})`, select: "id,slug,module_id" };
   let liveRoles = await read("read_role", roleColumns);
@@ -269,6 +292,19 @@ async function setup(o: Options, transport: Transport, print: (line: string) => 
   }
   if (scope === "gated" && !entities.some((e) => [...checkedPermissions(e.validation_rules)].some((p) => !permissionNames.includes(p)))) {
     print(`warning: the module is gated but no validation rule checks a gate: create the missing gates (rbac.md, "Restricted steps (gates)"), or set access_scope to advanced when the module has none.`);
+  }
+  // A name that is not a permission is false for every caller, and the platform saves the rule without a word.
+  const checks = entities.flatMap((e) => (["validation_rules", "select_rule"] as const).flatMap((source) =>
+    [...checkedPermissions(e[source])].filter((p) => !permissionNames.includes(p)).map((p) => ({ where: `${e.table_name}.${source}`, name: p }))));
+  if (checks.length) {
+    const names = [...new Set(checks.map((c) => c.name))];
+    const known = new Set((await read("read_permission", { filters: `permission_name=in.(${names.map(pgValue).join(",")})`, select: "permission_name" })).map((p) => p.permission_name));
+    const missing = checks.filter((x) => !known.has(x.name));
+    const own = missing.length ? [...permissionNames, ...(await read("read_permission", { filters: `module_id=eq.${live!.id}`, select: "permission_name" })).map((p) => p.permission_name)] : [];
+    for (const c of missing) {
+      const near = closest(c.name, own);
+      print(`warning: ${c.where} checks "${c.name}", which is not a permission, so the check is false for every caller${near ? ` (did you mean "${near}"?)` : ""}: fix the name or create the permission (rbac.md, "Restricted steps (gates)"). The tiers are ${permissionNames.join(", ")}; viewer, manager and admin are role names.`);
+    }
   }
   print(!changed ? NOTHING : o.dryRun ? "Dry run: nothing was written." : "Done.");
 }

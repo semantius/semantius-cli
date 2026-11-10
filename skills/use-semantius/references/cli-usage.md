@@ -378,6 +378,10 @@ JSON
 
 On Windows PowerShell 5.1 a pipe garbles non-ASCII text (`Zürich` arrives as `Z??rich`), so the piped form is for ASCII payloads there. `call-file.ts` is not affected.
 
+### Ad-hoc JSON and file work in Bun
+
+Python is forbidden across these skills, and it may not be installed. Reshaping JSON, or changing a file you staged, is Bun or `jq`: `bun -e '<code>'` for a one-liner, or a scratch `.ts` file run by path for anything longer, reading with `await Bun.file(path).json()` (or `.text()`) and writing with `await Bun.write(path, text)`. To change a script you already wrote, edit it in place with your file-edit tool and change only the lines that need it; never write the whole script again. Without a file-edit tool, a `bun -e` that reads the file, replaces the exact text and writes it back does the same.
+
 ### Building a bulk payload in Bun
 
 When the records come from data (a file, a previous read, a loop), assemble the array in a Bun script and pipe it over stdin — one call, one transaction:
