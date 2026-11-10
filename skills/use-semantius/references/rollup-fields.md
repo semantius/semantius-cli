@@ -33,8 +33,10 @@ The rollup field's `format` must fit the result (`90268`):
 
 The child entity, `link_field` and `value_field` must already exist, so create the rollup field last. Several rollups can go in one `create_field` array.
 
-```bash
-semantius call crud create_field '{
+`.tmp_deploy/orders-rollups.json`:
+
+```json
+{
   "data": {
     "table_name": "orders",
     "field_name": "open_amount",
@@ -47,7 +49,11 @@ semantius call crud create_field '{
       "filter": { "==": [{ "var": "status" }, "open"] }
     }
   }
-}'
+}
+```
+
+```bash
+bun "<skill-folder>/references/call-file.ts" create_field .tmp_deploy/orders-rollups.json
 ```
 
 - Omit `ctype`: it becomes `rollup` by itself. Omit `precision` too: it is copied from a `number` value field.

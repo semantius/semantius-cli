@@ -144,7 +144,7 @@ On a connecting record, which has no column that differs on every row, pass the 
 
 A `computed` or `rollup` column never goes in a row and is never patched: the platform writes it and overwrites what you send. Change its inputs instead.
 
-A column with one value on every row halts the run. Fix the inputs in the plan, clear the seed and write it again (next section). Constant by design means the formula gives the same value for every possible row; a column that came out 0 on every row never qualifies. Leave a column out only in that case, never because it halted, and name it in the report.
+A column with one value on every row halts the run. Fix the inputs in the plan, clear the seed and write it again (next section). Constant by design means the formula gives the same value for every possible row; a column that came out 0 on every row never qualifies. A `$user_id` stamp such as `requested_by_user_id` (`rbac.md` → "Controls on a gate") qualifies too, because a seed run creates every row as one user. Leave a column out only in those cases, never because it halted, and name it in the report.
 
 ## Changing what was seeded
 

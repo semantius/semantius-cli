@@ -13,15 +13,18 @@
  * Source: `lucide-icon-tags.json` next to this script, a snapshot of the
  * `lucide-static` release named in its `version` key. No network access.
  *
- * Usage:   bun lucide-icon-finder.ts <query…>
- *          bun lucide-icon-finder.ts --batch <file.json | ->   (`-` reads the JSON from stdin)
+ * Usage:   bun lucide-icon-finder.ts --batch <file.json | ->   (`-` reads the JSON from stdin)
+ *          bun lucide-icon-finder.ts <query…>
  * Output:  one line per query, `<query>: name, name, …` (at most 10 names), or
  *          `<query>: (none)`. With `--batch`, the file is a JSON object mapping a
- *          label to its queries (`{"status: hired": ["application hired", "hired"]}`,
- *          one label per enum entry); each label prints as `## <label>` followed by
- *          its query lines, and each label is searched on its own (an icon listed
- *          for one label is listed again for another).
- * Exit:    0 some query matched; 1 no query matched; 2 no arguments or a bad file
+ *          label to an array of its queries (`{"status: hired": ["application hired", "hired"]}`,
+ *          one label per module, entity or enum entry); each label prints as
+ *          `## <label>` followed by its query lines, and each label is searched on
+ *          its own (an icon listed for one label is listed again for another).
+ *          Plain arguments are alternatives for one meaning, and the run ends with a
+ *          hint to put several labels in one `--batch` call.
+ * Exit:    0 some query matched; 1 no query matched; 2 no arguments, a bad file, or
+ *          a label whose value is not an array
  */
 
 import { readFileSync } from "node:fs";
@@ -64,9 +67,14 @@ if (args[0] === "--batch") {
     console.error(`Usage: bun lucide-icon-finder.ts --batch <file.json | ->   (${e instanceof Error ? e.message : e})`);
     process.exit(2);
   }
+  const notLists = Object.entries(batch).filter(([, qs]) => !Array.isArray(qs)).map(([label]) => label);
+  if (notLists.length) {
+    console.error(`--batch: each label needs an array of queries, e.g. {"${notLists[0]}": ["first query", "second query"]}. Not arrays: ${notLists.join(", ")}`);
+    process.exit(2);
+  }
   let total = 0;
-  for (const [label, qs] of Object.entries(batch)) {
-    const queries = (Array.isArray(qs) ? qs : [qs]).map(String).filter((q) => q.trim() !== "");
+  for (const [label, qs] of Object.entries(batch) as [string, unknown[]][]) {
+    const queries = qs.map(String).filter((q) => q.trim() !== "");
     console.log(`## ${label}`);
     total += find(queries);
   }
@@ -77,4 +85,6 @@ if (queries.length === 0) {
   console.error('Usage: bun lucide-icon-finder.ts <query…>   e.g. "user plus" user person "contact card" (most specific first)');
   process.exit(2);
 }
-process.exit(find(queries) ? 0 : 1);
+const found = find(queries);
+console.log(`Several labels to look up? Put them all in one call: echo '{"<label>":["<query>","<query>"]}' | bun lucide-icon-finder.ts --batch -`);
+process.exit(found ? 0 : 1);

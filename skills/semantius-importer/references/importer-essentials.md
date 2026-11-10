@@ -5,7 +5,7 @@ The Step 0 hard-gate read for `semantius-importer`: everything the import workfl
 | Situation | Read |
 |---|---|
 | FK modeling depth (reference vs parent semantics, junctions, delete modes) | `../../use-semantius/references/data-modeling.md` |
-| RBAC beyond the module's two standard permissions | `../../use-semantius/references/rbac.md` |
+| Permissions and roles beyond what `module-rbac-setup.ts` creates | `../../use-semantius/references/rbac.md` |
 | Schema-evolution risk classes, renames, deletions | `../../use-semantius/references/data-modeling.md` → Safe Evolution Patterns |
 | PostgREST syntax beyond this file | `../../use-semantius/references/crud-tools.md` |
 | Exotic CLI forms, chaining, daemon/env tuning | `../../use-semantius/references/cli-usage.md` |
@@ -17,7 +17,7 @@ The Step 0 hard-gate read for `semantius-importer`: everything the import workfl
 ```bash
 semantius call crud <tool> '{...}'   # inline JSON
 ... | semantius call crud <tool>     # stdin (no JSON argument = read stdin)
-semantius tools crud <tool>          # live JSON schema for any tool
+semantius tools crud <tool>          # live JSON schema, only for a tool these files do not cover
 ```
 
 - **Prefer stdin for any payload carrying free text** (titles, descriptions, enum values, CSV-derived strings): piping bypasses shell quoting entirely. The Bun pattern is `Bun.spawn([...], {stdin: "pipe"})`, write JSON, close.
@@ -43,26 +43,25 @@ Every `crud` tool returns a JSON **array** by default — including `create_*`/`
 
 ## 3. Catalog writes, in mandatory order
 
-`read_*` before every `create_*` — if the read finds it, reuse it. Order: **Module → Permissions (one call) → wire module → Entity → Fields (one call).** **Batching rule:** every typed `create_*` takes `data` as one object **or an array** (items may have different keys; one request, one transaction, all-or-nothing); `update_*` / `delete_*` take an `id` array with the same `data` for all. Whenever more than one record of the same kind is pending — both baseline permissions, every new field of the entity — send them in ONE call. A loop of single-record calls is a mistake, not a style choice.
+`read_*` before every `create_*` — if the read finds it, reuse it. Order: **`module-rbac-setup.ts` (a new module only) → Entity → Fields (one call).** **Batching rule:** every typed `create_*` takes `data` as one object **or an array** (items may have different keys; one request, one transaction, all-or-nothing); `update_*` / `delete_*` take an `id` array with the same `data` for all. Whenever more than one record of the same kind is pending — every new field of the entity — send them in ONE call. A loop of single-record calls is a mistake, not a style choice.
 
 ### Module (when the import needs a new one)
 
-```bash
-semantius call crud create_module '{"data": {"module_name": "CRM", "module_slug": "crm", "description": "Customer Relationship Management"}}'
-semantius call crud create_permission '{"data": [{"permission_name": "crm:read", "description": "Read CRM data", "module_id": <id>}, {"permission_name": "crm:manage", "description": "Manage CRM data", "module_id": <id>}, {"permission_name": "crm:admin", "description": "Administer CRM settings", "module_id": <id>}]}'
-semantius call crud update_module '{"id": <module_id>, "data": {"view_permission": "crm:read", "manage_permission": "crm:manage", "admin_permission": "crm:admin", "access_scope": "advanced"}}'
-```
-
-- `module_slug`: always pass it, `^[a-z0-9][a-z0-9_-]*$`. Permission names are always `<module_slug>:<action>` (slug, never display name).
-- `view_permission` / `manage_permission` / `admin_permission` hold the permission **name** (text FK to `permissions.permission_name`); write the name directly. The FK means a permission must exist before a module names it, hence create the module on the `user:read` default, create the permissions, then wire. Skipping the `update_module` wiring leaves the module on the `user:read` default.
-- `description` is a ≤60-char tagline.
+Never with `create_*` calls. `SKILL.md` → Stage 4 runs `module-rbac-setup.ts` after the gate, the same command an explicit build uses: it creates the module with its icon, color, permissions, hierarchy, roles, grants and default roles. Take `module_id` from the first line of its output. `--description` is a ≤60-char tagline.
 
 ### Entity
 
-```bash
-semantius call crud create_entity '{"data": {"table_name": "products", "singular_label": "Product", "plural_label": "Products", "description": "...", "label_column": "product_name", "module_id": 3, "entity_type": "operational_record", "view_permission": "catalog:read", "edit_permission": "catalog:manage"}}'
+`<run-folder>/entity.json`:
+
+```json
+{"data": {"table_name": "products", "singular_label": "Product", "plural_label": "Products", "description": "...", "icon_name": "package", "label_column": "product_name", "module_id": 3, "entity_type": "operational_record", "view_permission": "catalog:read", "edit_permission": "catalog:manage"}}
 ```
 
+```bash
+bun "<skill-folder>/../use-semantius/references/call-file.ts" create_entity <run-folder>/entity.json
+```
+
+- `icon_name` comes from the finder call in `SKILL.md` → Stage 4, and is left out when no icon fits.
 - `entity_type`, `view_permission` and `edit_permission` come from the entity's class and write tier; the rules are in `use-semantius` (`data-modeling.md` → "Classifying an entity", `rbac.md` → "Choosing an entity's permissions"). Never leave the class at `unclassified`.
 
 - `table_name` is **plural snake_case**. `module_id` is required and non-null. `singular_label`/`plural_label` are grammatically symmetric bare nouns ("Product"/"Products", never "Product Name").
@@ -72,13 +71,13 @@ semantius call crud create_entity '{"data": {"table_name": "products", "singular
 
 ### Fields
 
-All of an entity's new fields go into **one** `create_field` call — `data` is an array (the copied `create-fields.ts` runner builds and sends it; items may carry different keys, e.g. `precision` on one and `enum_values` on another):
+All of an entity's new fields go into **one** `create_field` call — `data` is an array (the copied `create-fields.ts` runner builds and sends it; items may carry different keys, e.g. `precision` on one and `enum_values` on another). The payload it sends looks like this:
 
-```bash
-semantius call crud create_field '{"data": [
+```json
+{"data": [
   {"table_name": "products", "field_name": "price", "title": "Price", "format": "number", "precision": 2, "width": "default", "input_type": "default"},
   {"table_name": "products", "field_name": "status", "title": "Status", "format": "enum", "enum_values": ["active", "discontinued"], "width": "default", "input_type": "default"}
-]}'
+]}
 ```
 
 Properties the importer uses:

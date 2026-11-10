@@ -121,14 +121,14 @@ The rule passes on INSERT (no prior row), passes when the prior status was anyth
   "jsonlogic": {
     "if": [
       { "==": [{ "var": "$mode" }, "delete"] },
-      { "has_permission": "sales:delete_orders" },
+      { "has_permission": "sales:delete_order" },
       true
     ]
   }
 }
 ```
 
-Inserts and updates pass untouched; a delete passes only for holders of `sales:delete_orders`, and anyone else gets the rule's `code` and `message`. For "the owner or a permission holder", replace the `has_permission` branch with `{"or": [{"==": [{"var": "$old.owner_user_id"}, {"var": "$user_id"}]}, {"has_permission": "sales:delete_orders"}]}`.
+Inserts and updates pass untouched; a delete passes only for holders of `sales:delete_order`, and anyone else gets the rule's `code` and `message`. For "the owner or a permission holder", replace the `has_permission` branch with `{"or": [{"==": [{"var": "$old.owner_user_id"}, {"var": "$user_id"}]}, {"has_permission": "sales:delete_order"}]}`.
 
 #### Platform-extension operators
 
@@ -479,7 +479,7 @@ Test a rule's logic before writing it to an entity with the `evaluate_json_logic
 
 ```bash
 semantius call crud postgrestRequest '{"method": "POST", "path": "/rpc/evaluate_json_logic", "body": {
-  "rule": {"if": [{"==": [{"var": "$mode"}, "delete"]}, {"has_permission": "sales:delete_orders"}, true]},
+  "rule": {"if": [{"==": [{"var": "$mode"}, "delete"]}, {"has_permission": "sales:delete_order"}, true]},
   "data": {"$mode": "delete", "status": "open", "$old": {"status": "open"}}
 }}'
 ```
@@ -491,8 +491,10 @@ semantius call crud postgrestRequest '{"method": "POST", "path": "/rpc/evaluate_
 
 #### Example: pass both on `create_entity`
 
-```bash
-semantius call crud create_entity '{
+`.tmp_deploy/features-entity.json`:
+
+```json
+{
   "data": {
     "table_name": "features",
     "singular_label": "Feature",
@@ -542,7 +544,11 @@ semantius call crud create_entity '{
       }
     ]
   }
-}'
+}
+```
+
+```bash
+bun "<skill-folder>/references/call-file.ts" create_entity .tmp_deploy/features-entity.json
 ```
 
 Both arrays default to `[]` and may be omitted entirely. To add, change or remove a rule, or to recompute, read the current list with `read_entity` and send the full list on `update_entity` — the platform replaces, not merges.

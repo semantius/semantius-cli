@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
 /**
- * entity-match-checker.ts — compares the entities about to be created with every
- * entity on the instance, built-ins included, so one real-world thing is never
- * modeled twice.
+ * entity-match-checker.ts — compares the entities about to be created with the
+ * entities on the instance, so one real-world thing is never modeled twice. Of the
+ * platform's own `_core` module only `users` is compared: the people in a new
+ * entity may be the platform's users or separate. The other `_core` entities are
+ * never reused, so only their `table_name`s count, as reserved names.
  *
+ * RESERVED NAME: the new `table_name` equals a `_core` table other than `users`.
  * SAME NAME: the new `table_name` equals an existing one. SIMILAR NAME: the new
  * `table_name`, or one of the other words given for it, matches an existing
  * `table_name`, `singular_label` or `plural_label`. Two names match when they are
@@ -20,7 +23,8 @@
  *          `{"vendors": ["suppliers", "providers"]}`. `--separate` names the new
  *          entities the user said are different from their similar-name matches;
  *          a same-name match cannot be set aside.
- * Output:  one line per match, `same name: <new> = <Plural Label> in <Module> (<table_name>)`
+ * Output:  one line per match, `reserved name: <new> is a platform table, give the new entity another name`,
+ *          `same name: <new> = <Plural Label> in <Module> (<table_name>)`
  *          or `similar name: <new> ~ <Plural Label> in <Module> (<table_name>), matched "<word>"`,
  *          then a count line, then `Existing entities: <Plural Label>, …`
  * Exit:    0 nothing to settle; 1 a match to settle; 2 bad arguments or the instance cannot be read
@@ -29,8 +33,9 @@
 import { readFileSync } from "node:fs";
 
 export type Existing = { table_name: string; singular_label?: string | null; plural_label?: string | null; module_id?: number | null };
-export type Match = { table: string; kind: "same"; entity: Existing } | { table: string; kind: "similar"; entity: Existing; word: string };
+export type Match = { table: string; kind: "same" | "reserved"; entity: Existing } | { table: string; kind: "similar"; entity: Existing; word: string };
 
+const CORE_MODULE = "_core";
 const COPY_MARKER = /^(copy|local|new|old|temp|tmp|backup|v?\d+)$/;
 const IRREGULAR: Record<string, string> = { people: "person", men: "man", women: "woman", children: "child" };
 
@@ -54,16 +59,21 @@ function namesMatch(a: string[], b: string[]): boolean {
   return short.length > 0 && short[short.length - 1] === long[long.length - 1] && short.every((w) => long.includes(w));
 }
 
-/** Every match between the new entities and the existing ones; `separate` sets aside similar-name matches only. */
-export function findMatches(batch: Record<string, string[]>, existing: Existing[], separate: Set<string> = new Set()): Match[] {
+/** The `table_name`s of the `_core` entities that are never reused: every one but `users`. */
+export function reservedTables(existing: Existing[], moduleNames: Map<number, string>): Set<string> {
+  return new Set(existing.filter((e) => moduleNames.get(e.module_id ?? -1) === CORE_MODULE && e.table_name !== "users").map((e) => e.table_name));
+}
+
+/** Every match between the new entities and the existing ones; `separate` sets aside similar-name matches only, and a `reserved` table matches only by its exact name. */
+export function findMatches(batch: Record<string, string[]>, existing: Existing[], separate: Set<string> = new Set(), reserved: Set<string> = new Set()): Match[] {
   const matches: Match[] = [];
   for (const [table, others] of Object.entries(batch)) {
     for (const entity of existing) {
       if (entity.table_name === table) {
-        matches.push({ table, kind: "same", entity });
+        matches.push({ table, kind: reserved.has(table) ? "reserved" : "same", entity });
         continue;
       }
-      if (separate.has(table)) continue;
+      if (separate.has(table) || reserved.has(entity.table_name)) continue;
       const targets = [entity.table_name, entity.singular_label, entity.plural_label].filter((n): n is string => !!n).map(nameWords);
       const word = [table, ...others].find((w) => targets.some((t) => namesMatch(nameWords(w), t)));
       if (word) matches.push({ table, kind: "similar", entity, word });
@@ -124,12 +134,15 @@ if (import.meta.main) {
   }
 
   const label = (e: Existing) => e.plural_label || e.table_name;
-  const matches = findMatches(batch, existing, separate);
+  const reserved = reservedTables(existing, moduleNames);
+  const compared = existing.filter((e) => !reserved.has(e.table_name));
+  const matches = findMatches(batch, existing, separate, reserved);
   for (const m of matches) {
     const where = `${label(m.entity)} in ${moduleNames.get(m.entity.module_id ?? -1) ?? "another module"} (${m.entity.table_name})`;
-    console.log(m.kind === "same" ? `same name: ${m.table} = ${where}` : `similar name: ${m.table} ~ ${where}, matched "${m.word}"`);
+    if (m.kind === "reserved") console.log(`reserved name: ${m.table} is a platform table, give the new entity another name`);
+    else console.log(m.kind === "same" ? `same name: ${m.table} = ${where}` : `similar name: ${m.table} ~ ${where}, matched "${m.word}"`);
   }
-  console.log(matches.length ? `${matches.length} match(es) to settle before the first create_entity.` : `Nothing to settle: ${Object.keys(batch).length} new compared with ${existing.length} existing.`);
-  console.log(`Existing entities: ${existing.map(label).join(", ")}`);
+  console.log(matches.length ? `${matches.length} match(es) to settle before the first create_entity.` : `Nothing to settle: ${Object.keys(batch).length} new compared with ${compared.length} existing.`);
+  console.log(`Existing entities: ${compared.map(label).join(", ")}`);
   process.exit(matches.length ? 1 : 0);
 }

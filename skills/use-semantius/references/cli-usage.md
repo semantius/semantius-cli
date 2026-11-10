@@ -314,7 +314,7 @@ The `anyOf` is how every bulk-capable parameter appears: `data` on `create_*` is
 
 ## Workflow Pattern
 
-Always follow this order:
+For a tool the references document (`crud-tools.md`, `data-modeling.md`, `rbac.md`), go straight to step 4. For any other tool, follow this order:
 
 1. **Discover**, `semantius tools` to see the local servers and their tools
 2. **Explore**, `semantius tools <server>` to see tools + parameters
@@ -331,13 +331,24 @@ semantius call crud read_entity '{"filters": "table_name=eq.products"}'
 ```
 
 ### Stdin (preferred for complex or multi-line JSON)
-```bash
-# Pipe
-echo '{"data": {"name": "My Record"}}' | semantius call crud create_entity
+From a file, in every shell. Write the JSON to the file first, so no shell parses it:
 
-# Heredoc — no '-' needed with call subcommand. Several fields → ONE call: `data` is an array
+```bash
+bun "<skill-folder>/references/call-file.ts" create_entity args.json
+```
+
+A short payload can be piped:
+
+```bash
+echo '{"data": {"name": "My Record"}}' | semantius call crud create_entity
+```
+
+A heredoc works in bash only; PowerShell rejects it. Quote the delimiter (`<<'JSON'`), because an unquoted `<<EOF` makes the shell expand `$old` and `$mode` inside the JSON:
+
+```bash
+# No '-' needed with call subcommand. Several fields → ONE call: `data` is an array
 # (items may carry different keys; the response is the array of created fields)
-semantius call crud create_field <<EOF
+semantius call crud create_field <<'JSON'
 {
   "data": [
     {
@@ -360,13 +371,12 @@ semantius call crud create_field <<EOF
     }
   ]
 }
-EOF
-
-# From a file
-cat args.json | semantius call crud create_entity
+JSON
 ```
 
 **Why stdin?** Shell interpretation of `{}`, quotes, and special characters requires careful escaping. Stdin bypasses shell parsing entirely — and a bulk payload (an array of records) is exactly the multi-line JSON stdin is for.
+
+On Windows PowerShell 5.1 a pipe garbles non-ASCII text (`Zürich` arrives as `Z??rich`), so the piped form is for ASCII payloads there. `call-file.ts` is not affected.
 
 ### Building a bulk payload in Bun
 

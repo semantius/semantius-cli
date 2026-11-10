@@ -24,9 +24,11 @@ sqlToRest            →  translating a SQL query into PostgREST path syntax
 
 ## Quick reference
 
-Read this before the first call. For the full schema of one tool run `semantius tools crud <tool>`. `semantius tools crud` lists every tool with its parameters for about 1.8k tokens.
+Read this before the first call. This file and the other references give the signatures of the documented tools, so run `semantius tools crud <tool>` only for a tool they do not cover, or for one property with the `jq` filter in `cli-usage.md`. `semantius tools crud` lists every tool with its parameters for about 1.8k tokens.
 
 ### Required fields when creating (`data`)
+
+A new module, with its permissions and roles, is created by `references/module-rbac-setup.ts` ("Order for a new module" below), not by these tools.
 
 | Tool | Required | Also pass |
 |------|----------|-----------|
@@ -56,7 +58,7 @@ Read this before the first call. For the full schema of one tool run `semantius 
 
 ### Order for a new module
 
-The order is "Mandatory Creation Order" in `data-modeling.md`; follow it as written. For a request to build a whole module, read `build-module.md` first: it sets the scope around that order.
+The order is "Mandatory Creation Order" in `data-modeling.md`; follow it as written. It starts with `bun "<skill-folder>/references/module-rbac-setup.ts" --name "<Module Name>" --slug <module-slug> --description "<at most 60 characters>" --icon <icon-name>`, never `create_module`. For a request to build a whole module, read `build-module.md` first: it sets the scope around that order.
 
 ### Naming rules
 
@@ -362,4 +364,4 @@ Every entity exposes a read-only **`_label`** — its composed, human-readable l
 
 ## Tool parameters
 
-For the parameters of any tool, run `semantius tools crud <tool>`. It prints the description and the JSON input schema of that one tool.
+For the parameters of a tool the references do not cover, run `semantius tools crud <tool>`. It prints the description and the JSON input schema of that one tool.

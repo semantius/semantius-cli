@@ -77,29 +77,41 @@ Choosing either type is high-risk: `id_type`, `id_refentity` and an `is_a` prefi
 
 The platform creates only `id`, `created_at` and `updated_at` for a based entity. Its label field, and every other field of its base, are the base's.
 
-```bash
-# Level 0: the plain entities and the family roots, one call
-semantius call crud create_entity '{"data": [
+Level 0, the plain entities and the family roots, one call. `.tmp_deploy/entities-level-0.json`:
+
+```json
+{"data": [
   {"table_name": "business_partners", "singular_label": "Business Partner", "plural_label": "Business Partners",
    "label_column": "partner_name", "id_type": "typeid", "id_prefix": "bp",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"},
   {"table_name": "activities", "singular_label": "Activity", "plural_label": "Activities",
    "label_column": "subject", "id_type": "typeid", "id_prefix": "act",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"}
-]}'
+]}
+```
 
-# Level 1: entities based on level 0, one call; no label_column / label_parent / order_column
-semantius call crud create_entity '{"data": [
+```bash
+bun "<skill-folder>/references/call-file.ts" create_entity .tmp_deploy/entities-level-0.json
+```
+
+Level 1, entities based on level 0, one call; no `label_column`, `label_parent` or `order_column`. `.tmp_deploy/entities-level-1.json`:
+
+```json
+{"data": [
   {"table_name": "customers", "singular_label": "Customer", "plural_label": "Customers",
    "id_type": "has_a", "id_refentity": "business_partners",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"},
   {"table_name": "emails", "singular_label": "Email", "plural_label": "Emails",
    "id_type": "is_a", "id_prefix": "eml", "id_refentity": "activities",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"}
-]}'
-
-# Then fields: each entity's OWN fields only
+]}
 ```
+
+```bash
+bun "<skill-folder>/references/call-file.ts" create_entity .tmp_deploy/entities-level-1.json
+```
+
+Then fields: each entity's own fields only.
 
 Never send `id_refentity` on `update_entity` (`90241`). The one change it takes is a rename of the base, which the platform carries over itself.
 

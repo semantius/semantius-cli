@@ -2,6 +2,14 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## A date, a real number or an amount never becomes an enum
+
+2026-11-10. Asked for by Martin Amm, after a test import of a 6-row file created a date column and a weight column as enums. `get_csvschema` reports any column with 10 or fewer distinct values as `enum`; the enum review in `schema-mapping.md` now sets dates, real numbers and amounts to their own format without asking, and `create-fields.ts` refuses such an enum in its dry run, before the gate, naming the format to set. An integer column counts as an amount when its name says so (`amount`, `price`, `cost`, `total`, `fee`, a currency code). The file format is unchanged; `version` stays `3.1`.
+
+## An import creates a module the way a build does
+
+2026-11-09. Asked for by Martin Amm, after finding that a module created by an import had permissions but no roles, grants or hierarchy, so only Administrators could reach it. Stage 4 runs `use-semantius/references/module-rbac-setup.ts` for a new module, previews it with `--dry-run` for the gate, and checks it again with `--slug` after the catalog writes. The gate now comes before "Creation order", and the importer keeps no module-creation steps of its own. A new entity gets an `icon_name` from the same finder call. The file format is unchanged; `version` stays `3.1`.
+
 ## A module description is at most 60 characters
 
 2026-11-09. Asked for by Martin Amm: `importer-essentials.md` follows the 60-character limit in `use-semantius`. The file format is unchanged; `version` stays `3.1`.

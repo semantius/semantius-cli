@@ -29,6 +29,11 @@
  *   later batches are "not-run", and the run exits 1 (5 on auth). There is
  *   deliberately no per-field fallback loop: fix the cause and re-run — the
  *   read-before-create skips whatever landed.
+ * - Refuses, before anything else and in a dry run too, a column left as an
+ *   enum whose values are all dates, all numbers with at least one decimal,
+ *   or numbers in a column whose name says it holds an amount: a date, a real
+ *   number or an amount never becomes an enum (schema-mapping.md section 3).
+ *   Each such column is named with the format to set; the run exits 1.
  * - Verified: after the batches succeed the live fields are read AGAIN and
  *   every requested name must be present (never trust the create response).
  * - Loud: every field gets a row in the final table - field, status
@@ -83,6 +88,28 @@ const toCreate = M.columns.filter((c) => c.disposition === "create");
 if (toCreate.length === 0) {
   console.log(`no columns with disposition "create" in mapping.json - nothing to do`);
   process.exit(0);
+}
+
+const AMOUNT = /(^|_)(amount|price|cost|total|subtotal|fee|balance|salary|wage|revenue|spend|budget|tax|discount|payment|charge|usd|eur|gbp|chf)s?(_|$)/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+const PLAIN_NUMBER = /^[+-]?\d+(\.\d+)?$/;
+
+/** Why a column must not be an enum (its values are dates, real numbers or an amount), or null when it may be one. */
+function notAnEnum(c: ColumnSpec): string | null {
+  if (c.format !== "enum" || !c.enum_values?.length) return null;
+  const values = c.enum_values.map((e) => (typeof e === "object" ? e.value : e).trim()).filter(Boolean);
+  if (!values.length) return null;
+  if (values.every((v) => ISO_DATE.test(v))) return `every value is a date: set "format": "${values.some((v) => v.length > 10) ? "date-time" : "date"}"`;
+  if (!values.every((v) => PLAIN_NUMBER.test(v))) return null;
+  if (values.some((v) => v.includes("."))) return 'every value is a real number: set "format": "number" with "precision"';
+  const names = `${c.field_name} ${c.header}`.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return AMOUNT.test(names) ? 'it holds an amount: set "format": "number" with "precision"' : null;
+}
+
+const notEnums = toCreate.flatMap((c) => { const why = notAnEnum(c); return why ? [`refused  ${c.field_name}: a date, a real number or an amount never becomes an enum; ${why} in mapping.json and remove "enum_values"`] : []; });
+if (notEnums.length) {
+  for (const line of notEnums) console.error(line);
+  process.exit(1);
 }
 
 function titleCase(name: string): string {
