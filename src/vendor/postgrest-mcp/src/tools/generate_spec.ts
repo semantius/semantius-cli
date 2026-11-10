@@ -25,6 +25,8 @@ interface ModuleModel {
   external: Map<string, Row>
   /** module id -> slug (or name) for the external entities' modules. */
   externalModules: Map<number, string>
+  /** The `modules` rows of the external entities' modules. */
+  externalModuleRows: Row[]
 }
 
 async function loadModuleModel(
@@ -57,18 +59,21 @@ async function loadModuleModel(
   const external = await fetchEntitiesByName([...externalNames], authInfo)
 
   const externalModules = new Map<number, string>()
+  let externalModuleRows: Row[] = []
   const moduleIds = [...new Set([...external.values()].map((e) => e.module_id).filter((id) => id != null))]
   if (moduleIds.length) {
-    const rows = await pgGet(`/modules?id=${inList(moduleIds)}&select=id,module_name,module_slug&limit=10000`, authInfo)
-    for (const r of rows) externalModules.set(r.id, r.module_slug || r.module_name)
+    // Every column, not a select list: `version` feeds deployed_related_versions, and naming
+    // it would make the read fail outright on a platform that has no version column yet.
+    externalModuleRows = await pgGet(`/modules?id=${inList(moduleIds)}&limit=10000`, authInfo)
+    for (const r of externalModuleRows) externalModules.set(r.id, r.module_slug || r.module_name)
   }
 
-  return { module, entities, fields, outgoing, incoming, external, externalModules }
+  return { module, entities, fields, outgoing, incoming, external, externalModules, externalModuleRows }
 }
 
 /**
  * Renders the live model of a module as a semantic-spec markdown document
- * (the same shape the analyst skill writes: frontmatter, §1 Overview, §2 Entity
+ * (frontmatter, §1 Overview, §2 Entity
  * summary + diagram, §3 Entities, §4 Relationship summary, §5 Enumerations,
  * §6 Cross-model relationships, §7 Open questions, §8.1 Permissions catalog,
  * §9.1 Governance).
@@ -77,7 +82,7 @@ async function loadModuleModel(
  * material that is not stored on the platform, so they are not generated.
  */
 
-const SPEC_VERSION = '3.1'
+const SPEC_VERSION = '4.0'
 
 // ---------- small helpers ----------
 
@@ -94,8 +99,226 @@ function firstSentence(text: unknown): string {
 
 const hasValue = (v: unknown) => v !== undefined && v !== null && v !== ''
 
+/** A JSON rule value worth printing: a non-empty array, or an object with at least one key. */
+function isNonEmpty(v: unknown): boolean {
+  if (v == null) return false
+  if (Array.isArray(v)) return v.length > 0
+  if (typeof v === 'object') return Object.keys(v as object).length > 0
+  return false
+}
+
 function deleteMode(f: Row): string {
   return f.reference_delete_mode || (f.format === 'parent' ? 'cascade' : 'restrict')
+}
+
+/** The module's `settings` column as an object (it can arrive as a JSON string). */
+function moduleSettings(m: Row): Record<string, unknown> {
+  let s = m.settings
+  if (typeof s === 'string') {
+    try {
+      s = JSON.parse(s)
+    } catch {
+      return {}
+    }
+  }
+  return s && typeof s === 'object' && !Array.isArray(s) ? s : {}
+}
+
+// ---------- permission analysis (§8.1 tiers) ----------
+
+/** Text before the colon of `<prefix>:<suffix>`. */
+const permPrefix = (name: string) => name.split(':')[0]
+/** Text after the colon of `<prefix>:<suffix>`. */
+const permSuffix = (name: string) => name.split(':').pop() || name
+
+/** The code an entity's edit permission carries, if it is one of a module's codes: none on a
+ *  computed entity, which has no write tier, and none at the platform's column default `admin`. */
+const editCode = (e: Row): string =>
+  e.entity_type === 'computed' || e.edit_permission === 'admin' ? '' : e.edit_permission || ''
+
+/** Permission name -> the names it directly includes. */
+function includesIndex(hierarchy: Row[]): Map<string, string[]> {
+  const includes = new Map<string, string[]>()
+  for (const h of hierarchy) {
+    if (!includes.has(h.including_permission_name)) includes.set(h.including_permission_name, [])
+    includes.get(h.including_permission_name)!.push(h.included_permission_name)
+  }
+  return includes
+}
+
+/** Every permission `root` includes, transitively. */
+function includedClosure(root: string, includes: Map<string, string[]>): Set<string> {
+  const seen = new Set<string>()
+  const stack = [root]
+  while (stack.length) {
+    for (const next of includes.get(stack.pop()!) ?? []) if (!seen.has(next)) { seen.add(next); stack.push(next) }
+  }
+  return seen
+}
+
+/** A `<prefix>:write_<entity>` that includes its own `<prefix>:read_<entity>`, as every
+ *  entity-write row does. That row tells it from a gate named `write_off_invoice`. */
+function writesEntity(name: string, includes: Map<string, string[]>): boolean {
+  const suffix = permSuffix(name)
+  if (!suffix.startsWith('write_')) return false
+  return (includes.get(name) ?? []).includes(`${permPrefix(name)}:read_${suffix.slice('write_'.length)}`)
+}
+
+/** A code that includes a write permission is a bundle, not a gate. */
+function includesWrite(name: string, includes: Map<string, string[]>): boolean {
+  for (const n of includedClosure(name, includes)) if (writesEntity(n, includes)) return true
+  return false
+}
+
+/** Codes a JsonLogic value cites through `require_permission` or `has_permission`. */
+function citedPermissions(v: unknown, out: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(v)) {
+    for (const x of v) citedPermissions(x, out)
+  } else if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      if (k === 'require_permission' || k === 'has_permission') {
+        for (const a of Array.isArray(x) ? x : [x]) {
+          if (typeof a === 'string') out.add(a)
+          else citedPermissions(a, out)
+        }
+      } else citedPermissions(x, out)
+    }
+  }
+  return out
+}
+
+/** A JsonLogic value that carries `{"value_changed": "workflow_state"}`: a state transition rule. */
+function hasStateTransition(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(hasStateTransition)
+  if (v === null || typeof v !== 'object') return false
+  return Object.entries(v).some(([k, x]) =>
+    k === 'value_changed' ? (Array.isArray(x) ? x[0] : x) === 'workflow_state' : hasStateTransition(x))
+}
+
+/** The insert check `{"==": [{"var": "$old"}, null]}`, in either operand order. */
+function isInsertCheck(v: any): boolean {
+  if (v === null || typeof v !== 'object' || Array.isArray(v) || !Array.isArray(v['==']) || v['=='].length !== 2) return false
+  const isOld = (x: any) => x !== null && typeof x === 'object' && !Array.isArray(x) && x.var === '$old'
+  const [a, b] = v['==']
+  return (isOld(a) && b === null) || (isOld(b) && a === null)
+}
+
+/** Codes in the gated branch of a create guard: `{"if": [<insert check>, <gate check>, true]}`. */
+function createGateCodes(v: unknown, out: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(v)) {
+    for (const x of v) createGateCodes(x, out)
+  } else if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      if (k === 'if' && Array.isArray(x) && x.length >= 2 && isInsertCheck(x[0])) citedPermissions(x[1], out)
+      createGateCodes(x, out)
+    }
+  }
+  return out
+}
+
+/** Codes in a `has_permission` branch of an `or` that also holds an `is_raci_actor` branch. */
+function raciGateCodes(v: unknown, out: Set<string> = new Set()): Set<string> {
+  const isOp = (b: any, op: string) => b !== null && typeof b === 'object' && !Array.isArray(b) && op in b
+  if (Array.isArray(v)) {
+    for (const x of v) raciGateCodes(x, out)
+  } else if (v !== null && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      if (k === 'or' && Array.isArray(x) && x.some((b) => isOp(b, 'is_raci_actor'))) {
+        for (const b of x) {
+          if (!isOp(b, 'has_permission')) continue
+          for (const a of Array.isArray(b.has_permission) ? b.has_permission : [b.has_permission]) {
+            if (typeof a === 'string') out.add(a)
+          }
+        }
+      }
+      raciGateCodes(x, out)
+    }
+  }
+  return out
+}
+
+/**
+ * The §8.1 rows: tier, `included in :admin?` and `high risk?` per permission.
+ *
+ * The platform stores no tier, so the tier is a heuristic over what the live model proves, and
+ * always one a deploy accepts (`baseline-read`, `baseline-manage`, `baseline-admin`,
+ * `entity-read`, `entity-write`, `workflow-gate (lifecycle)`, `workflow-gate (rule)`, `override`,
+ * `narrow`):
+ *   entity-write   a `write_*` an owned entity's edit permission names, or that includes its
+ *                  own `read_*`. Not under `access_scope: custom`.
+ *   entity-read    a `read_*` an owned entity's view permission names, or that the module's
+ *                  `read` or an entity-write row includes. Not under `access_scope: custom`.
+ *   narrow         a code that includes a write permission, or any other code an owned
+ *                  entity's edit permission names.
+ *   workflow-gate (rule)       `bypass_submit_lock`, by name.
+ *   override       a `view_all_*` / `manage_all_*` code (tested before the rule test: it is wired
+ *                  into a select rule through `has_permission`).
+ *   workflow-gate (lifecycle)  cited by a `workflow_state` transition rule, next to
+ *                  `is_raci_actor` in an `or`, or in a create guard.
+ *   workflow-gate (rule)       cited by any other validation or select rule.
+ *   workflow-gate (lifecycle)  everything else.
+ * `included in :admin?` is ✓ when the admin permission transitively includes the row (with no
+ * admin permission, ✓ on every row). `high risk?` is ✓ only under `access_scope: raci`, on a
+ * lifecycle gate the admin does not include: under `gated` the admin holds every gate, so live
+ * state cannot show which gates are high-risk.
+ */
+function permissionRows(
+  m: Row,
+  permissions: Row[],
+  hierarchy: Row[],
+  owned: Row[],
+): Array<{ p: Row; tier: string; inAdmin: string; highRisk: string }> {
+  const includes = includesIndex(hierarchy)
+  const editColumns = new Set(owned.map(editCode).filter(Boolean))
+  const entityReads = new Set<string>(owned.map((e) => e.view_permission).filter(Boolean))
+  for (const h of hierarchy) {
+    const by: string = h.including_permission_name
+    if (permSuffix(by) === 'read' || writesEntity(by, includes)) entityReads.add(h.included_permission_name)
+  }
+  const perEntity = String(m.access_scope) !== 'custom'
+  const cited = new Set<string>()
+  const lifecycleCited = new Set<string>()
+  for (const e of owned) {
+    const rules = Array.isArray(e.validation_rules) ? e.validation_rules : e.validation_rules ? [e.validation_rules] : []
+    for (const rule of rules) {
+      const codes = citedPermissions(rule)
+      for (const c of codes) cited.add(c)
+      if (hasStateTransition(rule)) for (const c of codes) lifecycleCited.add(c)
+      for (const c of raciGateCodes(rule)) lifecycleCited.add(c)
+      for (const c of createGateCodes(rule)) lifecycleCited.add(c)
+    }
+    for (const c of citedPermissions(e.select_rule ?? {})) cited.add(c)
+  }
+  const raci = String(m.access_scope) === 'raci'
+  const adminPerm = permissions.find((p) => hasValue(m.admin_permission) && p.permission_name === m.admin_permission) ??
+    permissions.find((p) => permSuffix(p.permission_name) === 'admin')
+  const adminClosure = adminPerm ? includedClosure(adminPerm.permission_name, includes) : null
+
+  const rank = (name: string) => {
+    const s = permSuffix(name)
+    return s === 'read' ? 0 : s === 'manage' ? 1 : s === 'admin' ? 2 : 3
+  }
+  return [...permissions]
+    .sort((a, b) => rank(a.permission_name) - rank(b.permission_name) || a.permission_name.localeCompare(b.permission_name))
+    .map((p) => {
+      const name: string = p.permission_name
+      const suffix = permSuffix(name)
+      let tier: string
+      if (suffix === 'read') tier = 'baseline-read'
+      else if (suffix === 'manage') tier = 'baseline-manage'
+      else if (suffix === 'admin') tier = 'baseline-admin'
+      else if (perEntity && suffix.startsWith('write_') && (editColumns.has(name) || writesEntity(name, includes))) tier = 'entity-write'
+      else if (perEntity && suffix.startsWith('read_') && entityReads.has(name)) tier = 'entity-read'
+      else if (editColumns.has(name) || includesWrite(name, includes)) tier = 'narrow'
+      else if (suffix === 'bypass_submit_lock') tier = 'workflow-gate (rule)'
+      else if (/^(view_all_|manage_all_)/.test(suffix)) tier = 'override'
+      else if (lifecycleCited.has(name)) tier = 'workflow-gate (lifecycle)'
+      else if (cited.has(name)) tier = 'workflow-gate (rule)'
+      else tier = 'workflow-gate (lifecycle)'
+      const inAdmin = tier === 'baseline-admin' ? '-' : !adminClosure || adminClosure.has(name) ? '✓' : '-'
+      const highRisk = raci && tier === 'workflow-gate (lifecycle)' && inAdmin === '-' ? '✓' : '-'
+      return { p, tier, inAdmin, highRisk }
+    })
 }
 
 // ---------- permissions / roles (live) ----------
@@ -122,19 +345,43 @@ async function loadGovernance(model: ModuleModel, authInfo: AuthInfoLike | undef
 
 // ---------- front matter ----------
 
+/**
+ * The keys the platform stores, in a fixed order. The authored keys (`license`,
+ * the `description` block, `created_at`, `reconciled_*`, `source_blueprint`, `persona`,
+ * `initial_request`, …) are not stored on the platform, so they are not generated: a value
+ * here would be invented, not read.
+ */
 function frontmatter(model: ModuleModel, ordered: Row[], externalModuleSlugs: string[], today: string): string {
   const m = model.module
-  const out: string[] = ['---', 'artifact: semantic-spec', `version: "${SPEC_VERSION}"`, 'license: MIT']
+  const settings = moduleSettings(m)
+  const out: string[] = ['---', 'artifact: semantic-spec', `version: "${SPEC_VERSION}"`]
   out.push(`system_name: ${JSON.stringify(m.module_name)}`)
+  // The module's description column holds the spec's one-line tagline.
+  if (hasValue(m.description)) out.push(`tagline: ${JSON.stringify(String(m.description).trim())}`)
   if (m.icon_name) out.push(`icon_name: ${m.icon_name}`)
-  if (hasValue(m.description)) {
-    out.push('description: |')
-    for (const l of String(m.description).split(/\r?\n/)) out.push(l ? `  ${l}` : '')
-  }
   out.push(`system_slug: ${m.module_slug}`)
-  if (m.module_type) out.push(`module_kind: ${m.module_type}`)
+  if (m.module_type) out.push(`module_type: ${m.module_type}`)
+  if (hasValue(settings.module_kind)) out.push(`module_kind: ${settings.module_kind}`)
   if (m.access_scope) out.push(`access_scope: ${m.access_scope}`)
   if (m.domain_code) out.push(`domain_code: ${m.domain_code}`)
+  if (hasValue(settings.naming_mode)) out.push(`naming_mode: ${settings.naming_mode}`)
+  // Quoted: YAML reads an unquoted `#` as the start of a comment.
+  if (hasValue(m.logo_color)) out.push(`logo_color: "${m.logo_color}"`)
+  if (hasValue(m.home_page)) out.push(`home_page: ${m.home_page}`)
+  // A platform without a version column omits the deploy provenance.
+  if (hasValue(m.version)) {
+    out.push(`deployed_version: ${m.version}`)
+    if (hasValue(m.version_date)) out.push(`deployed_version_date: "${m.version_date}"`)
+    // The modules this one depends on: those its own fields reference, not those referencing it.
+    const dependsOn = new Set(
+      model.outgoing.map((f) => model.external.get(f.reference_table)?.module_id).filter((id) => id != null),
+    )
+    const related = model.externalModuleRows
+      .filter((r) => dependsOn.has(r.id) && hasValue(r.version) && r.id !== m.id)
+      .map((r) => [String(r.module_slug || r.module_name), r.version] as const)
+      .sort(([a], [b]) => a.localeCompare(b))
+    if (related.length) out.push('deployed_related_versions:', ...related.map(([s, v]) => `  ${s}: ${v}`))
+  }
   out.push(`generated_at: ${today}`, 'generated_from: live Semantius model')
   out.push('entities:', ...ordered.map((e) => `  - ${e.table_name}`))
   if (externalModuleSlugs.length) out.push('related_modules:', ...externalModuleSlugs.map((s) => `  - ${s}`))
@@ -166,6 +413,7 @@ function fieldNotes(f: Row, entity: Row): string {
   }
   if (hasValue(f.default_value)) parts.push(`default: "${f.default_value}"`)
   if (f.unique_value && !isRelationship(f)) parts.push('unique')
+  if (f.searchable && !parts.includes(bt('label_column'))) parts.push(bt('searchable'))
   if (f.rollup && Object.keys(f.rollup).length) parts.push(`rollup: ${bt(JSON.stringify(f.rollup))}`)
   return parts.join('; ')
 }
@@ -318,6 +566,16 @@ async function buildModuleSpec(
       if (Array.isArray(e.validation_rules) && e.validation_rules.length) {
         b.push('**Validation rules**', '', '```json', JSON.stringify(e.validation_rules, null, 2), '```', '')
       }
+      // Every field of the entity, not only the §3 table's: a rule on a hidden field is still part of the model.
+      const inputTypeRules = (fieldsByTable.get(table) ?? [])
+        .filter((f) => isNonEmpty(f.input_type_rule))
+        .map((f) => ({ field: f.field_name, jsonlogic: f.input_type_rule }))
+      if (inputTypeRules.length) {
+        b.push('**Input type rules**', '', '```json', JSON.stringify(inputTypeRules, null, 2), '```', '')
+      }
+      if (isNonEmpty(e.select_rule)) {
+        b.push('**Select rule**', '', '```json', JSON.stringify(e.select_rule, null, 2), '```', '')
+      }
     } else {
       // Entity of another module that this module references.
       const modSlug = e.module_id != null ? model.externalModules.get(e.module_id) : undefined
@@ -417,42 +675,14 @@ async function buildModuleSpec(
   if (options.includeGovernance) {
     const g = await loadGovernance(model, authInfo)
     if (g.permissions.length) {
-      const adminPerm: string | undefined = m.admin_permission || `${slug}:admin`
-      const included = new Map<string, string[]>()
-      for (const h of g.hierarchy) {
-        if (!included.has(h.including_permission_name)) included.set(h.including_permission_name, [])
-        included.get(h.including_permission_name)!.push(h.included_permission_name)
-      }
-      const reach = new Set<string>()
-      const stack = [adminPerm]
-      while (stack.length) {
-        const p = stack.pop()!
-        for (const c of included.get(p) ?? []) if (!reach.has(c)) { reach.add(c); stack.push(c) }
-      }
-
-      const tables = ordered.filter((e) => ownSet.has(e.table_name)).map((e) => e.table_name as string)
-      const classify = (p: string): { tier: string; rank: number } => {
-        if (p === `${slug}:read`) return { tier: 'baseline-read', rank: 0 }
-        if (p === `${slug}:manage`) return { tier: 'baseline-manage', rank: 1 }
-        if (p === `${slug}:admin`) return { tier: 'baseline-admin', rank: 2 }
-        for (let i = 0; i < tables.length; i++) {
-          if (p === `${slug}:read_${tables[i]}`) return { tier: 'entity-read', rank: 10 + i * 2 }
-          if (p === `${slug}:write_${tables[i]}`) return { tier: 'entity-write', rank: 11 + i * 2 }
-        }
-        return { tier: 'custom', rank: 1000 }
-      }
-      const perms = g.permissions
-        .map((p) => ({ p, ...classify(p.permission_name) }))
-        .sort((a, b) => a.rank - b.rank || a.p.permission_name.localeCompare(b.p.permission_name))
-
       parts.push(
         [
           '## 8.1 Permissions catalog',
           '',
-          '| permission | tier | description | included in `:admin`? |',
-          '| --- | --- | --- | --- |',
-          ...perms.map(({ p, tier }) =>
-            `| ${bt(p.permission_name)} | ${tier} | ${cell(p.description)} | ${p.permission_name === adminPerm ? '-' : reach.has(p.permission_name) ? '✓' : '-'} |`),
+          '| permission | tier | description | included in `:admin`? | high risk? |',
+          '| --- | --- | --- | --- | --- |',
+          ...permissionRows(m, g.permissions, g.hierarchy, model.entities).map(({ p, tier, inAdmin, highRisk }) =>
+            `| ${bt(p.permission_name)} | ${tier} | ${cell(p.description)} | ${inAdmin} | ${highRisk} |`),
         ].join('\n'),
       )
 
@@ -518,7 +748,8 @@ export const generateSpecTool: Tool<typeof inputSchema, undefined> = {
       `Generates the semantic spec document (<slug>-semantic-spec.md) of a module from the live model. ` +
       `The markdown has front matter, 1. Overview, 2. Entity summary with the entity relationship diagram ` +
       `(module and external entities in different colors, one-line entity label nodes, arrows labelled by relationship_label), ` +
-      `3. Entities (properties, fields, relationships, validation rules), 4. Relationship summary, 5. Enumerations, ` +
+      `3. Entities (properties, fields, relationships, computed fields, validation rules, input type rules, select rule), ` +
+      `4. Relationship summary, 5. Enumerations, ` +
       `6. Cross-model relationships, 7. Open questions, 8.1 Permissions catalog and 9.1 Governance. ` +
       `Handoffs and business-rule intents are design-time material that is not stored on the platform and are not generated. ` +
       `Returns the markdown as text: save it as <module_slug>-semantic-spec.md.`,

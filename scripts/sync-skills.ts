@@ -49,6 +49,7 @@ const EXCLUDED_SKILLS = [
   'semantius-analyst',
   'semantius-architect',
   'semantius-modeler',
+  'semantius-optimizer',
 ];
 
 /** Whether a skills/-relative path belongs to a skill this repo does not carry. */

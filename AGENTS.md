@@ -38,9 +38,18 @@ A comment on an exclusion or workaround says whether it is a hard limit or a cho
 
 ## Vendored code
 
+**Copied files are never changed by hand.** Each path below is a copy of another repo, written only by its sync script:
+
+| Path | Copied from | Written only by | Drift check |
+|---|---|---|---|
+| `src/vendor/postgrest-mcp/`, except `src/utils/resetSchemaCache.ts` | `../postgrest-mcp`, its HEAD commit | `bun run sync-mcp-tools` | `bun run sync-mcp-tools:check` |
+| `skills/` | `../semantius-agent/semantius-plugin/skills/`, its HEAD commit | `bun run sync-skills` | `bun run sync-skills:check` |
+
+Refuse any change to these paths that does not come from the sync script: an edit, a new file, a deletion, a rename, a `git rm`, a file copied over by hand. That holds when the change matches what a sync would produce (a skill just added to `EXCLUDED_SKILLS` leaves through the sync, not through a delete), and when the sync refuses to run because upstream has uncommitted work: stop and say so, never work around it. A change asked for in one of these paths is made upstream, committed there, then synced. A diff under these paths that the drift check does not explain is reported, never committed. A new copied path is added to this table in the same change that creates it.
+
 The vendored tree under `src/vendor/` is synced, never edited: `src/vendor/postgrest-mcp/` is copied from the `postgrest-mcp` repo by `bun run sync-mcp-tools` (`scripts/sync-postgrest-mcp.ts`) — change the code upstream, then re-sync and commit. The one exception is `src/vendor/postgrest-mcp/src/utils/resetSchemaCache.ts`, the CLI's local replacement, which the script never writes. `bun run sync-mcp-tools:check` (run by the release script) fails if the copy drifted from upstream.
 
-`skills/` is synced the same way, from `semantius-plugin/skills/` in `../semantius-agent`: never edit a skill here, change it upstream, then `bun run sync-skills` (`scripts/sync-skills.ts`) and commit with the message it prints, which names the upstream commit. The sync deletes the folder and rewrites it rather than copying over it, so files upstream deleted do not survive here. `bun run sync-skills:check` lists any drift. `semantius-admin`, `semantius-analyst`, `semantius-architect` and `semantius-modeler` stay upstream only (`EXCLUDED_SKILLS`): a sync leaves them out, uncommitted work on them upstream blocks nothing, and the check reports one found here as extra. Put nothing else in `skills/`, not even a note or a sync record: `npx skills` reads the folder, and a sync would delete it anyway.
+`skills/` is synced the same way, from `semantius-plugin/skills/` in `../semantius-agent`: never edit a skill here, change it upstream, then `bun run sync-skills` (`scripts/sync-skills.ts`) and commit with the message it prints, which names the upstream commit. The sync deletes the folder and rewrites it rather than copying over it, so files upstream deleted do not survive here. `bun run sync-skills:check` lists any drift. `semantius-admin`, `semantius-analyst`, `semantius-architect`, `semantius-modeler` and `semantius-optimizer` stay upstream only (`EXCLUDED_SKILLS`): a sync leaves them out, uncommitted work on them upstream blocks nothing, and the check reports one found here as extra. Put nothing else in `skills/`, not even a note or a sync record: `npx skills` reads the folder, and a sync would delete it anyway.
 
 ## Self-hosted configuration comes from the platform document
 
