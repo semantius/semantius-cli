@@ -44,7 +44,7 @@ A module deployed from a spec names each entity's permissions after the catalog,
 | Entity write | `<owner>:write_<entity>` | The entity's master |
 | Workflow gate | `<owner>:<verb>` | The module that realizes the state, if the catalog names one; otherwise the entity's master |
 | Override (`view_all_`, `manage_all_`, `submit_`, `bypass_submit_lock`) | `<owner>:<verb>` | The entity's master |
-| Bundle (`read`, `manage`, `admin`, a role that does part of the work such as `interviewer`, and a role that takes gates such as `hiring_manager`) | `<unit>:<tier>` | The module that declares it |
+| Bundle (`read`, `manage`, `admin`, a role that does part of the work such as `requester`, and a role that takes gates such as `hiring_manager`) | `<unit>:<tier>` | The module that declares it |
 
 An entity's `view_permission` and `edit_permission` point at its own read and write permissions, and never change. Roles hold bundles, and the bundles include the entity permissions through `permission_hierarchy`:
 
@@ -83,13 +83,13 @@ An entity's `view_permission` and `edit_permission` follow from its class (`data
 |---|---|---|---|
 | `:read` | `computed` | `view_permission = <slug>:read`; omit `edit_permission` (it defaults to `admin`) | `view_permission = <owner>:read_<entity>`; omit `edit_permission` |
 | `:manage` | `operational_record`, `operational_workflow`, `junction` | `view_permission = <slug>:read`, `edit_permission = <slug>:manage` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:manage` |
-| `:admin` | `catalog`; a `junction` whose parent legs are all `catalog` | `view_permission = <slug>:read`, `edit_permission = <slug>:admin` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:admin` |
+| `:admin` | `catalog`; a `junction` whose related entities are all `catalog` | `view_permission = <slug>:read`, `edit_permission = <slug>:admin` | `<owner>:read_<entity>` and `<owner>:write_<entity>`, included by `<unit>:admin` |
 
 - **Hand-built modules** (created with `module-rbac-setup.ts`) have three module-wide permissions, `<slug>:read`, `<slug>:manage` and `<slug>:admin`, plus a permission per gate, a bundle per role that takes gates or does part of the work, and a write permission per entity such a role writes, and `access_scope: advanced`, or `gated` when the module has a gate (see "Restricted steps (gates)" below). `basic` has no admin level, so a module with a `catalog` entity is never `basic`. The entity's `edit_permission` must already exist when `create_entity` runs.
 - **Modules deployed from a spec** keep the per-entity permissions above, derived from the same tier; the bundle table above lists what each bundle includes.
-- **A `junction`** follows its parent legs: `:manage`, or `:admin` only when every leg is a `catalog` entity.
+- **A `junction`** follows the entities it relates: `:manage`, or `:admin` only when every one of them is a `catalog` entity.
 - **Entities with a restricted step** (`operational_workflow`) stay at `:manage`; the restriction is a gate, see "Restricted steps (gates)" below.
-- **An entity a role that does part of the work writes** (an interviewer's scorecards) takes `edit_permission = <slug>:write_<entity>` in place of `<slug>:manage`. `<slug>:manage` includes it, so the write tier is unchanged ("Roles that do part of the work" below).
+- **An entity a role that does part of the work writes** (a requester's tickets) takes `edit_permission = <slug>:write_<entity>` in place of `<slug>:manage`. `<slug>:manage` includes it, so the write tier is unchanged ("Roles that do part of the work" below).
 - **Direct creation acts as the master** of every entity it creates: it writes the entity's own read and write permissions and nothing for entities another module masters, except view access to an entity it reuses ("Viewing an entity of another module" below).
 - **After a reclassification** (`update_entity` on `entity_type`), update the entity's `edit_permission` to the new tier in the same call (see "Update entity-level permission gates" below).
 
@@ -205,57 +205,68 @@ A role of this kind can also take a gate (a customer who accepts a quote). Its b
 
 Create these roles with the gates and the roles that take them, in the same calls:
 
-1. **The permissions:** each `<slug>:write_<entity>` ("Write scorecards") and the bundle `<slug>:<role_key>`, described by what it does ("Write the scorecards of the interviews you are on"), each with `module_id`, in the same `create_permission` as the gates.
+1. **The permissions:** each `<slug>:write_<entity>` ("Write tickets") and the bundle `<slug>:<role_key>`, described by what it does ("File tickets and comment on your own"), each with `module_id`, in the same `create_permission` as the gates.
 2. **The hierarchy rows:** `<slug>:manage` includes each `<slug>:write_<entity>`; the bundle includes `<slug>:read`, each `<slug>:write_<entity>` the role writes and each gate it takes. They go in the same `create_permission_hierarchy` as the gates' rows.
-3. **The role and its grant,** as for a role that takes gates: `role_name` "<Module Name> <Role Title>" ("Recruiting Interviewer"), `slug` `<module slug with - as _>_<role_key>`, `module_id`.
+3. **The role and its grant,** as for a role that takes gates: `role_name` "<Module Name> <Role Title>" ("Service Desk Requester"), `slug` `<module slug with - as _>_<role_key>`, `module_id`.
 4. **The entities:** each entity's `edit_permission`, `select_rule` and validation rules go in its `create_entity` payload, and the named field in its `create_field` call. A rollup over an entity with such a `select_rule` needs `include_hidden_rows: true` before the rule is set (`90269` otherwise). On the entity that holds the field, over an entity below it, it is set without asking, as in control 7, and the final response names it; any other such rollup follows `rollup-fields.md` → "Hidden child rows".
 
 In the per-entity shape the bundle is `<unit>:<role_key>` and includes `<unit>:read` and the role's `write_<entity>` permissions, and `<unit>:manage` includes each of those.
 
-**Complete rules for an interviewer.** Recruiters schedule interviews and name the interviewer on each (`interviewer_user_id`); the interviewer writes the scorecards of those interviews and never sees offers. The role is `recruiting:interviewer`, its bundle includes `recruiting:read` and `recruiting:write_scorecards`, and `scorecards.edit_permission` is `recruiting:write_scorecards`.
+**Complete rules for a requester.** A requester files tickets, comments on their own tickets, and never sees the agents' internal notes. Each ticket names its requester in `requested_by_user_id`, stamped on insert in `computed_fields` as in "Controls on a gate", control 1. The role is `service_desk:requester`; its bundle includes `service_desk:read`, `service_desk:write_tickets` and `service_desk:write_ticket_comments`, which are the `edit_permission` of `tickets` and of `ticket_comments`.
 
-The `select_rule` of `interviews`, which holds the field:
-
-```json
-{"and": [{"has_permission": "recruiting:read"}, {"or": [
-  {"!": [{"has_permission": "recruiting:interviewer"}]},
-  {"has_permission": "recruiting:manage"},
-  {"and": [{"!=": [{"var": "interviewer_user_id"}, null]}, {"==": [{"var": "interviewer_user_id"}, {"var": "$user_id"}]}]}]}]}
-```
-
-The `select_rule` of `scorecards`, below it, which shows a scorecard when its interview is visible:
+The `select_rule` of `tickets`, which holds the field:
 
 ```json
-{"and": [{"has_permission": "recruiting:read"}, {"or": [
-  {"!": [{"has_permission": "recruiting:interviewer"}]},
-  {"has_permission": "recruiting:manage"},
-  {"set_record": ["interview", "interviews", {"var": "interview_id"}, {"!=": [{"var": "interview"}, null]}]}]}]}
+{"and": [{"has_permission": "service_desk:read"}, {"or": [
+  {"!": [{"has_permission": "service_desk:requester"}]},
+  {"has_permission": "service_desk:manage"},
+  {"and": [{"!=": [{"var": "requested_by_user_id"}, null]}, {"==": [{"var": "requested_by_user_id"}, {"var": "$user_id"}]}]}]}]}
 ```
 
-The `validation_rules` of `scorecards`:
+The `validation_rules` of `tickets`, which keep a requester's writes to their own tickets (part 4):
 
 ```json
 [
-  {"code": "99010", "name": "scorecard_of_own_interview",
-   "message": "An interviewer can only write the scorecards of interviews they are on.",
-   "jsonlogic": {"if": [{"has_permission": "recruiting:manage"}, true,
-     {"set_record": ["interview", "interviews", {"var": "interview_id"},
-       {"and": [{"!=": [{"var": "interview"}, null]}, {"!=": [{"var": "interview.interviewer_user_id"}, null]},
-         {"==": [{"var": "interview.interviewer_user_id"}, {"var": "$user_id"}]}]}]}]}}
+  {"code": "99010", "name": "requester_own_tickets",
+   "message": "A requester can only write their own tickets.",
+   "jsonlogic": {"if": [{"has_permission": "service_desk:manage"}, true,
+     {"and": [{"!=": [{"var": "requested_by_user_id"}, null]}, {"==": [{"var": "requested_by_user_id"}, {"var": "$user_id"}]}]}]}}
 ]
 ```
 
-The `select_rule` of `offers`, which the role does not see:
+The `select_rule` of `ticket_comments`, which shows a comment when its ticket is visible:
 
 ```json
-{"and": [{"has_permission": "recruiting:read"}, {"or": [
-  {"!": [{"has_permission": "recruiting:interviewer"}]},
-  {"has_permission": "recruiting:manage"}]}]}
+{"and": [{"has_permission": "service_desk:read"}, {"or": [
+  {"!": [{"has_permission": "service_desk:requester"}]},
+  {"has_permission": "service_desk:manage"},
+  {"set_record": ["ticket", "tickets", {"var": "ticket_id"}, {"!=": [{"var": "ticket"}, null]}]}]}]}
+```
+
+The `validation_rules` of `ticket_comments`:
+
+```json
+[
+  {"code": "99012", "name": "comment_on_own_ticket",
+   "message": "A requester can only comment on their own tickets.",
+   "jsonlogic": {"if": [{"has_permission": "service_desk:manage"}, true,
+     {"set_record": ["ticket", "tickets", {"var": "ticket_id"},
+       {"and": [{"!=": [{"var": "ticket"}, null]}, {"!=": [{"var": "ticket.requested_by_user_id"}, null]},
+         {"==": [{"var": "ticket.requested_by_user_id"}, {"var": "$user_id"}]}]}]}]}}
+]
+```
+
+The `select_rule` of `internal_notes`, which the role does not see:
+
+```json
+{"and": [{"has_permission": "service_desk:read"}, {"or": [
+  {"!": [{"has_permission": "service_desk:requester"}]},
+  {"has_permission": "service_desk:manage"}]}]}
 ```
 
 Where control 7 also narrows an entity, its `select_rule` is one `and` of the entity's `view_permission`, control 7's `or` and this `or`.
 
-**A field the role may not change.** A requester writes `tickets` (`edit_permission = service_desk:write_tickets`) but leaves the assignee and the priority to the agents:
+**A field the role may not change.** The requester leaves a ticket's assignee and priority to the agents:
 
 ```json
 {"code": "99011", "name": "requester_leaves_triage",

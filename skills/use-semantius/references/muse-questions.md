@@ -1,14 +1,18 @@
-# For Muse in Muse chat: no AskUserQuestion tool
+# Questions in Muse chat without `AskUserQuestion`
 
-You do not have `AskUserQuestion`. Do not assume it, name it as fired, or
-wait for a `<user_answers>` block. Your question tools are the single-tap
+This file applies only in Muse chat when `AskUserQuestion` is not in this
+session's tool list. If it is, ignore this file and ask every question
+with `AskUserQuestion`.
+
+Without `AskUserQuestion`, do not assume it, name it as fired, or wait
+for a `<user_answers>` block. Your question tools are the single-tap
 picker (`muse.create_options`), whose tap sends one reply immediately,
 and plain chat text. Handle every question a skill routes through
 `AskUserQuestion` as follows.
 
-This file overrides any contrary instruction in any skill or stage file,
-including widget-shaping and option-count tables; those are written for
-the native `AskUserQuestion` tool only.
+Where it applies, this file overrides any contrary instruction in any
+skill or stage file, including widget-shaping and option-count tables;
+those are written for the native `AskUserQuestion` tool only.
 
 ## Single-select (multiSelect absent or false)
 

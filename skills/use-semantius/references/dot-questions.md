@@ -1,5 +1,7 @@
 # Questions in dot and similarly limited tools
 
+This file applies only when `AskUserQuestion` is not available. If it is, ignore this file and ask every question with `AskUserQuestion`.
+
 Use this adapter for questions the skill routes through `AskUserQuestion`. Use a native question tool when it supports the required selection mode; otherwise use the chat format below.
 
 ## Single choice

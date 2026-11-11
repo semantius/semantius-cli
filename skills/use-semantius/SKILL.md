@@ -85,7 +85,7 @@ Understanding which layer you're working with determines which tools to use:
 | `references/entity-match-checker.ts` | Run it (`bun`), don't read it: `--batch -` takes a JSON object on stdin mapping each new entity's `table_name` to other words for it, and compares them with the instance's entities and, of the platform's own, `users`; exit 1 names the matches to settle; see "Before any new entity: compare it with the instance" |
 | `references/vendor-names.ts` | Run it (`bun`), don't read it: `entity:<Name>…` and `field:<Name>…` convert a product's record and field names (singular, spelled the product's way) into `table_name` and labels, or `field_name` and label, only when the user asks to follow that product's names; never convert them by hand |
 | `references/preflight.md` | The environment checks a skill runs before doing work: stay in the repo root, Bun and jq, CLI install and sign-in, and when to read the two question-format files below |
-| `references/muse-questions.md`, `references/dot-questions.md` | How to ask questions where `AskUserQuestion` is not available; `preflight.md` says when to read them |
+| `references/muse-questions.md`, `references/dot-questions.md` | How to ask questions where `AskUserQuestion` is not available; never read them when it is. `preflight.md` says when to read them |
 
 ---
 
