@@ -309,7 +309,7 @@ export function buildTransferSchema(generatedBy: string): Json {
             records: {
               type: 'array',
               description:
-                'The records, absent from an export made with exclude_data. The id column is included. Each key is a field_name of the entity; a reference to a user is {"external_id": "..."}, any other reference the id of the referenced row.',
+                'The records, absent from an export made with exclude_data. The id column is included. Each key is a field_name of the entity; a reference to a user is {"external_id": "..."}, any other reference the id of the referenced row. A file written by hand may name a record of an entity with a TypeID key "<prefix>_sr<n>" (cand_sr1), in its id and in the references to it; the import writes its TypeID, and an export never writes that short form.',
               items: { type: 'object' },
             },
           },

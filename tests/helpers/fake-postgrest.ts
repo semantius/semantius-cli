@@ -603,6 +603,14 @@ export class FakePostgrest {
     const def = this.defOf(table);
     const missingDefault = preferences.has('missing=default');
     const merge = preferences.has('resolution=merge-duplicates');
+    // An is_a / has_a entity is a view: an upsert on it fails when planned.
+    if ((onConflict || merge) && def.data && this.chainOf(table).length > 1) {
+      throw fail(
+        400,
+        '42P10',
+        'there is no unique or exclusion constraint matching the ON CONFLICT specification',
+      );
+    }
 
     const written = this.statement(() => {
       const out: Row[] = [];
@@ -999,7 +1007,7 @@ export class FakePostgrest {
         continue;
       }
       const target = String(field.reference_table);
-      if (!this.tableOf(target).has(String(value))) {
+      if (!this.holds(target, value)) {
         throw this.foreignKeyError(table, column, value, target);
       }
     }
@@ -1079,11 +1087,53 @@ export class FakePostgrest {
     );
   }
 
+  /**
+   * A table, then the entities it is based on (id_type is_a / has_a): a record
+   * of a based entity shows its bases' fields too. The fake keeps such a
+   * record whole in the based entity's own table; it does not list it under
+   * the base, as the platform does.
+   */
+  private chainOf(table: string): string[] {
+    const chain = [table];
+    for (;;) {
+      const entity = this.tableOf('entities').get(chain[chain.length - 1]);
+      const base =
+        entity && (entity.id_type === 'is_a' || entity.id_type === 'has_a')
+          ? entity.id_refentity
+          : undefined;
+      if (typeof base !== 'string' || !base || chain.includes(base)) break;
+      chain.push(base);
+    }
+    return chain;
+  }
+
+  /**
+   * Whether `table` has a record `key`: its own, or one of an is_a entity
+   * based on it, which the platform lists under the base as well.
+   */
+  private holds(table: string, key: unknown): boolean {
+    if (this.tableOf(table).has(String(key))) return true;
+    for (const entity of this.tableOf('entities').values()) {
+      const name = String(entity.table_name);
+      if (
+        entity.id_type === 'is_a' &&
+        name !== table &&
+        this.chainOf(name).includes(table) &&
+        this.tableOf(name).has(String(key))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** A data table only has the columns of its fields (PostgREST's 42703 / PGRST204). */
   private checkColumns(table: string, columns: string[]): void {
     if (!this.defOf(table).data) return;
     const known = new Set(
-      this.fieldsOf(table).map((f) => String(f.field_name)),
+      this.chainOf(table).flatMap((level) =>
+        this.fieldsOf(level).map((f) => String(f.field_name)),
+      ),
     );
     for (const column of columns) {
       if (column !== '*' && !known.has(column)) {

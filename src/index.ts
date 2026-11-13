@@ -827,6 +827,8 @@ Built-in servers:
   JSON file; import_entities / import_module replay it onto another host as an upsert, e.g.
     semantius --host stage.example.com call utils/export_module '{"name":"CRM","path":"crm.json"}'
     semantius --host prod.example.com call utils/import_module '{"path":"crm.json"}'
+  import_entities with "check" writes nothing and lists every problem of the file's records, e.g.
+    semantius call utils/import_entities '{"path":"records.json","check":true}'
   utils/generate_module_schema writes the JSON Schema of that file (it makes no request to the host), e.g.
     semantius call utils/generate_module_schema '{"path":"transfer.schema.json"}'
 

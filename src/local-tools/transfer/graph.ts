@@ -299,7 +299,8 @@ export function orderRollups<T extends RollupField>(
  * statement, so the rows of one batch may point at each other in any order,
  * cycles included. Only a changed row whose parent exists neither on the
  * target nor in its own batch needs care — its parent comes later in the file
- * (records are in id order), or is held back itself:
+ * (records with a number as key are in id order; with any other key, later
+ * means not met yet), or is held back itself:
  *
  *   - through a `reference` column: the row is written with that column null,
  *     and `relink` asks for a second pass that writes the real value once
@@ -316,6 +317,8 @@ export class SelfReferences {
   relink = false;
   private readonly held = new Map<string, Row>();
   private lastId: number | undefined;
+  /** The keys met so far, kept only where keys are not numbers. */
+  private met: Set<string> | undefined;
 
   constructor(
     private readonly table: string,
@@ -335,8 +338,21 @@ export class SelfReferences {
     for (const row of rows) {
       const id = row[this.idColumn];
       if (typeof id !== 'number') {
+        // A TypeID, text or UUID key has no order to read "later" from, so
+        // the keys met so far are kept instead: one string per record of a
+        // table that references itself. A table mixing both is refused.
+        if (this.lastId !== undefined || id === null || id === undefined) {
+          throw new Error(
+            `${this.table}: record ${this.idColumn} ${JSON.stringify(id)} is not a number`,
+          );
+        }
+        this.met ??= new Set();
+        this.met.add(key(id));
+        continue;
+      }
+      if (this.met) {
         throw new Error(
-          `${this.table}: record ${this.idColumn} ${JSON.stringify(id)} is not a number`,
+          `${this.table}: record ${this.idColumn} ${JSON.stringify(id)} is a number, the records before it are not`,
         );
       }
       if (this.lastId !== undefined && id <= this.lastId) {
@@ -346,7 +362,16 @@ export class SelfReferences {
       }
       this.lastId = id;
     }
-    return this.lastId as number;
+    return this.lastId ?? 0;
+  }
+
+  /**
+   * Whether `parent` may come later in the file than the batch that ends at
+   * `high`: a higher number, or, where keys are not numbers, a key not met yet.
+   */
+  private later(parent: unknown, high: number): boolean {
+    if (this.met) return !this.met.has(key(parent));
+    return typeof parent === 'number' && parent > high;
   }
 
   /**
@@ -362,10 +387,7 @@ export class SelfReferences {
         const parent = row[ref.column];
         if (parent === null || parent === undefined) continue;
         if (ids.has(String(parent))) continue;
-        if (
-          (typeof parent === 'number' && parent > high) ||
-          this.held.has(String(parent))
-        ) {
+        if (this.later(parent, high) || this.held.has(String(parent))) {
           out.add(parent);
         }
       }
@@ -387,10 +409,7 @@ export class SelfReferences {
     const missing = (parent: unknown): boolean => {
       if (parent === null || parent === undefined) return false;
       if (writing.has(key(parent)) || onTarget(parent)) return false;
-      return (
-        (typeof parent === 'number' && parent > high) ||
-        this.held.has(key(parent))
-      );
+      return this.later(parent, high) || this.held.has(key(parent));
     };
     const parents = this.references.filter((r) => r.format === 'parent');
     const below = this.children(changed, parents);

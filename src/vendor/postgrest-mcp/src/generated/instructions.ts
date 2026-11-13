@@ -145,11 +145,12 @@ export const instructions = `   ---
    3. **Create the entity** with:
       - \`table_name\` (lowercase, snake_case, **always plural**; e.g., \`customers\`, \`categories\`; never ending in \`_ext\`, which is reserved) — renaming is high-risk: breaks all references
       - \`singular\` – optional; derived from \`table_name\` when blank (\`services\` becomes \`service\`, \`cities\` becomes \`city\`)
-      - \`singular_label\` – human-readable singular noun (e.g., "Service", "Company"), symmetric with \`plural_label\`. Pass it: when blank it is derived from \`label_column\` (\`service_name\` becomes "Service Name"). It does not set the title of the label field, which is always "Name".
+      - \`singular_label\` – human-readable singular noun (e.g., "Service", "Company"), symmetric with \`plural_label\`. Pass it: when blank it is derived from \`singular\` (\`service\` becomes "Service"), which is wrong whenever \`singular\` is. It does not set the title of the label field: that is \`label_column_label\`.
       - \`plural\` – do not pass it: the platform always sets it to \`table_name\`
       - \`plural_label\` (e.g., "Services", "Companies")
       - \`description\` (clear explanation of what this concept represents)
       - \`label_column\` – the snake_case **field name** whose value identifies a record (e.g., \`service_name\`, \`company_name\`). This must be a snake_case identifier, not a human-readable title. Always single-line text: it is created as \`text\` and, as a core column, its format never changes (\`90219\`), so it is never an enum, number, date, boolean or FK. Omit it for a junction (the platform composes its \`_label\` from the records it relates; set the auto \`label\` field's \`input_type\` to \`default\`) and for an \`is_a\` or \`has_a\` entity: it comes from the base (\`90242\`).
+      - \`label_column_label\` – the title of the label field, given in this same call (e.g., \`label_column: "offer_number"\` with \`label_column_label: "Offer #"\`); no \`update_field\` call is needed afterwards. Omit it to get the default: the label column in words without the entity's singular or plural (\`company_name\` on \`companies\` becomes "Name", \`region_description\` on \`regions\` becomes "Description"), except that a column ending in \`_number\`, \`_no\`, \`_id\` or \`_code\` keeps it (\`offer_number\` becomes "Offer Number"). It always equals the label field's \`title\`: changing either one changes both. An \`is_a\` or \`has_a\` entity takes it from the base (\`90242\`).
       - \`module_id\` (required — use resolved module)
       - \`view_permission\` and \`edit_permission\` – optional (defaults \`public:read\` and \`admin\`); set both deliberately. Each must name an existing permission.
       - Optional: \`icon_name\` — the icon to show for the entity: a Lucide icon name (see Field Format Quick Reference) or an icon URL; leave unset unless the user requests a specific icon.
@@ -172,12 +173,12 @@ export const instructions = `   ---
 
       **The system automatically creates these fields — do NOT create them manually:**
       - \`id\` — primary key field (\`ctype: "id"\`, \`is_pk: true\`), typed from \`id_type\`: format \`int64\` for \`auto_increment\` and \`bigint\`, \`text\`, \`uuid\`, or \`string\` for \`typeid\`, \`is_a\` and \`has_a\`
-      - The field named in \`label_column\` (e.g., \`service_name\`) with the title "Name"
+      - The field named in \`label_column\` (e.g., \`service_name\`), titled with \`label_column_label\`
       - \`created_at\` and \`updated_at\` timestamp fields
 
       > ⚠️ **Never call \`create_field\` for \`id\`, \`created_at\`, \`updated_at\`, or the field named in \`label_column\`. They already exist.**
 
-      > ℹ️ An \`is_a\` or \`has_a\` entity gets only \`id\`, \`created_at\` and \`updated_at\`: its label field, and every other field of its base, is its base's. Its \`label_column\` is set from the base.
+      > ℹ️ An \`is_a\` or \`has_a\` entity gets only \`id\`, \`created_at\` and \`updated_at\`: its label field, and every other field of its base, is its base's. Its \`label_column\` and \`label_column_label\` are set from the base.
 
       > ℹ️ \`searchable\` and \`is_child\` on the entity are **read-only** and computed automatically (\`searchable\` when any field has \`searchable: true\`; \`is_child\` when any field uses \`format: "parent"\` — for an \`is_a\` or \`has_a\` entity, a field of its base's levels counts too). Never set these manually.
 

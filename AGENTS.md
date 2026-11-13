@@ -94,6 +94,38 @@ one JSON file. Its rules:
 - **Records keep their ids**, and the import upserts by the entity's id column.
   References to `users` travel as `{"external_id": …}`, found through the
   fields with `reference_table = 'users'` — never by the shape of a value.
+- **A sample id is the one id a file may carry that is not the stored one.** A
+  record written by hand names itself `<prefix>_sr<n>` (`cand_sr1`), because
+  nobody types the 26 characters of a TypeID. The import pads it to
+  `<prefix>_0sr<n>` and `x` up to 26 characters (`sample-id.ts`): the leading
+  `0` because the first character must be 0-7, a letter as filler because
+  zeros would make `sr1` and `sr10` one id. It is padded only where the catalog
+  says a TypeID belongs (the key of an entity with `id_type` `typeid`, `is_a` or
+  `has_a`, and a reference or parent column to one), never by the shape of a
+  value in any other column. An export never writes the short form.
+- **`import_entities` with `check` writes nothing** (`check.ts`). It lists every
+  problem of the records in one answer, from the file and the catalog alone:
+  one bad value must not hide the next, and a record with a bad value is still
+  a record the others may name. It does not evaluate validation rules; a record
+  those refuse still stops the import. A new refusal in `RecordWriter.prepare`
+  belongs in the check as well.
+- **Records of an entity based on another are inserted, then patched.** The
+  platform refuses an upsert on an `is_a` or `has_a` entity (`42P10`, when the
+  statement is planned), so `writeBased` sends the new records in one plain
+  POST and each changed one in a PATCH of the columns that differ. A record of
+  such an entity shows its bases' fields, and the catalog lists a field only
+  under its owner, so `catalog.ts` gathers a table's fields up its chain of
+  bases. An `is_a` record is written whole at its own table; a `has_a` record
+  writes its key and its own fields, after the base record it attaches to. A
+  read of a base lists its subtypes' records too, so an export carries each of
+  them twice: under the base it is left to the subtype's table
+  (`left_to_subtypes`), and refused when the file carries no records of that
+  subtype.
+- **A table that references itself may have any key.** With a number as key,
+  "later in the file" is a higher id, and the records must be in id order.
+  With a TypeID, text or UUID key there is no order to read it from, so
+  `SelfReferences` keeps the keys it has met: one string per record of such a
+  table.
 - **Every read is paged** (`PostgrestClient.pages`): a page shorter than
   `limit` does not end a read, because PostgREST's `db-max-rows` may cut it;
   only an empty page does. There is no unpaged GET in the client.

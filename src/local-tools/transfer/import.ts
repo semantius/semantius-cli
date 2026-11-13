@@ -24,6 +24,8 @@ import { resolve } from 'node:path';
 import { bulkInsertOptions } from '../../vendor/postgrest-mcp/src/utils/bulk.js';
 import { resetSchemaCache } from '../../vendor/postgrest-mcp/src/utils/resetSchemaCache.js';
 import { buildToolContext, setCurrentContext } from '../crud/context.js';
+import { loadCatalog } from './catalog.js';
+import { type CheckResult, checkTransfer } from './check.js';
 import {
   CORE_FIELD_FIXED,
   ENTITY_COLUMNS,
@@ -63,6 +65,12 @@ import {
   columnList,
   eq,
 } from './postgrest.js';
+import {
+  TYPEID_KEYS,
+  isTypeId,
+  padSampleId,
+  typeIdPrefix,
+} from './sample-id.js';
 
 const INSERT_CHUNK = 100;
 const BATCH_ROWS = 2000;
@@ -86,7 +94,13 @@ export interface EntityResult {
   table_name: string;
   entity?: Status;
   fields?: Counts;
-  records?: { written: number; unchanged: number; rewritten?: number };
+  records?: {
+    written: number;
+    unchanged: number;
+    rewritten?: number;
+    /** Records of a base that are a subtype's, written under the subtype. */
+    left_to_subtypes?: number;
+  };
   sequence_next?: number | null;
 }
 
@@ -101,9 +115,9 @@ export interface ImportResult {
 
 export async function importTransfer(
   ctx: TransferContext,
-  args: { path: string },
+  args: { path: string; check?: boolean },
   kind: 'entities' | 'module',
-): Promise<ImportResult> {
+): Promise<ImportResult | CheckResult> {
   const path = resolve(args.path);
   const file = await readTransferFile(path);
   const { doc } = file;
@@ -113,6 +127,12 @@ export async function importTransfer(
     );
   }
   refuseLostRollups(doc);
+
+  if (args.check) {
+    // A check right after a build meets the same stale cache a write would.
+    ctx.pg.onSchemaMiss = schemaCacheRefresher(ctx).refreshOnce;
+    return checkTransfer(ctx, file);
+  }
 
   const moduleResult = kind === 'module' ? await importModule(ctx, doc) : {};
   const outcomes = new Map<string, EntityResult>(
@@ -733,17 +753,70 @@ interface TableState {
   index: number;
   count: number;
   idColumn: string;
-  /** Target catalog: field name → field. */
+  idPrefix: string;
+  /**
+   * Target catalog: field name → field. For an is_a or has_a entity it holds
+   * the fields of its bases too, as a record of it shows them.
+   */
   catalog: Map<string, Row>;
   /** Audit, computed and rollup columns: the platform sets them. */
   skip: Set<string>;
+  /**
+   * Set for an entity based on another. The platform refuses an upsert on one
+   * (42P10), so its new records are inserted and its changed ones patched.
+   */
+  based?: 'is_a' | 'has_a';
+  /** The fields the entity owns itself: all an extension (has_a) writes. */
+  own: Set<string>;
+  /**
+   * Prefix → table of the is_a entities based on this one. A read of a base
+   * lists their records too, so an export carries each of them twice: under
+   * the base and under its own table, which is where it is written.
+   */
+  subtypes: Map<string, string>;
   /** A rollup aggregates over this table: see writeTable. */
   aggregated: boolean;
   /** Columns written, from the first record. */
   columns?: string[];
   userColumns: string[];
+  /**
+   * The key and the references that hold a TypeID: a sample id in one of
+   * them (`cand_sr1`) is padded to its TypeID (sample-id.ts).
+   */
+  typeidColumns: string[];
   result: NonNullable<EntityResult['records']>;
   maxWritten?: number;
+}
+
+const INSTANT =
+  /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}(?::?\d{2})?)$/i;
+
+/** A date-time as [milliseconds of its whole second, fraction digits], or undefined. */
+function instantOf(value: unknown): [number, string] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = INSTANT.exec(value.trim());
+  if (!match) return undefined;
+  const zone = match[4].toUpperCase();
+  const offset =
+    zone === 'Z'
+      ? 'Z'
+      : `${zone.slice(0, 3)}:${zone.replace(':', '').slice(3) || '00'}`;
+  const second = Date.parse(`${match[1]}T${match[2]}${offset}`);
+  if (Number.isNaN(second)) return undefined;
+  return [second, (match[3] ?? '').padEnd(9, '0')];
+}
+
+/**
+ * Whether two date-times name one instant. The target answers
+ * "2026-09-15T14:30:00+00:00" for what a file written by hand calls
+ * "2026-09-15T14:30:00Z": compared as text, that record would be written again
+ * on every run, as an update the target's rules may refuse where they allowed
+ * the insert. The fraction is compared digit by digit, not as milliseconds.
+ */
+function sameInstant(a: unknown, b: unknown): boolean {
+  const x = instantOf(a);
+  const y = instantOf(b);
+  return !!x && !!y && x[0] === y[0] && x[1] === y[1];
 }
 
 /**
@@ -794,17 +867,7 @@ async function importRecords(
   const tables = entries.map((e) => e.table);
 
   // The target's catalog, after the schema step.
-  const entities = indexBy(
-    await pg.readIn('entities', 'table_name', tables, { key: 'table_name' }),
-    'table_name',
-  );
-  const fieldsOf = new Map<string, Row[]>(tables.map((t) => [t, []]));
-  for (const field of await pg.readIn('fields', 'table_name', tables, {
-    key: 'id',
-    unique: false,
-  })) {
-    fieldsOf.get(field.table_name as string)?.push(field);
-  }
+  const catalog = await loadCatalog(pg, tables);
   // Every rollup on the target, not just the file's: the parent may not be in it.
   const aggregated = new Set(
     (
@@ -820,49 +883,89 @@ async function importRecords(
   const states = new Map<string, TableState>();
   const references: Reference[] = [];
   for (const { table, index } of entries) {
-    const entity = entities.get(table);
-    if (!entity) throw new Error(`${table} is not on the target`);
-    const fields = fieldsOf.get(table) ?? [];
-    const computed = Array.isArray(entity.computed_fields)
-      ? (entity.computed_fields as Row[]).map((c) => c?.name)
-      : [];
-    const skip = new Set<string>([
-      ...fields
-        .filter((f) => f.ctype === 'audit' || f.ctype === 'rollup')
-        .map((f) => f.field_name as string),
-      ...computed.filter((n): n is string => typeof n === 'string'),
-    ]);
+    const info = catalog.tables.get(table);
+    if (!info) throw new Error(`${table} is not on the target`);
+    const based =
+      info.idType === 'is_a' || info.idType === 'has_a'
+        ? info.idType
+        : undefined;
     const result = { written: 0, unchanged: 0 };
     (outcomes.get(table) as EntityResult).records = result;
     states.set(table, {
       table,
       index,
       count: file.recordCount(index),
-      idColumn: (entity.id_column as string) || 'id',
-      catalog: new Map(fields.map((f) => [f.field_name as string, f])),
-      skip,
+      idColumn: info.idColumn,
+      idPrefix: info.idPrefix,
+      catalog: info.fields,
+      skip: info.skip,
+      based,
+      own: info.own,
+      subtypes: info.subtypes,
       aggregated: aggregated.has(table),
       userColumns: [],
+      typeidColumns: [],
       result,
     });
-    for (const f of fields) {
+    for (const [name, f] of info.fields) {
+      // An extension's record writes its own fields only; the fields of its
+      // base belong to the base record.
+      if (based === 'has_a' && !info.own.has(name)) continue;
       if (
         (f.format === 'reference' || f.format === 'parent') &&
         typeof f.reference_table === 'string' &&
-        !skip.has(f.field_name as string)
+        !info.skip.has(name)
       ) {
         references.push({
           table,
-          column: f.field_name as string,
+          column: name,
           target: f.reference_table,
           format: f.format,
         });
       }
     }
+    // An extension attaches to its base record, which must be there first.
+    if (based === 'has_a' && info.base) {
+      references.push({
+        table,
+        column: info.idColumn,
+        target: info.base,
+        format: 'parent',
+      });
+    }
+  }
+  // A reference to a base may name a record of an is_a entity based on it,
+  // so those of the file are written first as well.
+  for (const reference of [...references]) {
+    for (const info of catalog.tables.values()) {
+      if (
+        info.idType === 'is_a' &&
+        info.table !== reference.table &&
+        info.table !== reference.target &&
+        info.chain.includes(reference.target)
+      ) {
+        references.push({ ...reference, target: info.table });
+      }
+    }
+  }
+
+  // Which columns hold a TypeID: the key of an entity keyed by one, and the
+  // references to one, in the file or already on the target.
+  const typeidKey = (table: string): boolean =>
+    TYPEID_KEYS.has(catalog.keys.get(table)?.idType ?? '');
+  for (const state of states.values()) {
+    state.typeidColumns = [
+      ...new Set([
+        ...(typeidKey(state.table) ? [state.idColumn] : []),
+        ...references
+          .filter((r) => r.table === state.table && typeidKey(r.target))
+          .map((r) => r.column),
+      ]),
+    ];
   }
 
   const plan = planWrites(tables, references);
-  const writer = new RecordWriter(ctx, file, outcomes);
+  const writer = new RecordWriter(ctx, file, outcomes, new Set(tables));
   for (const step of plan.steps) {
     const state = states.get(step.table) as TableState;
     const relink = await withContext(`records of ${step.table}`, () =>
@@ -895,7 +998,44 @@ class RecordWriter {
     private readonly ctx: TransferContext,
     private readonly file: TransferFile,
     private readonly outcomes: Map<string, EntityResult>,
+    /** The tables the file carries records of. */
+    private readonly withRecords: ReadonlySet<string>,
   ) {}
+
+  /**
+   * Whether a record listed under a base is a subtype's. It is written under
+   * the subtype's own table, where the file carries it with the subtype's
+   * fields; inserted into the base it would be refused (90237).
+   */
+  private isSubtypeRecord(state: TableState, row: Row): boolean {
+    if (!state.subtypes.size) return false;
+    const id = padSampleId(row[state.idColumn]);
+    if (!isTypeId(id)) return false;
+    const prefix = typeIdPrefix(id);
+    if (prefix === state.idPrefix) return false;
+    const subtype = state.subtypes.get(prefix);
+    if (!subtype) return false;
+    if (!this.withRecords.has(subtype)) {
+      throw new Error(
+        `record ${JSON.stringify(row[state.idColumn])} is a record of ${subtype}, and the file carries no records of ${subtype}: a record is written at its own table, so export ${subtype} together with ${state.table}`,
+      );
+    }
+    return true;
+  }
+
+  /** Whether the target holds another value in `column` than the file. */
+  private differs(
+    state: TableState,
+    column: string,
+    wanted: unknown,
+    stored: unknown,
+  ): boolean {
+    if (Bun.deepEquals(wanted, stored)) return false;
+    return !(
+      state.catalog.get(column)?.format === 'date-time' &&
+      sameInstant(wanted, stored)
+    );
+  }
 
   /**
    * One pass over a table's records. Returns whether a reference to a later
@@ -932,6 +1072,13 @@ class RecordWriter {
 
     try {
       for await (const line of this.file.records(state.index)) {
+        if (this.isSubtypeRecord(state, line.row)) {
+          if (pass === 1) {
+            state.result.left_to_subtypes =
+              (state.result.left_to_subtypes ?? 0) + 1;
+          }
+          continue;
+        }
         const row = await this.prepare(state, line.row);
         columns ??= (state.columns as string[]).filter(
           (c) => pass === 2 || !deferred.includes(c),
@@ -980,11 +1127,19 @@ class RecordWriter {
       if (unknown.length) {
         throw new Error(`the target has no column ${unknown.join(', ')}`);
       }
+      // An extension (has_a) writes its key and its own fields: a record read
+      // at its table shows the base's fields too, which the base record holds.
       state.columns = keys.filter(
-        (k) => k === state.idColumn || !state.skip.has(k),
+        (k) =>
+          k === state.idColumn ||
+          (!state.skip.has(k) && (state.based !== 'has_a' || state.own.has(k))),
       );
       state.userColumns = state.columns.filter(
         (c) => state.catalog.get(c)?.reference_table === 'users',
+      );
+      const written = state.columns;
+      state.typeidColumns = state.typeidColumns.filter((c) =>
+        written.includes(c),
       );
     }
     for (const column of state.columns) {
@@ -994,10 +1149,15 @@ class RecordWriter {
         );
       }
     }
-    if (!state.userColumns.length) return row;
+    if (!state.userColumns.length && !state.typeidColumns.length) return row;
+
+    const mapped = { ...row };
+    for (const column of state.typeidColumns) {
+      mapped[column] = padSampleId(row[column]);
+    }
+    if (!state.userColumns.length) return mapped;
 
     const users = await this.userIds();
-    const mapped = { ...row };
     for (const column of state.userColumns) {
       const value = row[column];
       if (value === null) continue;
@@ -1071,7 +1231,10 @@ class RecordWriter {
 
     const changed = rows.filter((row) => {
       const target = current.get(String(row[idColumn]));
-      return !target || columns.some((c) => !Bun.deepEquals(row[c], target[c]));
+      return (
+        !target ||
+        columns.some((c) => this.differs(state, c, row[c], target[c]))
+      );
     });
     if (count === 'first') {
       state.result.written += changed.length;
@@ -1114,6 +1277,10 @@ class RecordWriter {
     columns: string[],
   ): Promise<void> {
     const { table, idColumn } = state;
+    if (state.based) {
+      await this.writeBased(state, rows, columns);
+      return;
+    }
     // Before the first record anywhere: a target without a working
     // fix_id_sequence would keep records behind a stale id sequence.
     this.probe ??= this.fixSequence(table);
@@ -1135,6 +1302,66 @@ class RecordWriter {
       ) {
         state.maxWritten = id;
       }
+    }
+  }
+
+  /**
+   * Write the records of an is_a or has_a entity. The platform refuses an
+   * upsert on one (42P10, when the statement is planned), so the new records
+   * go in one plain insert and each changed one in a PATCH of its own, with
+   * the columns that differ. The key is a TypeID, so no id sequence is
+   * involved. An is_a record is inserted here, at its own table, with its
+   * bases' fields in the same row; a has_a record attaches to the base record
+   * its id names.
+   */
+  private async writeBased(
+    state: TableState,
+    rows: Row[],
+    columns: string[],
+  ): Promise<void> {
+    const { pg } = this.ctx;
+    const { table, idColumn } = state;
+    const stored = indexBy(
+      await pg.readIn(
+        table,
+        idColumn,
+        rows.map((r) => r[idColumn]),
+        {
+          select: columns,
+          key: idColumn,
+          pageSize: BATCH_ROWS,
+          schemaWait: true,
+        },
+      ),
+      idColumn,
+    );
+    const fresh = rows.filter((r) => !stored.has(String(r[idColumn])));
+    if (fresh.length) {
+      await pg.request('POST', `/${table}?columns=${columnList(columns)}`, {
+        body: fresh.map((row) => pick(row, columns)),
+        prefer: 'return=minimal',
+        retry: 'insert',
+        schemaWait: true,
+      });
+    }
+    for (const row of rows) {
+      const before = stored.get(String(row[idColumn]));
+      if (!before) continue;
+      const change: Row = {};
+      for (const column of columns) {
+        if (
+          column !== idColumn &&
+          this.differs(state, column, row[column], before[column])
+        ) {
+          change[column] = row[column];
+        }
+      }
+      if (!Object.keys(change).length) continue;
+      await pg.request('PATCH', `/${table}?${eq(idColumn, row[idColumn])}`, {
+        body: change,
+        prefer: 'return=minimal',
+        schemaWait: true,
+      });
     }
   }
 

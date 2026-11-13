@@ -25,6 +25,11 @@ import {
   planWrites,
 } from '../src/local-tools/transfer/graph';
 import { PostgrestClient } from '../src/local-tools/transfer/postgrest';
+import {
+  isTypeId,
+  padSampleId,
+  typeIdPrefix,
+} from '../src/local-tools/transfer/sample-id';
 import { buildTransferSchema } from '../src/local-tools/transfer/schema';
 import {
   FakePostgrest,
@@ -2272,6 +2277,741 @@ describe('import: rollup and computed fields', () => {
   });
 });
 
+/**
+ * A recruiting module, without records, whose entities are keyed by a TypeID:
+ *   candidates (cand): label candidate_name, source (enum)
+ *   job_openings (jo): label job_opening_title
+ *   applications (appl): label application_name, candidate_id → candidates,
+ *     job_opening_id → job_openings (parent), owner_id → users, workflow_state
+ *   interviews (int): label interview_name, application_id → applications
+ *     (parent), interview_type (enum), rating
+ *   candidate_skills: a junction keyed by a number, candidate_id (parent)
+ */
+function seedRecruiting(f: FakePostgrest) {
+  const [module] = f.insert('modules', [
+    { module_name: 'Recruiting', module_slug: 'recruiting' },
+  ]);
+  const typeid = (table: string, prefix: string, label: string) => ({
+    table_name: table,
+    singular_label: table,
+    plural_label: table,
+    module_id: module.id,
+    label_column: label,
+    id_type: 'typeid',
+    id_prefix: prefix,
+  });
+  f.insert('entities', [
+    typeid('candidates', 'cand', 'candidate_name'),
+    typeid('job_openings', 'jo', 'job_opening_title'),
+    typeid('applications', 'appl', 'application_name'),
+    typeid('interviews', 'int', 'interview_name'),
+    {
+      table_name: 'candidate_skills',
+      singular_label: 'Skill',
+      plural_label: 'Skills',
+      module_id: module.id,
+      label_column: 'skill',
+    },
+  ]);
+  f.insert('fields', [
+    {
+      table_name: 'candidates',
+      field_name: 'source',
+      title: 'Source',
+      format: 'enum',
+      enum_values: ['referral', { value: 'job_board', label: 'Job board' }],
+    },
+    {
+      table_name: 'applications',
+      field_name: 'candidate_id',
+      title: 'Candidate',
+      format: 'reference',
+      reference_table: 'candidates',
+    },
+    {
+      table_name: 'applications',
+      field_name: 'job_opening_id',
+      title: 'Job opening',
+      format: 'parent',
+      reference_table: 'job_openings',
+    },
+    {
+      table_name: 'applications',
+      field_name: 'owner_id',
+      title: 'Owner',
+      format: 'reference',
+      reference_table: 'users',
+    },
+    {
+      table_name: 'applications',
+      field_name: 'workflow_state',
+      title: 'State',
+      format: 'enum',
+      enum_values: ['new', 'interview', 'hired'],
+      input_type: 'required',
+    },
+    {
+      table_name: 'interviews',
+      field_name: 'application_id',
+      title: 'Application',
+      format: 'parent',
+      reference_table: 'applications',
+    },
+    {
+      table_name: 'interviews',
+      field_name: 'interview_type',
+      title: 'Type',
+      format: 'enum',
+      enum_values: ['phone_screen', 'onsite'],
+    },
+    {
+      table_name: 'interviews',
+      field_name: 'rating',
+      title: 'Rating',
+      format: 'rating',
+    },
+    {
+      table_name: 'interviews',
+      field_name: 'scheduled_at',
+      title: 'Scheduled at',
+      format: 'date-time',
+    },
+    {
+      table_name: 'candidate_skills',
+      field_name: 'candidate_id',
+      title: 'Candidate',
+      format: 'parent',
+      reference_table: 'candidates',
+    },
+  ]);
+}
+
+/** A records-only file written by hand: table → records. */
+async function handWritten(
+  name: string,
+  tables: Record<string, Row[]>,
+): Promise<string> {
+  const path = join(dir, name);
+  await writeFile(
+    path,
+    JSON.stringify(
+      {
+        version: 1,
+        entities: Object.entries(tables).map(([table_name, records]) => ({
+          entity: { table_name },
+          records,
+        })),
+      },
+      null,
+      2,
+    ),
+  );
+  return path;
+}
+
+const X = (body: string) => body + 'x'.repeat(26 - body.length);
+
+/** A small, sound recruiting file. */
+const recruitingRecords = (): Record<string, Row[]> => ({
+  candidates: [
+    { id: 'cand_sr1', candidate_name: 'Maya Chen', source: 'referral' },
+    { id: 'cand_sr2', candidate_name: 'Liam Okafor', source: 'job_board' },
+  ],
+  job_openings: [{ id: 'jo_sr1', job_opening_title: 'Backend Engineer' }],
+  applications: [
+    {
+      id: 'appl_sr1',
+      application_name: 'Maya / Backend',
+      candidate_id: 'cand_sr1',
+      job_opening_id: 'jo_sr1',
+      owner_id: { external_id: 'auth0|alice' },
+      workflow_state: 'interview',
+    },
+    {
+      id: 'appl_sr2',
+      application_name: 'Liam / Backend',
+      candidate_id: 'cand_sr2',
+      job_opening_id: 'jo_sr1',
+      owner_id: null,
+      workflow_state: 'new',
+    },
+  ],
+  interviews: [
+    {
+      id: 'int_sr1',
+      interview_name: 'Phone screen',
+      application_id: 'appl_sr1',
+      interview_type: 'phone_screen',
+      rating: 4,
+      scheduled_at: '2026-11-05T14:00:00Z',
+    },
+  ],
+});
+
+describe('import: sample ids', () => {
+  test('padSampleId: 0, sr, the number as written, then x up to 26 characters', () => {
+    expect(padSampleId('cand_sr1')).toBe(`cand_${X('0sr1')}`);
+    expect(padSampleId('cand_sr1')).toBe('cand_0sr1xxxxxxxxxxxxxxxxxxxxxx');
+    expect(padSampleId('cand_sr10')).toBe(`cand_${X('0sr10')}`);
+    expect(padSampleId('pre_fix_sr2')).toBe(`pre_fix_${X('0sr2')}`);
+    // sr1, sr10 and sr100 stay three ids, each a TypeID
+    const three = ['cand_sr1', 'cand_sr10', 'cand_sr100'].map(padSampleId);
+    expect(new Set(three).size).toBe(3);
+    for (const id of three) expect(isTypeId(id)).toBe(true);
+    // anything else is left alone
+    for (const value of [
+      'cand_01h455vb4pex5vsknk084sn02q',
+      'cand_sr',
+      'cand_sr1a',
+      'sr1',
+      `cand_sr${'1'.repeat(24)}`,
+      7,
+      null,
+    ]) {
+      expect(padSampleId(value)).toBe(value);
+    }
+    expect(isTypeId('cand_sr1')).toBe(false);
+    expect(typeIdPrefix('pre_fix_01h455vb4pex5vsknk084sn02q')).toBe('pre_fix');
+  });
+
+  test('a sample id is padded in the key and in every reference to it', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const path = await handWritten('seed.json', {
+      ...recruitingRecords(),
+      candidate_skills: [
+        { id: 1, skill: 'Go', candidate_id: 'cand_sr1' },
+        { id: 2, skill: 'SQL', candidate_id: 'cand_sr2' },
+      ],
+    });
+    await call(target, 'import_entities', { path });
+
+    expect(target.rows('candidates').map((r) => r.id)).toEqual([
+      `cand_${X('0sr1')}`,
+      `cand_${X('0sr2')}`,
+    ]);
+    const application = target.row('applications', `appl_${X('0sr1')}`);
+    expect(application?.candidate_id).toBe(`cand_${X('0sr1')}`);
+    expect(application?.job_opening_id).toBe(`jo_${X('0sr1')}`);
+    expect(application?.owner_id).toBe(11);
+    expect(target.row('interviews', `int_${X('0sr1')}`)?.application_id).toBe(
+      `appl_${X('0sr1')}`,
+    );
+    // a junction keeps its number, and its reference is padded
+    expect(target.row('candidate_skills', 2)?.candidate_id).toBe(
+      `cand_${X('0sr2')}`,
+    );
+  });
+
+  test('a full TypeID and a key of another type are written as they are', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const real = 'cand_01h455vb4pex5vsknk084sn02q';
+    const path = await handWritten('seed.json', {
+      candidates: [{ id: real, candidate_name: 'Ada', source: 'referral' }],
+      // skill is text, not a reference: a value that looks like a sample id stays
+      candidate_skills: [{ id: 1, skill: 'cand_sr1', candidate_id: real }],
+    });
+    await call(target, 'import_entities', { path });
+    expect(target.rows('candidates').map((r) => r.id)).toEqual([real]);
+    expect(target.row('candidate_skills', 1)?.skill).toBe('cand_sr1');
+  });
+
+  test('a second import of the same file writes no record', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const path = await handWritten('seed.json', recruitingRecords());
+    const first = await call(target, 'import_entities', { path });
+    expect(
+      first.entities.map((e: Row) => [e.table_name, e.records]),
+    ).toEqual([
+      ['candidates', { written: 2, unchanged: 0 }],
+      ['job_openings', { written: 1, unchanged: 0 }],
+      ['applications', { written: 2, unchanged: 0 }],
+      ['interviews', { written: 1, unchanged: 0 }],
+    ]);
+    const mark = target.requests.length;
+    const second = await call(target, 'import_entities', { path });
+    for (const table of ['candidates', 'applications', 'interviews']) {
+      expect(upserts(target, table, mark)).toEqual([]);
+    }
+    expect(
+      second.entities.every((e: Row) => (e.records as Row).written === 0),
+    ).toBe(true);
+  });
+
+  test('a date-time the target answers in another form is the same instant, not a change', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const path = await handWritten('seed.json', recruitingRecords());
+    await call(target, 'import_entities', { path });
+    const id = `int_${X('0sr1')}`;
+    // PostgREST answers +00:00 where the file says Z
+    target.setStored('interviews', id, {
+      scheduled_at: '2026-11-05T14:00:00+00:00',
+    });
+    let mark = target.requests.length;
+    await call(target, 'import_entities', { path });
+    expect(upserts(target, 'interviews', mark)).toEqual([]);
+
+    // the same instant in another zone, with and without a fraction
+    target.setStored('interviews', id, {
+      scheduled_at: '2026-11-05T15:00:00.000000+01',
+    });
+    mark = target.requests.length;
+    await call(target, 'import_entities', { path });
+    expect(upserts(target, 'interviews', mark)).toEqual([]);
+
+    // another instant, one microsecond later, is a change
+    target.setStored('interviews', id, {
+      scheduled_at: '2026-11-05T14:00:00.000001+00:00',
+    });
+    mark = target.requests.length;
+    await call(target, 'import_entities', { path });
+    expect(upserts(target, 'interviews', mark).map((u) => u.ids)).toEqual([
+      [id],
+    ]);
+  });
+
+  test('a table keyed by a TypeID may reference itself, in any order', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const module = target.rows('modules')[0];
+    target.insert('entities', [
+      {
+        table_name: 'departments',
+        singular_label: 'Department',
+        plural_label: 'Departments',
+        module_id: module.id,
+        label_column: 'department_name',
+        id_type: 'typeid',
+        id_prefix: 'dep',
+      },
+    ]);
+    target.insert('fields', [
+      {
+        table_name: 'departments',
+        field_name: 'parent_department_id',
+        title: 'Part of',
+        format: 'reference',
+        reference_table: 'departments',
+      },
+    ]);
+    const path = await handWritten('seed.json', {
+      departments: [
+        // the child first: its parent comes later in the file
+        {
+          id: 'dep_sr2',
+          department_name: 'Platform',
+          parent_department_id: 'dep_sr1',
+        },
+        {
+          id: 'dep_sr1',
+          department_name: 'Engineering',
+          parent_department_id: null,
+        },
+      ],
+    });
+    expect(
+      (await call(target, 'import_entities', { path, check: true })).check,
+    ).toBe('passed');
+    await call(target, 'import_entities', { path });
+    expect(
+      target.row('departments', `dep_${X('0sr2')}`)?.parent_department_id,
+    ).toBe(`dep_${X('0sr1')}`);
+    const mark = target.requests.length;
+    await call(target, 'import_entities', { path });
+    expect(upserts(target, 'departments', mark)).toEqual([]);
+  });
+
+  test('two records that differ only in their id are two records', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const records = recruitingRecords();
+    records.interviews.push({ ...records.interviews[0], id: 'int_sr2' });
+    await call(target, 'import_entities', {
+      path: await handWritten('seed.json', records),
+    });
+    expect(target.rows('interviews')).toHaveLength(2);
+  });
+});
+
+describe('import: check', () => {
+  test('a sound file passes, nothing is written, and the import then writes it', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const path = await handWritten('seed.json', recruitingRecords());
+    const mark = target.requests.length;
+    const result = await call(target, 'import_entities', { path, check: true });
+    expect(result.check).toBe('passed');
+    expect(result.entities).toEqual([
+      { table_name: 'candidates', records: 2 },
+      { table_name: 'job_openings', records: 1 },
+      { table_name: 'applications', records: 2 },
+      { table_name: 'interviews', records: 1 },
+    ]);
+    expect(target.writesSince(mark)).toEqual([]);
+    expect(target.rows('candidates')).toEqual([]);
+
+    await call(target, 'import_entities', { path });
+    expect(target.rows('applications')).toHaveLength(2);
+  });
+
+  test('every problem is listed in one answer, and nothing is written', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const path = await handWritten('seed.json', {
+      candidates: [
+        { id: 'cand_sr1', candidate_name: 'Maya', source: 'referral', nickname: 'M' },
+        { id: 'cand_sr2', candidate_name: '', source: 'Job board', nickname: '' },
+        { id: 'cand_sr2', candidate_name: 'Twice', source: 'referral', nickname: '' },
+        { id: 'cand_1', candidate_name: 'Short', source: 'referral', nickname: '' },
+        { id: 'jo_sr9', candidate_name: 'Prefix', source: 'referral', nickname: '' },
+      ],
+      job_openings: [{ id: 'jo_sr1', job_opening_title: 'Backend' }],
+      applications: [
+        {
+          id: 'appl_sr1',
+          application_name: 'A',
+          candidate_id: 'cand_sr7',
+          job_opening_id: 'jo_sr1',
+          owner_id: { external_id: 'auth0|nobody' },
+          workflow_state: 'interview',
+        },
+        {
+          id: 'appl_sr2',
+          application_name: 'B',
+          candidate_id: 'cand_sr7',
+          job_opening_id: null,
+          owner_id: 11,
+          workflow_state: '',
+        },
+      ],
+      interviews: [
+        { id: 'int_sr1', interview_name: 'I', interview_type: 'onsite', rating: 9 },
+      ],
+      offers: [{ id: 'off_sr1' }],
+    });
+    const mark = target.requests.length;
+    const text = await callError(target, 'import_entities', {
+      path,
+      check: true,
+    });
+
+    expect(text).toContain('nothing was written');
+    for (const line of [
+      'offers: the table is not on the target, and the file does not define it',
+      'candidates.nickname: candidates has no such column',
+      'candidates.candidate_name: is required and empty (1 record: cand_sr2)',
+      'candidates.source: "Job board" is not one of its values (referral, job_board); write the value "job_board", not the label (1 record: cand_sr2)',
+      'candidates.id: is the id of more than one record (1 record: cand_sr2)',
+      'candidates.id: is not a TypeID',
+      'candidates.id: does not carry the prefix cand of candidates (1 record: jo_sr9)',
+      // one cause, one line, both records
+      'applications.candidate_id: names cand_sr7, which is no record of candidates in the file or on the target (2 records: appl_sr1, appl_sr2)',
+      'applications.job_opening_id: is null; a parent field always names a record (1 record: appl_sr2)',
+      'applications.owner_id: no user with external_id "auth0|nobody" on the target (1 record: appl_sr1)',
+      'applications.owner_id: 11 is not {"external_id": …}, which a reference to a user takes (1 record: appl_sr2)',
+      'applications.workflow_state: is required and empty (1 record: appl_sr2)',
+      'interviews.application_id: is a parent field and the records do not carry it',
+      'interviews.rating: 9 is not a rating from 0 to 5 (1 record: int_sr1)',
+    ]) {
+      expect(text).toContain(line);
+    }
+    expect(text).toMatch(/the check found 14 problems/);
+    expect(target.writesSince(mark)).toEqual([]);
+    expect(target.rows('candidates')).toEqual([]);
+  });
+
+  test('a bad value in a record does not make the records that name it fail', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const records = recruitingRecords();
+    records.candidates[0].source = 'agency';
+    const text = await callError(target, 'import_entities', {
+      path: await handWritten('seed.json', records),
+      check: true,
+    });
+    expect(text).toMatch(/the check found 1 problem /);
+    expect(text).toContain('candidates.source: "agency" is not one of its values');
+  });
+
+  test('a reference to a record already on the target passes', async () => {
+    const target = emptyTarget();
+    seedRecruiting(target);
+    const existing = 'cand_01h455vb4pex5vsknk084sn02q';
+    target.insert('candidates', [
+      { id: existing, candidate_name: 'Already here', source: 'referral' },
+    ]);
+    const records = recruitingRecords();
+    records.applications[0].candidate_id = existing;
+    const result = await call(target, 'import_entities', {
+      path: await handWritten('seed.json', records),
+      check: true,
+    });
+    expect(result.check).toBe('passed');
+  });
+
+  test('a file that defines its tables is checked against that definition', async () => {
+    const source = fake('source.example.test');
+    seedCrm(source);
+    const target = emptyTarget();
+    const path = join(dir, 'crm.json');
+    await call(source, 'export_module', { name: 'CRM', path });
+    const mark = target.requests.length;
+    const result = await call(target, 'import_entities', { path, check: true });
+    expect(result.check).toBe('passed');
+    expect(result.entities).toEqual([
+      { table_name: 'accounts', records: 5 },
+      { table_name: 'contacts', records: 2 },
+    ]);
+    expect(target.writesSince(mark)).toEqual([]);
+  });
+
+});
+
+/**
+ * A family: business_partners (bp, label partner_name, city), persons is_a
+ * business_partners (per; birth_date), customers has_a business_partners
+ * (tier, an enum), and orders that reference a business partner.
+ */
+function seedFamily(f: FakePostgrest) {
+  const [module] = f.insert('modules', [
+    { module_name: 'Partners', module_slug: 'partners' },
+  ]);
+  const entity = (table: string, more: Row) => ({
+    table_name: table,
+    singular_label: table,
+    plural_label: table,
+    module_id: module.id,
+    ...more,
+  });
+  f.insert('entities', [
+    entity('business_partners', {
+      label_column: 'partner_name',
+      id_type: 'typeid',
+      id_prefix: 'bp',
+    }),
+    entity('orders', {
+      label_column: 'order_name',
+      id_type: 'typeid',
+      id_prefix: 'ord',
+    }),
+  ]);
+  f.insert('entities', [
+    entity('persons', {
+      id_type: 'is_a',
+      id_prefix: 'per',
+      id_refentity: 'business_partners',
+    }),
+    entity('customers', {
+      id_type: 'has_a',
+      id_refentity: 'business_partners',
+    }),
+  ]);
+  f.insert('fields', [
+    {
+      table_name: 'business_partners',
+      field_name: 'city',
+      title: 'City',
+      format: 'text',
+    },
+    {
+      table_name: 'persons',
+      field_name: 'birth_date',
+      title: 'Born',
+      format: 'date',
+    },
+    {
+      table_name: 'customers',
+      field_name: 'tier',
+      title: 'Tier',
+      format: 'enum',
+      enum_values: ['silver', 'gold'],
+    },
+    {
+      table_name: 'orders',
+      field_name: 'partner_id',
+      title: 'Partner',
+      format: 'reference',
+      reference_table: 'business_partners',
+    },
+  ]);
+}
+
+const familyRecords = (): Record<string, Row[]> => ({
+  // listed first on purpose: an extension is written after its base record
+  customers: [{ id: 'bp_sr1', tier: 'gold' }],
+  orders: [
+    { id: 'ord_sr1', order_name: 'First', partner_id: 'bp_sr1' },
+    // a relationship to the base may name a subtype's record
+    { id: 'ord_sr2', order_name: 'Second', partner_id: 'per_sr1' },
+  ],
+  persons: [
+    {
+      id: 'per_sr1',
+      partner_name: 'Ada Lovelace',
+      city: 'London',
+      birth_date: '1990-12-10',
+    },
+  ],
+  business_partners: [{ id: 'bp_sr1', partner_name: 'Acme', city: 'Berlin' }],
+});
+
+/** The writes to a table since `from`: method, upsert or not, and the ids or filter. */
+function writesTo(f: FakePostgrest, table: string, from = 0) {
+  return f
+    .writesSince(from)
+    .filter((r) => r.target === table)
+    .map((r) => ({
+      method: r.method,
+      upsert: r.url.searchParams.has('on_conflict'),
+      body: r.body,
+    }));
+}
+
+describe('import: entities based on another (is_a, has_a)', () => {
+  test('new records are inserted, never upserted: a subtype whole, an extension after its base', async () => {
+    const target = emptyTarget();
+    seedFamily(target);
+    const path = await handWritten('family.json', familyRecords());
+    expect(
+      (await call(target, 'import_entities', { path, check: true })).check,
+    ).toBe('passed');
+    await call(target, 'import_entities', { path });
+
+    // the fake refuses an upsert on a based entity with 42P10, as the platform does
+    expect(writesTo(target, 'persons')).toEqual([
+      {
+        method: 'POST',
+        upsert: false,
+        body: [
+          {
+            id: `per_${X('0sr1')}`,
+            partner_name: 'Ada Lovelace',
+            city: 'London',
+            birth_date: '1990-12-10',
+          },
+        ],
+      },
+    ]);
+    expect(writesTo(target, 'customers')).toEqual([
+      {
+        method: 'POST',
+        upsert: false,
+        body: [{ id: `bp_${X('0sr1')}`, tier: 'gold' }],
+      },
+    ]);
+    const firstWrite = (table: string) =>
+      target.requests.findIndex(
+        (r) => r.method !== 'GET' && r.target === table,
+      );
+    expect(firstWrite('business_partners')).toBeGreaterThan(-1);
+    expect(firstWrite('business_partners')).toBeLessThan(
+      firstWrite('customers'),
+    );
+    expect(target.row('orders', `ord_${X('0sr2')}`)?.partner_id).toBe(
+      `per_${X('0sr1')}`,
+    );
+  });
+
+  test('a second import writes nothing; a changed value is one PATCH of that column', async () => {
+    const target = emptyTarget();
+    seedFamily(target);
+    const records = familyRecords();
+    await call(target, 'import_entities', {
+      path: await handWritten('family.json', records),
+    });
+    let mark = target.requests.length;
+    await call(target, 'import_entities', {
+      path: await handWritten('family.json', records),
+    });
+    expect(writesTo(target, 'persons', mark)).toEqual([]);
+    expect(writesTo(target, 'customers', mark)).toEqual([]);
+
+    records.customers[0].tier = 'silver';
+    records.persons[0].city = 'Paris';
+    mark = target.requests.length;
+    await call(target, 'import_entities', {
+      path: await handWritten('family.json', records),
+    });
+    expect(writesTo(target, 'customers', mark)).toEqual([
+      { method: 'PATCH', upsert: false, body: { tier: 'silver' } },
+    ]);
+    expect(writesTo(target, 'persons', mark)).toEqual([
+      { method: 'PATCH', upsert: false, body: { city: 'Paris' } },
+    ]);
+    expect(target.row('persons', `per_${X('0sr1')}`)?.city).toBe('Paris');
+  });
+
+  test("a subtype's record listed under its base is written at the subtype only", async () => {
+    const target = emptyTarget();
+    seedFamily(target);
+    // as an export writes a family: a read of the base lists the person too
+    const records = familyRecords();
+    records.business_partners.push({
+      id: 'per_sr1',
+      partner_name: 'Ada Lovelace',
+      city: 'London',
+    });
+    const path = await handWritten('family.json', records);
+    expect(
+      (await call(target, 'import_entities', { path, check: true })).check,
+    ).toBe('passed');
+    const result = await call(target, 'import_entities', { path });
+    expect(target.rows('business_partners').map((r) => r.id)).toEqual([
+      `bp_${X('0sr1')}`,
+    ]);
+    expect(target.rows('persons')).toHaveLength(1);
+    expect(
+      result.entities.find((e: Row) => e.table_name === 'business_partners')
+        .records,
+    ).toEqual({ written: 1, unchanged: 0, left_to_subtypes: 1 });
+
+    // without the subtype's records, the record has nowhere to be written
+    records.persons = [];
+    records.orders.pop();
+    const alone = await handWritten('alone.json', records);
+    const wanted =
+      'is a record of persons, and the file carries no records of persons';
+    expect(
+      await callError(target, 'import_entities', { path: alone, check: true }),
+    ).toContain(`business_partners.id: ${wanted}`);
+    expect(
+      await callError(target, 'import_entities', { path: alone }),
+    ).toContain(wanted);
+  });
+
+  test('the check lists a family record that cannot be written', async () => {
+    const target = emptyTarget();
+    seedFamily(target);
+    const text = await callError(target, 'import_entities', {
+      path: await handWritten('family.json', {
+        business_partners: [{ id: 'bp_sr1', partner_name: 'Acme', city: '' }],
+        persons: [
+          // the prefix of the base, not of the subtype
+          { id: 'bp_sr2', partner_name: 'Ada', city: '', birth_date: 'soon' },
+        ],
+        customers: [
+          { id: 'bp_sr1', tier: 'Gold' },
+          // no such base record
+          { id: 'bp_sr9', tier: 'gold' },
+        ],
+      }),
+      check: true,
+    });
+    for (const line of [
+      'persons.id: does not carry the prefix per of persons (1 record: bp_sr2)',
+      'persons.birth_date: "soon" is not a date such as 2026-09-15 (1 record: bp_sr2)',
+      'customers.tier: "Gold" is not one of its values (silver, gold); did you mean "gold"? (1 record: bp_sr1)',
+      'customers.id: names bp_sr9, which is no record of business_partners in the file or on the target (1 record: bp_sr9)',
+    ]) {
+      expect(text).toContain(line);
+    }
+    expect(text).toMatch(/the check found 4 problems/);
+  });
+});
+
 describe('call timeout', () => {
   test('a run longer than SEMANTIUS_TIMEOUT completes while it makes progress', async () => {
     const source = fake('source.example.test');
@@ -2461,17 +3201,43 @@ describe('write order', () => {
     ]);
   });
 
-  test('records out of id order, or with ids that are not numbers, are refused', () => {
+  test('records with a number as key out of id order, or mixing key types, are refused', () => {
     const self = new SelfReferences('t', 'id', [ref('t', 'p', 't')]);
     self.observe([{ id: 2, p: null }]);
     expect(() => self.observe([{ id: 1, p: null }])).toThrow(
       'not in ascending id order',
     );
-    expect(() =>
-      new SelfReferences('t', 'id', [ref('t', 'p', 't')]).observe([
-        { id: 'a', p: null },
-      ]),
-    ).toThrow('is not a number');
+    expect(() => self.observe([{ id: 'a', p: null }])).toThrow(
+      'is not a number',
+    );
+    const text = new SelfReferences('t', 'id', [ref('t', 'p', 't')]);
+    text.observe([{ id: 'b', p: null }]);
+    expect(() => text.observe([{ id: 3, p: null }])).toThrow(
+      'is a number, the records before it are not',
+    );
+  });
+
+  test('with a key that is not a number, later means not met yet', () => {
+    const self = new SelfReferences('t', 'id', [
+      ref('t', 'p', 't', 'parent'),
+      ref('t', 'r', 't'),
+    ]);
+    // any order: a TypeID has none to read
+    const batch = [
+      { id: 'c', p: 'z', r: null }, // parent z comes in a later batch
+      { id: 'a', p: null, r: 'y' }, // reference y comes in a later batch
+      { id: 'b', p: 'a', r: 'c' }, // parent in this batch; c is held back
+      { id: 'd', p: 'a', r: 'a' }, // both in this batch
+    ];
+    const high = self.observe(batch);
+    expect(self.unknownParents(batch, high).sort()).toEqual(['y', 'z']);
+    const written = self.split(batch, high, () => false);
+    expect(written.map((r) => r.id).sort()).toEqual(['a', 'b', 'd']);
+    expect(written.find((r) => r.id === 'a')?.r).toBeNull();
+    expect(written.find((r) => r.id === 'b')?.r).toBeNull();
+    expect(written.find((r) => r.id === 'd')?.r).toBe('a');
+    expect(self.relink).toBe(true);
+    expect(self.size).toBe(1);
   });
 });
 
