@@ -697,15 +697,22 @@ export function resolveHost(
  * of the configured-host machinery above. Used by `semantius use <host>` to
  * resolve the host it is about to log in to, before it becomes the current
  * one (so getHost()/resolveHostValue() cannot see it yet).
+ *
+ * `fresh` skips the 24 h cache and the per-process memo and asks the control
+ * plane again, rewriting the cache with the answer. A cloud org's CLI client id
+ * lives there and can change under a cached copy (the org's client recreated),
+ * which the identity provider then reports as `invalid_client`. A failed fresh
+ * read leaves the cache as it was.
  */
 export function resolveHostFacts(
   host: string,
-  opts: { reach?: LoginReach } = {},
+  opts: { reach?: LoginReach; fresh?: boolean } = {},
 ): Promise<HostFacts> {
+  if (opts.fresh) _resolved.delete(host);
   let pending = _resolved.get(host);
   if (!pending) {
     pending = isCloudHost(host)
-      ? resolveCloudHost(host, opts.reach)
+      ? resolveCloudHost(host, opts.reach, opts.fresh)
       : Promise.resolve(selfHostedFacts(host));
     _resolved.set(host, pending);
     const key = host;
@@ -733,10 +740,12 @@ function selfHostedFacts(host: string): HostFacts {
 async function resolveCloudHost(
   host: string,
   reach: LoginReach | undefined,
+  fresh = false,
 ): Promise<HostFacts> {
   const org = orgFromHost(host);
   const record =
-    readHostCache(host) ?? (await fetchControlPlaneRecord(host, org, reach));
+    (fresh ? null : readHostCache(host)) ??
+    (await fetchControlPlaneRecord(host, org, reach));
   return {
     mode: 'cloud',
     host,

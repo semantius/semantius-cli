@@ -20,11 +20,11 @@ import {
   type HostFacts,
   HostResolutionError,
   type OAuthMetadata,
-  deleteHostCache,
   getHostSource,
+  isCloudHost,
   readCachedOAuthMetadata,
   readCachedPlatformConfig,
-  resolveHost,
+  resolveHostFacts,
 } from '../host.js';
 import { hasHost, recordHost } from '../hosts-index.js';
 import { logTokenEvent } from '../logger.js';
@@ -284,13 +284,104 @@ export async function getSessionToken(
   const resource = resourceIndicator(host, platform);
   const metadata = await getOAuthMetadata(host, { platform });
   debug(`Using the OAuth session stored for ${host.host}`);
-  return tokenUnderLock(
-    host,
-    storage,
-    resource,
-    { metadata, platform },
-    !!opts.forceRefresh,
+  const forced = !!opts.forceRefresh;
+  try {
+    return await tokenUnderLock(
+      host,
+      storage,
+      resource,
+      { metadata, platform },
+      forced,
+    );
+  } catch (error) {
+    if (!clientWasRefused(error)) throw error;
+    const retry = await currentClient(host, platform, resource, error);
+    return tokenUnderLock(
+      retry.host,
+      storage,
+      resource,
+      retry.resolved,
+      forced,
+    );
+  }
+}
+
+/**
+ * Whether the token endpoint did not know the client id the refresh was made
+ * with (`invalid_client`). That says nothing about the refresh token, and
+ * everything about where the client id came from: the host's cached record
+ * (up to 24 h old) or platform document, which the host may have changed since.
+ * A status that is the server's own trouble (5xx, 408, 429) refuses nothing,
+ * whatever the body says, as in refreshWasRefused.
+ */
+function clientWasRefused(error: unknown): boolean {
+  if (!isCliAuthError(error)) return false;
+  const { code, data } = error as Error & {
+    code?: string;
+    data?: { error?: string; status?: number };
+  };
+  return (
+    code === 'provider.rejected' &&
+    data?.error === 'invalid_client' &&
+    !isTransientStatus(data.status)
   );
+}
+
+/**
+ * What a refresh refused for its client id should be retried with: the host's
+ * facts as they are published now. Throws `refusal` itself when there is
+ * nothing better to try, so the error the caller sees is the original one and
+ * its message still names what the token endpoint said.
+ *
+ * The cache is read first, because another invocation (or an earlier call of
+ * this one) may already have replaced the id; only when that still holds the
+ * id that was refused is the host asked again. An id that comes out the same
+ * is a client that really is gone, and a changed audience is a session issued
+ * for something else: both are a new login's business, not a retry's.
+ *
+ * Healing is best effort. Trouble reaching the control plane or the instance
+ * while looking for a better id does not hide what the token endpoint said —
+ * the refusal is what gets raised, and `login` will read the host afresh.
+ */
+async function currentClient(
+  host: HostFacts,
+  platform: PlatformConfig | null,
+  resource: string | undefined,
+  refusal: unknown,
+): Promise<{ host: HostFacts; resolved: ResolvedHost }> {
+  const refused = effectiveClientId(host, platform);
+  try {
+    const look = async (fresh: boolean) => {
+      const facts = await resolveHostFacts(host.host, { fresh });
+      const config = await getPlatformConfig(facts, { refetch: fresh });
+      return { facts, config, id: effectiveClientId(facts, config) };
+    };
+    let next = await look(false);
+    if (next.id === refused) next = await look(true);
+    if (
+      next.id === refused ||
+      resourceIndicator(next.facts, next.config) !== resource
+    ) {
+      throw refusal;
+    }
+    debug(
+      `The client id of ${host.host} changed (${refused} → ${next.id}); retrying the refresh with it`,
+    );
+    const metadata = await getOAuthMetadata(next.facts, {
+      platform: next.config,
+    });
+    return {
+      host: next.facts,
+      resolved: { metadata, platform: next.config },
+    };
+  } catch (error) {
+    if (error !== refusal) {
+      debug(
+        `Could not look for a newer client id for ${host.host}: ${(error as Error).message}`,
+      );
+    }
+    throw refusal;
+  }
 }
 
 /**
@@ -1105,8 +1196,15 @@ export async function logout(host: HostFacts): Promise<boolean> {
 /**
  * The host a login can actually run against: any host with a CLI client id.
  * Self-hosted instances carry the fixed SELF_HOSTED_CLIENT_ID; cloud orgs get
- * theirs from the control plane, and a cached record from before the control
- * plane published client_id_cli is refetched once.
+ * theirs from the control plane.
+ *
+ * A cloud org's id is read from the control plane on every login, never from
+ * the 24 h cache. A login is rare, and the cached id may be one the org no
+ * longer has (its client recreated): the browser would then be sent to the
+ * identity provider with a client it does not know, and the sign-in would end
+ * in an error page the terminal cannot explain. The control plane being
+ * briefly out of reach does not block a login, though: the cached record
+ * stands in for it, as it always did.
  *
  * This is the pre-discovery gate, so it knows nothing about the platform
  * document: on a self-hosted host it is vacuous, and the id it approved is
@@ -1116,21 +1214,26 @@ async function requireLoginableHost(
   host: HostFacts,
   reach: LoginReach,
 ): Promise<HostFacts> {
-  if (host.clientId) return host;
-
-  // Self-hosted client ids are fixed, so there is nothing to refetch: only a
-  // build without one lands here.
-  if (host.mode === 'selfhosted') {
+  // Self-hosted client ids are fixed, so there is nothing to ask: only a build
+  // without one lands in the throw.
+  if (!isCloudHost(host.host)) {
+    if (host.clientId) return host;
     throw new LoginUnavailableError(
       `OAuth login is not configured for ${host.host} (no CLI client id)`,
       `Use ${prefixedEnvName('API_KEY')} or ${prefixedEnvName('JWT')} for ${host.host}.`,
     );
   }
 
-  debug('No client_id_cli on the cached record; refetching the control plane');
-  deleteHostCache(host.host);
-  const fresh = await resolveHost({ reach });
-  if (fresh.clientId) return fresh;
+  let current = host;
+  try {
+    current = await resolveHostFacts(host.host, { reach, fresh: true });
+  } catch (error) {
+    if (!(error instanceof HostResolutionError && error.transient)) throw error;
+    debug(
+      `Control plane unavailable (${error.message}); logging in with the cached record for ${host.host}`,
+    );
+  }
+  if (current.clientId) return current;
 
   throw new LoginUnavailableError(
     `OAuth login is not enabled for ${host.org ?? host.host} (no CLI client on the control plane)`,

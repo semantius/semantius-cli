@@ -40,6 +40,7 @@ import {
   login,
   logout,
   noInteractiveLogin,
+  verifyStoredSession,
 } from '../src/auth/session';
 import {
   type SecretsApi,
@@ -71,6 +72,7 @@ import {
   readCachedOAuthMetadata,
   readCachedPlatformConfig,
   resolveHost,
+  resolveHostFacts,
   setHostCacheDirForTests,
   writeCachedOAuthMetadata,
   writeCachedPlatformConfig,
@@ -100,6 +102,8 @@ interface ProviderState {
   redirectUris: string[];
   clientIds: string[];
   scopes: string[];
+  /** The `client_id` of each token request, whatever its grant. */
+  tokenClientIds: string[];
   revoked: string[];
   /** Mutable knobs for the issuer cases; reset() restores the sound values. */
   cfg: ProviderConfig;
@@ -138,6 +142,12 @@ interface ProviderConfig {
   /** When set, answers every refresh_token grant instead (refuseRefresh aside). */
   refreshReply: (() => Response) | null;
   /**
+   * The client ids the token endpoint knows. A refresh made with any other is
+   * refused as `invalid_client` / "Unknown client_id", as the identity provider
+   * does for a client that was deleted. `null` — the default — knows them all.
+   */
+  knownClients: string[] | null;
+  /**
    * Paths whose answer is held, as a sandbox holds a request until somebody
    * approves it: for that many ms, or until release() for 'gate'. A held
    * request also ends when the client gives up on it.
@@ -163,6 +173,7 @@ function startProvider(): ProviderState {
     deviceUriComplete: true,
     refuseRefresh: false,
     refreshReply: null,
+    knownClients: null,
     hold: {},
     stallBody: [],
     refuse: [],
@@ -192,6 +203,7 @@ function startProvider(): ProviderState {
   const redirectUris: string[] = [];
   const clientIds: string[] = [];
   const scopes: string[] = [];
+  const tokenClientIds: string[] = [];
   const revoked: string[] = [];
   let issued = 0;
 
@@ -350,6 +362,18 @@ function startProvider(): ProviderState {
         const form = new URLSearchParams(await req.text());
         tokenGrants.push(form.get('grant_type') ?? '');
         resources.push(form.get('resource') ?? '');
+        const clientId = form.get('client_id') ?? '';
+        tokenClientIds.push(clientId);
+        if (
+          cfg.knownClients &&
+          form.get('grant_type') === 'refresh_token' &&
+          !cfg.knownClients.includes(clientId)
+        ) {
+          return Response.json(
+            { error: 'invalid_client', error_description: 'Unknown client_id' },
+            { status: 400 },
+          );
+        }
         if (cfg.refreshReply && form.get('grant_type') === 'refresh_token') {
           return cfg.refreshReply();
         }
@@ -384,6 +408,7 @@ function startProvider(): ProviderState {
     redirectUris,
     clientIds,
     scopes,
+    tokenClientIds,
     revoked,
     cfg,
     // One server for the file, but each test starts from access-1.
@@ -397,6 +422,7 @@ function startProvider(): ProviderState {
       cfg.deviceUriComplete = true;
       cfg.refuseRefresh = false;
       cfg.refreshReply = null;
+      cfg.knownClients = null;
       cfg.hold = {};
       cfg.stallBody = [];
       cfg.refuse = [];
@@ -409,6 +435,7 @@ function startProvider(): ProviderState {
       redirectUris.length = 0;
       clientIds.length = 0;
       scopes.length = 0;
+      tokenClientIds.length = 0;
       revoked.length = 0;
     },
     release: () => {
@@ -2178,6 +2205,246 @@ describe('oauth login', () => {
       expect(await getSessionToken(probe, { forceRefresh: true })).toBe(
         'access-2',
       );
+    });
+
+    // The client id a refresh sends is the document's, cached for 24 h. When
+    // the instance replaces its client, the identity provider answers the old
+    // id with invalid_client — about the id, not the session. A provider of
+    // its own per case: the document changes mid-test, and discovery is
+    // memoized per host name.
+    describe('a refresh refused for its client id', () => {
+      let own: ProviderState;
+      let target: HostFacts;
+
+      beforeEach(async () => {
+        own = startProvider();
+        process.env.SEMANTIUS_HOST = own.origin.replace('http://', '');
+        target = await resolveHost();
+        own.cfg.platformDoc = bundledDoc();
+        await login(target, { openUrl });
+        await makeDueForRefresh(target.host);
+        own.tokenClientIds.length = 0;
+        own.paths.length = 0;
+      });
+
+      afterEach(() => {
+        own.release();
+        own.stop();
+      });
+
+      const documentFetches = () =>
+        own.paths.filter((p) => p === '/.well-known/semantius.json').length;
+
+      test('is retried with the client id the host publishes now', async () => {
+        own.cfg.platformDoc = bundledDoc({ client_id_cli: 'recreated-client' });
+        own.cfg.knownClients = ['recreated-client'];
+
+        const token = await getAccessToken(target);
+
+        expect(token).toBe('access-2');
+        expect(own.tokenClientIds).toEqual([
+          'semantius-cli',
+          'recreated-client',
+        ]);
+        // Healed for the next command too, not only for this one.
+        expect(readCachedPlatformConfig(target.host)).toMatchObject({
+          clientId: 'recreated-client',
+        });
+        own.tokenClientIds.length = 0;
+        own.cfg.knownClients = ['recreated-client'];
+        await makeDueForRefresh(target.host);
+        expect(await getAccessToken(target)).toBe('access-3');
+        expect(own.tokenClientIds).toEqual(['recreated-client']);
+      });
+
+      test('that the host still publishes asks once more, and is not retried', async () => {
+        own.cfg.knownClients = [];
+
+        const error = await getAccessToken(target).catch((e: Error) => e);
+
+        expect(error).toBeInstanceOf(SessionExpiredError);
+        expect((error as Error).message).toContain(
+          'Token request failed: invalid_client (Unknown client_id)',
+        );
+        // The same id again could only be refused again.
+        expect(own.tokenClientIds).toEqual(['semantius-cli']);
+        expect(documentFetches()).toBe(1);
+      });
+
+      test('and a new id that is refused too ends in the same error, after one retry', async () => {
+        own.cfg.platformDoc = bundledDoc({ client_id_cli: 'recreated-client' });
+        own.cfg.knownClients = [];
+
+        const error = await getAccessToken(target).catch((e: Error) => e);
+
+        expect(error).toBeInstanceOf(SessionExpiredError);
+        expect(own.tokenClientIds).toEqual([
+          'semantius-cli',
+          'recreated-client',
+        ]);
+      });
+
+      test('is not retried for another audience: that session belongs to a new login', async () => {
+        own.cfg.platformDoc = bundledDoc({
+          client_id_cli: 'recreated-client',
+          audience: 'semantius://another',
+        });
+        own.cfg.knownClients = ['recreated-client'];
+
+        await expect(getAccessToken(target)).rejects.toThrow(
+          SessionExpiredError,
+        );
+        expect(own.tokenClientIds).toEqual(['semantius-cli']);
+      });
+
+      test('keeps the refusal when the host cannot be asked for a better id', async () => {
+        own.cfg.platformDoc = 'broken';
+        own.cfg.knownClients = [];
+
+        const error = await getAccessToken(target).catch((e: Error) => e);
+
+        // The token endpoint's word, not the document's 502: exit 5 and a
+        // login, which reads the host afresh.
+        expect(error).toBeInstanceOf(SessionExpiredError);
+        expect((error as Error).message).toContain('invalid_client');
+        expect(own.tokenClientIds).toEqual(['semantius-cli']);
+      });
+
+      test('is not looked into when the status is the server trouble of the moment', async () => {
+        own.cfg.refreshReply = () =>
+          Response.json({ error: 'invalid_client' }, { status: 503 });
+
+        await expect(getAccessToken(target)).rejects.toThrow(
+          SessionRefreshFailedError,
+        );
+        expect(documentFetches()).toBe(0);
+      });
+
+      test('also heals `use`: the stored session counts as usable again', async () => {
+        own.cfg.platformDoc = bundledDoc({ client_id_cli: 'recreated-client' });
+        own.cfg.knownClients = ['recreated-client'];
+
+        expect(await verifyStoredSession(target)).toBe('usable');
+      });
+    });
+  });
+
+  // --------------------------------------------------------------------
+  // A cloud org's client id is the control plane's. The cloud host name makes
+  // it a real one for isCloudHost; the stub sends the org's own host to the
+  // mock provider and answers the control plane itself.
+  describe('a cloud org whose client id changed', () => {
+    const CLOUD = 'recreated-client-org.semantius.cloud';
+    let controlPlane: { clientId: string | null; status: number };
+    let controlPlaneCalls: number;
+    let realFetch: typeof fetch;
+
+    /** The record the control plane serves now. */
+    const record = () =>
+      Response.json({
+        id: 't-1',
+        postgrest_url: 'https://recreated.example/rest',
+        client_id_cli: controlPlane.clientId,
+      });
+
+    /** What an earlier invocation left in the host cache. */
+    function cacheRecord(clientId: string): void {
+      mkdirSync(dirname(getHostCachePath(CLOUD)), { recursive: true });
+      writeFileSync(
+        getHostCachePath(CLOUD),
+        JSON.stringify({
+          fetched_at: new Date().toISOString(),
+          record: {
+            id: 't-1',
+            postgrest_url: 'https://recreated.example/rest',
+            client_id_cli: clientId,
+          },
+        }),
+      );
+    }
+
+    beforeEach(() => {
+      controlPlane = { clientId: 'new-client', status: 200 };
+      controlPlaneCalls = 0;
+      realFetch = globalThis.fetch;
+      globalThis.fetch = (async (
+        input: URL | Request | string,
+        init?: RequestInit,
+      ) => {
+        const url = new URL(
+          String(input instanceof Request ? input.url : input),
+        );
+        if (url.origin === 'https://api.semantius.cloud') {
+          controlPlaneCalls += 1;
+          return controlPlane.status === 200
+            ? record()
+            : new Response('', { status: controlPlane.status });
+        }
+        if (url.origin === `https://${CLOUD}`) {
+          return realFetch(
+            `${provider.origin}${url.pathname}${url.search}`,
+            init,
+          );
+        }
+        return realFetch(input as Parameters<typeof fetch>[0], init);
+      }) as typeof fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = realFetch;
+    });
+
+    test('a login reads the control plane, not the cached record', async () => {
+      cacheRecord('old-client');
+      const cached = await resolveHostFacts(CLOUD);
+      expect(cached.clientId).toBe('old-client');
+
+      await login(cached, { openUrl });
+
+      expect(controlPlaneCalls).toBe(1);
+      expect(provider.clientIds).toEqual(['new-client']);
+      expect(provider.tokenClientIds).toEqual(['new-client']);
+    });
+
+    test('a login goes on with the cached record while the control plane is down', async () => {
+      cacheRecord('old-client');
+      const cached = await resolveHostFacts(CLOUD);
+      controlPlane.status = 503;
+
+      await login(cached, { openUrl });
+
+      expect(provider.clientIds).toEqual(['old-client']);
+    });
+
+    test('an unknown organization is not papered over with the cache', async () => {
+      cacheRecord('old-client');
+      const cached = await resolveHostFacts(CLOUD);
+      controlPlane.status = 404;
+
+      await expect(login(cached, { openUrl })).rejects.toThrow(
+        /organization "recreated-client-org" not found/,
+      );
+      expect(provider.clientIds).toEqual([]);
+    });
+
+    test('a refresh refused for the cached id is retried with the control plane’s', async () => {
+      controlPlane.clientId = 'old-client';
+      cacheRecord('old-client');
+      const cached = await resolveHostFacts(CLOUD);
+      await login(cached, { openUrl });
+      await makeDueForRefresh(CLOUD);
+      provider.tokenClientIds.length = 0;
+      // The org's client was recreated since the cache was written.
+      controlPlane.clientId = 'new-client';
+      provider.cfg.knownClients = ['new-client'];
+      controlPlaneCalls = 0;
+
+      const token = await getAccessToken(cached);
+
+      expect(token).toBe('access-2');
+      expect(provider.tokenClientIds).toEqual(['old-client', 'new-client']);
+      expect(controlPlaneCalls).toBe(1);
+      expect((await resolveHostFacts(CLOUD)).clientId).toBe('new-client');
     });
   });
 
