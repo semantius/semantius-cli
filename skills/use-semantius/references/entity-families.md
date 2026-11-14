@@ -50,8 +50,8 @@ Inheritance is not a way to reuse fields:
 
 Kinds that differ by only a few fields stay one entity with a type enum even when the kind is fixed at creation.
 
-- **`is_a`, a subtype.** `activities` > `emails` > `classified_emails`, and `tasks` is_a `activities`; `persons` and `organizations` is_a `business_partners`. Every record is exactly one type, fixed when it is created: an email has an `eml_…` id, and `activities` lists it with every other activity. The base must be a managed `typeid` or `is_a` entity (`90240`). The subtype needs its own `id_prefix`. Chains may go several levels deep.
-- **`has_a`, an optional extension.** `customers` and `suppliers` has_a `business_partners`: a partner has at most one customer record and at most one supplier record, and both use the partner's `bp_…` key. The base must be a managed `typeid` entity (`90240`). One level only: nothing can be based on a `has_a` entity.
+- **`is_a`, a subtype.** `activities` > `emails` > `classified_emails`, and `tasks` is_a `activities`; `persons` and `organizations` is_a `business_partners`. Every record is exactly one type, fixed when it is created: an email has an `email_…` id, and `activities` lists it with every other activity. The base must be a managed `typeid` or `is_a` entity (`90240`). The subtype needs its own `id_prefix`, its singular like any other (`data-modeling.md` → "Choosing the key type"). Chains may go several levels deep.
+- **`has_a`, an optional extension.** `customers` and `suppliers` has_a `business_partners`: a partner has at most one customer record and at most one supplier record, and both use the partner's `business_partner_…` key. The base must be a managed `typeid` entity (`90240`). One level only: nothing can be based on a `has_a` entity.
 - **A platform built-in is never a base.** Reference `users` with a `reference` field instead.
 
 Choosing either type is high-risk: `id_type`, `id_refentity` and an `is_a` prefix are fixed at creation, and a record's type never changes. Confirm with the user before creating.
@@ -82,10 +82,10 @@ Level 0, the plain entities and the family roots, one call. `.tmp_deploy/entitie
 ```json
 {"data": [
   {"table_name": "business_partners", "singular_label": "Business Partner", "plural_label": "Business Partners",
-   "label_column": "partner_name", "id_type": "typeid", "id_prefix": "bp",
+   "label_column": "partner_name", "id_type": "typeid", "id_prefix": "business_partner",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"},
   {"table_name": "activities", "singular_label": "Activity", "plural_label": "Activities",
-   "label_column": "subject", "id_type": "typeid", "id_prefix": "act",
+   "label_column": "subject", "id_type": "typeid", "id_prefix": "activity",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"}
 ]}
 ```
@@ -102,7 +102,7 @@ Level 1, entities based on level 0, one call; no `label_column`, `label_parent` 
    "id_type": "has_a", "id_refentity": "business_partners",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"},
   {"table_name": "emails", "singular_label": "Email", "plural_label": "Emails",
-   "id_type": "is_a", "id_prefix": "eml", "id_refentity": "activities",
+   "id_type": "is_a", "id_prefix": "email", "id_refentity": "activities",
    "module_id": 7, "entity_type": "operational_record", "view_permission": "crm:read", "edit_permission": "crm:manage"}
 ]}
 ```
@@ -137,7 +137,7 @@ Never send `id_refentity` on `update_entity` (`90241`). The one change it takes 
 
 ## Writing
 
-- **Writes through any level reach the record's own type.** `PATCH /activities?id=eq.<eml id>` runs the emails rules too. `DELETE /activities?id=eq.<eml id>` deletes the email completely, running the delete rules of every level (any of them may refuse). An update writes the level that changed and the levels below it.
+- **Writes through any level reach the record's own type.** `PATCH /activities?id=eq.<email id>` runs the emails rules too. `DELETE /activities?id=eq.<email id>` deletes the email completely, running the delete rules of every level (any of them may refuse). An update writes the level that changed and the levels below it.
 - **Insert an `is_a` record once, at its own table**, with the base's fields in the same payload. Never insert a base row and then a subtype row: that creates two records, and a record's type cannot change afterward. A direct insert into the base with a subtype's prefix fails (`90237`).
 - **Create a `has_a` record:**
   - without an `id`, it creates the base record too (send the base's fields with it);

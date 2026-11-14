@@ -1,55 +1,31 @@
 #!/usr/bin/env bun
 /**
- * seed-lib.ts — the fixed helpers for a sample-data seed script. Copy it next to the
- * script and import it; never retype it (`references/seed-data.md` shows how).
+ * seed-lib.ts — what stands before and after the import of a sample-data file (`references/seed-data.md`).
  *
- * What it enforces:
- *   - Failure is loud: a non-zero exit from `semantius`, a short RETURNING, a row with
- *     different keys than its siblings, a wrong count or a child that names the wrong
- *     parent all THROW, and `runSeed` turns any thrown error into a non-zero exit.
- *   - Ids are never typed and never taken from an insert response by position: a parent
- *     is re-read by its natural key (`idsByKey`) and a child names its parent by label.
- *     `assertParents` then reads every child back with its `<fk>_label` and compares it
- *     with the parent the script meant.
- *   - Numbers fit the rows: `assertItemized` halts before the first write on a stored figure out of scale with
- *     its child rows, and `assertComputedVary` halts on a computed or rollup column with one value on every row.
- *   - States agree: `assertStatesAgree` halts before the first write on a parent whose state its child rows'
- *     states contradict.
- *   - A key the seed owns: `seedEnsureMany` refuses a `keyField` the platform writes.
- *   - One call per table: `postMany` sends a whole table in one `postgrestRequest` POST
- *     (array `body`, at most `BATCH_SIZE` rows per call). A failed call landed nothing.
+ * Sample data is one records file, checked and written by the CLI's import:
+ *   semantius call utils/import_entities '{"path":".tmp_deploy/seed_<slug>.json","check":true}'   lists every problem, writes nothing
+ *   semantius call utils/import_entities '{"path":".tmp_deploy/seed_<slug>.json"}'                writes; a re-run writes only what differs
  *
- * Check run: `bun run <script> --check` (or `SEED_CHECK=1`) runs the whole script with
- * every write recorded but never sent. Reads still go to the live host: before a table's
- * insert, one read with `limit=0` proves the table and every column of the first row
- * exist. The rows a write would have added are returned by later reads that match them
- * (`eq.`, `in.()` and `is.null` filters), so `idsByKey` and the next table behave as on a
- * real run. The platform still validates VALUES (enums, NOT NULL, rules) only on the real
- * run, and relationship labels exist only there, so `assertParents` checks them on the
- * real run.
+ * This script:
+ *   bun seed-lib.ts --describe <table>[,<table>…]   the file's skeleton and what a record of each table carries
+ *   bun seed-lib.ts --emails <file>                 before the import: the file is valid JSON (a mistake is named
+ *                                                   with its line, through jq), and every email address is at a
+ *                                                   subdomain of example.com, so sample data never reaches a real inbox.
+ *                                                   It starts every run of the seed command, so it also counts the runs:
+ *                                                   an eleventh run without a finished report prints SEED STOPPED, exit 5
+ *   bun seed-lib.ts --report <file>               after the import: the records on the host, the columns the platform
+ *                                                   filled, and how parent and child states stand to each other
+ *   bun seed-lib.ts --clear <file>                  deletes the file's records again, children first
  *
- *   - Sample email addresses never reach a real inbox: `postMany` refuses any address that is not at a
- *     subdomain of example.com.
- *
- * Not a CLI — import it:
- *   import { postMany, seedEnsureMany, idsByKey, assertParents, assertJunction, assertItemized, assertStatesAgree, assertStamped, assertComputedVary, assertSeedCounts, assertSeedDistinct,
- *            rng, days, uniq, slugify, exampleDomain, patchById, clearSeeded, runSeed } from "./seed-lib";
+ * A record of an entity with a TypeID key names itself `<prefix>_sr<n>` (`candidate_sr1`), in its id and in every
+ * relationship to it. The import stores `<prefix>_0sr<n>` padded with `x` to 26 characters, and `--report` and
+ * `--clear` pad the same way, because the platform refuses a read by the short form.
  */
 
-type Row = Record<string, unknown>;
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
-let writeCount = 0;
-let clearStarted = false;   // this script called clearSeeded
-let rowsInserted = false;   // this script sent an insert
-
-/** Count of write calls so far (a bulk call counts once). */
-export const writes = (): number => writeCount;
-
-/** True with the `--check` argument or `SEED_CHECK=1`: writes are recorded, never sent. */
-export const isCheckRun = (): boolean => process.env.SEED_CHECK === "1" || process.argv.slice(2).includes("--check");
-
-/** Prefix for a success line, so a check run never reads like a seeded table. */
-const tag = (): string => (isCheckRun() ? "[check run] " : "");
+type Row = Record<string, any>;
 
 // ─────────────────────────────── transport ───────────────────────────────
 
@@ -66,74 +42,26 @@ const spawnTransport: Transport = async (argv, stdin) => {
 let transport: Transport = spawnTransport;
 
 /** Tests only: replace the process that talks to the platform (`null` restores it). */
-export const setTransport = (t: Transport | null): void => { transport = t ?? spawnTransport; };
+export const setTransport = (t: Transport | null): void => {
+  transport = t ?? spawnTransport;
+  metaCache.clear();
+  moduleLoads.clear();
+};
 
-// ─────────────────────────────── check run ───────────────────────────────
-
-const dryRows = new Map<string, any[]>();   // `pg:/<table>` → rows a check run "inserted"
-let dryId = 0;
-const dryWarned = new Set<string>();
-const rulesRead = new Map<string, any[]>();   // table → its computed_fields, read once by assertComputedVary
-let seedUserId: string | undefined;           // the seeding user's id, read once by assertComputedVary
-
-/** Clears what a check run recorded (tests only). */
-export const resetCheckRun = (): void => { dryRows.clear(); dryWarned.clear(); dryId = 0; writeCount = 0; clearStarted = false; rowsInserted = false; rulesRead.clear(); seedUserId = undefined; };
-
-/** `col=op.value` triples of a PostgREST query string (`select`, `order`, `limit`, `offset` dropped); `null` when a part is not of that form. */
-function parseFilters(query: string): Array<[string, string, string]> | null {
-  const out: Array<[string, string, string]> = [];
-  for (const part of query.split("&")) {
-    if (!part) continue;
-    const eq = part.indexOf("=");
-    if (eq < 0) return null;
-    const col = part.slice(0, eq);
-    if (["select", "order", "limit", "offset"].includes(col)) continue;
-    const rest = part.slice(eq + 1);
-    const dot = rest.indexOf(".");
-    if (dot < 0) return null;
-    out.push([col, rest.slice(0, dot), rest.slice(dot + 1)]);
-  }
-  return out;
+/** One `postgrestRequest` call. Throws on a non-zero exit, with what the platform said. */
+export async function pgRequest(method: string, path: string, body?: unknown): Promise<any> {
+  const payload: Row = { method, path };
+  if (body !== undefined) payload.body = body;
+  const { code, out, err } = await transport(["semantius", "call", "crud", "postgrestRequest"], JSON.stringify(payload));
+  if (code !== 0) throw new Error(`${method} ${path} failed (exit ${code}): ${(err || out).trim()}`);
+  return out.trim() ? JSON.parse(out) : null;
 }
 
-const decode = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
-const unquote = (s: string): string => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1).replace(/\\(.)/g, "$1") : s);
-
-/** Rows the check run recorded under `key` that match `query`. An unsupported operator matches nothing (warned once). */
-function dryMatch(key: string, query: string): any[] {
-  const rows = dryRows.get(key) ?? [];
-  if (!rows.length) return [];
-  const warn = (what: string): any[] => {
-    if (!dryWarned.has(what)) { dryWarned.add(what); console.warn(`  [check run] ${what}: rows this check run created are not matched`); }
-    return [];
-  };
-  const triples = parseFilters(query);
-  if (!triples) return warn(`unparsed filter "${query}"`);
-  const tests: Array<(r: any) => boolean> = [];
-  for (const [col, op, raw] of triples) {
-    if (op === "eq") { const v = unquote(decode(raw)); tests.push((r) => String(r[col]) === v); }
-    else if (op === "in") {
-      const set = new Set(raw.replace(/^\(|\)$/g, "").split(",").map((v) => unquote(decode(v))));
-      tests.push((r) => set.has(String(r[col])));
-    } else if (op === "is" && raw === "null") tests.push((r) => r[col] === null || r[col] === undefined);
-    else return warn(`operator ${op}. on ${col}`);
-  }
-  return rows.filter((r) => tests.every((t) => t(r)));
-}
-
-// ─────────────────────────────── query helpers ───────────────────────────────
-
-export const BATCH_SIZE = 100;
-
-/** Splits `rows` into groups of at most `size`. */
-export function chunk<T>(rows: ReadonlyArray<T>, size = BATCH_SIZE): T[][] {
+const chunk = <T>(rows: ReadonlyArray<T>, size = 100): T[][] => {
   const out: T[][] = [];
   for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
   return out;
-}
-
-const preview = (keys: ReadonlyArray<string>, n = 20): string =>
-  keys.slice(0, n).join(", ") + (keys.length > n ? `, … +${keys.length - n} more` : "");
+};
 
 /** PostgREST `in.()` value quoting: plain when safe, else double-quoted with `\` and `"` escaped. */
 const PG_PLAIN = /^[A-Za-z0-9_$.\-:@]+$/;
@@ -142,738 +70,619 @@ export const pgQuote = (v: string | number): string => {
   return PG_PLAIN.test(s) ? s : `"${s.replace(/[\\"]/g, "\\$&")}"`;
 };
 
-/**
- * `col=in.(v1,v2,…)` for a multi-key read. Values are quoted per `pgQuote`, then percent-encoded, so a
- * `&`, `,`, `+`, `#`, `%`, quote or space inside a value ("AT&T", "Salesforce, Inc.") never breaks the
- * query string. Throws on an empty list.
- */
+/** `col=in.(v1,v2,…)`, each value quoted and percent-encoded. */
 export function inFilter(column: string, values: ReadonlyArray<string | number>): string {
   if (!values.length) throw new Error(`inFilter ${column}: empty value list`);
   return `${column}=in.(${values.map((v) => encodeURIComponent(pgQuote(v))).join(",")})`;
 }
 
-const tableOf = (path: string): string => {
-  const t = path.split("?")[0];
-  return t.startsWith("/") ? t : `/${t}`;
+// ─────────────────────────────── reading the file ───────────────────────────────
+
+/** What a JSON lint says about a file: nothing when it reads it, else its message, which names a line and column. */
+type Lint = (path: string) => { found: boolean; message: string };
+
+/** `jq empty <file>`: the parser of the runtime says a file is not JSON, `jq` says where (preflight installs it). */
+const jqLint: Lint = (path) => {
+  try {
+    const p = Bun.spawnSync(["jq", "empty", path], { stdout: "pipe", stderr: "pipe" });
+    return { found: true, message: p.exitCode === 0 ? "" : p.stderr.toString().trim() };
+  } catch {
+    return { found: false, message: "" };
+  }
+};
+let lint: Lint = jqLint;
+
+/** Tests only: replace the lint (`null` restores `jq`). */
+export const setLint = (l: Lint | null): void => { lint = l ?? jqLint; };
+
+/** The offset right after the first JSON object or array of `text`, or -1 when it never closes. */
+function endOfFirstValue(text: string): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth <= 0) return i + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * The parsed records file. A file that is not JSON is refused with the place of the mistake: the line and column
+ * `jq` names, with that line and the one before it, where a missing comma or bracket usually is.
+ */
+function readJsonFile(path: string): any {
+  let text: string;
+  try { text = readFileSync(path, "utf8").replace(/^﻿/, ""); }
+  catch (e) { throw new Error(`${path} cannot be read: ${e instanceof Error ? e.message : e}`); }
+  try { return JSON.parse(text); }
+  catch (e) {
+    const lines = text.split(/\r?\n/);
+    const around = (line: number): string =>
+      [line - 1, line].filter((n) => n >= 1 && n <= lines.length).map((n) => `  ${String(n).padStart(4)} | ${lines[n - 1].slice(0, 200)}`).join("\n");
+    const { found, message } = lint(path);
+    const at = /line (\d+), column (\d+)/.exec(message);
+    let where: string;
+    if (at) {
+      where = `${message.replace(/^jq: /, "").replace(/^(error: |parse error: )/, "")}\n${around(Number(at[1]))}`;
+    } else {
+      // jq reads several JSON values one after another, so it accepts a document with something after its end
+      const end = endOfFirstValue(text);
+      const after = end < 0 ? -1 : text.slice(end).search(/\S/);
+      if (after >= 0) {
+        const line = text.slice(0, end + after).split("\n").length;
+        where = `the document is closed before line ${line}, column ${end + after - text.lastIndexOf("\n", end + after - 1)}, and something follows it; a records file is one object, closed once\n${around(line)}`;
+      } else {
+        where = `${e instanceof Error ? e.message : e}${found ? "" : "; jq was not found to say where (preflight.md → check 2)"}`;
+      }
+    }
+    throw new Error(
+      `${path} is not valid JSON: ${where}\n` +
+      "Fix that place with your file-edit tool, then run the command again. The usual causes: a closing bracket or brace too many or too few, " +
+      'a missing comma between two records, a comma after the last record, a double quote inside a text that is not written \\".',
+    );
+  }
+}
+
+// ─────────────────────────────── sample ids ───────────────────────────────
+
+const TYPEID_KEYS = new Set(["typeid", "is_a", "has_a"]);
+const SAMPLE_ID = /^([a-z](?:[a-z_]{0,61}[a-z])?)_sr([0-9]{1,23})$/;
+
+/** A sample id (`candidate_sr1`) as the import stores it (`candidate_0sr1xxxxxxxxxxxxxxxxxxxxxx`); anything else unchanged. */
+export function padSampleId(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const m = SAMPLE_ID.exec(value);
+  if (!m) return value;
+  const body = `0sr${m[2]}`;
+  return `${m[1]}_${body}${"x".repeat(26 - body.length)}`;
+}
+
+// ─────────────────────────────── table descriptions ───────────────────────────────
+
+type FieldMeta = {
+  field_name: string; format: string; input_type: string; input_type_rule: unknown; enum_values: unknown;
+  default_value: unknown; ctype: string; reference_table: string; rollup?: { link_field?: string } | null;
+};
+type TableMeta = { table: string; entity: Row; fields: Map<string, FieldMeta>; base?: TableMeta };
+
+const ENTITY_COLS = "table_name,module_id,id_type,id_prefix,id_refentity,label_column,computed_fields,select_rule";
+const FIELD_COLS = "table_name,field_name,format,input_type,input_type_rule,enum_values,default_value,ctype,reference_table,rollup";
+const metaCache = new Map<string, TableMeta>();
+/** The module reads in progress, by module id, so two tables of one module asked for together read it once. */
+const moduleLoads = new Map<string, Promise<void>>();
+
+/** The entity and fields of `table`, read once with every other entity of its module. */
+async function metaOf(table: string): Promise<TableMeta> {
+  if (!metaCache.has(table)) await loadModuleOf(table);
+  const meta = metaCache.get(table)!;
+  // also for a table read alongside another of its module, which the cache then holds without its base
+  if (["is_a", "has_a"].includes(String(meta.entity.id_type)) && meta.entity.id_refentity && !meta.base) {
+    meta.base = await metaOf(String(meta.entity.id_refentity));
+  }
+  return meta;
+}
+
+async function loadModuleOf(table: string): Promise<void> {
+  const [entity] =(await pgRequest("GET", `/entities?select=${ENTITY_COLS}&table_name=eq.${encodeURIComponent(table)}`)) ?? [];
+  if (!entity) throw new Error(`${table} is not an entity on this host; check the table name (read_entity lists them)`);
+  if (entity.module_id === null || entity.module_id === undefined) return loadEntities(table, entity);
+  const key = String(entity.module_id);
+  if (!moduleLoads.has(key)) moduleLoads.set(key, loadEntities(table, entity));
+  await moduleLoads.get(key);
+  if (!metaCache.has(table)) await loadEntities(table, entity);
+}
+
+async function loadEntities(table: string, entity: Row): Promise<void> {
+  const entities: Row[] = entity.module_id === null || entity.module_id === undefined
+    ? [entity]
+    : (await pgRequest("GET", `/entities?select=${ENTITY_COLS}&module_id=eq.${encodeURIComponent(String(entity.module_id))}`)) ?? [];
+  if (!entities.some((e) => e?.table_name === table)) entities.push(entity);
+  const fields: Row[] = [];
+  for (const part of chunk(entities.map((e) => String(e.table_name)), 40)) {
+    fields.push(...((await pgRequest("GET", `/fields?select=${FIELD_COLS}&${inFilter("table_name", part)}`)) ?? []));
+  }
+  for (const e of entities) {
+    if (metaCache.has(e.table_name)) continue;
+    metaCache.set(e.table_name, {
+      table: e.table_name, entity: e,
+      fields: new Map(fields.filter((f) => f.table_name === e.table_name).map((f) => [String(f.field_name), f as FieldMeta])),
+    });
+  }
+}
+
+const idTypeOf = (m: TableMeta): string => String(m.entity.id_type || "auto_increment");
+/** Own fields plus, for an `is_a` / `has_a` entity, the fields of its bases. */
+const fieldsOf = (m: TableMeta): Map<string, FieldMeta> => (m.base ? new Map([...fieldsOf(m.base), ...m.fields]) : m.fields);
+/** The fields a record of the table writes: an extension (`has_a`) writes its own, its base's belong to the base record. */
+const writtenFields = (m: TableMeta): Map<string, FieldMeta> => (idTypeOf(m) === "has_a" ? m.fields : fieldsOf(m));
+const rulesOf = (m: TableMeta): Row[] => [
+  ...(Array.isArray(m.entity?.computed_fields) ? m.entity.computed_fields : []), ...(m.base ? rulesOf(m.base) : []),
+];
+const emptyRule = (r: unknown): boolean => !r || (typeof r === "object" && !Array.isArray(r) && Object.keys(r as object).length === 0);
+
+/** A rule that reads its own field keeps what an insert sends there (an approval stamp on a record past its step). */
+const keepsSent = (rule: Row, col: string): boolean => {
+  const t = JSON.stringify(rule?.jsonlogic ?? null);
+  return t.includes(`"var":"${col}"`) || t.includes(`"var":["${col}"`);
 };
 
-/** The natural keys of `rows` as strings; throws on an empty or repeated key. */
-function keysOf(who: string, table: string, keyField: string, rows: ReadonlyArray<Row>): string[] {
-  const keys = rows.map((r, i) => {
-    const k = r[keyField];
-    if (k === undefined || k === null || k === "") throw new Error(`${who} ${table}: row ${i} has an empty "${keyField}"`);
-    return String(k);
-  });
-  if (new Set(keys).size !== keys.length) {
-    throw new Error(`${who} ${table}: "${keyField}" repeats among the rows; every seeded row needs its own ${keyField}`);
-  }
-  return keys;
+/** Whether the platform fills `col`, so a record never carries it. A stamp an insert keeps is not one of them. */
+function platformFills(m: TableMeta, col: string): boolean {
+  const f = fieldsOf(m).get(col);
+  if (f && ["audit", "core", "rollup"].includes(f.ctype)) return true;
+  const rule = rulesOf(m).find((r) => r?.name === col);
+  if (rule) return isRequesterStamp(rule) || !keepsSent(rule, col);
+  return f?.ctype === "computed";
 }
 
-// ─────────────────────────────── postgrestRequest ───────────────────────────────
+const MODE_INSERT = JSON.stringify({ "==": [{ var: "$mode" }, "insert"] });
 
-/**
- * Loud `postgrestRequest` call: reads and writes of business records. The payload field is `body`, not
- * `data` (`data` is the typed-tool shape); this helper owns that difference. Throws on any non-zero exit.
- * `single` adds `--single` (one-row body only: the CLI rejects it for an array body, use `postMany`).
- * Returns parsed JSON: an array, or the bare object with `single`.
- */
-export async function pgRequest(method: string, path: string, body?: unknown, single = false): Promise<any> {
-  if (single && Array.isArray(body)) {
-    throw new Error(`pgRequest ${method} ${path}: --single cannot be combined with an array body (SINGLE_ARRAY_INPUT); use postMany() for a bulk insert`);
-  }
-  const [table, query = ""] = path.split("?");
-  const key = `pg:${table}`;
-  if (isCheckRun() && method !== "GET") {
-    let out: any[] = [];
-    if (method === "POST") {
-      out = (Array.isArray(body) ? body : [body]).map((r: any) => ({ ...r, id: r?.id ?? -(++dryId) }));
-      dryRows.set(key, [...(dryRows.get(key) ?? []), ...out]);
-    } else {
-      out = dryMatch(key, query);
-      if (method === "PATCH") {
-        for (const r of out) Object.assign(r, body);
-        const id = parseFilters(query)?.find(([c, op]) => c === "id" && op === "eq")?.[2];
-        if (!out.length && id !== undefined) out = [{ ...(body as object), id: decode(id) }];   // a live row
-      } else dryRows.set(key, (dryRows.get(key) ?? []).filter((r) => !out.includes(r)));
+/** The states in which `rule` keeps a stamp an insert sends (`rbac.md` → "Controls on a gate", control 5), or null. */
+function keptStates(rule: Row): string[] | null {
+  const own = JSON.stringify({ "!=": [{ var: rule?.name }, null] });
+  let found: string[] | null = null;
+  const walk = (n: any): void => {
+    if (found || !n || typeof n !== "object") return;
+    if (Array.isArray(n)) { n.forEach(walk); return; }
+    if (Array.isArray(n.and)) {
+      const parts = n.and.map((x: any) => JSON.stringify(x));
+      const states = n.and.find((x: any) => Array.isArray(x?.in) && JSON.stringify(x.in[0]) === '{"var":"workflow_state"}' && Array.isArray(x.in[1]));
+      if (parts.includes(MODE_INSERT) && parts.includes(own) && states) { found = states.in[1].map(String); return; }
     }
-    writeCount++;
-    console.log(`  [check run] ${method} ${table}: ${out.length} row(s), not sent`);
-    return single ? out[0] ?? null : out;
-  }
-  const argv = single
-    ? ["semantius", "--single", "call", "crud", "postgrestRequest"]
-    : ["semantius", "call", "crud", "postgrestRequest"];
-  const payload: Row = { method, path };
-  if (body !== undefined) payload.body = body;
-  const { code, out, err } = await transport(argv, JSON.stringify(payload));
-  if (isCheckRun()) {   // a GET: live rows plus the rows this check run inserted
-    if (code !== 0) throw new Error(`pgRequest ${method} ${path} failed (exit ${code}): ${err}`);
-    const live = out.trim() ? JSON.parse(out) : [];
-    return [...(Array.isArray(live) ? live : [live]), ...dryMatch(key, query)];
-  }
-  if (code !== 0) throw new Error(`pgRequest ${method} ${path} failed (exit ${code}): ${err}`);
-  if (method !== "GET") writeCount++;
-  return out.trim() ? JSON.parse(out) : null;
+    Object.values(n).forEach(walk);
+  };
+  walk(rule?.jsonlogic);
+  return found;
 }
 
-const EMAIL_IN_TEXT = /[^\s@<>"',;:()[\]]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
+/** A rule that stamps the requester: `{"if": [$mode == insert, $user_id, …]}`. */
+const isRequesterStamp = (rule: Row): boolean => {
+  const j = rule?.jsonlogic;
+  return Array.isArray(j?.if) && JSON.stringify(j.if[0]) === MODE_INSERT && JSON.stringify(j.if[1]) === '{"var":"$user_id"}';
+};
 
-/**
- * Every email address in a seeded row sits at a subdomain of example.com (`exampleDomain("Adobe")` →
- * "adobe.example.com"), whatever company the row names, so a sample address can never reach a real inbox.
- * Throws naming the row, the column and the address. Looks inside every text value, notes included.
- */
-export function assertExampleEmails(table: string, rows: ReadonlyArray<Row>): void {
-  const bad: string[] = [];
-  rows.forEach((row, i) => {
-    for (const [col, v] of Object.entries(row)) {
-      if (typeof v !== "string") continue;
-      for (const m of v.matchAll(EMAIL_IN_TEXT)) {
-        if (!m[1].toLowerCase().endsWith(".example.com")) bad.push(`row ${i} ${col}: ${m[0]}`);
-      }
-    }
-  });
-  if (bad.length) {
-    throw new Error(
-      `${table}: ${bad.length} email address(es) not at a subdomain of example.com:\n  - ${bad.join("\n  - ")}\n` +
-      `Build each one with exampleDomain(company), e.g. \`support@\${exampleDomain("Adobe")}\` → support@adobe.example.com.`,
-    );
-  }
+const enumValues = (f: FieldMeta): string[] =>
+  (Array.isArray(f.enum_values) ? f.enum_values : []).map((e: any) => (e && typeof e === "object" ? String(e.value) : String(e)));
+
+const NULLABLE = new Set(["reference", "date", "date-time"]);
+const isRelationship = (f: FieldMeta): boolean => (f.format === "reference" || f.format === "parent") && !!f.reference_table;
+
+/** How a record names itself, or a record of `m` is named by another. */
+function idExample(m: TableMeta, n = 1): string {
+  const type = idTypeOf(m);
+  if (type === "has_a" && m.base) return idExample(m.base, n);
+  if (type === "typeid" || type === "is_a") return `"${m.entity.id_prefix}_sr${n}"`;
+  if (type === "uuid") return "a UUID";
+  if (type === "text") return "its text key";
+  return String(n);
 }
 
-/**
- * Bulk insert: ONE POST with an array `body` per at most `size` rows. `postgrestRequest` is the raw PostgREST
- * path, so every row MUST carry the same keys: a column you send on one row you send on every row. Only
- * `reference`, `date` and `date-time` accept `null`; every other format is NOT NULL, so an empty one is
- * `""` (text, email, url, ...) or `0` (numbers), required or not. Never leave a key `undefined`. The shape
- * is asserted up front, naming the odd row, and so is every email address (`assertExampleEmails`). In a check
- * run, one live read with `limit=0` first proves the table and the columns exist. Returns the inserted rows
- * with their ids. Treat that array as a count and a pool, not as a map from your rows to ids: a parent's id
- * comes from `idsByKey`. Throws on a short RETURNING.
- * Bare INSERT: a re-run appends a second set. Use it only for a table with no column that differs on every
- * row (a connecting record); every other table goes through `seedEnsureMany`.
- */
-export async function postMany(path: string, rows: ReadonlyArray<Row>, size = BATCH_SIZE): Promise<any[]> {
-  if (!rows.length) return [];
-  const table = tableOf(path);
-  assertExampleEmails(table, rows);
-  rowsInserted = true;
-  if (isCheckRun()) {
-    const columns = Object.keys(rows[0]).filter((k) => rows[0][k] !== undefined);
-    await pgRequest("GET", `${table}?select=${columns.join(",")}&limit=0`);   // a missing table or column fails here, before the real run
-  }
-  const shapeOf = (r: Row): string => Object.keys(r).filter((k) => r[k] !== undefined).sort().join(",");
-  const shape = shapeOf(rows[0]);
-  rows.forEach((r, i) => {
-    const s = shapeOf(r);
-    if (s !== shape) {
-      throw new Error(
-        `postMany ${table}: row ${i} keys [${s}] differ from row 0 [${shape}]; a bulk insert needs identical keys ` +
-        `on every row (send null / "" / 0 explicitly; never omit a key or leave it undefined)`,
-      );
+function idLine(m: TableMeta): string {
+  const type = idTypeOf(m);
+  if (type === "has_a" && m.base) return `the id of the ${m.base.table} record it extends, such as ${idExample(m.base)}; that record is in the file or on the host`;
+  if (type === "typeid" || type === "is_a") return `${idExample(m, 1)}, ${idExample(m, 2)}, … (a sample id: the prefix ${m.entity.id_prefix}, "_sr", a number from 1)`;
+  if (type === "uuid") return "a UUID on every record";
+  if (type === "text") return "a text key on every record";
+  if (type === "bigint") return "a whole number on every record";
+  return "1, 2, 3, … (a whole number)";
+}
+
+/** The parent and child tables among `metas` that both carry `workflow_state`, with the field that relates them. */
+function statePairs(metas: ReadonlyArray<TableMeta>): Array<{ parent: TableMeta; child: TableMeta; field: string }> {
+  const out: Array<{ parent: TableMeta; child: TableMeta; field: string }> = [];
+  const has = (m: TableMeta) => fieldsOf(m).has("workflow_state");
+  for (const child of metas) {
+    if (!has(child)) continue;
+    for (const f of writtenFields(child).values()) {
+      if (!isRelationship(f) || f.reference_table === child.table) continue;
+      const parent = metas.find((m) => m.table === f.reference_table);
+      if (parent && has(parent)) out.push({ parent, child, field: f.field_name });
     }
-  });
-  const out: any[] = [];
-  for (const part of chunk(rows, size)) {
-    const res = await pgRequest("POST", table, part);
-    if (!Array.isArray(res) || res.length !== part.length) {
-      throw new Error(
-        `postMany ${table}: sent ${part.length} row(s), PostgREST returned ${Array.isArray(res) ? res.length : typeof res} ` +
-        `(RETURNING suppressed by RLS, or a partial insert); halting`,
-      );
-    }
-    out.push(...res);
-    if (!isCheckRun()) console.log(`  ✓ POST ${table}: ${part.length} row(s) in one call`);
   }
   return out;
 }
 
-/**
- * Halts when `keyField` is a column the platform writes: a `computed` or `rollup` column, or a column a
- * `computed_fields` rule fills (a composed label keeps `ctype` "label", so the rule is read too). The platform
- * overwrites what the seed sends there, so no stored row ever matches its key. Reads the live host on a check
- * run as well, so the mistake surfaces before anything is written.
- */
-async function assertSeedOwnsKey(table: string, keyField: string): Promise<void> {
-  const name = table.slice(1);
-  const [field] = (await pgRequest("GET", `/fields?select=ctype&table_name=eq.${encodeURIComponent(name)}&field_name=eq.${encodeURIComponent(keyField)}`)) ?? [];
-  const [entity] = (await pgRequest("GET", `/entities?select=computed_fields&table_name=eq.${encodeURIComponent(name)}`)) ?? [];
-  const ruled = Array.isArray(entity?.computed_fields) && entity.computed_fields.some((c: any) => c?.name === keyField);
-  const why = ruled ? "a computed_fields rule fills it" : ["computed", "rollup"].includes(field?.ctype) ? `it is a ${field.ctype} column` : "";
-  if (why) {
-    throw new Error(
-      `seedEnsureMany ${table}: "${keyField}" cannot be the key, because ${why}: the platform overwrites what the seed sends, ` +
-      `so the rows stored never match the rows in the plan. Key on a column the seed sends and the platform does not compute ` +
-      `(a code from uniq(), or a value that differs on every row).`,
-    );
-  }
-}
-
-/**
- * The default insert for a table. Reads the rows whose `keyField` is already present (`in.()`, chunked), posts
- * only the missing rows, and returns ALL rows with ids in INPUT order, found by key, so a re-run after a halt
- * converges instead of appending a second set. `keyField` is a column the seed sends and the platform does not
- * compute (the label column when no rule fills it, or a code), differing on every row, present on every row and
- * stable across runs; the database need not enforce it. A column the platform writes is refused before the first
- * read (`assertSeedOwnsKey`). Use it only on entities the build just created: a row that already exists under that
- * key is reused, not replaced. Never an upsert.
- */
-export async function seedEnsureMany(path: string, rows: ReadonlyArray<Row>, keyField: string): Promise<any[]> {
-  const table = tableOf(path);
-  const keys = keysOf("seedEnsureMany", table, keyField, rows);
-  await assertSeedOwnsKey(table, keyField);
-  const byKey = new Map<string, any>();
-  for (const part of chunk(keys)) {
-    for (const r of await pgRequest("GET", `${table}?${inFilter(keyField, part)}`)) byKey.set(String(r[keyField]), r);
-  }
-  const missing = rows.filter((_, i) => !byKey.has(keys[i]));
-  for (const r of await postMany(table, missing)) byKey.set(String(r[keyField]), r);
-  const still = keys.filter((k) => !byKey.has(k));
-  if (still.length) throw new Error(`seedEnsureMany ${table}: ${still.length} row(s) neither found nor returned by the insert: ${preview(still)}`);
-  return keys.map((k) => byKey.get(k));
-}
-
-/** Updates ONE record by id: `PATCH <table>?id=eq.<id>` with `body`. Throws unless exactly one row came back. */
-export async function patchById(table: string, id: string | number, body: Row): Promise<any> {
-  const res = await pgRequest("PATCH", `${tableOf(table)}?id=eq.${encodeURIComponent(String(id))}`, body);
-  if (!Array.isArray(res) || res.length !== 1) {
-    throw new Error(`patchById ${table}: expected 1 row back, got ${Array.isArray(res) ? res.length : typeof res}`);
-  }
-  return res[0];
-}
-
-/**
- * Empties tables this build seeded, so a changed script can seed them again: `seedEnsureMany` never changes a row
- * that is already there. `tables` is in delete order, children first, each with the row count it holds:
- *   await clearSeeded([["/contracts", 4], ["/vendors", 3]]);
- * Every table is counted before the first delete, and a count that differs halts with nothing deleted, because
- * the other rows are not the seed's. Deletes by id, at most `BATCH_SIZE` per call. In a check run the counts are
- * read and the deletes are recorded, never sent. Use it only on entities the build created.
- */
-export async function clearSeeded(tables: ReadonlyArray<readonly [path: string, expected: number]>): Promise<void> {
-  clearStarted = true;
-  const ids = new Map<string, Array<string | number>>();
-  const wrong: string[] = [];
-  for (const [path, expected] of tables) {
-    const table = tableOf(path);
-    const rows: any[] = await pgRequest("GET", `${table}?select=id`);
-    if (rows.length !== expected) wrong.push(`${table} holds ${rows.length} row(s), expected ${expected}`);
-    ids.set(table, rows.map((r) => r.id));
-  }
-  if (wrong.length) {
-    throw new Error(
-      `clearSeeded: nothing deleted, ${wrong.length} table(s) do not hold the expected rows:\n  - ${wrong.join("\n  - ")}\n` +
-      `The other rows are not the seed's. Stop and tell the user; do not copy these numbers into the script.`,
-    );
-  }
-  for (const [table, rowIds] of ids) {
-    for (const part of chunk(rowIds)) {
-      const res = await pgRequest("DELETE", `${table}?${inFilter("id", part)}`);
-      if (!isCheckRun() && (!Array.isArray(res) || res.length !== part.length)) {
-        throw new Error(
-          `clearSeeded ${table}: asked to delete ${part.length} row(s), PostgREST returned ${Array.isArray(res) ? res.length : typeof res} ` +
-          `(a parent listed before its child, or RLS); halting`,
-        );
+/** The file's skeleton and, for each table, what a record carries. */
+export async function describeTables(names: ReadonlyArray<string>): Promise<string> {
+  const tables = names.map((n) => n.trim().replace(/^\//, "")).filter(Boolean);
+  // Each round trip to the host costs seconds: the tables are read together, then the tables they relate to and the users.
+  const metas = await Promise.all(tables.map((t) => metaOf(t)));
+  const described = metas.flatMap((m) => [...writtenFields(m).values()].filter((f) => f.field_name !== "id" && !(platformFills(m, f.field_name) || ["id", "audit", "core"].includes(f.ctype))));
+  const targets = [...new Set(described.filter((f) => isRelationship(f) && f.reference_table !== "users").map((f) => f.reference_table))];
+  const usersNamed = described.some((f) => isRelationship(f) && f.reference_table === "users");
+  const [, usersRead] = await Promise.all([
+    Promise.all(targets.map((t) => metaOf(t))),
+    usersNamed ? Promise.all([currentUserId(), pgRequest("GET", "/users?select=id,display_name,external_id&order=id&limit=20")]) : Promise.resolve(undefined),
+  ]);
+  const out: string[] = [
+    "The file, .tmp_deploy/seed_<module_slug>.json (tables in any order; the import writes parents first):",
+    '{ "version": 1, "entities": [',
+    ...tables.map((t, i) => `  { "entity": { "table_name": "${t}" }, "records": [ … ] }${i < tables.length - 1 ? "," : ""}`),
+    "] }",
+    "Every record of a table carries the same columns, the id among them. A column the platform fills is never written.",
+    "",
+  ];
+  for (const m of metas) {
+    const never: string[] = [];
+    const columns: string[] = [];
+    const enums: string[] = [];
+    for (const f of writtenFields(m).values()) {
+      if (f.field_name === "id") continue;
+      if (platformFills(m, f.field_name) || ["id", "audit", "core"].includes(f.ctype)) { never.push(f.field_name); continue; }
+      const notes: string[] = [f.format];
+      if (isRelationship(f)) {
+        if (f.reference_table === "users") notes.push('a user: {"external_id": "…"} from the list below');
+        else {
+          const target = await metaOf(f.reference_table);
+          notes.push(`the id of a record of ${f.reference_table}, such as ${idExample(target)}`);
+        }
       }
+      const required = f.input_type === "required" && emptyRule(f.input_type_rule) && String(f.default_value ?? "") === "";
+      if (required) notes.push("required");
+      else if (f.input_type === "required" && emptyRule(f.input_type_rule)) notes.push(`default ${JSON.stringify(f.default_value)}`);
+      if (!emptyRule(f.input_type_rule)) notes.push("required in some states (input_type_rule)");
+      if (f.format === "parent") notes.push("never null");
+      else if (NULLABLE.has(f.format) && !required) notes.push("may be null");
+      columns.push(`${f.field_name} (${notes.join(", ")})`);
+      if (f.format === "enum") enums.push(`${f.field_name}: ${enumValues(f).join(", ")}`);
     }
-    console.log(`  ${tag()}✓ ${table}: ${rowIds.length} row(s) ${isCheckRun() ? "to delete" : "deleted"}`);
+    out.push(m.table);
+    if (idTypeOf(m) === "is_a" && m.base) out.push(`  a kind of ${m.base.table}: its record carries the ${m.base.table} columns too, and is written here only, never under ${m.base.table}`);
+    out.push(`  id: ${idLine(m)}`);
+    out.push(`  columns: ${columns.join("; ") || "none besides the id"}`);
+    if (enums.length) out.push(`  enum values (write the value, never the label): ${enums.join(" | ")}`);
+    out.push(`  never write (the platform fills them): ${never.join(", ") || "nothing"}`);
+    const rollups = [...fieldsOf(m).values()].filter((f) => f.ctype === "rollup" && typeof f.rollup?.link_field === "string");
+    if (rollups.length) {
+      const over = [...new Set(rollups.map((f) => String(f.rollup!.link_field).split(".")[0]))];
+      out.push(`  rollups: ${rollups.map((f) => f.field_name).join(", ")} over ${over.join(", ")}: give the records different numbers of those, so the totals differ`);
+    }
+    for (const rule of rulesOf(m)) {
+      const states = keptStates(rule);
+      if (!states) continue;
+      const col = String(rule.name);
+      const approver = fieldsOf(m).get(col)?.reference_table === "users" && rulesOf(m).some(isRequesterStamp) ? ", never the user who seeds" : "";
+      out.push(`  stamp: write ${col} on records in ${states.join(", ")}${approver}, and null on the others; the user who seeds needs the module's admin role for such records`);
+    }
+    out.push("");
   }
+  const pairs = statePairs(metas);
+  if (pairs.length) {
+    out.push("Tables whose states must agree (a parent's state and the states of its child records tell one story):");
+    for (const p of pairs) out.push(`  ${p.parent.table} and ${p.child.table} (through ${p.child.table}.${p.field})`);
+    out.push("");
+  }
+  if (usersRead) {
+    const [me, rows] = usersRead;
+    const users: Row[] = rows ?? [];
+    out.push("Users a record may name:");
+    for (const u of users) {
+      if (!u.external_id) continue;
+      out.push(`  {"external_id": ${JSON.stringify(u.external_id)}}  ${u.display_name ?? ""}${String(u.id) === me ? "  (the user who seeds: the requester of every record, so never its approver)" : ""}`);
+    }
+    out.push("");
+  }
+  return out.join("\n");
 }
 
-// ─────────────────────────────── relationships ───────────────────────────────
-
-/**
- * Turns a parent's natural key (its label) into its id. Re-reads the parent table once per at most
- * `BATCH_SIZE` keys (`select=id,<keyField>` with an `in.()` filter) and returns a function:
- *   const vendorId = await idsByKey("/vendors", "vendor_name", vendorRows);
- *   vendor_id: vendorId("Adobe")
- * The function throws on a label that was not seeded, so a typo is a halt, not a wrong id. Throws here when
- * a seeded label is absent from the table or matches more than one row (a repeated label from an earlier run).
- * `labelOf(key)` gives the parent's stored `_label`, for `assertParents` when a rule composes the parent's label
- * and the plan cannot know it: `assertParents(…, plan.map((p) => interviewId.labelOf(p.interview)))`. A check run
- * gives the key back, since its rows have no label yet.
- */
-export async function idsByKey(
-  path: string, keyField: string, rows: ReadonlyArray<Row>,
-): Promise<((key: string) => string | number) & { labelOf: (key: string) => string }> {
-  const table = tableOf(path);
-  const keys = keysOf("idsByKey", table, keyField, rows);
-  const found = new Map<string, any[]>();
-  for (const part of chunk(keys)) {
-    for (const r of await pgRequest("GET", `${table}?select=id,_label,${keyField}&${inFilter(keyField, part)}`)) {
-      const k = String(r[keyField]);
-      found.set(k, [...(found.get(k) ?? []), r]);
-    }
-  }
-  const absent = keys.filter((k) => !found.has(k));
-  if (absent.length) throw new Error(`idsByKey ${table}: ${absent.length} seeded ${keyField} value(s) not found on read-back: ${preview(absent)}`);
-  const repeated = keys.filter((k) => found.get(k)!.length > 1);
-  if (repeated.length) throw new Error(`idsByKey ${table}: ${keyField} matches more than one row for ${preview(repeated)}; clear the earlier rows with clearSeeded or rename`);
-  const rowOf = (key: string) => {
-    const hit = found.get(key);
-    if (!hit) throw new Error(`idsByKey ${table}: no seeded ${keyField} "${key}"; seeded: ${preview(keys)}`);
-    return hit[0];
-  };
-  return Object.assign((key: string) => rowOf(key).id, {
-    labelOf: (key: string): string => (isCheckRun() && rowOf(key)._label === undefined ? key : String(rowOf(key)._label ?? "")),
-  });
+async function currentUserId(): Promise<string> {
+  const { code, out, err } = await transport(["semantius", "call", "crud", "getCurrentUser"], "{}");
+  if (code !== 0) throw new Error(`getCurrentUser failed (exit ${code}): ${err}`);
+  return String(JSON.parse(out).user_id ?? "");
 }
 
-const SPINE = " › ";
+// ─────────────────────────────── the file ───────────────────────────────
 
-/**
- * Reads the child rows back with their `<fkField>_label` and compares each with the parent label the script
- * meant. `rows` are the child rows as sent (each carries `keyField`, a column unique across them: the label
- * column or a code); `parentLabels[i]` is the label of the parent intended for `rows[i]`, or `null` for a row
- * whose optional relationship is meant to be empty. A composed label shows ancestors first
- * ("Region › Vendor"); a label that ends with the intended one after " › " matches.
- * Throws naming every wrong row. On a real run only: the label columns exist on the live host.
- */
-export async function assertParents(
-  path: string, keyField: string, fkField: string,
-  rows: ReadonlyArray<Row>, parentLabels: ReadonlyArray<string | null>,
-): Promise<void> {
-  const table = tableOf(path);
-  if (rows.length !== parentLabels.length) {
-    throw new Error(`assertParents ${table}.${fkField}: ${rows.length} row(s) but ${parentLabels.length} intended parent label(s)`);
-  }
-  const keys = keysOf("assertParents", table, keyField, rows);
-  parentLabels.forEach((l, i) => {
-    if (l === "") throw new Error(`assertParents ${table}.${fkField}: row ${i} has no intended parent label (null means the relationship is meant to be empty)`);
-  });
-  if (isCheckRun()) {
-    console.log(`  [check run] ${table}.${fkField}: parent labels are read back on the real run`);
-    return;
-  }
-  const column = `${fkField}_label`;
-  const stored = new Map<string, string>();
-  for (const part of chunk(keys)) {
-    for (const r of await pgRequest("GET", `${table}?select=${keyField},${column}&${inFilter(keyField, part)}`)) {
-      stored.set(String(r[keyField]), String(r[column] ?? ""));
-    }
-  }
-  const wrong: string[] = [];
-  keys.forEach((k, i) => {
-    const got = stored.get(k);
-    const want = parentLabels[i];
-    const matches = want === null ? got === "" : got === want || (got ?? "").endsWith(`${SPINE}${want}`);
-    if (got === undefined || !matches) {
-      wrong.push(`${k}: intended ${want === null ? "no parent" : `parent "${want}"`}, stored "${got ?? "(row not found)"}"`);
-    }
-  });
-  if (wrong.length) {
-    throw new Error(
-      `assertParents ${table}.${fkField}: ${wrong.length} of ${keys.length} row(s) name the wrong parent:\n  - ${wrong.join("\n  - ")}\n` +
-      `Fix each with patchById (or clearSeeded and seed again), then check again.`,
-    );
-  }
-  console.log(`  ✓ ${table}.${fkField}: all ${keys.length} row(s) name the intended parent`);
-}
+type FileTable = { table: string; records: Row[]; meta: TableMeta; ids: unknown[] };
 
-/**
- * Checks a connecting record (junction) table, which has no column that differs on every row, so
- * `assertParents` cannot key it. Reads every row of the table back with both `<fkA>_label` and `<fkB>_label`
- * and compares them with the pairs the script meant, as a set of rows: every intended pair must be there and
- * nothing else (a pair that is missing, wrong or left over from an earlier run halts, named). Meant for a
- * table this script just created, which holds at most the 20 seeded rows. Real run only, like `assertParents`.
- *   await assertJunction("/seats", "application_id", "user_id", [["Slack", "Maria Lopez"], ["Figma", "Tom Becker"]]);
- */
-export async function assertJunction(
-  path: string, fkA: string, fkB: string, pairs: ReadonlyArray<readonly [string, string]>,
-): Promise<void> {
-  const table = tableOf(path);
-  pairs.forEach(([a, b], i) => { if (!a || !b) throw new Error(`assertJunction ${table}: pair ${i} has an empty label`); });
-  if (isCheckRun()) {
-    console.log(`  [check run] ${table}.${fkA}/${fkB}: pairs are read back on the real run`);
-    return;
+/** The tables of a records file that carry records, each with its description and its ids as the host stores them. */
+async function readSeedFile(path: string): Promise<FileTable[]> {
+  const doc = readJsonFile(path);
+  if (!Array.isArray(doc?.entities)) throw new Error(`${path} is not a records file: it has no "entities" list (seed-data.md → "The file")`);
+  const out: FileTable[] = [];
+  for (const entry of doc.entities) {
+    const table = entry?.entity?.table_name;
+    const records = Array.isArray(entry?.records) ? entry.records : [];
+    if (typeof table !== "string" || !records.length) continue;
+    const meta = await metaOf(table);
+    const padded = TYPEID_KEYS.has(idTypeOf(meta));
+    out.push({ table, records, meta, ids: records.map((r: Row) => (padded ? padSampleId(r.id) : r.id)) });
   }
-  const [colA, colB] = [`${fkA}_label`, `${fkB}_label`];
-  const stored: Array<{ a: string; b: string }> = (await pgRequest("GET", `${table}?select=${colA},${colB}`))
-    .map((r: Row) => ({ a: String(r[colA] ?? ""), b: String(r[colB] ?? "") }));
-  const same = (got: string, want: string) => got === want || got.endsWith(`${SPINE}${want}`);
-  const missing: string[] = [];
-  for (const [a, b] of pairs) {
-    const at = stored.findIndex((s) => same(s.a, a) && same(s.b, b));
-    if (at < 0) missing.push(`${a} + ${b}`); else stored.splice(at, 1);
-  }
-  if (missing.length || stored.length) {
-    throw new Error(
-      `assertJunction ${table}.${fkA}/${fkB}:` +
-      (missing.length ? `\n  - ${missing.length} intended pair(s) not stored: ${missing.join("; ")}` : "") +
-      (stored.length ? `\n  - ${stored.length} stored row(s) not intended: ${stored.map((s) => `${s.a} + ${s.b}`).join("; ")}` : "") +
-      `\nFix with patchById (or clearSeeded and seed again), then check again.`,
-    );
-  }
-  console.log(`  ✓ ${table}.${fkA}/${fkB}: all ${pairs.length} row(s) name the intended parents`);
-}
-
-// ─────────────────────────────── generators ───────────────────────────────
-
-/**
- * Seeded random generator, one per table: `const r = rng("contracts")`. The seed is fixed (42) and the table
- * name gives each table its own sequence, so a re-run of the UNCHANGED script draws the same values (dates
- * from `days()` are relative to the run day). Never `Math.random()`.
- *   - `r.pick(pool)`         one random entry; repeats are fine (job title, email local part)
- *   - `r.int(min, max)`      an integer in [min, max] (house number, quantity, amount, day offset)
- *   - `r.chance(p)`          true with probability p (booleans with a realistic mix)
- *   - `r.deal(pool, n)`      n entries, shuffled, every pool entry once before any repeats: enum values (each
- *                            value appears once n >= the value count; repeat a value in the pool to weight
- *                            it), parents dealt to children, places
- *   - `r.distinct(pool, n)`  n DIFFERENT entries; throws when the pool has fewer than n (names, labels)
- *   - `r.tuples(n, pools)`   n DISTINCT combinations, each part dealt (first + last name, two-word names);
- *                            throws when the pools cannot give n combinations
- */
-export function rng(stream: string, seed = 42) {
-  let s = seed >>> 0;
-  for (let k = 0; k < stream.length; k++) s = Math.imul(s ^ stream.charCodeAt(k), 0x01000193) >>> 0;
-  const next = (): number => {   // mulberry32
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  const nonEmpty = (pool: readonly unknown[], what: string) => {
-    if (!pool.length) throw new Error(`rng("${stream}").${what}: empty pool`);
-  };
-  const int = (min: number, max: number): number => min + Math.floor(next() * (max - min + 1));
-  const chance = (p: number): boolean => next() < p;
-  const pick = <T>(pool: readonly T[]): T => {
-    nonEmpty(pool, "pick");
-    return pool[Math.floor(next() * pool.length)];
-  };
-  const deal = <T>(pool: readonly T[], n: number): T[] => {
-    nonEmpty(pool, "deal");
-    const out: T[] = [];
-    while (out.length < n) {
-      const round = [...pool];
-      for (let k = round.length - 1; k > 0; k--) {
-        const j = Math.floor(next() * (k + 1));
-        [round[k], round[j]] = [round[j], round[k]];
-      }
-      out.push(...round);
-    }
-    return out.slice(0, n);
-  };
-  const distinct = <T>(pool: readonly T[], n: number): T[] => {
-    const values = [...new Set(pool)];
-    if (values.length < n) {
-      throw new Error(`rng("${stream}").distinct: ${n} different entries asked, the pool has ${values.length}; build them with r.tuples`);
-    }
-    return deal(values, n);
-  };
-  const tuples = <T>(n: number, pools: ReadonlyArray<readonly T[]>): T[][] => {
-    pools.forEach((p) => nonEmpty(p, "tuples"));
-    const sets = pools.map((p) => [...new Set(p)]);   // a repeated pool entry is not a second value
-    const space = sets.reduce((acc, p) => acc * p.length, 1);
-    if (space < n) {
-      throw new Error(`rng("${stream}").tuples: ${n} distinct combinations asked, the pools give only ${space}; add pool entries`);
-    }
-    const key = (t: T[]) => JSON.stringify(t);
-    const seen = new Set<string>();
-    const firstFree = (): T[] => {   // near exhaustion: walk the combinations in order
-      for (let idx = 0; ; idx++) {
-        let q = idx;
-        const t = sets.map((p) => { const v = p[q % p.length]; q = Math.floor(q / p.length); return v; });
-        if (!seen.has(key(t))) return t;
-      }
-    };
-    const columns = sets.map((p) => deal(p, n));
-    const out: T[][] = [];
-    for (let k = 0; k < n; k++) {
-      let t = columns.map((c) => c[k]);
-      for (let tries = 0; seen.has(key(t)) && tries < 100; tries++) t = sets.map((p) => pick(p));
-      if (seen.has(key(t))) t = firstFree();
-      seen.add(key(t));
-      out.push(t);
-    }
-    return out;
-  };
-  return { next, int, chance, pick, deal, distinct, tuples };
-}
-
-const LATIN: Record<string, string> = { "ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "ł": "l", "đ": "d", "ð": "d", "þ": "th", "ı": "i" };
-
-/**
- * Lowercase ASCII token for email local parts and domains: letters without a decomposed form transliterated
- * (ø → o, æ → ae, ß → ss, ł → l, đ → d), accents stripped, everything but a-z / 0-9 dropped.
- * `slugify("Søren Østergaard")` → "sorenostergaard". Throws when nothing Latin is left (`李伟`): such a name
- * carries a Latin form for its email.
- */
-export function slugify(s: string): string {
-  const out = s.toLowerCase()
-    .replace(/[øæœßłđðþı]/g, (c) => LATIN[c])
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]/g, "");
-  if (!out) throw new Error(`slugify("${s}"): no Latin letters left; give the name a Latin form for its email`);
   return out;
 }
 
-/** Email / web domain for an invented company: `exampleDomain("Beacon Foods")` → "beaconfoods.example.com". Subdomains of example.com are reserved and never receive mail. */
-export const exampleDomain = (companyName: string): string => `${slugify(companyName)}.example.com`;
-
-/** Collision-proof token for a CODE-LIKE `unique_value` field (account code, SKU, invoice number): `uniq("ACCT-", i)` → "ACCT-0", "ACCT-1", … Never on a field a person reads as a name. */
-export const uniq = (base: string, i: number, suffix = ""): string => `${base}${i}${suffix}`;
-
-/** A date `d` days from today (negative for the past) as `YYYY-MM-DD`: `days(-30)`, `days(rng.int(60, 400))`. */
-export const days = (d: number): string => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
-
-// ─────────────────────────────── guards ───────────────────────────────
-
-/** Every table landed but the numbers must change, so a plain re-run keeps the old rows. */
-class SeedPlanError extends Error {}
-
-/**
- * Scale guard, before the first write: a parent's stored figure that its child rows itemize (seats purchased over
- * seat rows) stays between the number of those rows and twice that, because a small dataset cannot carry a real
- * company's numbers. Each entry is the parent's label, its figure and its number of child rows:
- *   assertItemized("subscriptions.seats_purchased", plan.map((p) => [p.name, p.seats_purchased, p.seats.length]));
- * Throws naming every parent outside the range. It reads nothing, so a check run applies it the same way.
- */
-export function assertItemized(column: string, parents: ReadonlyArray<readonly [label: string, figure: number, children: number]>): void {
-  if (!parents.length) throw new Error(`assertItemized ${column}: no parents given`);
-  const wrong = parents
-    .filter(([, figure, children]) => !(figure >= children && figure <= children * 2))
-    .map(([label, figure, children]) => `${label}: ${figure} over ${children} child row(s), expected ${children} to ${children * 2}`);
-  if (wrong.length) {
-    throw new Error(
-      `SEED SCALE FAILURE, ${column}: ${wrong.length} of ${parents.length} parent(s) out of scale:\n  - ${wrong.join("\n  - ")}\n` +
-      `Set each figure from the parent's child rows in the plan.`,
-    );
+/** The stored rows of `ids`, by id. */
+async function storedRows(table: string, ids: ReadonlyArray<unknown>, select: ReadonlyArray<string>): Promise<Map<string, Row>> {
+  const out = new Map<string, Row>();
+  const columns = [...new Set(["id", ...select])].join(",");
+  for (const part of chunk(ids.filter((id) => id !== null && id !== undefined) as Array<string | number>)) {
+    for (const row of (await pgRequest("GET", `/${table}?select=${columns}&${inFilter("id", part)}`)) ?? []) out.set(String(row.id), row);
   }
-  console.log(`  ${tag()}✓ ${column}: ${parents.length} parent(s) at the scale of their child rows`);
+  return out;
 }
 
+/** The tables of the file with children before their parents (and an extension before its base). */
+function childrenFirst(tables: ReadonlyArray<FileTable>): FileTable[] {
+  const names = new Set(tables.map((t) => t.table));
+  const parentsOf = (t: FileTable): string[] => [
+    ...[...writtenFields(t.meta).values()].filter((f) => isRelationship(f) && f.reference_table !== t.table && names.has(f.reference_table)).map((f) => f.reference_table),
+    ...(t.meta.base && names.has(t.meta.base.table) ? [t.meta.base.table] : []),
+  ];
+  const done: FileTable[] = [];
+  const left = [...tables];
+  while (left.length) {
+    // a table no table still left points at has no children left
+    const i = left.findIndex((t) => !left.some((o) => o !== t && parentsOf(o).includes(t.table)));
+    done.push(...left.splice(i < 0 ? 0 : i, 1));
+  }
+  return done;
+}
+
+// ─────────────────────────────── --emails ───────────────────────────────
+
+const ADDRESS = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
+
 /**
- * Lifecycle guard, before the first write: a parent's state and the states of its child rows tell one story (a
- * hired application has an accepted offer; an application still at applied has no offer). Each entry is the
- * parent's label, its state and its child rows' states; `rules` maps a parent state to the child states it allows
- * (`only`, empty for no child rows) and the child states it needs at least one of (`needs`):
- *   assertStatesAgree("applications.offers", plan.map((a) => [a.name, a.state, a.offers.map((o) => o.state)]), {
- *     applied: { only: [] },
- *     hired: { needs: ["accepted"], only: ["accepted"] },
- *   });
- * A parent state the rules do not name allows any children; a rule whose state no parent has halts (a typo, or a
- * state the plan never deals). Throws naming every parent that disagrees. It reads nothing, so a check run applies
- * it the same way.
+ * Sample data never reaches a real inbox: every email address in the file, in any column, is at a subdomain of
+ * example.com (`support@adobe.example.com`), which receives no mail. Throws with every other address. It reads
+ * the file only, so it runs before the import and needs no host.
  */
-export function assertStatesAgree(
-  name: string,
-  parents: ReadonlyArray<readonly [label: string, state: string, childStates: ReadonlyArray<string>]>,
-  rules: Readonly<Record<string, { only?: ReadonlyArray<string>; needs?: ReadonlyArray<string> }>>,
-): void {
-  if (!parents.length) throw new Error(`assertStatesAgree ${name}: no parents given`);
-  if (!Object.keys(rules).length) throw new Error(`assertStatesAgree ${name}: no rules given; name each parent state that limits its children`);
-  const emptyNeeds = Object.keys(rules).filter((s) => rules[s].needs?.length === 0);
-  if (emptyNeeds.length) throw new Error(`assertStatesAgree ${name}: "needs" is empty for ${emptyNeeds.join(", ")}; name the child states, or leave "needs" out`);
-  const states = new Set(parents.map(([, state]) => state));
-  const unused = Object.keys(rules).filter((s) => !states.has(s));
-  if (unused.length) throw new Error(`assertStatesAgree ${name}: no parent is in state ${unused.join(", ")}; fix the state name, give a parent that state in the plan, or drop that rule`);
+export function checkEmails(path: string): string {
+  const doc = readJsonFile(path);
+  if (!Array.isArray(doc?.entities)) throw new Error(`${path} is not a records file: it has no "entities" list (seed-data.md → "The file")`);
   const wrong: string[] = [];
-  for (const [label, state, children] of parents) {
-    const rule = rules[state];
-    if (!rule) continue;
-    const outside = rule.only ? [...new Set(children.filter((c) => !rule.only!.includes(c)))] : [];
-    if (outside.length) {
-      wrong.push(`${label} (${state}): ${outside.join(", ")} not allowed, ${rule.only!.length ? `only ${rule.only!.join(", ")}` : "no child rows"}`);
+  let seen = 0;
+  const walk = (value: unknown, where: string): void => {
+    if (typeof value === "string") {
+      for (const m of value.matchAll(ADDRESS)) {
+        seen++;
+        if (!m[1].toLowerCase().endsWith(".example.com")) wrong.push(`${where}: ${m[0]}`);
+      }
+    } else if (value && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) walk(v, Array.isArray(value) ? where : `${where}.${k}`);
     }
-    if (rule.needs && !children.some((c) => rule.needs!.includes(c))) {
-      wrong.push(`${label} (${state}): needs a child in ${rule.needs.join(" or ")}, has ${children.length ? children.join(", ") : "none"}`);
+  };
+  for (const entry of doc.entities) {
+    const table = String(entry?.entity?.table_name ?? "?");
+    for (const record of Array.isArray(entry?.records) ? entry.records : []) {
+      for (const [column, value] of Object.entries(record ?? {})) {
+        if (column !== "id") walk(value, `${table}.${column} of ${JSON.stringify(record.id)}`);
+      }
     }
   }
   if (wrong.length) {
     throw new Error(
-      `SEED LIFECYCLE FAILURE, ${name}: ${wrong.length} problem(s):\n  - ${wrong.join("\n  - ")}\n` +
-      `Set each parent's state and its children's states together in the plan.`,
+      `${wrong.length} email address(es) could reach a real inbox; nothing was written:\n${wrong.map((w) => `  - ${w}`).join("\n")}\n` +
+      "Write each at a subdomain of example.com, named after the company: support@adobe.example.com, ana.silva@globex.example.com. Never at example.com itself.",
     );
   }
-  console.log(`  ${tag()}✓ ${name}: ${parents.length} parent(s) agree with their children`);
+  return `Email addresses: ${seen} checked, all at a subdomain of example.com.`;
 }
 
-/**
- * Read-back guard for `computed` and `rollup` columns: the platform writes them, so only a read shows them. Reads
- * `columns` for the seeded `rows` (`keyField` is a column unique across them) and halts when a column holds one
- * value on every row, which means its inputs do not differ between the rows. A `$user_id`, `$now` or `$today` stamp is
- * constant on a seed by design (one user, one day): such a column is left out with a printed line instead (`stampOf`).
- * Call it at the very end of the script,
- * before `assertSeedCounts`. A check run only proves the columns exist: the values appear on the real run.
- */
-export async function assertComputedVary(
-  path: string, keyField: string, rows: ReadonlyArray<Row>, columns: ReadonlyArray<string>,
-): Promise<void> {
-  const table = tableOf(path);
-  const keys = keysOf("assertComputedVary", table, keyField, rows);
-  if (!columns.length) throw new Error(`assertComputedVary ${table}: no columns named`);
-  const select = [keyField, ...columns].join(",");
-  if (isCheckRun()) {
-    await pgRequest("GET", `${table}?select=${select}&limit=0`);   // a missing column fails here, before the real run
-    console.log(`  [check run] ${table}: ${columns.join(", ")} are read back on the real run`);
-    return;
-  }
-  const stored = new Map<string, any>();
-  for (const part of chunk(keys)) {
-    for (const r of await pgRequest("GET", `${table}?select=${select}&${inFilter(keyField, part)}`)) stored.set(String(r[keyField]), r);
-  }
-  const absent = keys.filter((k) => !stored.has(k));
-  if (absent.length) throw new Error(`assertComputedVary ${table}: ${absent.length} seeded ${keyField} value(s) not found on read-back: ${preview(absent)}`);
-  if (keys.length < 2) {
-    console.log(`  ${table}: one row, so ${columns.join(", ")} cannot be compared`);
-    return;
-  }
-  const fails: string[] = [];
-  for (const c of columns) {
-    const values = new Set(keys.map((k) => String(stored.get(k)[c] ?? "")));
-    if (values.size > 1) { console.log(`  ✓ ${table}.${c}: ${values.size} distinct value(s) across ${keys.length} row(s)`); continue; }
-    const value = [...values][0];
-    const stamp = await stampOf(table, c, value);
-    if (stamp) console.log(`  ${table}.${c}: "${value}" on every row, a ${stamp} stamp, so constant by design: left out of the check; name it in the report`);
-    else fails.push(`${table}.${c}: "${value}" on all ${keys.length} row(s)`);
-  }
-  if (fails.length) {
-    throw new SeedPlanError(
-      `SEED COMPUTED VALUE FAILURE, ${fails.length} column(s) hold one value on every row:\n  - ${fails.join("\n  - ")}\n` +
-      `Give the rows different inputs in the plan (for a rollup that counts children, different numbers of children), then ` +
-      `clearSeeded and seed again. A $user_id, $now or $today stamp is left out by this check itself; never drop any other ` +
-      `column and never patch it: the platform writes it.`,
-    );
-  }
-}
+// ─────────────────────────────── --report ───────────────────────────────
 
 /**
- * Approval-stamp guard, at the end of the script: every seeded row in one of `states` (the gated state and the states
- * after it) holds a value in each stamp column, read back from the platform. A row past the step without its stamp
- * means the seed did not send it, or the entity's rule does not keep what an insert sends (`rbac.md` → "Controls on a
- * gate", control 5). A check run only proves the columns exist.
- *   await assertStamped("/offers", "offer_code", offerRows, ["approved_by_user_id", "approved_at"], ["approved", "sent", "accepted", "declined"]);
+ * After the import: what the host holds of the file, what the platform filled in, and how parent and child
+ * states stand. It reports and never blocks: a line under "Look at" is for the final response, not a failure.
  */
-export async function assertStamped(
-  path: string, keyField: string, rows: ReadonlyArray<Row>, columns: ReadonlyArray<string>, states: ReadonlyArray<string>,
-): Promise<void> {
-  const table = tableOf(path);
-  const keys = keysOf("assertStamped", table, keyField, rows);
-  if (!columns.length || !states.length) throw new Error(`assertStamped ${table}: name the stamp columns and the states past the step`);
-  const select = [keyField, "workflow_state", ...columns].join(",");
-  if (isCheckRun()) {
-    await pgRequest("GET", `${table}?select=${select}&limit=0`);   // a missing column fails here, before the real run
-    console.log(`  [check run] ${table}: ${columns.join(", ")} are read back on the real run`);
-    return;
-  }
-  const past: any[] = [];
-  for (const part of chunk(keys)) {
-    for (const r of await pgRequest("GET", `${table}?select=${select}&${inFilter(keyField, part)}`)) if (states.includes(r.workflow_state)) past.push(r);
-  }
-  if (!past.length) { console.log(`  ${table}: no seeded row is in ${states.join(", ")}, so no stamp to check`); return; }
-  const empty = past.flatMap((r) => columns.filter((c) => r[c] === null || r[c] === undefined || r[c] === "").map((c) => `${r[keyField]} (${r.workflow_state}): ${c} is empty`));
-  if (empty.length) {
-    throw new SeedPlanError(
-      `SEED STAMP FAILURE, ${table}: ${empty.length} stamp(s) missing on rows past the step:\n  - ${empty.join("\n  - ")}\n` +
-      `Send each stamp on the rows past the step (seed-data.md, "Approval stamps on rows past the step"), check that the ` +
-      `entity's stamp rules keep what an insert sends, then clearSeeded and seed again.`,
-    );
-  }
-  console.log(`  ✓ ${table}: all ${past.length} row(s) past the step carry ${columns.join(", ")}`);
-}
+export async function reportSeed(path: string): Promise<string> {
+  const tables = await readSeedFile(path);
+  const out: string[] = [];
+  const look: string[] = [];
+  const rows = new Map<string, Map<string, Row>>();
+  let total = 0;
+  let notOnHost = 0;
 
-/**
- * The variable (`$user_id`, `$now`, `$today`) that makes `column` constant on a seed, or "" when it is no such stamp: its
- * rule reads the variable and not its own field, and its one value is what the variable gives on this run (the seeding
- * user, a time today, today's date). A rule that reads its own field keeps what the seed sent (an approval stamp on a row
- * past its step), so that column is still checked.
- */
-async function stampOf(table: string, column: string, value: string): Promise<string> {
-  if (!rulesRead.has(table)) {
-    const [entity] = (await pgRequest("GET", `/entities?select=computed_fields&table_name=eq.${encodeURIComponent(table.slice(1))}`)) ?? [];
-    rulesRead.set(table, Array.isArray(entity?.computed_fields) ? entity.computed_fields : []);
-  }
-  const rule = rulesRead.get(table)!.find((r: any) => r?.name === column);
-  if (!rule) return "";
-  const text = JSON.stringify(rule.jsonlogic ?? null);
-  if (text.includes(`"var":"${column}"`) || text.includes(`"var":["${column}"`)) return "";
-  const today = days(0);
-  if (text.includes('"$today"') && value === today) return "$today";
-  if (text.includes('"$now"') && value.startsWith(today)) return "$now";
-  if (text.includes('"$user_id"')) {
-    if (seedUserId === undefined) {
-      const { code, out, err } = await transport(["semantius", "call", "crud", "getCurrentUser"], "{}");
-      if (code !== 0) throw new Error(`getCurrentUser failed (exit ${code}): ${err}`);
-      seedUserId = String(JSON.parse(out).user_id ?? "");
+  for (const t of tables) {
+    const filled = [...fieldsOf(t.meta).values()].filter((f) => f.field_name !== "id" && !["audit", "core"].includes(f.ctype) && platformFills(t.meta, f.field_name));
+    const state = fieldsOf(t.meta).has("workflow_state") ? ["workflow_state"] : [];
+    const relationships = [...writtenFields(t.meta).values()].filter((f) => isRelationship(f) && f.reference_table !== "users").map((f) => f.field_name);
+    const stored = await storedRows(t.table, t.ids, [...filled.map((f) => f.field_name), ...state, ...relationships]);
+    rows.set(t.table, stored);
+    total += stored.size;
+    const missing = t.ids.filter((id) => !stored.has(String(id)));
+    notOnHost += missing.length;
+    if (missing.length) {
+      out.push(`✗ ${t.table}: ${stored.size} of ${t.ids.length} records are on the host`);
+      look.push(`${t.table}: ${missing.length} record(s) of the file are not on the host (${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}); run the import again`);
+    } else out.push(`✓ ${t.table}: ${stored.size} record${stored.size === 1 ? "" : "s"}`);
+    for (const f of filled) {
+      const values = [...stored.values()].map((r) => JSON.stringify(r[f.field_name]));
+      const distinct = new Set(values);
+      if (stored.size < 2) { out.push(`    ${f.field_name}: ${values[0] ?? "no record"} (one record, nothing to compare)`); continue; }
+      // the user, the day or the time of the import is one value on every record of one import
+      const stamp = JSON.stringify(rulesOf(t.meta).find((r) => r?.name === f.field_name)?.jsonlogic ?? null);
+      if (distinct.size === 1 && /"var":"\$(user_id|now|today)"/.test(stamp)) {
+        out.push(`    ${f.field_name}: ${values[0]} on every record, as one import writes it`);
+        continue;
+      }
+      out.push(`    ${f.field_name}: ${distinct.size} distinct value(s)`);
+      if (distinct.size === 1) look.push(`${t.table}.${f.field_name} holds ${values[0]} on every record: ${f.ctype === "rollup" ? "give the records different numbers of child records" : "check the rule that fills it, or the values it reads"}`);
     }
-    if (value === seedUserId) return "$user_id";
   }
-  return "";
+
+  for (const p of statePairs(tables.map((t) => t.meta))) {
+    const parents = rows.get(p.parent.table);
+    const children = rows.get(p.child.table);
+    if (!parents || !children) continue;
+    const byState = new Map<string, Map<string, number>>();
+    const withChildren = new Map<string, number>();
+    for (const child of children.values()) {
+      const parent = parents.get(String(child[p.field]));
+      if (!parent) continue;
+      const s = String(parent.workflow_state);
+      const counts = byState.get(s) ?? new Map<string, number>();
+      counts.set(String(child.workflow_state), (counts.get(String(child.workflow_state)) ?? 0) + 1);
+      byState.set(s, counts);
+      withChildren.set(String(parent.id), 1);
+    }
+    out.push(`${p.parent.table} and their ${p.child.table}, by state:`);
+    const states = [...new Set([...parents.values()].map((r) => String(r.workflow_state)))];
+    for (const s of states) {
+      const all = [...parents.values()].filter((r) => String(r.workflow_state) === s);
+      const without = all.filter((r) => !withChildren.has(String(r.id))).length;
+      const counts = [...(byState.get(s) ?? new Map()).entries()].map(([c, n]) => `${c} ×${n}`).join(", ");
+      out.push(`    ${s} (${all.length}): ${counts || `no ${p.child.table}`}${counts && without ? `; ${without} without ${p.child.table}` : ""}`);
+    }
+  }
+
+  out.push("", `Report finished: ${total} record(s) in ${tables.length} table(s) on the host.`);
+  if (look.length) out.push("Look at:", ...look.map((l) => `  - ${l}`));
+  if (!notOnHost) forgetSeedRuns(path);
+  // What comes next is said here, in the output the agent has just read: the one step with no tool call after it.
+  out.push(
+    "",
+    notOnHost
+      ? `Not finished: ${notOnHost} record(s) of the file are not on the host. Run the seed command again; send it as your next tool call.`
+      : "This was the last step. Your next response is the final response itself: write it now. " +
+        "Any other message sent first (that the records are in, that the handover comes next) ends the turn before the user has the result.",
+  );
+  return out.join("\n");
 }
 
-/**
- * Count guard. `expected` is the per-table count the sample-data question named; `counts` is what the script
- * tallied from its own inserts (`counts.vendors = vendors.length`). Throws when a table missed its count
- * (including a table never seeded) or when a table was tallied that `expected` does not name (a typo).
- */
-export function assertSeedCounts(counts: Record<string, number>, expected: Record<string, number>): void {
-  const fails: string[] = [];
-  for (const [table, want] of Object.entries(expected)) {
-    const n = counts[table] ?? 0;
-    if (n === want) console.log(`  ${tag()}✓ ${table}: ${n}`);
-    else fails.push(`${table} seeded ${n}, expected ${want}${table in counts ? "" : " (table never seeded)"}`);
-  }
-  for (const table of Object.keys(counts)) {
-    if (!(table in expected)) fails.push(`${table} was seeded but is not in the expected counts (typo?)`);
-  }
-  if (fails.length) throw new Error(`SEED COUNT FAILURE, ${fails.length} problem(s):\n  - ${fails.join("\n  - ")}`);
-  console.log(`\n${tag()}All ${Object.keys(expected).length} table(s) at target${isCheckRun() ? " (nothing was sent)" : ""}.`);
-}
+// ─────────────────────────────── --clear ───────────────────────────────
 
 /**
- * Distinctness guard: a count proves the table is full, not that every row carries the same surname, company
- * or a one-word label. Fails when a human-facing column has fewer than `minDistinct` different values
- * (default: the smaller of the row count and 8). Empty strings and nulls are not counted. Call it only on
- * columns where variety is expected, with a part that lives inside a combined value passed as its own column.
+ * Deletes the file's records, children first. A record with a sample id is the file's own. A record with any
+ * other key (a junction's number) is deleted only while it still holds the relationships the file gave it: a
+ * difference means the record is not the one the file wrote, and that table is left alone.
  */
-export function assertSeedDistinct(
-  table: string, rows: ReadonlyArray<Row>, fields: ReadonlyArray<string>, minDistinct = Math.min(rows.length, 8),
-): void {
-  const fails: string[] = [];
-  for (const f of fields) {
-    const values = rows.map((r) => r[f]).filter((v) => v !== "" && v !== null && v !== undefined);
-    const distinct = new Set(values.map((v) => String(v))).size;
-    if (distinct >= Math.min(minDistinct, values.length)) console.log(`  ${tag()}✓ ${table}.${f}: ${distinct} distinct`);
-    else fails.push(`${table}.${f}: ${distinct} distinct value(s) across ${rows.length} row(s), expected >= ${minDistinct}`);
+export async function clearSeed(path: string): Promise<string> {
+  const tables = childrenFirst(await readSeedFile(path));
+  const out: string[] = [];
+  let deleted = 0;
+  for (const t of tables) {
+    const relationships = [...writtenFields(t.meta).values()].filter((f) => isRelationship(f) && f.reference_table !== "users");
+    const stored = await storedRows(t.table, t.ids, relationships.map((f) => f.field_name));
+    if (!stored.size) { out.push(`  ${t.table}: nothing to delete`); continue; }
+    if (!TYPEID_KEYS.has(idTypeOf(t.meta))) {
+      const padFor = new Map<string, boolean>();
+      for (const f of relationships) padFor.set(f.field_name, TYPEID_KEYS.has(idTypeOf(await metaOf(f.reference_table))));
+      const other = t.records.filter((r, i) => {
+        const row = stored.get(String(t.ids[i]));
+        return row && relationships.some((f) => f.field_name in r && String(row[f.field_name]) !== String(padFor.get(f.field_name) ? padSampleId(r[f.field_name]) : r[f.field_name]));
+      });
+      if (other.length) {
+        throw new Error(`${t.table}: ${other.length} record(s) with the file's ids (${other.slice(0, 5).map((r) => r.id).join(", ")}) hold other relationships than the file gave them, so they are not the records it wrote. Nothing was deleted from ${t.table} or the tables after it; ${deleted} record(s) were deleted before. Stop and tell the user.`);
+      }
+    }
+    for (const part of chunk([...stored.keys()])) {
+      try { await pgRequest("DELETE", `/${t.table}?${inFilter("id", part)}`); }
+      catch (e) {
+        throw new Error(`${t.table}: the platform refused the delete (${e instanceof Error ? e.message : e}). ${deleted} record(s) were deleted before it; the tables after ${t.table} still hold theirs. Stop and tell the user.`);
+      }
+      deleted += part.length;
+    }
+    out.push(`  ${t.table}: ${stored.size} record(s) deleted`);
   }
-  if (fails.length) throw new Error(`SEED DISTINCTNESS FAILURE, ${fails.length} problem(s):\n  - ${fails.join("\n  - ")}\nDeal the field from a larger pool (r.deal / r.tuples).`);
+  out.push("", `Clear finished: ${deleted} record(s) deleted. Nothing was seeded: import the file again to write them.`);
+  return out.join("\n");
 }
 
-/**
- * Halting harness: runs the seed script's body, owns the try/catch, and exits non-zero on any thrown error.
- * Success is printed only when the body resolved with no throw. After a halt, the tables written before the
- * failing call have landed; a re-run converges only for tables seeded with `seedEnsureMany`. A script that only
- * clears ends `Clear finished`, never `Seed finished`.
- */
-export async function runSeed(body: () => Promise<void>): Promise<void> {
+// ─────────────────────────────── runs ───────────────────────────────
+
+/** The seed command runs this many times for one file without a finished report; the next run is refused. */
+export const SEED_RUN_LIMIT = 10;
+/** Beside the records file, so a run of another file or another build never counts against this one. */
+const runsFileOf = (path: string): string => join(dirname(path), "seed-runs.json");
+
+function readRuns(path: string): Record<string, number> {
   try {
-    await body();
-    const clearOnly = clearStarted && !rowsInserted;
-    console.log(
-      isCheckRun()
-        ? clearOnly
-          ? `\nCHECK RUN passed: ${writeCount} delete call(s) checked, none sent, nothing cleared. Run the script again without --check to clear.`
-          : `\nCHECK RUN passed: ${writeCount} write call(s) checked, none sent, nothing seeded. Run the script again without --check to seed.`
-        : clearOnly
-          ? `\nClear finished: ${writeCount} delete call(s) applied with no errors. Nothing was seeded: run the seed script next.`
-          : `\nSeed finished: ${writeCount} write call(s) applied with no errors.`,
-    );
+    const doc = JSON.parse(readFileSync(runsFileOf(path), "utf8"));
+    return doc && typeof doc === "object" && !Array.isArray(doc) ? doc : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Counts one run of the seed command for `path` (its first step, `--emails`, starts every run). Returns the text that
+ * refuses the run once `SEED_RUN_LIMIT` runs have gone by without a finished report, and null otherwise. A seed that loops
+ * (fix the file, run again, the same platform refusal) ends here, in code, whatever the agent makes of the last answer.
+ */
+export function countSeedRun(path: string): string | null {
+  const runs = readRuns(path);
+  const key = basename(path);
+  const done = Number(runs[key]) || 0;
+  if (done >= SEED_RUN_LIMIT) {
+    return `SEED STOPPED: the seed command has run ${done} times for ${key} without a finished report, so it runs no more. ` +
+      `Do not run it again, and write nothing to the tables by hand. Finish the build, and say in the final response which tables hold records and what stopped the rest ` +
+      `(build-module.md → "Final response"). Only the user can allow more runs: they delete ${runsFileOf(path)}.`;
+  }
+  runs[key] = done + 1;
+  try { writeFileSync(runsFileOf(path), JSON.stringify(runs, null, 2)); } catch { /* a count that cannot be kept never blocks a seed */ }
+  return null;
+}
+
+/** A finished report ends the count of `path`: the seed is complete. */
+export function forgetSeedRuns(path: string): void {
+  const runs = readRuns(path);
+  const key = basename(path);
+  if (!(key in runs)) return;
+  delete runs[key];
+  try {
+    if (Object.keys(runs).length) writeFileSync(runsFileOf(path), JSON.stringify(runs, null, 2));
+    else rmSync(runsFileOf(path), { force: true });
+  } catch { /* nothing to keep */ }
+}
+
+// ─────────────────────────────── CLI ───────────────────────────────
+
+if (import.meta.main) {
+  const arg = (flag: string): string | undefined => {
+    const i = process.argv.indexOf(flag);
+    return i >= 0 ? process.argv[i + 1] : undefined;
+  };
+  const describe = arg("--describe");
+  const emails = arg("--emails");
+  const report = arg("--report");
+  const clear = arg("--clear");
+  try {
+    if (describe) console.log(await describeTables(describe.split(",")));
+    else if (emails) {
+      const stopped = countSeedRun(emails);
+      if (stopped) {
+        console.log(stopped);
+        process.exit(5);
+      }
+      console.log(checkEmails(emails));
+    }
+    else if (report) console.log(await reportSeed(report));
+    else if (clear) console.log(await clearSeed(clear));
+    else {
+      console.error("Usage: bun seed-lib.ts --describe <table>[,<table>…] | --emails <file> | --report <file> | --clear <file>");
+      process.exit(1);
+    }
   } catch (err) {
-    console.error(`\nSEED HALTED after ${writeCount} write call(s): ${err instanceof Error ? err.message : String(err)}`);
-    console.error(
-      isCheckRun()
-        ? "Nothing was sent. Edit the script in place (never retype it) and check-run it again."
-        : err instanceof SeedPlanError
-          ? "Every table landed, so a plain re-run changes nothing. Edit the plan in the script (never retype it), run clearSeeded, then seed again."
-          : clearStarted && !rowsInserted
-            ? writeCount
-              ? "The clear is INCOMPLETE: the tables listed before the failing one are already empty. Stop and tell the user."
-              : "Nothing was deleted. Stop and tell the user."
-            : "The seed is INCOMPLETE. Tables written before this call have landed. Inspect them, then edit the script in place (never retype it) and run it again: only a table seeded with seedEnsureMany converges.",
-    );
+    console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 }

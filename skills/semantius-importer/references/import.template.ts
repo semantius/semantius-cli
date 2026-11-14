@@ -11,6 +11,9 @@
  * only with `natural_key` set in mapping.json (the field marked unique):
  * rows whose key already exists are skipped. Otherwise re-running duplicates rows.
  *
+ * Refuses to start while `questions` in mapping.json holds an entry without an
+ * `answer` (SKILL.md writing convention 7): each one is named, nothing is sent.
+ *
  * Run FROM THE SESSION CWD (repo root), by path — never `cd` into the run folder:
  *   bun run .tmp_import/run-<ts>/import.ts <absolute-path-to-csv>
  * Every batch spawns `semantius call`, and the CLI reads its `.env` from the
@@ -61,6 +64,8 @@ type Mapping = {
   expected_records?: number | null;
   batch_size?: number;
   columns: ColumnSpec[];
+  // The question ledger; only checked for open entries (render-plan.ts lists them).
+  questions?: Array<{ question: string; answer?: string | string[] | null }>;
 };
 
 const M: Mapping = JSON.parse(
@@ -76,6 +81,12 @@ const NATURAL_KEY: string | null = M.natural_key ?? null;
 if (M.on_exists !== undefined && M.on_exists !== "insert") {
   console.error(`mapping.json: on_exists "${M.on_exists}" is not supported - this import is insert-only (updating existing records is postponed). Remove the key.`);
   process.exit(4);
+}
+const OPEN_QUESTIONS = (M.questions ?? []).filter((q) => q.answer === undefined || q.answer === null);
+if (OPEN_QUESTIONS.length) {
+  console.error(`refused  mapping.json has ${OPEN_QUESTIONS.length} open question(s); ask them and record each answer first (render-plan.ts lists them):`);
+  for (const q of OPEN_QUESTIONS) console.error(`  - ${q.question}`);
+  process.exit(1);
 }
 // The entity's primary key column, copied into mapping.json from the LIVE
 // entity's id_column property (read_entity; default "id", but customizable

@@ -380,7 +380,30 @@ On Windows PowerShell 5.1 a pipe garbles non-ASCII text (`Zürich` arrives as `Z
 
 ### Ad-hoc JSON and file work in Bun
 
-Python is forbidden across these skills, and it may not be installed. Reshaping JSON, or changing a file you staged, is Bun or `jq`: `bun -e '<code>'` for a one-liner, or a scratch `.ts` file run by path for anything longer, reading with `await Bun.file(path).json()` (or `.text()`) and writing with `await Bun.write(path, text)`. To change a script you already wrote, edit it in place with your file-edit tool and change only the lines that need it; never write the whole script again. Without a file-edit tool, a `bun -e` that reads the file, replaces the exact text and writes it back does the same.
+Python is forbidden across these skills, and it may not be installed. The skill's scripts are Bun, every helper it ships is Bun, and a second language means a second set of quoting and escaping mistakes. Each need has a Bun tool that is shorter than the Python one:
+
+| Need | Bun tool |
+|---|---|
+| Where a JSON file is broken | `call-file.ts` names the line and column, with a caret and the bracket still open; `--check` validates without sending |
+| A payload with rules (`computed_fields`, `validation_rules`, `select_rule`, `input_type_rule`) | A Bun builder script on `jsonlogic-kit.ts` that names each part as a `const` and writes the file with `writePayload` |
+| A change to a file you wrote (a sample-data file after a check, a builder) | `edit-file.ts`, or your file-edit tool |
+| Reshaping JSON (adding a key to every item, merging two files) | Change the builder and run it again; for a one-off, `bun -e '<code>'` or a scratch `.ts` file, reading with `await Bun.file(path).json()` and writing with `await Bun.write(path, text)`, or `jq` |
+
+**Writing a file with no file-write tool.** Use a quoted heredoc: `cat > <file> <<'EOF'` … `EOF` in bash, a single-quoted here-string `@'` … `'@` piped to `Set-Content -Encoding utf8 <file>` in PowerShell (without `-Encoding utf8`, Windows PowerShell 5.1 writes the file in the ANSI code page, and non-ASCII text such as "Søren" does not survive). The quotes keep the shell from expanding `$user_id`, `$mode` or `$old.<field>` and `${…}` inside the text. Unquoted, `"$user_id"` arrives as `""`, which `call-file.ts` refuses. Some harnesses cut a heredoc short (at an apostrophe, for one), so run what you wrote right away: `call-file.ts --check` for a payload, the script itself for a script. A file cut short fails at its end.
+
+**Changing a file you wrote.** Change only the lines that need it, never write the whole file again. With your file-edit tool, or without one with `edit-file.ts`:
+
+```bash
+bun "<skill-folder>/references/edit-file.ts" .tmp_deploy/seed_recruiting.ts <<'EOF'
+<<<<<<< OLD
+  { _ref: "OFF-02", base_salary: 88000, workflow_state: "sent" },
+=======
+  { _ref: "OFF-02", base_salary: 88000, workflow_state: "sent", approved_by_user_id: approverId, approved_at: at(-8, "09:00") },
+>>>>>>> NEW
+EOF
+```
+
+Each block's OLD text must occur exactly once in the file, and every block applies or none does. The script prints the changed lines with their numbers; an OLD text that is missing or occurs twice, or a NEW text that is the same as its OLD text, changes nothing and says why.
 
 ### Building a bulk payload in Bun
 
@@ -515,6 +538,9 @@ semantius call utils/import_entities '{"path":"accounts.json"}'
 - **What travels.** `export_module` writes the module, its permissions, permission hierarchy, roles and grants, then its entities with their fields and records. `export_entities` writes entities, fields and records. Metadata is keyed by name (`module_name`, role `slug`, `permission_name`), never by a host's ids. Metadata and system tables (`users`, `roles`, `entities`, …) cannot be exported.
 - **Records keep their ids.** The import upserts by the entity's id column, so it overwrites any target row with the same id. References between exported tables keep their values; references to other tables keep their ids too, so their target rows must exist. References to `users` travel as `{"external_id": …}`: a user's numeric id differs between hosts, `external_id` does not. An unknown `external_id` is an error.
 - **Re-runs are cheap.** Every step reads the target first and writes only what differs, so re-running a failed import resumes it, and re-importing unchanged data writes nothing. Nothing is ever deleted, and there is no transaction across requests.
+- **`import_entities` with `"check": true` writes nothing.** It checks the file's records against the catalog (tables, columns, ids, required fields, enum values, the records and users a relationship names) and lists every problem in one answer; the call fails when there is one. It does not evaluate validation rules: a record those refuse still stops the import.
+- **A record written by hand names itself `<prefix>_sr<n>`** (`candidate_sr1`) where its entity has a TypeID key, in its id and in every relationship to it. The import stores the TypeID `<prefix>_0sr<n>` padded with `x` to 26 characters; an export never writes the short form. Sample data is written this way (`seed-data.md`).
+- **Records of an `is_a` or `has_a` entity** are inserted when new and patched when changed, since the platform refuses an upsert on one (`entity-families.md` → "Writing").
 - **`import_entities` also takes a module file**, importing only its entities (their module must exist on the target). `import_module` needs a module file.
 - **The target needs the `fix_id_sequence` RPC**, which moves each table's id sequence past the imported ids. A target on 0.5.0-beta1 lacks it until it is rebuilt; the import then stops before writing any record.
 - **Validation rules and `select_rule`** are written once the fields exist and **before any record**, so a first import and a re-import meet the same rules. A record that violates the exported rules fails the import instead of being written: a file exported from a host whose rules were added after its data may not import cleanly. That is intended, not transient: fix the data or the rule, don't retry.

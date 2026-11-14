@@ -92,7 +92,7 @@ Source of truth for this contract: `semantius-cli/src/local-tools/csv-schema.d.t
 
 ## 2. Format mapping
 
-> **Ledger note (sections 2-7).** Every user question these sections describe (a format override, an ambiguous enum, the unique-key question, the reserved-column collisions, an FK candidate, the label column, a zero-for-empty or enum-empty rule) is a `Q:` ledger task in the Stage 2 review loop: enumerated all at once, asked in batches of up to four, and completed only after the answer is in `mapping.json`. Templates and sequence: SKILL.md writing convention 7 and Stage 2. Nothing here is asked outside that loop.
+> **Ledger note (sections 2-7).** Every user question these sections describe (a format override, an ambiguous enum, the unique-key question, the reserved-column collisions, an FK candidate, the label column, a zero-for-empty or enum-empty rule) is an entry in the question ledger (`questions` in `mapping.json`, section 8) in the Stage 2 review loop: enumerated all at once, asked in batches of up to four, and answered in the same edit that puts the answer in the mapping. Templates and sequence: SKILL.md writing convention 7 and Stage 2. Nothing here is asked outside that loop.
 
 The vocabulary is aligned, so most formats pass straight into `create_field`:
 
@@ -110,7 +110,7 @@ The vocabulary is aligned, so most formats pass straight into `create_field`:
 
 **Fallback rule: any `format` not in the table passes through verbatim.** The table documents the formats whose handling has nuances; it is guidance, never an allowlist. A format without a row (`email`, `url`, anything a future CLI version emits) is sent to `create_field` as-is (together with `precision`, `enum_values`, and `input_type` when present), passed through untouched by the import script's coercion, and gets the empty-cell default of its PostgreSQL type (section 7; types: the format → type table in `use-semantius/references/data-modeling.md`) unless the platform's nullability rule marks it NULL-capable. A new format must never break or block the skill.
 
-**The introspection verdict is gold — default to it, and never override it silently.** Every `format` (and `precision`, `enum_values`, `input_type`, and the boolean pair) in the csvschema output is a deliberate decision produced by the detection rules of section 1, not an accident. Pass it through to `create_field` unchanged unless there is a genuine, domain-level reason to change it. If you are confident the verdict is wrong for the data (e.g. a heuristic `string` id column that is really a numeric measurement, or an enum that is really an integer), that override is a **user decision, not a mapping edit**: raise it in the mapping review as an `AskUserQuestion` that states the introspected format, the proposed override, and the reason, and defaults to the introspected format. Silently changing a column's format in the mapping is editorializing the source's declared type — the exact mistake this rule exists to prevent. A mapping that differs from the csvschema verdict without a recorded user decision is a defect. The one exception: an `enum` verdict on dates, real numbers or an amount is corrected without a question (section 3).
+**The introspection verdict is gold — default to it, and never override it silently.** Every `format` (and `precision`, `enum_values`, `input_type`, and the boolean pair) in the csvschema output is a deliberate decision produced by the detection rules of section 1, not an accident. Pass it through to `create_field` unchanged unless there is a genuine, domain-level reason to change it. If you are confident the verdict is wrong for the data (e.g. a heuristic `string` id column that is really a numeric measurement, or an enum that is really an integer), that override is a **user decision, not a mapping edit**: raise it in the mapping review as an `AskUserQuestion` that states the introspected format, the proposed override, and the reason, and defaults to the introspected format. The enum review is the one place where the default is the other way round: there the question defaults to the format section 3 gives by meaning, and to `enum` only when the meaning is unclear. Silently changing a column's format in the mapping is editorializing the source's declared type — the exact mistake this rule exists to prevent. A mapping that differs from the csvschema verdict without a recorded user decision is a defect. The one exception: an `enum` verdict on dates, real numbers or an amount is corrected without a question (section 3).
 
 Additional `create_field` properties per column: `title` (Title Case of the field name unless the raw header is already a better human title), `width: "default"`, and the util's `input_type` when present (section 6). **No `field_order`**: the platform appends each new field after the entity's existing ones in array order, and the array follows the mapping's column order, so the CSV order becomes the display order. Add `field_order` to a column only when the user asks for a specific position, after reading the entity's live `field_order` values (the label field sits at 20; a tie renders in an unpredictable order without any error). Field creation goes out as **one bulk `create_field` call** (an array of all the field objects) through the copied `create-fields.ts` runner (import-script-template.md) instead of one call per column.
 
@@ -130,7 +130,7 @@ Because of quirk 1, treat every `enum` verdict as a claim to verify, not a fact.
 |---|---|
 | a recognized boolean pair (quirk 2 list) | `boolean` |
 | integer strings in a column whose name says it holds an amount (`amount`, `price`, `cost`, `total`, `fee`, `balance`, `tax`, a currency code) | `number` with `precision`, never an enum |
-| other integer strings (`"1"`, `"42"`) | ambiguous: `integer`, `rating` or genuine enum. Decide by meaning: quantities and measurements are `integer`; a person's judgment on a 1–5 or star scale (values within 0–5, a header like `rating`, `stars`, `score`) is `rating` (drop the introspected `enum_values`); codes are a genuine enum; ask the user when unclear |
+| other integer strings (`"1"`, `"42"`) | `integer`, `rating` or genuine enum, decided by meaning: quantities and measurements are `integer`; a person's judgment on a 1–5 or star scale (values within 0–5, a header like `rating`, `stars`, `score`) is `rating` (drop the introspected `enum_values`); codes are a genuine enum. Ask the fixed-list question (SKILL.md writing convention 7) with the format the meaning gives as the default, and with `Fixed list` as the default when the meaning is unclear |
 | numeric strings with decimals | `number` (with `precision` re-derived from the values), never an enum |
 | ISO dates / datetimes | `date` / `date-time`, never an enum |
 | a handful of short lowercase tokens (`draft`, `active`, `archived`) | genuine `enum`; keep the values (sorted, deduped), each with a label and a color (see "Values and labels" below) |
@@ -209,13 +209,13 @@ Otherwise keep the column scalar (`integer` or `string` as introspected) and not
 
 1. A column named `name`, `title`, or `*_name` / `*_title`.
 2. Otherwise the required `string` column with the highest uniqueness in `sample_values`.
-3. Otherwise ask (`Q: Which column should name each row?`, `multiSelect: false`): any human-identifying string column works, so the options are the string columns ranked by uniqueness, **2 to 4 of them** (the tool rejects a 1-option or 5-option question). Exactly 1 string column: no question, it is the label column. No string column at all: no question; propose the most unique column of any format and flag it in the mapping review. More than 4: list the 4 best and end the question text with ` The 4 best candidates are listed; type another header if you prefer.` (the tool adds its own free-text slot; never list an "Other" option).
+3. Otherwise ask (`Which column should name each row?`, `multiSelect: false`): any human-identifying string column works, so the options are the string columns ranked by uniqueness, **2 to 4 of them** (the tool rejects a 1-option or 5-option question). Exactly 1 string column: no question, it is the label column. No string column at all: no question; propose the most unique column of any format and flag it in the mapping review. More than 4: list the 4 best and end the question text with ` The 4 best candidates are listed; type another header if you prefer.` (the tool adds its own free-text slot; never list an "Other" option).
 
 The user confirms (or picks another column) in the mapping review. Mechanics for a new entity:
 
 - Pass the chosen field name as `label_column` on `create_entity`. The platform **auto-creates** that field (plus a computed `label` field reading from it).
 - Therefore **exclude the label column from the `create_field` list** and **keep it in the import mapping**; the script writes to it like any other column.
-- The auto-created label field's `title` defaults to `singular_label`. When the CSV column implies a more specific title ("License Plate", "Product Code"), follow up with `update_field` to set the title, per data-modeling.md "Customizing the `label` field's title". This is the rename path for the default label field; `singular_label` itself stays the bare symmetric noun.
+- `create_entity` titles the auto-created label field: the label column in words without the entity's singular at its start (`product_name` on `products` → "Name", `license_plate` on `cars` → "License Plate"; a column ending in `_number`, `_no`, `_id` or `_code` keeps the entity's word). When the CSV header implies a better title, pass it as `label_column_label` in the `create_entity` payload, so no `update_field` follows (use-semantius `data-modeling.md` → "Customizing the label field's title"). `singular_label` itself stays the bare symmetric noun.
 
 **Mandatoriness.** The util already derives `input_type: "required"` (present only on columns with no empty cells). Treat it as the **proposal**: default to sending it through, but let the user downgrade any column to `"default"` in the review — a full-file scan can still be a lucky sample, and a later import of a sparser file would start failing. Columns without the property get `input_type: "default"`. Never send `required` itself.
 
@@ -229,8 +229,8 @@ The platform computes nullability from `format`: only `reference`, `date`, and `
 |---|---|---|
 | `date`, `date-time`, `reference` | `null` | |
 | `string`, `multiline`, `color`, `icon` | `""` | |
-| `integer`, `number` | `0` | When the column has empties and zero would be a lie (a missing measurement is not a zero), surface it once during mapping review: keep `0`, keep the column as `string`, or drop the column |
-| `boolean` | `false` | Same caveat as numbers when absence differs from "no" |
+| `integer`, `number` | `0` | When the column has empties and zero would be a lie (a missing measurement is not a zero), surface it once during mapping review with the empty-cell question (SKILL.md writing convention 7): keep `0`, store the column as `string` so the empties stay blank, or drop the column. A blank is never possible in the number field itself |
+| `boolean` | `false` | Same caveat and the same question as numbers when absence differs from "no" |
 | `rating` | `0` | `0` means not rated, so an empty cell is honest. A required rating needs 1–5: when the column has empties, surface it once during mapping review (make the field optional, or drop the column) |
 | `enum` | ask during review: add an explicit `"unknown"`-style value to `enum_values`, send `""`, or drop the column | |
 
@@ -240,7 +240,7 @@ The platform computes nullability from `format`: only `reference`, `date`, and `
 
 ## 8. The mapping artifact (`mapping.json`)
 
-The review loop's output and the **single runtime input** for every script in the run folder: `render-plan.ts` renders the mapping table and plan facts from it, `create-fields.ts` creates fields from it, `import.ts` imports by it. One entry per CSV column plus the shared config — nothing about the run is stated anywhere else, so the rendered plan and what actually executes can never disagree.
+The review loop's output and the **single runtime input** for every script in the run folder: `render-plan.ts` renders the mapping table, plan facts and open questions from it, `create-fields.ts` creates fields from it, `import.ts` imports by it. One entry per CSV column plus the shared config — nothing about the run is stated anywhere else, so the rendered plan and what actually executes can never disagree.
 
 ```json
 {
@@ -283,6 +283,16 @@ The review loop's output and the **single runtime input** for every script in th
       "disposition": "skip",
       "reason": "platform-owned column"
     }
+  ],
+  "questions": [
+    {
+      "stage": 2,
+      "header": "Unique key",
+      "question": "Mark External ID as unique so re-running this import skips rows that are already there?",
+      "options": ["Unique (Recommended)", "Not unique"],
+      "decides": "unique_value on external_id, natural_key",
+      "answer": "Unique (Recommended)"
+    }
   ]
 }
 ```
@@ -297,6 +307,7 @@ Top-level keys:
 | `on_exists` | **Removed** (postponed). The scripts reject a mapping that still carries `"on_exists": "update"`; do not write the key. |
 | `expected_records` | The introspection wrapper's `record_count` on a full scan; `null` when the scan was capped. The import verifies `parsed` against it (section 9). |
 | `batch_size` | Optional insert batch size (default 250, sane range 200–500). |
+| `questions` | The question ledger (SKILL.md writing convention 7): one entry per question Stages 2–4 ask, with `stage`, `header`, `question` (the exact text), `options` (the labels, "(Recommended)" on the default) and `decides` (what the answer sets in this file). `answer` stays absent until the user answers, then holds the chosen label, an array of labels for a multi-select, or the user's own text. `render-plan.ts` lists every entry without an answer; `create-fields.ts` (its dry run too) and `import.ts` refuse to run while one is open. |
 
 Per column:
 

@@ -29,7 +29,10 @@
  *   later batches are "not-run", and the run exits 1 (5 on auth). There is
  *   deliberately no per-field fallback loop: fix the cause and re-run — the
  *   read-before-create skips whatever landed.
- * - Refuses, before anything else and in a dry run too, a column left as an
+ * - Refuses, before anything else and in a dry run too, a mapping with an
+ *   open question: an entry of `questions` without an `answer` (SKILL.md
+ *   writing convention 7). Each one is named; the run exits 1.
+ * - Refuses next, in a dry run too, a column left as an
  *   enum whose values are all dates, all numbers with at least one decimal,
  *   or numbers in a column whose name says it holds an amount: a date, a real
  *   number or an amount never becomes an enum (schema-mapping.md section 3).
@@ -74,7 +77,8 @@ type ColumnSpec = {
   default_value?: string;
 };
 
-type Mapping = { table: string; columns: ColumnSpec[] };
+type Question = { question: string; answer?: string | string[] | null };
+type Mapping = { table: string; columns: ColumnSpec[]; questions?: Question[] };
 
 const DRY_RUN = process.argv.includes("--dry-run");
 /** Fields per create_field call. 100 keeps one DDL-heavy transaction bounded; lower it if a call is slow. */
@@ -83,6 +87,15 @@ const BATCH_SIZE = 100;
 const M: Mapping = JSON.parse(
   readFileSync(new URL("./mapping.json", import.meta.url), "utf8"),
 );
+
+// The question ledger: no dry run and no write while a question is unanswered.
+const openQuestions = (M.questions ?? []).filter((q) => q.answer === undefined || q.answer === null);
+if (openQuestions.length) {
+  console.error(`refused  mapping.json has ${openQuestions.length} open question(s); ask them and record each answer first (render-plan.ts lists them):`);
+  for (const q of openQuestions) console.error(`  - ${q.question}`);
+  process.exit(1);
+}
+
 const toCreate = M.columns.filter((c) => c.disposition === "create");
 
 if (toCreate.length === 0) {

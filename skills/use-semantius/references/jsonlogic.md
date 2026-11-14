@@ -33,7 +33,7 @@ Both are first-class entity properties: read with `read_entity`, set on `create_
 ```
 
 - `name` (string, required) — the scalar field of the same entity that receives the result. It is not checked when the rule is saved: a rule may name a field that does not exist yet, and it fills the field in once the field is added. May reference a JSONB sub-property via dotted notation (e.g. `"metadata.rice"`).
-- `jsonlogic` (object, required) — evaluated against the merged record (caller payload + values written by earlier `computed_fields` entries).
+- `jsonlogic` (object, required) — evaluated against the merged record (caller payload + values written by earlier `computed_fields` entries). That record holds stored columns only: `_label` and every `<fk>_label` are added by a read, so a rule that reads one gets null. `writeModel` and `call-file.ts` refuse such a rule; to use a related record's label, read its stored label column with `set_record` (below), as `composedLabel` does.
 - `description` (string, optional) — human note for future readers and agents.
 
 #### `validation_rules` element shape
@@ -302,7 +302,7 @@ Three JsonLogic operators bind values into the data context **before** the rest 
 | Operator | Shape | Effect |
 |---|---|---|
 | `let` | `{"let": ["<name>", <value-expression>, <body-expression>]}` | Evaluates `<value-expression>`, binds it under `<name>` for the duration of `<body-expression>`, returns the body's result. Nest `let` calls to bind several names. Useful for naming a sub-expression you reference more than once. |
-| `set_record` | `{"set_record": ["<name>", "<entity_name>", <id-expression>, <body-expression>]}` | Resolves `<id-expression>` against the data context, calls `get_record_by_id(<entity_name>, <id>)`, binds the resulting row (JSONB object, or `null` when no row matches or the caller may not read the row) under `<name>` for the duration of `<body-expression>`, returns the body's result. Inside the body, `{"var": "<name>.<column>"}` reads any column of the loaded row, exactly like `$old.<column>` for the post-write record. |
+| `set_record` | `{"set_record": ["<name>", "<entity_name>", <id-expression>, <body-expression>]}` | Resolves `<id-expression>` against the data context, calls `get_record_by_id(<entity_name>, <id>)`, binds the resulting row (JSONB object, or `null` when no row matches or the caller may not read the row) under `<name>` for the duration of `<body-expression>`, returns the body's result. Inside the body, `{"var": "<name>.<column>"}` reads any column of the loaded row, exactly like `$old.<column>` for the post-write record. The row holds the stored columns only: `_label` and every `<fk>_label` read as `null`. |
 | `throw_error` | `{"throw_error": "<message>"}` | Raises a PostgreSQL exception with SQLSTATE `99000` and the supplied message. A long form `{"throw_error": [message, code, [name, value, ...]]}` takes its own class-99 `code` (`90911` otherwise) and a flat list of named parameters (`90914` if nested; names `90912` and `90913` are reserved). The platform surfaces the message back to the caller verbatim, bypassing the rule's static `message` field. Place inside an `if` so the throw is conditional. |
 
 `let` and `set_record` are evaluated before the bulk argument-evaluation pass inside `evaluate_json_logic`, so the body sees an augmented data context. The bindings disappear when the body returns.
@@ -326,7 +326,7 @@ Three JsonLogic operators bind values into the data context **before** the rest 
 
 - **Parent-state gates** — refuse to modify an `order_line` when the parent `order.workflow_state = 'shipped'`. Without `set_record`, this rule had no way to read the parent's workflow_state; the gate had to live in application code.
 - **Inherited values on a child** — compute `country` on `addresses` from the customer record; copy `currency` from the parent `order` onto every line; pull `discount_pct` from the customer's contract.
-- **Merged labels** — derive a `label_column` value that combines fields from the current record AND a parent (`"Line 3 — INV-2025-0042"`, `"<order_number> / <line_no>"`).
+- **Merged labels** — derive a `label_column` value from the records a record relates, and from its own fields where those repeat (`"Ana Silva – Calculus I"`, `"<order_number> · line <line_no>"`); see `data-modeling.md` → "Choosing the label".
 - **Conditional cross-entity throw** — a parent record in a specific state should reject the child write with a domain-specific error: `{"throw_error": "Cannot modify a shipped order"}` rather than a generic `"validation failed"`.
 
 They are **not** the right tool for cross-row aggregates ("≤ 5 high-priority features per release", "Σ child amounts ≤ parent total"); those still belong in cube views with downstream alerts, or in dedicated triggers if true synchronous enforcement matters. `set_record` reads one row by id; it does not aggregate, scan, or filter.
@@ -365,11 +365,11 @@ Read: *"bind the parent order under `order`; if the order's workflow_state is `s
 
 Placed in `order_lines.computed_fields`. Even when the caller supplies `currency_code` directly, the platform silently overwrites it with the parent's value — that's the standard `computed_fields` contract.
 
-**Pattern 3 — Merged label.** `order_lines.label_column = line_label`, computed from the parent order number and the line's own sequence number:
+**Pattern 3 — Merged label.** `order_lines.label_column = order_line_name`, computed from the parent order number and the line's own sequence number:
 
 ```json
 {
-  "name": "line_label",
+  "name": "order_line_name",
   "description": "'<order_number> · line <line_no>'.",
   "jsonlogic": {
     "set_record": ["order", "orders", {"var": "order_id"}, {
@@ -384,6 +384,44 @@ Placed in `order_lines.computed_fields`. Even when the caller supplies `currency
 ```
 
 Reads display as `"INV-2025-0042 · line 3"` everywhere a Semantius UI surface or saved query asks for the line's label, no extra join required.
+
+**A record two related records name.** An enrollment is a student in a course. `composedLabel` (`jsonlogic-kit.ts`) builds its label from both:
+
+```typescript
+composedLabel("enrollment_name", [
+  { via: "student_id", table: "students", column: "student_name" },
+  { via: "course_id", table: "courses", column: "course_title" },
+]);
+```
+
+Do not write the label by hand over `<fk>_label`: `{"concat": [{"var": "student_id_label"}, " – ", {"var": "course_id_label"}]}` stores only the separator on every record, because the record being written has no `student_id_label`. `writeModel` and `call-file.ts` refuse it.
+
+The `computed_fields` entry of `enrollments` it returns:
+
+```json
+{
+  "name": "enrollment_name",
+  "jsonlogic": {
+    "set_record": ["student", "students", {"var": "student_id"},
+      {"set_record": ["course", "courses", {"var": "course_id"},
+        {"if": [
+          {"and": [
+            {"==": [{"var": "$mode"}, "update"]},
+            {"or": [
+              {"and": [{"!=": [{"var": "student_id"}, null]}, {"==": [{"var": "student"}, null]}]},
+              {"and": [{"!=": [{"var": "course_id"}, null]}, {"==": [{"var": "course"}, null]}]}
+            ]}
+          ]},
+          {"var": "$old.enrollment_name"},
+          {"cat": [{"var": "student.student_name"}, " – ", {"var": "course.course_title"}]}
+        ]}
+      ]}
+    ]
+  }
+}
+```
+
+It reads `"Ana Silva – Calculus I"`. The `if` keeps the stored label on an update where a relationship field is set but its record reads as `null` (the writer may not see it). A field of the record itself goes in as `{ field: "start_date" }`, and an enum as `{ field: "enrollment_type", labels: { audit: "Audit", credit: "Credit" } }`, so the label shows the enum's words, not its stored value.
 
 **Pattern 4 — Use `let` to avoid recomputing a sub-expression.** When the same value appears more than once inside an expression, bind it under `let` so the engine evaluates it only once and the body is easier to read:
 
@@ -479,19 +517,24 @@ Errors at evaluation time name the entity and the rule (`hint.entity`, `hint.rul
 
 #### Testing a rule
 
-Test a rule's logic before writing it to an entity with the `evaluate_json_logic` RPC. It runs the same engine and changes nothing:
+Test a rule's logic before writing it to an entity with the `evaluate_json_logic` RPC. It runs the same engine and changes nothing. Write the case from the builder script that built the rule (`data-modeling.md` → "A payload with rules is built, not typed"), so the rule is the same object that goes to the entity, then send the file:
+
+```typescript
+// in the builder script, after deleteGate = rule("99003", "delete_requires_delete_permission", …)
+writePayload(".tmp_deploy/test-delete-gate.json", { method: "POST", path: "/rpc/evaluate_json_logic", body: {
+  rule: deleteGate.jsonlogic,
+  data: { $mode: "delete", status: "open", $old: { status: "open" } },
+} });
+```
 
 ```bash
-semantius call crud postgrestRequest '{"method": "POST", "path": "/rpc/evaluate_json_logic", "body": {
-  "rule": {"if": [{"==": [{"var": "$mode"}, "delete"]}, {"has_permission": "sales:delete_order"}, true]},
-  "data": {"$mode": "delete", "status": "open", "$old": {"status": "open"}}
-}}'
+bun "<skill-folder>/references/call-file.ts" postgrestRequest .tmp_deploy/test-delete-gate.json
 ```
 
 - It prints the rule's result (`false` above for a caller without the permission); a truthy result means the write would pass. A throw comes back as the error the write would get, e.g. `(99000) <message>` or `(42501) Permission denied: ${permission} required`.
 - `data` is only what you send. No reserved variable is added, so include every one the rule reads: `$mode`, `$old`, `$today`, `$now`, `$user_id` (your own is `user_id` from `getCurrentUser`). For a DELETE, send the stored row as both the record and `$old`.
 - `has_permission` and `require_permission` check your own permissions, `set_record` reads real rows, and `value_changed` compares against the `$old` you pass.
-- Several cases, or a long rule: write a Bun script that sends each case over stdin (`cli-usage.md` → "Building a bulk payload in Bun"), so no shell parses the JSON. Test a rule that maps values on every combination of its inputs, and a rule that guards with `$mode` on the delete path too.
+- Several cases: write one file per case from the builder and send each, so no shell parses the JSON. Test a rule that maps values on every combination of its inputs, and a rule that guards with `$mode` on the delete path too.
 
 #### Example: pass both on `create_entity`
 

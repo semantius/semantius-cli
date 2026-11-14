@@ -3,9 +3,12 @@
  * skill. Reads `./mapping.json` (schema-mapping.md section 8) and prints, as
  * markdown on stdout:
  *
- *   1. the Stage 2 mapping table (one row per CSV column), and
+ *   1. the Stage 2 mapping table (one row per CSV column),
  *   2. a facts block with every count the pre-write plan and the final
- *      report need (columns, skips, fields to create, batches, ...).
+ *      report need (columns, skips, fields to create, batches, ...), and
+ *   3. the question ledger: every entry of `questions` that has no answer
+ *      yet (SKILL.md writing convention 7). `open questions: 0` is the
+ *      precondition for every dry run, diff report, pre-write gate and write.
  *
  * The artifact is the single source of truth: the skill pastes this output
  * instead of restating numbers in prose, so the rendered table, the plan,
@@ -39,6 +42,17 @@ type ColumnSpec = {
   default_value?: string;
 };
 
+// One question of the ledger. `answer` stays absent (or null) until the user answers:
+// the chosen option label, an array of labels for a multi-select, or the user's own text.
+type Question = {
+  stage: number;
+  header: string;
+  question: string;
+  options?: string[];
+  decides?: string;
+  answer?: string | string[] | null;
+};
+
 type Mapping = {
   table: string;
   id_column?: string;
@@ -47,6 +61,7 @@ type Mapping = {
   expected_records?: number | null;
   batch_size?: number;
   columns: ColumnSpec[];
+  questions?: Question[];
 };
 
 const M: Mapping = JSON.parse(
@@ -100,6 +115,15 @@ console.log(`- label column: ${label.length ? `\`${label[0]!.field_name}\` (auto
 console.log(`- unique key: ${M.natural_key ? `\`${M.natural_key}\` (marked unique; re-runs skip rows whose value already exists, existing rows are never modified)` : "none (plain insert; re-running duplicates rows)"}`);
 console.log(`- expected records: ${expected ?? "unknown (capped scan)"}${expected ? `, up to ${Math.ceil(expected / batchSize)} batch(es) of ${batchSize}` : ""}`);
 
+const questions = M.questions ?? [];
+const isOpen = (q: Question) => q.answer === undefined || q.answer === null;
+const open = questions.filter(isOpen);
+console.log(`- open questions: ${open.length} (${questions.length - open.length} answered)`);
+if (open.length) {
+  console.log(`\n**Open questions (nothing is written until each one is answered):**\n`);
+  open.forEach((q, i) => console.log(`${i + 1}. ${q.question}`));
+}
+
 // Sanity warnings - never fatal, always visible.
 const nonSkipNames = M.columns.filter((c) => c.disposition !== "skip").map((c) => c.field_name);
 if (M.natural_key && !nonSkipNames.includes(M.natural_key)) {
@@ -119,3 +143,8 @@ if (dupes.length) console.log(`\n⚠ duplicate field names in mapping: ${[...new
 const pinned = creates.filter((c) => c.field_order !== undefined);
 if (pinned.length) console.log(`\n⚠ explicit field_order on ${pinned.map((c) => `${c.field_name} (${c.field_order})`).join(", ")}: keep it only if the user asked for that position and it does not tie with a live field (the label field sits at 20); otherwise remove it, the platform appends new fields in column order`);
 if (label.length > 1) console.log(`\n⚠ more than one column has disposition "label": ${label.map((c) => c.field_name).join(", ")}`);
+const unnamed = questions.filter((q) => !q.question || !q.header);
+if (unnamed.length) console.log(`\n⚠ ${unnamed.length} question(s) in the ledger without "question" or "header" text`);
+const texts = questions.map((q) => q.question);
+const repeated = texts.filter((t, i) => t && texts.indexOf(t) !== i);
+if (repeated.length) console.log(`\n⚠ the same question is in the ledger more than once: ${[...new Set(repeated)].join(" | ")}`);

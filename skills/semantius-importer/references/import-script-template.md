@@ -66,6 +66,7 @@ These are the contract `import.template.ts` fulfills — read them to understand
 9. **Preload of existing keys.** With `natural_key` set, page `GET /<table>?select=<key>&order=<key>&limit=1000&offset=N` until a short page, building the set of key values already in the table; rows whose key is in the set are skipped. Without a unique key the script is a plain insert; re-running it duplicates rows and the script says so in its banner.
 10. **Progress on stderr, summary on stdout.** One line per batch (`batch 12/40 ok - 3000/9873 rows`); the final line of stdout is the JSON summary (`parsed / inserted / skipped / failed / ...`), also written to `import-summary.json`, so the calling skill parses one object.
 11. **Built-in count verify.** After the last batch the script compares the server row count (`GET /<table>?select=count`, reading `[{"count": N}]`) against `preexisting + inserted` and exits non-zero on mismatch. Skipped and failed rows are excluded from the expectation. It also checks `parsed` against `expected_records` (the introspection's `record_count` on full scans) and flags a mismatch as a parsing defect.
+12. **No import while a question is open.** Before it reads the file, the script exits 1 when `questions` in `mapping.json` holds an entry without an `answer` (SKILL.md writing convention 7), naming each one; nothing is sent.
 
 ## The field-creation runner (`create-fields.ts`)
 
@@ -76,11 +77,13 @@ Stage 4's field creation goes through the copied runner, never an ad-hoc shell l
 - **Transient-tolerant, fail-fast on real errors, loud always**: exit 3 (transport) is retried per call up to 3 times with 1s/3s/9s backoff, the same policy as the import script — and before each retry the live fields are re-read so rows that landed despite the lost response are dropped from the resend (a blind resend would 409 and fail the whole call). Exit 4 (validation: a bad mapping, where continuing is genuinely pointless) and exit 5 (auth) never retry; because the call is one transaction, a failed call landed **nothing** — every field of it is `failed` with the platform's first stderr line, later calls are `not-run`, and there is deliberately no per-field fallback loop (fix the cause and re-run). Every requested field gets a row in the final result table (`ok` / `failed` / `skipped-exists` / `not-run`). The script exits 1 on any failure (5 on auth) — a failed create can never scroll past silently.
 - **Verified**: after the calls succeed it re-reads the live fields and asserts every requested name is present (never trusts the create response); a missing name is reported `failed`.
 - `--dry-run` prints the exact bulk payload(s) — `{ "data": [ …field objects… ] }` per call — without writing (offline, no read); used for the pre-write confirmation gate and for verification.
+- **No run while a question is open**: before anything else, in a dry run too, it exits 1 when `questions` in `mapping.json` holds an entry without an `answer`, naming each one; nothing is read or written.
 
 ## mapping.json checklist (before running anything)
 
 The old generation-time checklist is now a checklist on the artifact, verified once after the review loop approves it (`render-plan.ts` warns about several of these automatically):
 
+- [ ] `render-plan.ts` prints `open questions: 0`: every entry in `questions` has an `answer`.
 - [ ] Every column has a `disposition`: `create` / `exists` / `label` / `skip` — and skipped columns carry a `reason`.
 - [ ] Exactly one column has `disposition: "label"` for a new entity (the auto-created label column: imported, never `create_field`), and no `field_name` targets an auto-generated column (`created_at`, `updated_at`, `label`) or the entity's primary key.
 - [ ] Every `create` column carries `title` and `format`, and no `field_order` unless the user asked for that column's position (the platform appends new fields in column order; a hand-picked value can tie with the label field at 20); `precision` on `number` columns; `enum_values` on confirmed enums; `input_type` per the review; `unique_value: true` on the column named by `natural_key` (the user's "mark unique" answer).

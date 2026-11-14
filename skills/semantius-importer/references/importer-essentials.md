@@ -66,7 +66,7 @@ bun "<skill-folder>/../use-semantius/references/call-file.ts" create_entity <run
 
 - `table_name` is **plural snake_case**. `module_id` is required and non-null. `singular_label`/`plural_label` are grammatically symmetric bare nouns ("Product"/"Products", never "Product Name").
 - **Auto-created on `create_entity`** — never `create_field` these: `id`, `label`, the `<label_column>` field, `created_at`, `updated_at`. `_label` and `<fk>_label` are read-time projections (absent from the fields catalog, never writable, never import targets). The computed `label` is likewise **not a PostgREST column**: `select=label` fails with `42703` (verified live) — to verify labels, select the `<label_column>` field instead.
-- The auto-created label field's `title` defaults to `singular_label`; when the CSV implies a better one ("Product Code"), follow up with `update_field` on that field's `title`.
+- `create_entity` titles the auto-created label field: the label column in words without the entity's singular at its start (`product_name` → "Name"; a column ending in `_number`, `_no`, `_id` or `_code` keeps it: "Product Code"). When the CSV implies a better title, pass it as `label_column_label` in the `create_entity` payload; no `update_field` follows (use-semantius `data-modeling.md` → "Customizing the label field's title").
 - **Never create or import into `users`** or other platform built-ins.
 
 ### Fields
