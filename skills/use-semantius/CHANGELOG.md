@@ -2,6 +2,15 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## The final response gives one total for sample data
+
+2026-11-14. Asked for by Martin Amm after a build whose final response listed the count of each table and then told what the records showed (states, wasted seats). The final response now says `Generated <n> sample records.` and nothing more about the records.
+
+- `seed-lib.ts --report`: after a complete seed, its last line gives the sample-data line itself, `Generated <n> sample record(s).` (singular for one record), with no count per table, and points to the `Look at` lines only when there are any. The total is the one read back from the host. A seed with records missing from the host still ends `Not finished`.
+- `build-module.md` → "Final response" and `seed-data.md` → "Report": the sample-data line is the one the report's last line gives, as written there; every line the report put under `Look at` still follows it. A stopped seed, the approval-gate statement and the `Look at` lines are unchanged.
+- `scripts/seed-lib.test.ts` covers the line for several records, for one record, and with and without a `Look at` line.
+- `flows.md` row 8.9 carries the change. Rows 8.1 to 8.10 were read again against the changed files, and a search of the whole file for sample-data wording found only rows 8.8 and 8.9 (row 8.8, the question before the build, still names the total and the tables) and row 4.29 (maintenance-mode modeler). The file format is unchanged; `version` stays `3.1`.
+
 ## A rule that reads a read-time label and an entity at the wrong write tier are refused
 
 2026-11-14. Asked for by Martin Amm after a run that built a recruiting module. Three label columns were filled by a hand-written `concat` over `<fk>_label`, so they stored the separators and little else, and a `catalog` entity was created at `:manage` and repaired by hand afterward. Both are now refused before anything is sent.

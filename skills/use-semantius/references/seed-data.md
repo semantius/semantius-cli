@@ -129,9 +129,9 @@ A record written straight into a state at or past an approval (`approved`, `orde
 
 ## Report
 
-Report sample data only from a command that ran through to the report, which prints `Report finished: <n> record(s) in <k> table(s) on the host.` Its last line says what comes next: after a complete seed, the final response itself, with no other message before it.
+Report sample data only from a command that ran through to the report, which prints `Report finished: <n> record(s) in <k> table(s) on the host.` Its last line says what comes next: after a complete seed, the final response itself, with no other message before it, and gives the sample-data line of that response.
 
-- State how many records each table holds, from its `✓ <table>: <n> records` lines.
+- State the total in the sentence the report's last line gives, `Generated <n> sample records.`, as it is written there. No count per table.
 - Name every line under `Look at`: a column that holds one value on every record, or records of the file that are not on the host.
 - A command that stopped before the report seeded nothing you can report as complete: say which step stopped, what it named, and which tables hold records.
 - Do not summarize the data's meaning: that is analytics, which is a separate request.

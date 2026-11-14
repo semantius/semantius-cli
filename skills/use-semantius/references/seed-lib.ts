@@ -563,6 +563,8 @@ export async function reportSeed(path: string): Promise<string> {
     notOnHost
       ? `Not finished: ${notOnHost} record(s) of the file are not on the host. Run the seed command again; send it as your next tool call.`
       : "This was the last step. Your next response is the final response itself: write it now. " +
+        `Its sample-data line is: "Generated ${total} sample record${total === 1 ? "" : "s"}." with no count per table` +
+        `${look.length ? ", followed by each line under Look at" : ""}. ` +
         "Any other message sent first (that the records are in, that the handover comes next) ends the turn before the user has the result.",
   );
   return out.join("\n");
