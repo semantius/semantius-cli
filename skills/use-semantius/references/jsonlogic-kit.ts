@@ -364,10 +364,8 @@ export function writeAccess(dir: string, access: AccessRecord): void {
 /**
  * Writes a new model's payloads into `dir` once `modelProblems` finds nothing: `entities.json` (or `entities-1.json`,
  * `entities-2.json`, … for an `is_a` / `has_a` family, one file per level, bases first), `fields.json`, with the
- * rollups after every other field and each field a `computed_fields` rule fills `disabled`, `labels.json` (the
- * `update_field` that sets each label column a rule fills to `disabled`) when there is one, `access.json` when the model
- * has an access record, and `relationships.json` when it has a relationship record. Throws, naming every problem, and
- * writes nothing otherwise.
+ * rollups after every other field, `access.json` when the model has an access record, and `relationships.json` when it
+ * has a relationship record. Throws, naming every problem, and writes nothing otherwise.
  */
 export function writeModel(dir: string, model: { entities: ReadonlyArray<any>; fields: ReadonlyArray<any>; access?: AccessRecord; relationships?: RelationshipRecord }): void {
   const problems = modelProblems(model.entities, model.fields, model.access, model.relationships);
@@ -391,20 +389,9 @@ export function writeModel(dir: string, model: { entities: ReadonlyArray<any>; f
     written.push(`${path} with create_entity`);
   }
   const isRollup = (f: any) => !!f?.rollup && typeof f.rollup === "object" && Object.keys(f.rollup).length > 0;
-  // A field a computed_fields rule fills is disabled: the platform leaves a required one required.
-  const filled = (table: string, field: string) => (model.entities.find((e) => e.table_name === table)?.computed_fields ?? [])
-    .some((c: any) => String(c?.name ?? "").split(".")[0] === field);
-  const fields = model.fields.map((f) => (filled(f.table_name, f.field_name) && f.input_type !== "hidden" ? { ...f, input_type: "disabled" } : f));
   const fieldsPath = join(dir, "fields.json");
-  writePayload(fieldsPath, { data: [...fields.filter((f) => !isRollup(f)), ...fields.filter(isRollup)] });
+  writePayload(fieldsPath, { data: [...model.fields.filter((f) => !isRollup(f)), ...model.fields.filter(isRollup)] });
   written.push(`${fieldsPath} with create_field`);
-  // create_entity makes the label field required, so a label a rule fills is disabled with update_field.
-  const labels = model.entities.filter((e) => e.label_column && filled(e.table_name, e.label_column)).map((e) => `${e.table_name}.${e.label_column}`);
-  if (labels.length) {
-    const labelsPath = join(dir, "labels.json");
-    writePayload(labelsPath, { id: labels, data: { input_type: "disabled" } });
-    written.push(`${labelsPath} with update_field`);
-  }
   if (model.access !== undefined) {
     const accessPath = join(dir, "access.json");
     writeFileSync(accessPath, `${JSON.stringify(model.access, null, 2)}\n`);

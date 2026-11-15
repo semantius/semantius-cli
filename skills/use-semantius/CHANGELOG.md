@@ -2,6 +2,15 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## `writeModel` leaves the input type of a computed or rollup field to the platform
+
+2026-11-15. Asked for by Martin Amm: the platform now sets the state of a field a `computed_fields` rule fills and of a rollup field itself, a `required` one included, including the label column that `create_entity` makes `required`. The rewrite to `disabled` and the extra `update_field` of the entry "A field a computed_fields rule fills is disabled" are no longer needed.
+
+- `jsonlogic-kit.ts` → `writeModel`: writes every field with the `input_type` the model declares, with no rewrite to `disabled`, and writes no `labels.json`. The send order is `entities`, then `fields`, then the access script.
+- `data-modeling.md` → "A payload with rules is built, not typed": the list of files `writeModel` writes no longer names `labels.json` or the `disabled` rewrite.
+- `scripts/jsonlogic-kit.test.ts`, `scripts/call-file.test.ts` and `scripts/terminology.test.ts` pass; none covered the rewrite.
+- `flows.md`: all 252 lines read again against the changed files. No row names `writeModel`, the send order, `labels.json` or a field's `input_type`, so no row changed. The file format is unchanged; `version` stays `3.1`.
+
 ## The final response gives one total for sample data
 
 2026-11-14. Asked for by Martin Amm after a build whose final response listed the count of each table and then told what the records showed (states, wasted seats). The final response now says `Generated <n> sample records.` and nothing more about the records.
