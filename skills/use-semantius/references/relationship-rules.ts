@@ -10,6 +10,11 @@
  *
  * A `parent` field needs an entry whose facts make it one, and that answers for the everyday person and each role of
  * the access record. A `reference` needs no proof: when the facts cannot tell, a field is a reference.
+ *
+ * `parentChainProblems` reads the fields alone, not the record: a chain of `parent` relationships holds at most
+ * three entities, and a longer one is refused with every entity and `parent` field in it. `otherParentProblems`
+ * names every other `parent` field when one is refused as a parent, so all of them are answered again.
+ * `cascadeProblems` refuses any delete mode but `restrict` on a `parent` child with a `workflow_state` of its own.
  */
 import type { AccessRecord } from "./access-rules";
 
@@ -38,6 +43,82 @@ export function referenceReasons(e: RelationshipEntry): string[] {
   for (const [person, how] of Object.entries(e.reachedBy)) if (how !== "parent" && how !== "never") out.push(`${person} reaches these records through "${how}" (question 3)`);
   if (e.citedByNumber) out.push("people cite one by its own number (question 3)");
   return out;
+}
+
+/** The most entities a chain of `parent` relationships holds: a parent, its child, and that child's child. */
+export const MAX_PARENT_CHAIN = 3;
+
+/**
+ * The chains of `parent` relationships with more than `MAX_PARENT_CHAIN` entities, one line each, naming every entity
+ * of the chain and every `parent` field in it. `fields` are the fields being written; `host` holds the `parent` fields
+ * read from the host, and a field of `fields` stands for the same field there. Only a chain with a field of `fields`
+ * in it is named. A `parent` field to its own table adds no entity, and a chain stops where it would come back to an
+ * entity it already holds.
+ */
+export function parentChainProblems(fields: ReadonlyArray<any>, host: ReadonlyArray<any> = []): string[] {
+  return longChains(fields, host).map(({ chain, between }) =>
+    `${chain.join(" → ")}: a chain of ${chain.length} entities, each a parent child of the one before. A chain holds at most ${MAX_PARENT_CHAIN}. Answer the three questions again for every parent field of the chain (${between.map(idOf).join(", ")}); each one that fails any of them is a reference (${SECTION})`);
+}
+
+const idOf = (f: { table_name: string; field_name: string }) => `${f.table_name}.${f.field_name}`;
+
+/** Each chain of more than `MAX_PARENT_CHAIN` entities with a field of `fields` in it: its entities from the top down, and the `parent` fields between them. */
+function longChains(fields: ReadonlyArray<any>, host: ReadonlyArray<any>): Array<{ chain: string[]; between: any[] }> {
+  const usable = (f: any) => f && typeof f.table_name === "string" && typeof f.field_name === "string";
+  const written = new Set(fields.filter(usable).map((f) => `${f.table_name}.${f.field_name}`));
+  const isParent = (f: any) => usable(f) && f.format === "parent" && typeof f.reference_table === "string" && f.reference_table !== f.table_name;
+  const own = fields.filter(isParent);
+  const all = [...own, ...host.filter((f) => isParent(f) && !written.has(`${f.table_name}.${f.field_name}`))];
+  const childrenOf = new Map<string, string[]>();
+  for (const f of all) {
+    const children = childrenOf.get(f.reference_table) ?? [];
+    if (!children.includes(f.table_name)) children.push(f.table_name);
+    childrenOf.set(f.reference_table, children);
+  }
+  const hasParent = new Set(all.map((f) => f.table_name));
+  const chains: string[][] = [];
+  const walk = (chain: string[]) => {
+    const next = (childrenOf.get(chain[chain.length - 1]) ?? []).filter((t) => !chain.includes(t));
+    if (!next.length) { if (chain.length > MAX_PARENT_CHAIN) chains.push(chain); return; }
+    for (const t of next) walk([...chain, t]);
+  };
+  for (const top of childrenOf.keys()) if (!hasParent.has(top)) walk([top]);
+  return chains
+    .map((chain) => ({ chain, between: chain.slice(1).flatMap((t, i) => all.filter((f) => f.table_name === t && f.reference_table === chain[i])) }))
+    .filter(({ between }) => between.some((f) => own.includes(f)));
+}
+
+/**
+ * The `parent` fields of an entity with a `workflow_state` of its own whose delete mode is not `restrict`. A cascade
+ * deletes the children with their parent without their own permission and rules, so a child with its own states is
+ * removed on its own. `host` holds fields read from the host: a `workflow_state` there counts for its table.
+ */
+export function cascadeProblems(fields: ReadonlyArray<any>, host: ReadonlyArray<any> = []): string[] {
+  const withStates = new Set([...fields, ...host].filter((f) => f && f.field_name === "workflow_state" && typeof f.table_name === "string").map((f) => f.table_name));
+  return fields
+    .filter((f) => f && f.format === "parent" && typeof f.table_name === "string" && typeof f.field_name === "string" && withStates.has(f.table_name) && f.reference_delete_mode !== "restrict")
+    .map((f) => `${idOf(f)}: ${f.table_name} has a workflow_state of its own, and a cascade deletes its records with their parent, without their own permission and rules. A parent child with its own states takes restrict: write "reference_delete_mode": "restrict" in the field and "delete": "restrict" in its entry of the relationship record (${SECTION})`);
+}
+
+/**
+ * One line that names every other `parent` field of `fields`, when a check refuses one of them as a parent: its
+ * entry's facts make it a reference, a role of the access record is limited to its entity (`limitedTo`), or it is in a
+ * chain of more than `MAX_PARENT_CHAIN` entities. A refusal is evidence about all of the answers, so each of the
+ * other `parent` fields is answered again. `scope` names what `fields` are in the line ("the model", "the payload").
+ */
+export function otherParentProblems(fields: ReadonlyArray<any>, record: unknown, access?: AccessRecord | null, host: ReadonlyArray<any> = [], scope = "the model"): string[] {
+  const parents = fields.filter((f) => f && typeof f.table_name === "string" && typeof f.field_name === "string" && f.format === "parent");
+  const rec = record && typeof record === "object" && !Array.isArray(record) ? (record as Record<string, any>) : {};
+  const roles = access && typeof access === "object" && access.roles && typeof access.roles === "object" ? Object.values(access.roles) : [];
+  const limited = new Set(roles.flatMap((r: any) => (r?.limitedTo && typeof r.limitedTo === "object" ? Object.keys(r.limitedTo) : [])));
+  const inChain = new Set(longChains(fields, host).flatMap(({ between }) => between.map(idOf)));
+  const refused = parents.filter((f) => {
+    const e = rec[idOf(f)];
+    return limited.has(f.table_name) || inChain.has(idOf(f)) || (!shapeOf(idOf(f), e).length && e.format === "parent" && referenceReasons(e).length > 0);
+  });
+  const others = parents.filter((f) => !refused.includes(f));
+  if (!refused.length || !others.length) return [];
+  return [`every other parent field of ${scope} (${others.map(idOf).join(", ")}): answer the three questions again for each, from how the leading products handle these records. ${refused.map(idOf).join(", ")} ${refused.length === 1 ? "was" : "were"} refused as a parent, which is evidence about all of the answers, not only about ${refused.length === 1 ? "that one" : "those"}; each field that fails any question is a reference (${SECTION})`];
 }
 
 /** The problems of one entry's shape; empty when every key has the type it needs. */

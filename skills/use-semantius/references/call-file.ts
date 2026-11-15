@@ -39,7 +39,12 @@
  *     `state`, `stage`, or `<the entity's singular>_status` / `_state` / `_stage`);
  *   - a `create_field` row with `format: parent` is refused unless `relationships.json` in the payload's
  *     folder, the relationship record, has its entry and that entry's facts make it a parent
- *     (`relationship-rules.ts`); a row whose entry there names another format is refused too.
+ *     (`relationship-rules.ts`); a row whose entry there names another format is refused too;
+ *   - a `create_field` row with `format: parent` that makes a chain of `parent` relationships with more
+ *     than three entities is refused, with the chain: the other `parent` fields are read from the host;
+ *   - when a `parent` row is refused as a parent, one line names every other `parent` row of the payload;
+ *   - a `parent` row without `reference_delete_mode: restrict` on an entity with a `workflow_state` of its own
+ *     is refused: the `workflow_state` is taken from the payload, and from the host when the payload lacks it.
  *
  * Usage:   bun call-file.ts [--check] [--raw] <tool> <file.json>
  *          --check validates the file (the permission read included) and sends nothing.
@@ -55,7 +60,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { coverageProblems, labelColumnProblems, lifecycleNameProblems, planAccess, type AccessRecord } from "./access-rules";
 import { checkedPermissions, closest } from "./permission-names";
-import { relationshipProblems } from "./relationship-rules";
+import { cascadeProblems, otherParentProblems, parentChainProblems, relationshipProblems } from "./relationship-rules";
 
 /** Sends the payload to the tool and returns the CLI's exit code; `raw` prints the CLI's own output, otherwise a one-line summary of it. */
 export type Send = (tool: string, payload: string, raw?: boolean) => Promise<number>;
@@ -69,6 +74,7 @@ export type ReadEntities = (tables: ReadonlyArray<string>) => Promise<EntityInfo
 export type ReadFields = (ids: ReadonlyArray<string>) => Promise<string[] | null>;
 /** The fields among `ids` (`<table_name>.<field_name>`) that exist on the host, with the relationship each holds; null when the read failed. */
 export type ReadFieldRefs = (ids: ReadonlyArray<string>) => Promise<FieldRef[] | null>;
+export type ReadParentFields = () => Promise<FieldRef[] | null>;
 /** The entities on the host whose `id_prefix` is one of `prefixes`; null when the read failed. */
 export type ReadPrefixes = (prefixes: ReadonlyArray<string>) => Promise<Array<{ table_name: string; id_prefix: string }> | null>;
 
@@ -634,6 +640,16 @@ const spawnReadFieldRefs: ReadFieldRefs = async (ids) => {
   try { return JSON.parse(out) as FieldRef[]; } catch { return null; }
 };
 
+const spawnReadParentFields: ReadParentFields = async () => {
+  const args = JSON.stringify({ filters: "format=eq.parent", select: "table_name,field_name,format,reference_table", limit: 10000 });
+  const proc = Bun.spawn(["semantius", "call", "crud", "read_field"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  proc.stdin.write(args);
+  proc.stdin.end();
+  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  if (code !== 0) return null;
+  try { return JSON.parse(out) as FieldRef[]; } catch { return null; }
+};
+
 const spawnReadPrefixes: ReadPrefixes = async (prefixes) => {
   const args = JSON.stringify({ filters: `id_prefix=in.(${prefixes.map(pgValue).join(",")})`, select: "table_name,id_prefix", limit: 1000 });
   const proc = Bun.spawn(["semantius", "call", "crud", "read_entity"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -689,9 +705,12 @@ export function lifecycleProblems(file: string, fields: ReadonlyArray<any>, tool
 /**
  * The relationship fields of a `create_field` payload checked against the relationship record, `relationships.json` in
  * the payload's folder (`writeModel` writes it), with the access record beside it for the people it names. A payload
- * with no `parent` field and no record passes.
+ * with no `parent` field and no record passes. `host` holds the `parent` fields read from the host: a chain of
+ * `parent` relationships is counted through them, and when a `parent` field is refused as a parent, every other
+ * `parent` field of the payload is named too. A `workflow_state` in `host` or in `fields` makes the `parent` fields of
+ * its entity take `restrict`.
  */
-export function relationshipFileProblems(file: string, fields: ReadonlyArray<any>): string[] {
+export function relationshipFileProblems(file: string, fields: ReadonlyArray<any>, host: ReadonlyArray<FieldRef> = []): string[] {
   const related = fields.filter((f) => f?.format === "parent" || f?.format === "reference");
   if (!related.length) return [];
   const path = join(dirname(file), "relationships.json");
@@ -704,7 +723,7 @@ export function relationshipFileProblems(file: string, fields: ReadonlyArray<any
   }
   let access: AccessRecord | null = null;
   try { access = JSON.parse(readFileSync(join(dirname(file), "access.json"), "utf8").replace(/^﻿/, "")); } catch { access = null; }
-  return relationshipProblems(related, record, access, path);
+  return [...relationshipProblems(related, record, access, path), ...parentChainProblems(related, host), ...otherParentProblems(related, record, access, host, "the payload"), ...cascadeProblems(fields, host)];
 }
 
 /** Runs the script and returns its exit code. */
@@ -712,7 +731,7 @@ export async function main(
   argv: string[], send: Send = spawnSend, printError: (line: string) => void = console.error,
   readPermissions: ReadPermissions = spawnRead, print: (line: string) => void = console.log,
   readEntities: ReadEntities = spawnReadEntities, readFields: ReadFields = spawnReadFields, readPrefixes: ReadPrefixes = spawnReadPrefixes,
-  readFieldRefs: ReadFieldRefs = spawnReadFieldRefs,
+  readFieldRefs: ReadFieldRefs = spawnReadFieldRefs, readParentFields: ReadParentFields = spawnReadParentFields,
 ): Promise<number> {
   // --check and --raw come first, in either order; the tool and the file follow.
   const afterFlags = argv.findIndex((a) => a !== "--check" && a !== "--raw");
@@ -786,7 +805,16 @@ export async function main(
   if (!refs) problems.push("the relationship fields its rollups read could not be read from the host, so their link_field was not checked; check the connection and run it again.");
   else problems.push(...rollupRelationshipProblems(fields, refs));
   problems.push(...lifecycleProblems(file, fields, tool));
-  if (tool === "create_field") problems.push(...relationshipFileProblems(file, created));
+  if (tool === "create_field") {
+    // A chain of parent relationships can run through fields the host already has: one read fetches them.
+    const hostParents = created.some((f) => f.format === "parent") ? await readParentFields() : [];
+    if (!hostParents) problems.push("the parent fields could not be read from the host, so the payload was not checked for a chain of parent relationships; check the connection and run it again.");
+    // A parent child with its own states takes restrict: a workflow_state the payload does not carry is read from the host.
+    const states = [...new Set(created.filter((f) => f.format === "parent" && f.reference_delete_mode !== "restrict").map((f) => `${f.table_name}.workflow_state`))].filter((id) => !written.has(id));
+    const hostStates = states.length ? await readFieldRefs(states) : [];
+    if (!hostStates) problems.push("the workflow_state fields could not be read from the host, so the delete mode of the parent fields was not checked; check the connection and run it again.");
+    problems.push(...relationshipFileProblems(file, created, [...(hostParents ?? []), ...(hostStates ?? [])]));
+  }
   if (tool === "create_entity") problems.push(...labelColumnProblems(entityItems(tool, payload)));
   let checked = 0;
   if (PERMISSION_TOOLS.has(tool)) {

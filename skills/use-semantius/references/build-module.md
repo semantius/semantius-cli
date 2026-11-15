@@ -55,7 +55,7 @@ Each field, entity and permission is then created under the rules that already g
       - `citedByNumber` (question 3): true when people cite one by its own number.
       - `label`: the label sentence of "Relationship labels". Rewrite any label whose sentence is not true.
 
-      The facts decide the format. A field is a `parent` only when `savedWithout` is false, everyone in `createdBy` is also in `parentWorkedBy`, every `reachedBy` is `"parent"` or `"never"`, and `citedByNumber` is false; otherwise it is a `reference`. `writeModel` and `call-file.ts` refuse a `parent` field with no entry, with an entry that leaves out the everyday person or a role, or with facts that make it a `reference`, and they refuse any field whose entry names another format or delete mode:
+      The facts decide the format. A field is a `parent` only when `savedWithout` is false, everyone in `createdBy` is also in `parentWorkedBy`, every `reachedBy` is `"parent"` or `"never"`, and `citedByNumber` is false; otherwise it is a `reference`. `writeModel` and `call-file.ts` refuse a `parent` field with no entry, with an entry that leaves out the everyday person or a role, or with facts that make it a `reference`, they refuse any field whose entry names another format or delete mode, and they refuse a chain of `parent` relationships with more than three entities:
       ```json
       {
         "order_lines.order_id": { "format": "parent", "delete": "cascade", "savedWithout": false, "createdBy": ["sales_rep"], "parentWorkedBy": ["sales_rep"], "reachedBy": { "sales_rep": "parent" }, "citedByNumber": false, "label": "Order contains Order Line" },
@@ -95,7 +95,7 @@ The list and its choice go in one message with no tool call, which ends the turn
   6. A role that does only part of the work (a requester, a technician, an interviewer: it writes only some entities and, where the products limit it, sees only the records that name it) is no gate role and never gets `<slug>:manage` (`rbac.md` → "Roles that do part of the work").
   7. `approved`, `signed`, `issued`, `released`, `posted`, `committed`, `hired`, and `void` or `terminated` on a financial or contractual record are where the role usually changes. They are examples, not the test: the test is who takes the step.
 - **Close the message with the choice, as plain text.**
-  - With more than 4 new entities: the line "How should I design the \<Module\>?", then two options, each its own paragraph with a blank line before it and each naming its entities by plural label: A, with all of them (recommended), and B, with only the core ones. Then the line "Reply with a letter, or tell me what to add, drop or rename." The count in each option is the number of entities it names.
+  - With more than 4 new entities: the line "How should I design the \<Module\>?", then two options, each its own paragraph with a blank line before it and each naming its entities by plural label: A, with all of them (recommended), and B, with only the core ones. Then the line "Reply with A or B, or tell me what to add, drop or rename." The count in each option is the number of entities it names.
   - With 4 or fewer: one line, "Build the \<Module\> with these \<N\> entities? Reply yes, or tell me what to add, drop or rename."
 
   > How should I design the Vendor Tracker?
@@ -104,7 +104,7 @@ The list and its choice go in one message with no tool call, which ends the turn
   >
   > B. With the core 4: Vendors, Contracts, Renewals, Invoices.
   >
-  > Reply with a letter, or tell me what to add, drop or rename.
+  > Reply with A or B, or tell me what to add, drop or rename.
 - A reply that changes the list gets the changed list and its choice again, in the same kind of message.
 - The confirmed list is the build scope. Entities left out go under next steps in the final response.
 - With no answer (a non-interactive run, or no reply), the list is still shown before the first write. Build the four most central entities, or all of them when there are fewer, and list the rest as next steps. An entity left out by an unanswered similar-name match stays out. The gates and roles worked out for the entities built go in the access record; a left-out entity's gate is listed with it among the next steps.

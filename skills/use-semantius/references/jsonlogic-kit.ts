@@ -25,7 +25,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { coverageProblems, labelColumnProblems, lifecycleNameProblems, lifecyclesOf, planAccess, shapeProblems, type AccessRecord } from "./access-rules";
 import { FIELD_FORMATS as FORMATS, fieldProblems, iconProblems, keyProblems, labelReadProblems, madeFieldProblems, rollupRelationshipProblems, writeTierProblems, type EntityInfo } from "./call-file";
-import { relationshipProblems, type RelationshipRecord } from "./relationship-rules";
+import { cascadeProblems, otherParentProblems, parentChainProblems, relationshipProblems, type RelationshipRecord } from "./relationship-rules";
 
 export type Logic = unknown;
 
@@ -269,7 +269,10 @@ const NO_EMPTY_VALUE = new Set(["boolean", "integer", "int32", "int64", "number"
  * - an entity whose `edit_permission` is not the write tier of its class (`catalog` at `:admin`, an operational class at `:manage`);
  * - a `workflow_state` whose states the access record does not cover, and every problem of the record itself;
  * - a `parent` field without an entry in the relationship record whose facts make it a parent, an entry whose format
- *   is not its field's, and every other problem of that record (`relationship-rules.ts`).
+ *   is not its field's, and every other problem of that record (`relationship-rules.ts`);
+ * - a chain of `parent` relationships with more than three entities;
+ * - every other `parent` field, in one line, when one is refused as a parent;
+ * - a `parent` field without `restrict` on an entity with a `workflow_state` of its own.
  * A field whose entity is not in `entities` is checked by `call-file.ts` alone, except against the relationship record.
  */
 export function modelProblems(entities: ReadonlyArray<any>, fields: ReadonlyArray<any>, access?: AccessRecord, relationships?: RelationshipRecord): string[] {
@@ -310,6 +313,7 @@ export function modelProblems(entities: ReadonlyArray<any>, fields: ReadonlyArra
   out.push(...entityPermissionProblems(entities), ...writeTierProblems(entities));
   out.push(...accessProblems(entities, fields, access));
   out.push(...relationshipProblems(fields, relationships, access, "relationships (writeModel)"));
+  out.push(...parentChainProblems(fields), ...otherParentProblems(fields, relationships, access), ...cascadeProblems(fields));
   return out;
 }
 

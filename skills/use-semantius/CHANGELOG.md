@@ -2,6 +2,49 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## A parent child with its own states takes restrict
+
+2026-11-15. Asked for by Martin Amm, after the agency build of the two entries below: its five wrong `parent` fields all carried `cascade`, so deleting an account or a job would have deleted estimates, tasks and time entries, records with their own states, without their own permission and rules. Until now the delete mode was the builder's judgment and no script checked it. Compared before the decision: Salesforce always cascades a master-detail and restores the records from its Recycle Bin; ServiceNow sets a delete rule per reference field.
+
+- `relationship-rules.ts`: new `cascadeProblems`. A `parent` field of an entity that has a `workflow_state` of its own is refused unless its `reference_delete_mode` is `restrict`; `cascade`, `clear` and no delete mode are all refused. It reads the fields, has no `because`, and names the two places to write `restrict`: the field and its entry in the relationship record.
+- `jsonlogic-kit.ts`: `modelProblems`, and so `writeModel`, runs it on the model's fields.
+- `call-file.ts`: `relationshipFileProblems` runs it on the payload. A `workflow_state` the payload does not carry is read from the host with the reader the rollup check already uses; a failed read refuses the payload.
+- `data-modeling.md` → "Choosing the Right Format", the `cascade` bullet: one sentence with the rule. `review-module.md` → "Relationships": the delete-mode row names it.
+- Tests: `scripts/relationship-rules.test.ts`, `scripts/jsonlogic-kit.test.ts`, `scripts/call-file.test.ts`.
+- `flows.md`: all 252 lines read again against the changed files. No row changes: the rule adds no question and no step. The file format is unchanged; `version` stays `3.1`.
+
+A correct `parent` whose parts have states can no longer be deleted in one step: each part is removed first, through its own permission.
+
+## A refused parent names every other parent field; containment is not the test
+
+2026-11-15. Asked for by Martin Amm, after the agency build of the entry below: when one of its `parent` fields was refused, the builder changed that field and sent the rest as they were, and the three questions had been answered from where each record sits in the products' screens.
+
+- `relationship-rules.ts`: new `otherParentProblems`. When a `parent` field is refused as a parent (its entry's facts make it a `reference`, a role is limited to its entity with `limitedTo`, or it is in a chain of more than three entities), one line names every other `parent` field and asks for the three questions to be answered again for each. `jsonlogic-kit.ts` (`modelProblems`) runs it on the model; `call-file.ts` (`relationshipFileProblems`) on the payload.
+- `data-modeling.md` → "Choosing the Right Format": a paragraph that containment is not the test, and a sentence on the line above.
+- `review-module.md` → "Relationships": a row for a chain of `parent` relationships with more than three entities.
+- Tests: `scripts/relationship-rules.test.ts`, `scripts/jsonlogic-kit.test.ts`, `scripts/call-file.test.ts`.
+- `flows.md`: all 252 lines read again against the changed files. No row changes: nothing here adds a question or a step, and row 9.2 describes the review report's sections, not each row it verifies. The file format is unchanged; `version` stays `3.1`.
+
+## A chain of parent relationships holds at most three entities
+
+2026-11-15. Asked for by Martin Amm, after an agency build made seven relationships `parent`, five of them against the three questions, in a chain four entities deep (client accounts, client jobs, media plans, media placements). The checks passed it: they compare the builder's own answers in the relationship record with the format it chose, and those answers were written to fit. When one field was refused, the builder changed that field alone. The limit follows Salesforce's master, detail and subdetail.
+
+- `relationship-rules.ts`: new `parentChainProblems` and `MAX_PARENT_CHAIN` (3). The check reads the `parent` fields, never the relationship record, and has no `because`. A chain of more than three entities is refused in one line that names every entity and every `parent` field of the chain and asks for the three questions to be answered again for each of them. A junction counts like any other entity; a `parent` field to its own table adds none.
+- `jsonlogic-kit.ts`: `modelProblems`, and so `writeModel`, runs the check on the model's fields.
+- `call-file.ts`: a `create_field` payload with a `parent` field reads the host's `parent` fields in one `read_field` call, so a chain that runs through existing fields is found. Only a chain with a field of the payload in it is refused; a failed read refuses the payload.
+- `data-modeling.md` → "Choosing the Right Format": one paragraph with the rule. `build-module.md` → step 5.6 names the refusal.
+- Tests: `scripts/relationship-rules.test.ts`, `scripts/jsonlogic-kit.test.ts`, `scripts/call-file.test.ts`.
+- `flows.md`: all 252 lines read again against the changed files. No row changes: the rule adds no question and no step, and no row describes what `writeModel` or `call-file.ts` refuse in a relationship. The file format is unchanged; `version` stays `3.1`.
+
+With the cheapest fix (one field of the chain becomes a `reference`), the rule leaves four of that build's five wrong relationships in place: a `parent` child one entity under its parent forms no long chain.
+
+## The entity-list choice names its letters
+
+2026-11-15. Asked for by Martin Amm: the closing line of the entity-list message said "Reply with a letter" without saying which letters can be given.
+
+- `build-module.md` → "Confirm the entity list": with more than 4 new entities, the closing line is "Reply with A or B, or tell me what to add, drop or rename.", in the rule and in its sample.
+- `flows.md`: all 252 lines read again against the changed file. Row 8.7 quotes the new line; no other row quotes it. The file format is unchanged; `version` stays `3.1`.
+
 ## `writeModel` leaves the input type of a computed or rollup field to the platform
 
 2026-11-15. Asked for by Martin Amm: the platform now sets the state of a field a `computed_fields` rule fills and of a rollup field itself, a `required` one included, including the label column that `create_entity` makes `required`. The rewrite to `disabled` and the extra `update_field` of the entry "A field a computed_fields rule fills is disabled" are no longer needed.
