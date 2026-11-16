@@ -81,7 +81,7 @@ export const instructions = `   ---
    2. **References over raw IDs** – Use \`reference_table\` + \`reference_delete_mode\` for relationships
    3. **Security by default** – Set \`view_permission\` and \`edit_permission\` deliberately on new entities (the defaults are \`public:read\` and \`admin\`)
    4. **Additive changes first** – Prefer adding over deleting/renaming unless impact is understood
-   5. **Validate before runtime** – Ensure one PK field (\`is_pk=true\`; a second one is refused with \`90215\`) and one label field (\`ctype='label'\`) per entity
+   5. **Validate before runtime** – Ensure one PK field (\`is_pk=true\`; a second one is refused with \`90215\`) and one label field (\`ctype\` \`label\`, or \`computed_label\` when a rule writes it) per entity
    6. **Never create auto-generated fields** – When creating an entity, the system automatically creates \`id\`, the field named in \`label_column\` (the entity's label field), \`created_at\` and \`updated_at\`. Do **not** call \`create_field\` for any of these.
    7. **Every entity needs a module** – Always assign a \`module_id\`. If no suitable module exists, create one first (see Module Workflow below).
    8. **Modules need baseline permissions** – By convention every new module has at least \`<module>:read\` and \`<module>:manage\` permissions.
@@ -143,7 +143,7 @@ export const instructions = `   ---
    2. **Resolve permissions** – Use \`read_permission\` to find suitable \`view_permission\` and \`edit_permission\`. Use module-level permissions (e.g., \`crm:read\`, \`crm:manage\`) or create entity-specific ones if needed.
 
    3. **Create the entity** with:
-      - \`table_name\` (lowercase, snake_case, **always plural**; e.g., \`customers\`, \`categories\`; never ending in \`_ext\`, which is reserved) — renaming is high-risk: breaks all references
+      - \`table_name\` (lowercase, snake_case, **always plural**; e.g., \`customers\`, \`categories\`; never starting with \`_\`, which marks an internal table (\`90271\`), never ending in \`_ext\`, which is reserved, and at most 41 bytes (\`90273\`)) — renaming is high-risk: breaks all references. A table rename rewrites only the entity argument of \`set_record\` in the rules of other entities; anything else in a rule that spells the old name stays.
       - \`singular\` – optional; derived from \`table_name\` when blank (\`services\` becomes \`service\`, \`cities\` becomes \`city\`)
       - \`singular_label\` – human-readable singular noun (e.g., "Service", "Company"), symmetric with \`plural_label\`. Pass it: when blank it is derived from \`singular\` (\`service\` becomes "Service"), which is wrong whenever \`singular\` is. It does not set the title of the label field: that is \`label_column_label\`.
       - \`plural\` – do not pass it: the platform always sets it to \`table_name\`
@@ -159,7 +159,7 @@ export const instructions = `   ---
       - Optional: \`cube_mode\` — OLAP cube generation: \`auto\` (default, include in cube) or \`disabled\`
       - \`audit_log\`: Optional boolean, default \`false\`. When \`true\`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value.
       - Optional: \`managed\` — When \`false\`, automatic DDL execution is disabled for this entity. Leave unset (defaults to \`true\`) for normal entities where Semantius manages the database schema. Set to \`false\` only for external or legacy tables where DDL is managed outside the platform.
-      - Optional: \`order_column\` — Enable fixed, user-defined row ordering (e.g. drag-and-drop) by naming the snake_case field that stores the sort position. The platform provisions that INTEGER column and, when an insert sends no value, assigns the highest value below 900000 plus 10 (10 for the first record). Leave unset (default \`''\`) unless the user wants records to keep a manual order rather than a natural/sorted one.
+      - Optional: \`order_column\` — Enable fixed, user-defined row ordering (e.g. drag-and-drop) by naming the snake_case field that stores the sort position. The platform provisions that INTEGER column and, when an insert sends no value, assigns the highest value below 900000 plus 10 (10 for the first record). The name must be one the table does not already have, as a field or a system column (\`90278\`): the column belongs to the platform, and clearing \`order_column\` drops it with its data. Leave unset (default \`''\`) unless the user wants records to keep a manual order rather than a natural/sorted one.
       - Optional: \`id_type\` — the key type of the table. **Chosen once on create and locked afterwards** (an update that changes it fails with \`90233\`), so decide before creating:
         - \`auto_increment\` (default, leave it unset): a 64-bit number the database assigns. Right for almost every entity.
         - \`uuid\`: a time-ordered UUIDv7 the database assigns. Use when ids must be unguessable or created by several systems without coordination.
@@ -182,7 +182,7 @@ export const instructions = `   ---
 
       > ℹ️ \`searchable\` and \`is_child\` on the entity are **read-only** and computed automatically (\`searchable\` when any field has \`searchable: true\`; \`is_child\` when any field uses \`format: "parent"\` — for an \`is_a\` or \`has_a\` entity, a field of its base's levels counts too). Never set these manually.
 
-      > ℹ️ **There is no \`is_nullable\` field: nullability follows \`format\`.** Only \`reference\`, \`date\` and \`date-time\` allow NULL. \`default_value\` is optional and may be set; when it is blank, a NOT NULL column gets the zero value of its type (see *Nullability and Default Values*).
+      > ℹ️ **There is no \`is_nullable\` field: nullability follows \`format\`.** Only \`reference\`, \`date\`, \`time\`, \`date-time\` and \`uuid\` allow NULL. \`default_value\` is optional and may be set; when it is blank, a NOT NULL column gets the zero value of its type (see *Nullability and Default Values*).
 
    4. **Add domain fields** based on user requirements (see Field Format Quick Reference below). Pass all fields of the entity to a single \`create_field\` call as an array in \`data\`.
       - Omit \`field_order\`: the platform appends each new field after the entity's existing ones in array order. A hand-picked value can sit above the label field's 20 or tie with a neighbor; values from 900000 up are outside the automatic numbering.
@@ -316,7 +316,7 @@ export const instructions = `   ---
 
    **Saving \`computed_fields\` recalculates existing records.** A validation rule added later is not applied retroactively; it checks later writes only. Adding or changing \`computed_fields\` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with \`90908\`, whose \`record_id\` and \`problem\` say why. The pass moves no \`updated_at\` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps \`\$user_id\` or \`\$now\` unconditionally moves on this pass, as on any update; make such a stamp insert-only: \`{"if": [{"==": [{"var": "\$mode"}, "insert"]}, {"var": "\$user_id"}, {"var": "\$old.created_by"}]}\`. Removing a rule keeps the last values as ordinary data.
 
-   **Derived marker.** A field a rule names gets \`ctype: "computed"\`, and its \`input_type\` \`default\` or \`readonly\` becomes \`disabled\` (and stays \`disabled\` when the rule goes). The label column keeps \`ctype: "label"\`. Rules match fields by name and a rename does not rewrite them, so a renamed field loses the marker: update the rule too. A rule cannot name a rollup field (\`90907\`), and a computed field cannot become a rollup (\`90261\`).
+   **Derived marker.** A field a rule names gets \`ctype: "computed"\`; the label column gets \`ctype: "computed_label"\` instead and keeps the label's protection. \`input_type\` stays as you set it: the rule overwrites whatever a form submits, and a client shows a visible \`computed\` or \`computed_label\` field disabled because of its \`ctype\`. The marker goes when no rule names the field. Rules match fields by name and a rename does not rewrite them, so **a field that a rule names cannot be renamed** (\`90275\`, and the error names the rule): change the rule first, then rename. A field renamed onto a name a rule writes gets the marker. A rule cannot name a rollup field (\`90907\`), and a computed field cannot become a rollup (\`90261\`).
 
    #### \`computed_fields\` element shape
 
@@ -396,6 +396,11 @@ export const instructions = `   ---
 
    If \`evaluate_json_logic\` itself throws, the raised error must include the offending entry's \`name\` (for computed fields) or \`code\` (for validation rules) together with the inner error.
 
+   #### Checks on save and arithmetic
+
+   - **Rules are checked when they are saved.** A \`computed_fields\` entry, validation rule, \`select_rule\` or \`input_type_rule\` that names an operator the evaluator does not implement is refused (\`90909\`, which names the rule and the operator), wherever in the rule it stands. A validation rule or \`select_rule\` must be **one** JsonLogic operation, an object with exactly one key: a literal such as \`true\`, or an object with several keys, is refused (\`90919\`), because the evaluator would read it as a truthy value that passes every record. A computed field may be a literal. The check runs on every save of the entity, so an entity that already stores such a rule cannot be saved again until the rule is put right.
+   - **Arithmetic has to have a finite result.** \`+\`, \`-\`, \`*\`, \`/\`, \`%\`, \`max\` and \`min\` over text that carries no number, \`/\` or \`%\` with a zero divisor, and any result of Infinity or NaN raise \`90920\`; \`null\` and \`""\` count as 0. Guard a divisor as the \`rice_score\` sample does.
+
    #### Reserved variables
 
    JsonLogic expressions may read these injected variables via \`{"var": "\$name"}\`:
@@ -453,12 +458,12 @@ export const instructions = `   ---
    }
    \`\`\`
 
-   - Omit \`ctype\`: it becomes \`rollup\` by itself. Omit \`precision\` too: it is copied from a \`number\` value field.
-   - \`input_type\` \`default\` and \`readonly\` become \`disabled\`; \`hidden\` stays.
+   - Omit \`ctype\`: it becomes \`rollup\` by itself. Omit \`precision\` too: it is copied from a \`number\` value field when the rollup is saved (see *\`precision\` Values*).
+   - \`input_type\` stays as you set it: the database overwrites whatever a form submits, and a client shows a visible rollup field disabled because of its \`ctype\`.
    - \`required\`, \`searchable\` and \`unique_value\` are refused (\`90261\`), and so is a definition on a key, a core field, a \`reference\` or \`parent\` field, or a field a \`computed_fields\` rule names.
    - Neither side can be an \`is_a\` or \`has_a\` entity (\`90249\`). On an unmanaged entity the definition is kept as metadata, and takes effect once both sides are managed.
 
-   **The filter** is compiled to SQL, so only this subset is accepted: \`and\`, \`or\`, \`!\`, \`!!\`, \`==\`, \`===\`, \`!=\`, \`!==\`, \`<\`, \`<=\`, \`>\`, \`>=\`, \`in\` with a non-empty list of literals, literals, and \`var\` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and \`<\` and \`<=\` take three operands). Everything else is refused on save (\`90265\`, and the error names it): other operators such as \`if\`, arithmetic, \`cat\` and \`missing\`, the variables \`\$user_id\`, \`\$now\` and \`\$today\`, dotted paths, and a \`var\` with a default. \`==\` and \`!=\` treat \`null\` as a value; an ordering comparison with a NULL column excludes the record. The date operators (\`date_add\`, \`date_diff\`, \`date_part\`, \`date_trunc\`, \`to_date\`, \`date_format\`) can be used as values: their date is a date or date-time column, an ISO 8601 literal or another date operator, and their unit, part or pattern is a literal. A date literal compared with a date or date-time column must be ISO 8601 and is read in UTC.
+   **The filter** is compiled to SQL, so only this subset is accepted: \`and\`, \`or\`, \`!\`, \`!!\`, \`==\`, \`===\`, \`!=\`, \`!==\`, \`<\`, \`<=\`, \`>\`, \`>=\`, \`in\` with a non-empty list of literals, literals, and \`var\` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and \`<\` and \`<=\` take three operands). Everything else is refused on save (\`90265\`, and the error names it): other operators such as \`if\`, arithmetic, \`cat\` and \`missing\`, the variables \`\$user_id\`, \`\$now\` and \`\$today\`, dotted paths, and a \`var\` with a default. \`==\` and \`!=\` treat \`null\` as a value; an ordering comparison with a NULL column excludes the record. \`===\` and \`!==\` between a column and a literal of another JSON type (\`{"===": [{"var": "qty"}, "5"]}\`) are refused (\`90265\`). Text is ordered by code point (\`"B" < "a"\`), not by the column's collation, and a literal number is compared with a \`number\` column as written, not rounded to the column's decimals. The date operators (\`date_add\`, \`date_diff\`, \`date_part\`, \`date_trunc\`, \`to_date\`, \`date_format\`) can be used as values: their date is a date or date-time column, an ISO 8601 literal or another date operator, and their unit, part or pattern is a literal. A date literal compared with a date or date-time column must be ISO 8601 and is read in UTC.
 
    **How it behaves:**
    - The value cannot be written by hand. On create it starts as the empty aggregate, and on update a changed value is recomputed, with no error. Change the child records instead.
@@ -472,7 +477,7 @@ export const instructions = `   ---
    **Changing and removing:**
    - Saving a new or changed definition recalculates the records whose value differs. This is not an edit: no \`updated_at\`, audit row, queue message or RACI event, on this entity or any rollup parent above it. Those tables take no other writes until the save commits, so warn the user before doing this on a busy table.
    - A definition that needs another column type (\`sum(amount)\` to \`max(ship_date)\`) is a format change (\`90223\`): drop and recreate the field.
-   - \`rollup: {}\` removes the definition. The field stays with its last values as ordinary data, \`ctype\` clears, and \`input_type\` stays \`disabled\` until you change it.
+   - \`rollup: {}\` removes the definition. The field stays with its last values as ordinary data, \`ctype\` clears, and the field becomes editable again with the \`input_type\` it has.
    - Renames of the tables and fields a definition names are followed automatically.
    - The \`link_field\`, the value field and the child entity cannot be deleted while another entity's rollup depends on them (\`90266\`, which names the rollups), unless the same module delete removes both sides. The rollup field itself is deleted like any other field.
    - Find rollups with \`read_field(filters: "ctype=eq.rollup")\`. \`get_schema\` shows \`ctype: "rollup"\`, \`is_core: false\` and the definition under \`rollup\`.
@@ -489,6 +494,7 @@ export const instructions = `   ---
    - **Trigger lifecycle:** When \`select_rule\` is non-empty, the platform generates the SELECT, UPDATE and DELETE policies of the table. When the rule is cleared (back to \`{}\`) the default \`view_permission\` policies replace them; when the entity is deleted they are dropped.
    - **Reserved variables:** only \`\$today\`, \`\$now\` and \`\$user_id\`; there is no \`\$old\` and no \`\$mode\` on a read. \`\$user_id\` is the typical anchor for ownership checks.
    - **Use sparingly:** Per-row evaluation runs on every read, so keep the JsonLogic simple — prefer direct comparisons to columns and reserved variables over deep traversals. \`set_record\` (cross-entity lookup) works here but runs an extra SELECT per row of every read.
+   - **Checked on save:** a rule that names an unknown operator (\`90909\`) or is not a single operation, such as \`true\` (\`90919\`), is refused when the entity is saved (see *Checks on save and arithmetic*).
    - **Broaden with \`has_permission\`, not \`require_permission\`:** \`has_permission\` returns a boolean and composes with \`or\` (\`{"or": [<own rows>, {"has_permission": "<code>"}]}\`); \`require_permission\` throws on a miss, and a rule that throws hides the row.
 
    Sample (a row is visible if its \`owner_id\` matches the current user, or its \`visibility\` column is \`public\`):
@@ -510,7 +516,7 @@ export const instructions = `   ---
 
    - **Return type:** \`input_type_rule\` MUST evaluate to one of the valid \`input_type\` enum values: \`"default"\`, \`"required"\`, \`"readonly"\`, \`"disabled"\`, \`"hidden"\`. The returned value replaces the static \`input_type\` for that record.
    - **Evaluated client-side** against the current form record; reserved variables (\`\$today\`, \`\$now\`, \`\$user_id\`) are available where relevant.
-   - **Falls back** to the static \`input_type\` when the rule is empty (\`{}\`) or evaluates to something other than a valid enum value. No server code evaluates it, so it never blocks a write.
+   - **Falls back** to the static \`input_type\` when the rule is empty (\`{}\`) or evaluates to something other than a valid enum value. No server code evaluates it, so it never blocks a record write. Saving the field does check it: a rule that names an unknown operator is refused (\`90909\`, rule name \`<field>.input_type_rule\`).
    - **A non-empty rule removes the database \`required\` check** of the field (the rule can turn \`required\` off per record), so \`required\` is then enforced by the client only.
 
    Sample (an \`approved_at\` field is \`readonly\` once \`status\` is \`approved\`, otherwise standard \`default\`):
@@ -665,10 +671,11 @@ export const instructions = `   ---
    - Adding an \`input_type_rule\` to a \`required\` field (the database stops enforcing \`required\` for it)
    - Adding \`unique_value: true\` to an existing field (will fail if duplicate values exist — suggest deduplication first)
    - Adding or changing a \`rollup\` definition or \`computed_fields\` (recalculates existing records with no audit row; the tables written take no other writes until the save commits)
+   - Changing the \`precision\` of a \`number\` field (alters the column: lowering it rounds the stored values, and any change of scale rewrites the table under an exclusive lock)
    - These may affect existing data or access patterns
 
    ### 🛑 High-Risk Changes (require explicit user confirmation)
-   - Renaming \`table_name\` or \`field_name\` (breaks all references)
+   - Renaming \`table_name\` or \`field_name\` (breaks all references). A field rename is refused while a rule names the field (\`90275\`): a \`computed_fields\` entry, validation rule or \`select_rule\` of the entity, an \`input_type_rule\` of its fields, or one of those rules of an \`is_a\`/\`has_a\` entity below it; the error names the rule to change first. A rename that would give the field's index a name another table's index carries is refused (\`90274\`), and so is a name that is too long (\`90276\`, see *Naming rules*)
    - Deleting entities or fields (permanent data loss)
    - Removing permissions still in use by roles
    - Changing primary key fields (\`id_type\` cannot change at all; a record's key value cannot change either, the update fails with \`90236\`)
@@ -697,7 +704,7 @@ export const instructions = `   ---
    ### Fields not displaying correctly
 
    **Check:**
-   - Entity has \`label_column\` set and it matches a real field with \`ctype='label'\`
+   - Entity has \`label_column\` set and it matches a real field with \`ctype\` \`label\` (or \`computed_label\`)
    - Fields have appropriate \`width\` (see Field Format Quick Reference)
    - Fields have proper \`field_order\` for display sequence
    - \`input_type\` is appropriate for the use case (see Field Format Quick Reference)
@@ -708,7 +715,7 @@ export const instructions = `   ---
 
    Choose the appropriate \`format\` when creating fields:
 
-   > ⚠️ \`format\` can be changed on a managed entity only to a format with the same physical database type (e.g. \`text\` → \`email\` is safe, both are TEXT; \`text\` → \`number\` is refused with \`90223\`: drop and recreate the field). A reference takes the type of the key it points at, so \`text\` → \`reference\` of a TEXT-keyed entity is allowed. Planning such a change with the user is high-risk work.
+   > ⚠️ \`format\` can be changed on a managed entity only to a format with the same physical database type (e.g. \`text\` → \`email\` is safe, both are TEXT; \`text\` → \`number\` is refused with \`90223\`: drop and recreate the field). A reference takes the type of the key it points at, so \`text\` → \`reference\` of a TEXT-keyed entity is allowed. A field that its entity names as \`label_parent\` cannot leave \`reference\` or \`parent\` (\`90277\`): clear \`label_parent\` first. Planning such a change with the user is high-risk work.
 
    | Category | Values |
    |----------|--------|
@@ -731,7 +738,7 @@ export const instructions = `   ---
 
    ### Nullability and Default Values
 
-   > ℹ️ **There is no \`is_nullable\` field: nullability follows \`format\`.** \`default_value\` is optional and may be set. When it is blank, a NOT NULL column gets the zero value shown in the table, and a format with no zero value gets no default, so every insert must send a value.
+   > ℹ️ **There is no \`is_nullable\` field: nullability follows \`format\`.** \`default_value\` is optional and may be set. When it is blank, a NOT NULL column gets the zero value shown in the table and a nullable column stays NULL. \`parent\` is the one NOT NULL format with no default, so every insert must send it.
 
    | Format(s) | PostgreSQL type | Auto default | Nullable? |
    |-----------|-----------------|--------------|-----------|
@@ -745,12 +752,12 @@ export const instructions = `   ---
    | \`boolean\` | BOOLEAN | \`FALSE\` | NOT NULL |
    | \`json\`, \`jsonlogic\`, \`object\` | JSONB | \`'{}'\` | NOT NULL |
    | \`array\` | JSONB | \`'[]'\` | NOT NULL |
-   | \`uuid\` | UUID | none (no zero value) | NOT NULL |
-   | \`time\` | TIME | none (no zero value) | NOT NULL |
-   | \`duration\` | INTERVAL | none (no zero value) | NOT NULL |
-   | \`binary\` | BYTEA | none (no zero value) | NOT NULL |
+   | \`duration\` | INTERVAL | \`'0'\` (no time) | NOT NULL |
+   | \`binary\` | BYTEA | \`''\` (no bytes) | NOT NULL |
    | \`date-time\` | TIMESTAMPTZ | none | NULL allowed |
    | \`date\` | DATE | none | NULL allowed |
+   | \`time\` | TIME | none | NULL allowed |
+   | \`uuid\` | UUID | none | NULL allowed |
    | \`reference\` | FK, type of the referenced entity's key (BIGINT for \`auto_increment\`/\`bigint\`, TEXT, UUID, or the TypeID domain) | none | NULL allowed |
    | \`parent\` | FK, type of the referenced entity's key (as for \`reference\`) | none | NOT NULL |
 
@@ -793,16 +800,16 @@ export const instructions = `   ---
    | \`disabled\` | Shown greyed out, not editable, and not submitted by a form |
    | \`hidden\` | Not shown in forms at all |
 
-   On a rollup or computed field, \`default\` and \`readonly\` become \`disabled\` automatically, because a form must not submit a derived value.
+   A rollup, computed or computed label field keeps the \`input_type\` you set. The database writes its value and overwrites whatever a form submits, and a client shows a visible derived field disabled because of its \`ctype\`.
 
    **\`required\` is enforced for every writer, not only forms.** A write that leaves a required field missing fails with error \`90258\`. Missing means:
 
-   - \`NULL\` for \`reference\`, \`date\` and \`date-time\`
+   - \`NULL\` for \`reference\`, \`date\`, \`time\`, \`date-time\` and \`uuid\`
    - blank or whitespace-only text, and an empty \`enum\`
    - JSON \`{}\`, \`[]\`, \`null\` or \`""\`
    - an empty \`binary\`, and a \`rating\` of \`0\`
 
-   Numbers and booleans have no missing value, so \`0\` and \`false\` are accepted. A field with an \`input_type_rule\` is not enforced by the database, because the rule can turn \`required\` off per record.
+   Numbers, booleans and durations have no missing value, so \`0\`, \`false\` and a zero duration are accepted. A field with an \`input_type_rule\` is not enforced by the database, because the rule can turn \`required\` off per record.
 
    - **Existing rows:** a row that already lacks a required value stays readable; its UPDATE fails until the value is filled in.
    - **Populated tables:** adding a required field with no real \`default_value\` to a table with rows fails with \`90259\`, and so does changing a field to \`required\` while rows have no value for it. Add the field as \`default\`, backfill it, then change it to \`required\`.
@@ -854,6 +861,8 @@ export const instructions = `   ---
 
    > ℹ️ Only set \`precision\` when the default of 2 is not appropriate. Omit it for most fields.
 
+   > ⚠️ **Changing \`precision\` later alters the column** (a medium-risk change): lowering it rounds the values the column holds, and any change of scale rewrites the table under an exclusive lock. A rollup over the field keeps the precision it copied, and its totals stay right at that scale, until the rollup field is saved again with a change of its definition, format or precision; then it takes the new precision.
+
    ---
 
    ### \`ctype\` Values
@@ -865,12 +874,17 @@ export const instructions = `   ---
    | empty | Ordinary field | no |
    | \`id\` | Primary key | yes |
    | \`label\` | Display label | yes, but it may be renamed and its default value changed |
+   | \`computed_label\` | Display label whose value one of the entity's \`computed_fields\` rules writes | yes, like \`label\` |
    | \`audit\` | \`created_at\` and \`updated_at\` | yes |
    | \`core\` | Other system columns | yes |
    | \`rollup\` | Value aggregated by the database from the field's \`rollup\` definition | no |
    | \`computed\` | Value written by one of the entity's \`computed_fields\` rules | no |
 
-   A protected column cannot be deleted (\`90217\`) or renamed (\`90218\`), and its format (\`90219\`) and default value (\`90220\`) cannot change; the label column is the exception for renaming and for its default value. A \`rollup\` or \`computed\` field can still be renamed, deleted, or moved to another format with the same column type. \`get_schema\` reports these two with \`is_core: false\`.
+   A protected column cannot be deleted (\`90217\`) or renamed (\`90218\`), and its format (\`90219\`) and default value (\`90220\`) cannot change; the label column (\`label\` or \`computed_label\`) is the exception for renaming and for its default value. A \`rollup\` or \`computed\` field can still be deleted or moved to another format with the same column type. A \`rollup\` field can be renamed. A \`computed\` field or \`computed_label\` column cannot be renamed while its rule names it (\`90275\`). \`get_schema\` reports \`is_core: false\` for \`rollup\` and \`computed\`, and \`true\` for \`computed_label\`.
+
+   **The label marker follows \`entities.label_column\`.** Pointing \`label_column\` at another field makes that field the label (\`label\`, or \`computed_label\` when a rule writes it), and the previous label field becomes an ordinary field. A plain or computed field can become the label; an \`id\`, \`audit\`, \`core\` or \`rollup\` field cannot (\`90270\`).
+
+   \`get_schema\` also lists two read-only projections that are not fields: \`_label\` (\`ctype: "_label"\`) and each \`<fk>_label\` (\`ctype: "fk_label"\`), both \`writable: false\`. They never appear in \`read_field\` and are never created or written.
 
    ---
 
@@ -916,12 +930,12 @@ export const instructions = `   ---
    - **read_permission_hierarchy** / **create_permission_hierarchy** — Set up permission inheritance
    - **read_role** / **create_role** — Manage permission bundles
    - **read_role_permission** / **create_role_permission** — Grant permissions to roles
-   - **update_permission** / **delete_permission** — keyed by \`permission_name\`; renaming one cascades to every table that names it, and deleting is refused (foreign key violation) while an entity's \`view_permission\` or \`edit_permission\`, a module's \`view_permission\`, or a queue's \`view_permission\` or \`manage_permission\` names it; a module's \`manage_permission\` and \`admin_permission\` are cleared instead. Role grants, user grants and hierarchy entries of the permission are deleted with it
+   - **update_permission** / **delete_permission** — keyed by \`permission_name\`; renaming one cascades to every table that names it, and deleting is refused (foreign key violation) while an entity's \`view_permission\` or \`edit_permission\`, a module's \`view_permission\`, or a queue's \`view_permission\` or \`manage_permission\` names it; a module's \`manage_permission\` and \`admin_permission\` are cleared instead. Role grants, user grants and hierarchy entries of the permission are deleted with it. The permission \`admin\` can be neither deleted nor renamed (\`90104\`)
    - **update_permission_hierarchy** / **delete_permission_hierarchy** — keyed by \`id\` (\`"<including>.<included>"\`); \`origin\` never changes
    - **update_role** / **delete_role** — keyed by \`id\`; the \`origin\` never changes and the \`slug\` of a \`system\` role is fixed. Deleting a role also deletes its user assignments and permission grants; it is refused (\`90104\`) for the last enabled Administrator, and by a foreign key violation while a module names it as a default role
-   - **update_role_permission** / **delete_role_permission** — keyed by \`id\` (\`"<role_id>.<permission_name>"\`)
-   - **read_user** / **create_user** / **update_user** / **delete_user** — User identity management. Deleting a user also deletes their role assignments, direct permission grants and API keys, and is refused (\`90104\`) for the last enabled Administrator
-   - **read_user_role** / **create_user_role** / **update_user_role** / **delete_user_role** — Assign roles to users; \`id\` is \`"<user_id>.<role_id>"\`. Every user already holds role 1, which cannot be removed (\`90103\`); the Administrator role cannot be removed from the last enabled Administrator (\`90104\`)
+   - **update_role_permission** / **delete_role_permission** — keyed by \`id\` (\`"<role_id>.<permission_name>"\`). The grant of \`admin\` to the Administrator role (role 2) can be neither deleted nor pointed at another role or permission (\`90104\`)
+   - **read_user** / **create_user** / **update_user** / **delete_user** — User identity management. Deleting a user also deletes their role assignments, direct permission grants and API keys, and is refused (\`90104\`) for the last enabled Administrator. Only a holder of \`admin\` may set or change \`external_id\`, on insert or update (42501, \`hint.code\` \`90107\`; sending the unchanged value passes). A \`user:manage\` holder therefore creates agents (\`is_agent: true\`, inserted without \`external_id\`) but not people: a person's row comes from their first sign-in or from an administrator
+   - **read_user_role** / **create_user_role** / **update_user_role** / **delete_user_role** — Assign roles to users; \`id\` is \`"<user_id>.<role_id>"\`. Every user already holds role 1, which cannot be removed (\`90103\`). The Administrator role cannot be removed from the last enabled Administrator, and that \`user_roles\` row cannot be updated to another role or user (\`90104\`)
 
    ### Utilities
    - **getCurrentUser** — Get current user's profile and effective permissions. Also returns \`api_baseurl\` (for webhook/hook endpoints), \`semantius_org\` (the org slug), and \`ui_baseurl\` (the web UI base, e.g. \`https://<org>.semantius.app\`) for building links to the web user interface:
@@ -929,7 +943,7 @@ export const instructions = `   ---
      - A specific record: \`{ui_baseurl}/{module_slug}/{table_name}/{id}\` (e.g. \`https://mytest.semantius.app/hiring-starter/job_applications/719\`)
    - **create_webhook_receiver** / **read_webhook_receiver** / **update_webhook_receiver** / **delete_webhook_receiver** — Inbound HTTP endpoints for external systems; deleting a receiver deletes its logs (see *Receive Records from an External System*)
    - **create_webhook_receiver_log** / **read_webhook_receiver_log** / **update_webhook_receiver_log** / **delete_webhook_receiver_log** — The delivery log of a receiver; the receiver writes it, you read it
-   - **generate_api_key** / **list_api_keys** / **delete_api_key** — API keys of the caller (an admin may act for another user); \`generate_api_key\` returns \`{api_key, key_id}\` and the plaintext key is shown once
+   - **generate_api_key** / **list_api_keys** / **delete_api_key** — API keys of the caller (an admin may act for another user); \`generate_api_key\` returns \`{api_key, key_id}\` and the plaintext key is shown once. \`delete_api_key\` answers a caller without \`admin\` who names another user's key as it answers a key that does not exist (\`90402\`). The key of a disabled user does not validate, and works again once the user is enabled
    - **get_cli_config** / **get_cli_token** — CLI setup text (creates a new API key on every call) and a short-lived JWT for the \`x-api-key\` header
    - **refresh_schema_cache** — Reloads PostgREST's schema cache; the cache refreshes by itself after structural changes, so call it only when a just-created entity or field is missing from \`postgrestRequest\` responses
    - **sendEmail** — Sends a transactional email (\`to\`, \`subject\`, and \`text\` or \`html\`; \`from\` defaults to the caller's email)
@@ -950,10 +964,21 @@ export const instructions = `   ---
    | \`90247\` / \`90248\` | An \`is_a\` / \`has_a\` entity or a base still has records / entities are based on it | Delete its records / the based entities first |
    | \`90243\` | A field name repeats the base's | Create only the entity's own fields |
    | \`90241\` / \`90233\` | \`id_refentity\` / \`id_type\` changed on update | Omit them on update |
+   | \`90271\` | A \`table_name\` starts with \`_\` (internal tables) | Choose another name |
+   | \`90273\` | A \`table_name\` is longer than 41 bytes | Shorten it |
+   | \`90274\` | The field's generated index name is already used by another table's index (\`a_b\`.\`c\` and \`a\`.\`b_c\` spell the same one) | Rename the field |
+   | \`90275\` | A field that a rule names cannot be renamed (the error names the rule) | Change the rule first, then rename |
+   | \`90276\` | A \`field_name\` is too long for its table: table name + field name must fit 53 bytes | Shorten the field name |
+   | \`90277\` | A field named as the entity's \`label_parent\` has to stay \`reference\` or \`parent\` | Clear \`label_parent\` first |
+   | \`90278\` | \`order_column\` names a column the table already has | Name a new column |
+   | \`90280\` | A rollup's function and another parent's rollup guard would share a name | Rename the child entity or the link field |
+   | \`90909\` / \`90919\` | A rule names an operator the evaluator does not implement / a validation rule or \`select_rule\` is not one operation | Fix the rule |
+   | \`90920\` | Arithmetic with no finite result: text that carries no number, a zero divisor | Guard the operands in the rule |
+   | \`90505\` / \`90506\` | A queue name is not lower case or over 47 bytes / a queue mapping's trigger name would not fit 63 bytes | Use a shorter lower-case name |
    | \`PGRST102\` | A bulk array whose rows have different keys (raw \`postgrestRequest\` only) | Give every row the same keys |
    | \`42P10\` | Upsert on an \`is_a\` / \`has_a\` entity | Insert, then PATCH |
 
-   **Naming rules:** \`module_slug\` \`^[a-z0-9][a-z0-9_-]*\$\`; \`permission_name\` one or more segments \`[a-z0-9][a-z0-9_-]*\` joined by \`:\`; role \`slug\` \`^[a-z0-9_]+\$\`; \`field_name\` \`^[a-z_][a-z0-9_]*\$\` (a leading \`_\` is refused, \`90224\`).
+   **Naming rules:** \`module_slug\` \`^[a-z0-9][a-z0-9_-]*\$\`; \`permission_name\` one or more segments \`[a-z0-9][a-z0-9_-]*\` joined by \`:\`; role \`slug\` \`^[a-z0-9_]+\$\`; \`table_name\` lowercase snake_case, not starting with \`_\` (\`90271\`), not ending in \`_ext\`, at most 41 bytes (\`90273\`); \`field_name\` \`^[a-z_][a-z0-9_]*\$\` (a leading \`_\` is refused, \`90224\`), and table name + field name at most 53 bytes, where the table name is \`<table_name>_ext\` for an \`is_a\` or \`has_a\` entity (\`90276\`; a table cannot be renamed to a name under which one of its fields would no longer fit).
 
    ---
 

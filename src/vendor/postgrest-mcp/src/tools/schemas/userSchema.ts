@@ -7,7 +7,7 @@ import { z } from 'zod/v4'
 
 export const userSchema = z.looseObject({
   id: z.number().int().optional().describe('Internal identifier, assigned automatically'),
-  external_id: z.string().optional().describe('Identity: the JWT sub claim from the authentication provider. Required and unique, never empty. A human user must bring one; an agent (is_agent true) inserted without one gets agent:<uuid>. It cannot be blanked later. Read-only in the UI: set it on create, since changing it detaches the user from their login.'),
+  external_id: z.string().optional().describe('Identity: the JWT sub claim from the authentication provider. Required and unique, never empty. A human user must bring one; an agent (is_agent true) inserted without one gets agent:<uuid>. It cannot be blanked later. Only a holder of the admin permission may set or change it (42501, hint code 90107; sending the unchanged value passes), so a user:manage holder creates agents without one but not people. Read-only in the UI: set it on create, since changing it detaches the user from their login.'),
   email: z.string().email().optional().describe('Email address of the user. Optional: agents and pre-provisioned users may have none.'),
   display_name: z.string().optional().describe('Display name from the JWT name claim'),
   first_name: z.string().optional().describe('First name from JWT given_name claim'),

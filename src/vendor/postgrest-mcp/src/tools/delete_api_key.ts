@@ -24,7 +24,7 @@ export const deleteApiKeyTool: Tool<typeof inputSchema, undefined> = {
     description:
       `Permanently revokes an API key by its public key_id. ` +
       `Users may delete their own keys; deleting a key that belongs to another user requires the "admin" permission. ` +
-      `Returns true on success and raises an error if the key does not exist or the caller lacks permission. ` +
+      `Returns true on success and raises 90402 (API key not found) if the key does not exist, or if it belongs to another user and the caller lacks "admin". ` +
       `WARNING: This operation cannot be undone — any client still using the revoked key will immediately fail to authenticate.`,
     inputSchema,
   },
