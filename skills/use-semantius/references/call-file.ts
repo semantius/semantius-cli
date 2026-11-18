@@ -21,11 +21,17 @@
  *     exists on the host (a payload sent a second time), is refused (the platform's 23505);
  *   - a key the tool does not take (`required`, `data_type`, …) is refused with the key to write
  *     instead (PostgREST's PGRST204), and so is a value outside a key's list (`width`, `format`, …);
+ *   - a new `table_name` that starts with "_" (90271) or is longer than 41 bytes (90273) is refused, and so is a new
+ *     field whose table name (`<table>_ext` for an `is_a` / `has_a` entity), own name and 10 bytes do not fit in 63
+ *     bytes (90276), `created_at`, `updated_at` and a new entity's label column included;
  *   - `label_parent` on `create_entity` (90226), an `id_prefix` that does not fit the `id_type`
  *     (23514), an `id_prefix` that is not the entity's singular without digits, one prefix on
  *     two entities of the payload, and an `id_prefix` another entity on the host already has
  *     (23505) are refused;
  *   - a required `reference` with `reference_delete_mode: clear` is refused (the platform's 90257);
+ *   - a `default_value` of `SESSION_USER`, or of `CURRENT_USER` on a field that is not a `reference` or `parent`
+ *     to `users`, is refused: it stores the database role name, never a person; an update that does not
+ *     carry the field's `format` reads it from the host;
  *   - a rollup over rows that readers of its entity may not see, without `include_hidden_rows`,
  *     is refused (90269): the child's `select_rule` and both `view_permission`s are read from the host;
  *   - a rollup whose `link_field` is not a `reference` or `parent` field of the child that points at the
@@ -67,7 +73,7 @@ export type Send = (tool: string, payload: string, raw?: boolean) => Promise<num
 /** The permissions on the host whose names are in `names`, or that start with one of `prefixes`; null when the read failed. */
 export type ReadPermissions = (names: ReadonlyArray<string>, prefixes: ReadonlyArray<string>) => Promise<string[] | null>;
 /** What the field checks need of an entity. */
-export type EntityInfo = { table_name: string; view_permission?: string; select_rule?: unknown; label_column?: string };
+export type EntityInfo = { table_name: string; view_permission?: string; select_rule?: unknown; label_column?: string; id_type?: string };
 /** The entities on the host named in `tables`; null when the read failed. */
 export type ReadEntities = (tables: ReadonlyArray<string>) => Promise<EntityInfo[] | null>;
 /** The ids (`<table_name>.<field_name>`) among `ids` of the fields that exist on the host; null when the read failed. */
@@ -146,7 +152,7 @@ const ENTITY_VALUES: Record<string, ReadonlySet<string>> = {
 /** Keys written for another one, with what to write instead. */
 const FIELD_KEY_HINTS: Record<string, string> = {
   required: 'write input_type: "required" (there is no required key)', is_required: 'write input_type: "required"',
-  nullable: "leave it out: only reference, date and date-time take NULL, by their format", is_nullable: "leave it out: nullability follows the format",
+  nullable: "leave it out: only reference, date, time, date-time and uuid take NULL, by their format", is_nullable: "leave it out: nullability follows the format",
   type: "write format", data_type: "write format", field_type: "write format", name: "write field_name", label: "write title",
   options: "write enum_values", values: "write enum_values", choices: "write enum_values", enum: "write enum_values",
   default: "write default_value", unique: "write unique_value", order: "write field_order",
@@ -228,6 +234,45 @@ export function keyProblems(tool: string, items: ReadonlyArray<any>): string[] {
     for (const [prefix, tables] of tablesOf) {
       if (tables.length > 1) out.push(`${tables.join(", ")}: each has the id_prefix "${prefix}", but a key prefix is unique among entities (23505); entities with one singular are a name clash, so settle it with the user before anything is written (data-modeling.md, "Choosing the key type")`);
     }
+  }
+  return out;
+}
+
+/** A name's length in bytes, as PostgreSQL counts it. */
+const bytesOf = (s: string): number => new TextEncoder().encode(s).length;
+/** The table that holds an entity's own fields: `<table>_ext` for an `is_a` / `has_a` entity. */
+const relationOf = (table: string, idType: unknown): string => (idType === "is_a" || idType === "has_a" ? `${table}_ext` : table);
+
+/**
+ * New names the platform refuses (data-modeling.md → "Entity Naming Rules", "Reserved field names"): a `table_name`
+ * that starts with "_" (90271) or is longer than 41 bytes (90273), and a field whose relation (its table, or
+ * `<table>_ext` for an `is_a` / `has_a` entity), its own name and 10 bytes do not fit in 63 bytes (90276).
+ * `entities` are `create_entity` items: their `created_at`, `updated_at` and label column are fields of them too.
+ * `fields` are `create_field` items, whose entity's `id_type` is taken from `info`; an entity missing there counts as a
+ * plain table. Renames are left to the platform.
+ */
+export function nameProblems(entities: ReadonlyArray<any>, fields: ReadonlyArray<any>, info: ReadonlyMap<string, { id_type?: string }> = new Map()): string[] {
+  const out: string[] = [];
+  const fieldFit = (table: string, relation: string, field: string, what = "the field name") => {
+    const max = 53 - bytesOf(relation);
+    if (bytesOf(field) <= max) return;
+    out.push(`${table}.${field}: ${what} is ${bytesOf(field)} bytes, and a field of ${relation} fits only up to ${max} (90276): the table name, the field name and 10 bytes must fit in 63. Shorten the field name (data-modeling.md, "Reserved field names")`);
+  };
+  for (const e of entities) {
+    if (typeof e?.table_name !== "string" || !e.table_name) continue;
+    const t = e.table_name;
+    const relation = relationOf(t, e.id_type);
+    if (t.startsWith("_")) out.push(`${t}: a table_name that starts with "_" marks an internal table and is refused (90271); choose another name (data-modeling.md, "Entity Naming Rules")`);
+    if (bytesOf(t) > 41) {
+      out.push(`${t}: the table_name is ${bytesOf(t)} bytes, and a table_name has at most 41 (90273), because the names generated from it would not fit in 63; shorten it (data-modeling.md, "Entity Naming Rules")`);
+    } else if (bytesOf(relation) + bytesOf("created_at") > 53) {
+      out.push(`${t}: ${e.id_type === "is_a" ? "an" : "a"} ${e.id_type} entity keeps its fields in ${relation}, where created_at and updated_at must fit too, so its table_name has at most 39 bytes; this one has ${bytesOf(t)} (90276). Shorten it (data-modeling.md, "Entity Naming Rules")`);
+    }
+    if (typeof e.label_column === "string" && e.label_column && relation === t && bytesOf(t) <= 41) fieldFit(t, relation, e.label_column, "the label column's name");
+  }
+  for (const f of fields) {
+    if (typeof f?.table_name !== "string" || typeof f?.field_name !== "string") continue;
+    fieldFit(f.table_name, relationOf(f.table_name, info.get(f.table_name)?.id_type), f.field_name);
   }
   return out;
 }
@@ -331,10 +376,15 @@ export function existingFieldProblems(fields: ReadonlyArray<any>, existing: Read
   ];
 }
 
+/** A default that names a database role or the signed-in user: what it stores depends on the field (data-modeling.md, "Computed defaults"). */
+export const USER_DEFAULT = /^(current_user|session_user)$/i;
+
 /**
  * The field problems the platform refuses one at a time: a required reference with `clear` (90257), and a rollup over
  * rows that readers of its entity may not see, without `include_hidden_rows` (90269). `entities` holds the parent and
- * the child of each rollup; a rollup whose entities are not in it is not checked.
+ * the child of each rollup; a rollup whose entities are not in it is not checked. Also a default the platform accepts
+ * but that never names a person: `SESSION_USER`, and `CURRENT_USER` on a field that is not a reference or parent to
+ * users (a field with no `format` is not checked for it).
  */
 export function fieldProblems(fields: ReadonlyArray<any>, entities: ReadonlyMap<string, EntityInfo>): string[] {
   const out: string[] = [];
@@ -342,6 +392,11 @@ export function fieldProblems(fields: ReadonlyArray<any>, entities: ReadonlyMap<
     const where = `${f.table_name}.${f.field_name}`;
     if (f.format === "reference" && f.input_type === "required" && f.reference_delete_mode === "clear") {
       out.push(`${where}: a required reference cannot take reference_delete_mode clear, which empties it when the record it points at is deleted (90257). Use restrict, or make the field optional (data-modeling.md, "Choosing the Right Format").`);
+    }
+    const userDefault = typeof f.default_value === "string" ? f.default_value.trim() : "";
+    const toUsers = (f.format === "reference" || f.format === "parent") && f.reference_table === "users";
+    if (/^session_user$/i.test(userDefault) || (/^current_user$/i.test(userDefault) && typeof f.format === "string" && !toUsers)) {
+      out.push(`${where}: default_value ${userDefault} stores the database role name, the same for every user, never a person. To record who writes a record, use a reference to users with default_value CURRENT_USER (data-modeling.md, "Computed defaults").`);
     }
     const rollup = f.rollup;
     if (!rollup || typeof rollup !== "object" || typeof rollup.link_field !== "string" || rollup.include_hidden_rows === true) continue;
@@ -611,7 +666,7 @@ const spawnRead: ReadPermissions = async (names, prefixes) => {
 };
 
 const spawnReadEntities: ReadEntities = async (tables) => {
-  const args = JSON.stringify({ filters: `table_name=in.(${tables.map(pgValue).join(",")})`, select: "table_name,view_permission,select_rule,label_column", limit: 1000 });
+  const args = JSON.stringify({ filters: `table_name=in.(${tables.map(pgValue).join(",")})`, select: "table_name,view_permission,select_rule,label_column,id_type", limit: 1000 });
   const proc = Bun.spawn(["semantius", "call", "crud", "read_entity"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   proc.stdin.write(args);
   proc.stdin.end();
@@ -792,12 +847,21 @@ export async function main(
     else entities = new Map(read.map((e) => [e.table_name, e]));
   }
   problems.push(...madeFieldProblems(created, entities));
+  problems.push(...nameProblems(tool === "create_entity" ? entityItems(tool, payload) : [], created, entities));
   if (created.length) {
     const existing = await readFields(created.map((f) => `${f.table_name}.${f.field_name}`));
     if (!existing) problems.push("the fields could not be read from the host, so the payload was not checked for fields that already exist; check the connection and run it again.");
     else problems.push(...existingFieldProblems(created, new Set(existing), entities));
   }
-  problems.push(...fieldProblems(fields, entities));
+  // A default of a role name or the signed-in user is checked against the field's format: an update that does not carry it reads it from the host.
+  const unformatted = fields.filter((f) => typeof f.format !== "string" && typeof f.default_value === "string" && USER_DEFAULT.test(f.default_value.trim())).map((f) => `${f.table_name}.${f.field_name}`);
+  const hostFormats = unformatted.length ? await readFieldRefs(unformatted) : [];
+  if (!hostFormats) problems.push("the fields whose default names a user could not be read from the host, so their default was not checked; check the connection and run it again.");
+  const formatOf = new Map((hostFormats ?? []).map((r) => [`${r.table_name}.${r.field_name}`, r]));
+  problems.push(...fieldProblems(fields.map((f) => {
+    const host = formatOf.get(`${f.table_name}.${f.field_name}`);
+    return host && typeof f.format !== "string" ? { ...f, format: host.format, reference_table: f.reference_table ?? host.reference_table } : f;
+  }), entities));
   // A rollup reads a relationship field of its child: one among the items being written is read as they have it, the rest from the host.
   const written = new Set(fields.filter((f) => typeof f.format === "string").map((f) => `${f.table_name}.${f.field_name}`));
   const unread = [...new Set(fields.map(rollupRelationshipOf).filter((l): l is [string, string] => !!l).map(([child, name]) => `${child}.${name}`).filter((id) => !written.has(id)))];

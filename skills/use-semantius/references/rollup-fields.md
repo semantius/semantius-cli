@@ -57,13 +57,13 @@ bun "<skill-folder>/references/call-file.ts" create_field .tmp_deploy/orders-rol
 ```
 
 - Omit `ctype`: it becomes `rollup` by itself. Omit `precision` too: it is copied from a `number` value field.
-- `input_type` `default` and `readonly` become `disabled`; `hidden` stays.
+- `input_type` stays as you set it: a client shows a visible rollup field disabled because of its `ctype`.
 - `required`, `searchable` and `unique_value` are refused (`90261`), and so is a definition on a key, a core field, a `reference` or `parent` field, or a field a `computed_fields` rule names.
 - Neither side can be an `is_a` or `has_a` entity (`90249`). On an unmanaged entity the definition is kept as metadata and takes effect once both sides are managed.
 
 ## The filter
 
-The filter is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and `<` and `<=` take three operands). Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record.
+The filter is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and `<` and `<=` take three operands). Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record. Text is ordered by code point, not by the column's collation. A number literal is compared with a `number` column as written, not rounded to the column's decimals.
 
 The date operators (`date_add`, `date_diff`, `date_part`, `date_trunc`, `to_date`, `date_format`) can be used as values, for example `{"==": [{"date_part": [{"var": "ship_date"}, "quarter"]}, 4]}`. Their date is a date or date-time column, an ISO 8601 literal or another date operator; their unit, part or pattern is a literal; their amount is a literal or an integer column; a `duration` column works only on a date-time. A date literal compared with a date or date-time column must be ISO 8601 and is read in UTC.
 
@@ -83,7 +83,7 @@ The aggregate covers every child record, and every reader of the parent sees it.
 
 - Saving a new or changed definition recalculates the records whose value differs. This is not an edit: no `updated_at`, audit row, queue message or RACI event, on this entity or any rollup parent above it. Those tables take no other writes until the save commits, so warn the user before doing this on a busy table.
 - A definition that needs another column type (`sum(amount)` to `max(ship_date)`) is a format change (`90223`): drop and recreate the field.
-- `rollup: {}` removes the definition. The field stays with its last values as ordinary data, `ctype` clears, and `input_type` stays `disabled` until you change it.
+- `rollup: {}` removes the definition. The field stays with its last values as ordinary data, `ctype` clears, and `input_type` stays as it was.
 - Renames of the tables and fields a definition names are followed automatically.
 - The `link_field`, the value field and the child entity cannot be deleted while another entity's rollup depends on them (`90266`, which names the rollups), unless the same module delete removes both sides. The rollup field itself is deleted like any other field.
 - Find rollups with `read_field(filters: "ctype=eq.rollup")`. `get_schema` (`POST /rpc/get_schema`) shows `ctype: "rollup"`, `is_core: false` and the definition under `rollup`.

@@ -13,7 +13,7 @@ semantius call crud read_entity '{"filters": "table_name=eq.<table_name>"}'
 semantius call crud read_field '{"filters": "table_name=eq.<table_name>"}'
 ```
 
-Note which fields have `input_type: "readonly"` or `input_type: "disabled"`. The receiver drops a payload value for a `readonly` field before it writes. It does not drop a `disabled` field: `disabled` is the mode the platform gives computed and rollup fields, whose value it overwrites on every write, so a payload value for one has no lasting effect. Leave both kinds out of the payload.
+Note which fields have `input_type: "readonly"` or `input_type: "disabled"`. The receiver drops a payload value for a `readonly` field before it writes. It does not drop a `disabled` field. Note also the fields with `ctype` `computed`, `computed_label` or `rollup`: the platform overwrites their value on every write, whatever their `input_type`, so a payload value for one has no lasting effect. Leave all of them out of the payload.
 
 The receiver writes only the keys that match a field of the table; other keys are ignored, and a payload with no matching key is refused (`400`, "No matching fields found").
 

@@ -737,7 +737,7 @@
 
    ### Nullability and Default Values
 
-   > ℹ️ **There is no `is_nullable` field: nullability follows `format`.** `default_value` is optional and may be set. When it is blank, a NOT NULL column gets the zero value shown in the table and a nullable column stays NULL. `parent` is the one NOT NULL format with no default, so every insert must send it.
+   > ℹ️ **There is no `is_nullable` field: nullability follows `format`.** `default_value` is optional and may be set. When it is blank, a NOT NULL column gets the zero value shown in the table and a nullable column stays NULL. `parent` is the one NOT NULL format with no default, so every insert must send it, unless it is a `parent` field to `users` whose `default_value` is `CURRENT_USER`.
 
    | Format(s) | PostgreSQL type | Auto default | Nullable? |
    |-----------|-----------------|--------------|-----------|
@@ -811,7 +811,7 @@
    Numbers, booleans and durations have no missing value, so `0`, `false` and a zero duration are accepted. A field with an `input_type_rule` is not enforced by the database, because the rule can turn `required` off per record.
 
    - **Existing rows:** a row that already lacks a required value stays readable; its UPDATE fails until the value is filled in.
-   - **Populated tables:** adding a required field with no real `default_value` to a table with rows fails with `90259`, and so does changing a field to `required` while rows have no value for it. Add the field as `default`, backfill it, then change it to `required`.
+   - **Populated tables:** adding a required field with no real `default_value`, or with `CURRENT_USER`, which existing rows never take, to a table with rows fails with `90259`, and so does changing a field to `required` while rows have no value for it. Add the field as `default`, backfill it, then change it to `required`.
    - **Labels:** the label field a new entity gets automatically is `required`. If its writers don't send a label, such as a junction (a connecting record) whose label is composed from the records it relates, set that field's `input_type` to `default`.
    - **Delete mode:** `required` together with `reference_delete_mode: "clear"` fails with `90257`, because clearing the reference would make every delete of the parent fail.
 

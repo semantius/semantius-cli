@@ -39,7 +39,7 @@ A new module, with its permissions and roles, is created by `references/module-r
 | `create_field` | `table_name`, `field_name`, `title` | `format`; `reference_table` for a `reference` / `parent` field; `rollup` for an aggregate over a child entity |
 | `create_permission_hierarchy` | `including_permission_name`, `included_permission_name` | |
 | `create_role_permission` | `role_id`, `permission_name` | |
-| `create_user` | `external_id` for a human user (an agent gets one) | `email` (optional) |
+| `create_user` | `external_id` for a human user, which only a holder of `admin` may set (`90107`; an agent gets one) | `email` (optional) |
 | `create_user_role` | `user_id`, `role_id` | |
 | `create_webhook_receiver` | `label` | `table_name`, `auth_type` `hmac`, `secret` |
 | `create_webhook_receiver_log` | `webhook_receiver_id` | |
@@ -81,7 +81,12 @@ The order is "Mandatory Creation Order" in `data-modeling.md`; follow it as writ
 | `90248` | Entities are based on it | `read_entity` with `id_refentity=eq.<table>`, delete those first |
 | `90243` | A field name repeats the base's | Create only the entity's own fields |
 | `90241`, `90233` | `id_refentity` or `id_type` changed on update (an unchanged value is accepted) | Omit them on update |
-| `42703` | The column does not exist | Check the name with `read_field`; a webhook log filters on `webhook_receiver_id` |
+| `90271` | A `table_name` starts with `_` | Choose another name |
+| `90273` | A `table_name` is longer than 41 bytes | Shorten it |
+| `90276` | The table name, the field name and 10 bytes exceed 63 bytes; on an `is_a` / `has_a` entity a `table_name` over 39 bytes | Shorten the field name or the table name |
+| `90275` | A rename of a field that a rule names (the hint names the rule) | Change the rule first, then rename |
+| `90909`, `90919` | A rule names an unknown operator, or a `select_rule` / validation rule is not one operation | Fix the rule (`jsonlogic.md` → "Deploy-time guarantees") |
+| `90920` | Arithmetic over text with no number, a zero divisor, or an infinite result | Guard the value in the rule || `42703` | The column does not exist | Check the name with `read_field`; a webhook log filters on `webhook_receiver_id` |
 | `PGRST102` | A bulk array whose rows have different keys | Give every row the same keys |
 | `42P10` | Upsert on an `is_a` / `has_a` entity | Insert, then PATCH |
 
@@ -185,7 +190,7 @@ Inserting many rows into a business table is **one** `POST` with an **array body
 
    The JSON itself is valid — this is a column-discovery constraint on bulk inserts, not an encoding or transport problem. The wording sends people chasing red herrings (stdin buffering, command-line length, character escaping, auth rotation).
 
-2. The alternative, `?columns=col1,col2,…` on the path, lifts the same-keys rule but makes a key omitted from an item **NULL** (not the column default): `postgrestRequest` exposes no `prefer` input, so PostgREST's `Prefer: missing=default` cannot be sent. Use `?columns=` only when NULL is acceptable for every omitted key (nullable `reference` / `date` / `date-time` columns); a NOT NULL text or number column needs an explicit `""` / `0` on every row.
+2. The alternative, `?columns=col1,col2,…` on the path, lifts the same-keys rule but makes a key omitted from an item **NULL** (not the column default): `postgrestRequest` exposes no `prefer` input, so PostgREST's `Prefer: missing=default` cannot be sent. Use `?columns=` only when NULL is acceptable for every omitted key (nullable `reference` / `date` / `time` / `date-time` / `uuid` columns); a NOT NULL text or number column needs an explicit `""` / `0` on every row.
 
 This only affects `POST` with an array body. Single-object inserts (`body: {...}`) and PATCH/DELETE are unaffected. Keep a batch to roughly 100–250 rows; the response is the array of inserted rows (never combine an array body with `accept: application/vnd.pgrst.object+json` or the CLI's `--single`).
 

@@ -2,6 +2,10 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## A time or uuid column takes null
+
+2026-11-16. Asked for by Martin Amm, with the platform update that use-semantius follows from the same day (pg_semantius 0.5.0). `SKILL.md` (the nullability row), `importer-essentials.md` and `schema-mapping.md` section 7: `reference`, `date`, `time`, `date-time` and `uuid` accept NULL, so an empty cell of a `time` or `uuid` column sends `null`; a `duration` defaults to no time and a `binary` to no bytes. No script changes: an empty cell takes the column's `empty_value` from `mapping.json`. The file format is unchanged; `version` stays `3.1`.
+
 ## The enum review defaults to the format the meaning gives
 
 2026-11-13. Asked for by Martin Amm, after a Haiku test import asked "Frames was read as enum. Keep enum, or change it?" and recommended changing it. `schema-mapping.md` section 2 said a format override defaults to the introspected format, while section 3 decides an enum verdict on whole numbers by meaning (a count is `integer`, a judgment on a 1–5 scale is `rating`, codes are an enum). The enum review is now the one place where the question defaults to the format section 3 gives, and to the fixed list only when the meaning is unclear. Every enum review uses the fixed-list template, which now names that format in plain words: `<Header>: keep it as a fixed list of choices, or store it as <kind>?`, where `<kind>` is free text, a whole number or a rating from 0 to 5. Files: `SKILL.md` (writing convention 7, Stage 2), `schema-mapping.md` (sections 2 and 3). The file format is unchanged; `version` stays `3.1`.

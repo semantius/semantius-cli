@@ -164,7 +164,7 @@ Never send `id_refentity` on `update_entity` (`90241`). The one change it takes 
 | Changing `id_type`, `id_refentity`, or an `is_a` prefix | `90233`, `90241`, `90245` | rebuild the entity |
 | A field, rename, root prefix change, rule change or entity delete while a view, function or policy built by hand sits on the family's view | `90256` (the hint names the objects) | drop them, make the change, create them again |
 
-Names generated from a long entity name (`<entity>_ext_<field>_fkey`, `record_write_<entity>`) are truncated at 63 bytes, so keep family table names short.
+A family entity's `table_name` has at most 39 bytes, and its field names must fit with `<table_name>_ext` (`data-modeling.md` → "Entity Naming Rules", "Reserved field names").
 
 ---
 

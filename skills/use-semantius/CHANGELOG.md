@@ -2,6 +2,33 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## Computed defaults: relative days, now, and the signed-in user
+
+2026-11-18. Asked for by Martin Amm, once the platform worked out `today`, `tomorrow`, `yesterday`, `now`, `$today` and `$now` on each insert in UTC, gave the signed-in user for `CURRENT_USER` or `$user_id` on a field to `users`, and refused misplaced ones (`90283`, `90284`). Checked against `c:\dev\semantius\apps\_core\migrations\0160_dd_functions.sql`, its tests 0530 and 0531, and a scratch entity on the live instance; a review subagent checked the plan. The full list of spellings went into the `create_field` tool description in postgrest-mcp, which the CLI vendors; the skill writes one spelling per meaning.
+
+- `data-modeling.md` → "`default_value`": the "Limits" bullet no longer lists SQL keywords. The new "Computed defaults" table gives what to write per format (`today`, `tomorrow`, `yesterday`, `now`, `gen_random_uuid()`, `CURRENT_USER`), with the equivalent spellings, `90284`, why a default cannot count days, and what `CURRENT_USER` does and does not do.
+- Decided by Martin Amm: the field that records who created, opened, requested or reported a record is a `reference` to `users` with `default_value` `CURRENT_USER` and `input_type` `default`, named for the domain's verb (`<verb>_by_user_id`), one per entity. The words, not the `$` forms, because a shell expands `$today` to an empty default.
+- `access-rules.ts`: a table's requester field is its field that records who opened a record, and `requested_by_user_id` only when it has none. A role limited to `requested_by_user_id` on a table that has such a field, and a table with two of them, are problems (`openerProblems`, also run by `writeModel`). Such a field needs no `userFields` entry. A computed default is judged by format: `today` is computed on a date field and plain text on a text field. `rbac.md` ("The access record", "Roles that do part of the work", control 1) and `review-module.md` say "the requester field".
+- `call-file.ts` refuses `SESSION_USER`, and `CURRENT_USER` on a field that is not a reference or parent to `users`, because they store the database role name; an update without `format` reads it from the host.
+
+## A time or uuid field is nullable; rules are checked on save; long names are refused
+
+2026-11-16. Asked for by Martin Amm, once the MCP server and the CLI followed the platform update pg_semantius 0.5.0. Checked against the 0.5.0 section of `c:\dev\semantius\extension\CHANGES.md`, `docs\error-contract.md` and the platform's SQL; review subagents compared the release with the skill, and their cuts of repeated text and of codes the platform already explains when it refuses were applied.
+
+- Nullability: `reference`, `date`, `time`, `date-time` and `uuid` allow NULL; a `duration` defaults to no time and a `binary` to no bytes. `data-modeling.md` also says what `90258` counts as missing. `crud-tools.md` (`?columns=`) and `seed-data.md` follow.
+- A needed `boolean`, `duration`, `binary` or JSON field stays out of the validation rule. `jsonlogic-kit.ts`: `isSet` tests `time` and `uuid` against null, refuses those formats, and `modelProblems` asks no rule for them.
+- `access-rules.ts`, a field a role leaves to others: a `time` or `uuid` is empty as null. A default is compared in the field's own type (`true`, not `"true"`). A `duration`, `binary` or JSON field, and one whose default the database computes (`gen_random_uuid()`), is left out of the insert test with a warning; a change of it is still refused.
+- `seed-lib.ts --describe` says "may be null" for `time` and `uuid`; `call-file.ts`'s `nullable` hint names the five formats.
+- Derived markers: the platform never changes `input_type`, and a label column a rule writes carries `computed_label` (`data-modeling.md`, `jsonlogic.md`, `rollup-fields.md`, `webhooks.md`). `label_column` is pointed only at a single-line text field.
+- Renames: `data-modeling.md` → "Safe Evolution Patterns" → High-Risk says that a field a rule names cannot be renamed (`90275`) and what a table rename rewrites; the other places point to it.
+- Rules: `jsonlogic.md` → "Deploy-time guarantees" (`90909`, `90919`), arithmetic (`90920`), `set_record` with a malformed id (`90238`).
+- Precision: lowering it is high-risk, raising it medium-risk. The rollup filter orders text by code point and compares numbers as written.
+- Names: `90271`, `90273` and 39 bytes for an `is_a` / `has_a` entity ("Entity Naming Rules"), `90276` ("Reserved field names"); `order_column` names a new column (`90278`).
+- Users: only an admin sets `external_id` (`90107`). The "Error to action" table gains `90271`, `90273`, `90276`, `90275`, `90909` / `90919` and `90920`.
+- New check: `call-file.ts` `nameProblems` refuses, before anything is sent, a new `table_name` that starts with `_` or is longer than 41 bytes (39 for `is_a` / `has_a`), and a new field or label column whose name does not fit with its table name. `call-file.ts` runs it once the host's entities are read (`EntityInfo` carries `id_type`), and `modelProblems` runs it for `writeModel`.
+- Tests: `scripts/call-file.test.ts`, `scripts/jsonlogic-kit.test.ts`, `scripts/seed-lib.test.ts`, `scripts/access-rules.test.ts`.
+- `flows.md`: all 252 lines read again against the changed files. No row changes: no question, step or order changed, and row 9.4 takes its high-risk tier from "Safe Evolution Patterns". The file format is unchanged; `version` stays `3.1`.
+
 ## A parent child with its own states takes restrict
 
 2026-11-15. Asked for by Martin Amm, after the agency build of the two entries below: its five wrong `parent` fields all carried `cascade`, so deleting an account or a job would have deleted estimates, tasks and time entries, records with their own states, without their own permission and rules. Until now the delete mode was the builder's judgment and no script checked it. Compared before the decision: Salesforce always cascades a master-detail and restores the records from its Recycle Bin; ServiceNow sets a delete rule per reference field.

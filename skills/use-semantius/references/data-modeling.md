@@ -42,9 +42,9 @@ module-rbac-setup.ts (module, permissions, permission hierarchy, roles, grants, 
 **Exception: a model with `is_a` / `has_a` entities** creates its entities in **one `create_entity` call per level, bases first**: plain entities and family roots first, then the entities based on them, and so on. The fields still come only after every level exists. A based entity named before its base fails with `23503`. Full rules: `entity-families.md`.
 <!-- Family variant: `entity-families.md` → "Creating a family". This block summarizes; that section governs families. -->
 
-**Every `create_entity` and `create_field` goes through a file.** Run `mkdir -p .tmp_deploy` once, write the JSON to `.tmp_deploy/<name>.json`, then run `bun "<skill-folder>/references/call-file.ts" <tool> .tmp_deploy/<name>.json`, as the examples below do. Quotes and apostrophes in a description then cannot break the call. Before it sends, `call-file.ts` checks the payload and names every problem in one run: invalid JSON (with its line and column), a variable a shell emptied, a `has_permission` / `require_permission` name that is not a permission on the host, a `create_field` row for a field `create_entity` already made (the label column, `id`, `created_at`, `updated_at`; `23505`) or for any field that already exists on the host (a payload sent a second time; `23505`), a key the tool does not take, with the key to write instead (`required` → `input_type: "required"`; `PGRST204`), a value outside a key's list (`width`, `format`, `input_type`, `id_type`, …), `label_parent` on `create_entity` (`90226`), an `id_prefix` that does not fit the `id_type` (`23514`), that is not the entity's singular ("Choosing the key type"), that two entities of the payload share, or that another entity already has (`23505`), a required `reference` with `reference_delete_mode: clear` (`90257`), a rollup over rows that readers of its entity may not see, without `include_hidden_rows` (`90269`), a rollup whose `link_field` is not a relationship field of the child that points at the rollup's own entity (`90262`), an icon that is not a Lucide icon, a `computed_fields` or `validation_rules` rule that reads `_label` or `<fk>_label` ("Choosing the label"), an entity whose `edit_permission` is not the write tier of its class (`rbac.md` → "Choosing an entity's permissions"), a `workflow_state` whose states the module's access record (`access.json` beside the payload) does not cover, and a `parent` field whose entry in the relationship record (`relationships.json` beside the payload) is missing or has facts that make it a `reference` ("Choosing the Right Format"). `--check` runs the checks and sends nothing. A payload sent straight to `semantius call` gets none of these checks. The payload shapes are in this file, so do not run `semantius tools` for these tools.
+**Every `create_entity` and `create_field` goes through a file.** Run `mkdir -p .tmp_deploy` once, write the JSON to `.tmp_deploy/<name>.json`, then run `bun "<skill-folder>/references/call-file.ts" <tool> .tmp_deploy/<name>.json`, as the examples below do. Quotes and apostrophes in a description then cannot break the call. Before it sends, `call-file.ts` checks the payload and names every problem in one run: invalid JSON (with its line and column), a variable a shell emptied, a `has_permission` / `require_permission` name that is not a permission on the host, a `create_field` row for a field `create_entity` already made (the label column, `id`, `created_at`, `updated_at`; `23505`) or for any field that already exists on the host (a payload sent a second time; `23505`), a key the tool does not take, with the key to write instead (`required` → `input_type: "required"`; `PGRST204`), a value outside a key's list (`width`, `format`, `input_type`, `id_type`, …), a new `table_name` that starts with `_` or is longer than 41 bytes (`90271`, `90273`), a new field whose name does not fit with its table name (`90276`; "Reserved field names"), `label_parent` on `create_entity` (`90226`), an `id_prefix` that does not fit the `id_type` (`23514`), that is not the entity's singular ("Choosing the key type"), that two entities of the payload share, or that another entity already has (`23505`), a required `reference` with `reference_delete_mode: clear` (`90257`), a rollup over rows that readers of its entity may not see, without `include_hidden_rows` (`90269`), a rollup whose `link_field` is not a relationship field of the child that points at the rollup's own entity (`90262`), an icon that is not a Lucide icon, a `computed_fields` or `validation_rules` rule that reads `_label` or `<fk>_label` ("Choosing the label"), an entity whose `edit_permission` is not the write tier of its class (`rbac.md` → "Choosing an entity's permissions"), a `workflow_state` whose states the module's access record (`access.json` beside the payload) does not cover, and a `parent` field whose entry in the relationship record (`relationships.json` beside the payload) is missing or has facts that make it a `reference` ("Choosing the Right Format"). `--check` runs the checks and sends nothing. A payload sent straight to `semantius call` gets none of these checks. The payload shapes are in this file, so do not run `semantius tools` for these tools.
 
-**A payload with rules is built, not typed.** When entities carry `computed_fields`, `validation_rules` or a `select_rule`, or fields carry an `input_type_rule`, write one Bun builder script (`.tmp_deploy/build_<module_slug>.ts`). It imports `<skill-folder>/references/jsonlogic-kit.ts`, names each part of a rule as a `const` (a gate's check, a state list, a lock), composes the rules from those names, and writes the model with `writeModel(".tmp_deploy", { entities, fields, access, relationships })`. A model with a `workflow_state` is always written this way, because `access` is its access record: who moves a record into each state (`rbac.md` → "Restricted steps (gates)" → "The access record"). `relationships` is its relationship record: the facts that decide each relationship field's format ("Choosing the Right Format"). Its gate rules are not in the builder: `module-rbac-setup.ts --access` writes them once the entities exist (step 9). `writeModel` checks the entities, the fields and both records together and names every problem: a `workflow_state` whose states the access record does not cover, every problem of the access record itself, a `parent` field whose entry in the relationship record is missing or has facts that make it a `reference`, a key `create_entity` or `create_field` does not take and a value outside a key's list, a field its `input_type_rule` makes required in some states with no validation rule of its entity that reads it, `readonly` on a field no `computed_fields` rule fills, a computed field that fills no field, a field `create_entity` makes on its own (the label column of an entity in the payload, `id`, `created_at`, `updated_at`), the field and icon checks of `call-file.ts`, and a rollup whose `link_field` is not a relationship field of the child that points at the rollup's own entity. Only when it finds none does it write `entities.json` (one `entities-<n>.json` per level, bases first, for an `is_a` / `has_a` family), `fields.json`, with the rollups last, `access.json` and `relationships.json`. Run it, then send the files with `call-file.ts` in the order it prints. Never type a nested rule on one line, and never use Python (`cli-usage.md` → "Ad-hoc JSON and file work in Bun"). To change a rule later, change the builder and run it again.
+**A payload with rules is built, not typed.** When entities carry `computed_fields`, `validation_rules` or a `select_rule`, or fields carry an `input_type_rule`, write one Bun builder script (`.tmp_deploy/build_<module_slug>.ts`). It imports `<skill-folder>/references/jsonlogic-kit.ts`, names each part of a rule as a `const` (a gate's check, a state list, a lock), composes the rules from those names, and writes the model with `writeModel(".tmp_deploy", { entities, fields, access, relationships })`. A model with a `workflow_state` is always written this way, because `access` is its access record: who moves a record into each state (`rbac.md` → "Restricted steps (gates)" → "The access record"). `relationships` is its relationship record: the facts that decide each relationship field's format ("Choosing the Right Format"). Its gate rules are not in the builder: `module-rbac-setup.ts --access` writes them once the entities exist (step 9). `writeModel` checks the entities, the fields and both records together and names every problem: a `workflow_state` whose states the access record does not cover, every problem of the access record itself, a `parent` field whose entry in the relationship record is missing or has facts that make it a `reference`, a key `create_entity` or `create_field` does not take and a value outside a key's list, a field its `input_type_rule` makes required in some states with no validation rule of its entity that reads it, `readonly` on a field no `computed_fields` rule fills, a computed field that fills no field, a field `create_entity` makes on its own (the label column of an entity in the payload, `id`, `created_at`, `updated_at`), the name, field and icon checks of `call-file.ts`, and a rollup whose `link_field` is not a relationship field of the child that points at the rollup's own entity. Only when it finds none does it write `entities.json` (one `entities-<n>.json` per level, bases first, for an `is_a` / `has_a` family), `fields.json`, with the rollups last, `access.json` and `relationships.json`. Run it, then send the files with `call-file.ts` in the order it prints. Never type a nested rule on one line, and never use Python (`cli-usage.md` → "Ad-hoc JSON and file work in Bun"). To change a rule later, change the builder and run it again.
 
 ```typescript
 import { all, any, changed, eq, hasPerm, iff, isIn, ne, old, rule, userId, v, writeModel } from "<skill-folder>/references/jsonlogic-kit.ts";
@@ -78,7 +78,7 @@ The kit's functions and what each takes. A field is always passed by its name, n
 | `changed(field)` | The write changes the field (always on an insert) |
 | `changedTo(field, value)` | The move of a field into a value: `changedTo("workflow_state", "approved")` |
 | `setRecord(name, table, id, body)` | Reads one row of `table` by `id` into `name` for `body` |
-| `isSet(field, format)` | The field holds a value, by its format: `isSet("rejection_reason", "text")`, `isSet("sold_date", "date")`, `isSet("sale_price", "number")`; never for a boolean |
+| `isSet(field, format)` | The field holds a value, by its format: `isSet("rejection_reason", "text")`, `isSet("sold_date", "date")`, `isSet("sale_price", "number")`; never for a boolean, a duration, a binary or a JSON field |
 | `appliesIn(states, mode, field?)` | The `input_type_rule` of a field that applies only in some values: `mode` (`"required"`, `"default"` or `"readonly"`) there, hidden elsewhere; `field` defaults to `workflow_state`: `appliesIn(["rejected"], "required")` |
 | `rule(code, name, message, jsonlogic, description?)` | A validation rule: a class-99 code, a snake_case name, the message the caller sees |
 | `computed(name, jsonlogic, description?)` | A `computed_fields` entry: the field it fills and its value |
@@ -218,6 +218,7 @@ The platform built-ins (`users`, `roles`, `permissions`) are already classified;
 - **`table_name` is always plural snake_case**, `products`, `orders`, `order_lines`, not `product`, `order`, `orderLine`
 - **Name the concept in full.** A singular noun that explains itself; `table_name` is its plural. `sales_opportunity` → `sales_opportunities`, never an abbreviation such as `opp`.
 - **Never end a `table_name` in `_ext`.** `<table_name>_ext` is the storage table of an `is_a` / `has_a` entity, so the platform reserves it (`90250`); see `entity-families.md`.
+- **Never start a `table_name` with `_`, and keep it to 41 bytes.** The platform refuses a leading `_` (`90271`) and a longer name (`90273`), on create, on a rename and when `managed` is switched on. An `is_a` / `has_a` entity keeps its fields in `<table_name>_ext`, so its name has at most 39 bytes (see "Reserved field names"). `call-file.ts` and `writeModel` refuse such a name before anything is sent.
 - **Never create a `users` entity**, Semantius has a built-in `users` table. Any module that needs to reference users must use `reference_table: "users"` pointing at the existing table. Creating a competing `users` or `user` entity will conflict with the built-in table and break authentication.
 - **Never create a second entity for something the instance already holds**, under any name or prefix. `table_name` identifies an entity across the whole instance, not per module. Compare first: `SKILL.md` → "Before any new entity: compare it with the instance".
 
@@ -300,10 +301,10 @@ Platform meta-schema. **Never declare in a domain model.** The platform manages 
 
 | Field | Notes |
 |-------|-------|
-| `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. |
+| `table_name` | **Plural** snake_case. Renaming is supported but think twice: integrations, saved queries, and external consumers reference the entity by name. What a rename changes in rules: "Safe Evolution Patterns" → High-Risk. |
 | `singular_label` | Human-readable name for **one record** (e.g. `Product`). Must be grammatically symmetric with `plural_label`, if `plural_label` is "Products", this must be "Product", never "Product Name". Pass it: when blank it is derived from `singular`, with every word of the table name (`product` becomes "Product", but `crm_product` becomes "Crm Product"). Field-level titles like "Product Name" belong on the label field (the field named in `label_column`), not here (see Customizing the label field's title below). |
 | `plural_label` | e.g. "Products" |
-| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`, but set on every entity: the field people tell its records apart by, or `<singular>_name` composed from the records it relates (see "Choosing the label"); omit it for a junction table, whose `_label` the platform composes from its `parent` fields (see "M:N Junction Tables" below). Never set it on an `is_a` / `has_a` entity: it comes from the base (on create the platform overwrites it; an update is refused with `90242`). **Always single-line text:** `create_entity` creates this field as `text`, and as a core column its format can never change afterward (`90219`), so a label column is never an `enum`, number, date, boolean or FK. When the only identifying attribute is a type or category, the label is composed from the records it relates (see "Choosing the label"). |
+| `label_column` | Snake_case **field name** that identifies a record (e.g. `product_name`). NOT a human-readable title. Optional on `create_entity`, but set on every entity: the field people tell its records apart by, or `<singular>_name` composed from the records it relates (see "Choosing the label"); omit it for a junction table, whose `_label` the platform composes from its `parent` fields (see "M:N Junction Tables" below). Never set it on an `is_a` / `has_a` entity: it comes from the base (on create the platform overwrites it; an update is refused with `90242`). **Always single-line text:** `create_entity` creates this field as `text`, and as a core column its format can never change afterward (`90219`), so a label column is never an `enum`, number, date, boolean or FK. When the only identifying attribute is a type or category, the label is composed from the records it relates (see "Choosing the label"). On `update_entity`, point it only at another single-line text field: that field becomes the label and the previous label field an ordinary one. A key, `created_at`, `updated_at`, another system column or a rollup field cannot become the label (`90270`). |
 | `label_column_label` | Optional title of the label field, given on `create_entity`, so no `update_field` follows. Pass it only when the platform's default does not fit (see "Customizing the label field's title"). It and the label field's `title` stay in step both ways. Never set it on an `is_a` / `has_a` entity: it comes from the base (on create the platform keeps the base's; an update is refused with `90242`). |
 | `module_id` | Required on `create_entity` — must be a valid (non-null) integer module id; `null` is rejected. Find with `read_module`. On `update_entity` it stays optional, but a provided value must still be a non-null integer. |
 | `entity_type` | **Required on every entity you create:** `catalog`, `operational_workflow`, `operational_record`, `junction` or `computed`. The platform default `unclassified` is never a choice. See "Classifying an entity" above. Optional on `update_entity`, where a provided value must be one of the six allowed values. |
@@ -314,7 +315,7 @@ Platform meta-schema. **Never declare in a domain model.** The platform manages 
 | `id_refentity` | Only with `id_type` `is_a` / `has_a`, and then required: the `table_name` of the base this entity is based on. `is_a` needs a managed `typeid` or `is_a` base; `has_a` a managed `typeid` base (`90240`). Set on create only; never send it on `update_entity` (`90241`). See `entity-families.md`. |
 | `id_column` | Leave it unset: the key field is `id`. Like `id_type`, it is fixed on create; an update that changes it fails with `90253`. |
 | `managed` | Optional, default `true`. When `false`, automatic DDL for table and field changes is disabled: use it only for external or legacy tables whose DDL is managed outside the platform. |
-| `order_column` | Optional. Names an integer field that stores a fixed row order (drag-and-drop). Setting it creates the column, and an insert that sends no value gets the highest value below 900000 plus 10 (10 for the first record). Not available on an `is_a` / `has_a` entity (`90249`). |
+| `order_column` | Optional. Names an integer field that stores a fixed row order (drag-and-drop). Setting it creates the column, and an insert that sends no value gets the highest value below 900000 plus 10 (10 for the first record). It names a new column: a name that a field or a system column of the entity already has is refused (`90278`). Not available on an `is_a` / `has_a` entity (`90249`). |
 | `icon_name` | The icon shown for the entity in the UI: a Lucide icon name in kebab-case or an icon URL (see "Icons are Lucide icons" under the Field Format Quick Reference). Every entity gets one, unless no icon fits. |
 | `name_sort` | Optional text sort key that orders entities in navigation. Leave it unset unless the user wants a specific navigation order. |
 | `edit_mode` | Optional. Controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`. Set only when the user has a specific UX requirement. |
@@ -329,7 +330,7 @@ When `create_entity` is called, the system automatically creates:
 | Field | `ctype` | Notes |
 |-------|---------|-------|
 | `id` | `id` | Primary key (`is_pk: true`), typed by the entity's `id_type`: format `int64` for `auto_increment` and `bigint`, `text`, `uuid`, or `string` for `typeid`, `is_a` and `has_a`. An entity has exactly one `is_pk` field; a second one is refused (`90215`). **Never** create it with `create_field` |
-| `<label_column>` | `label` | The actual named field (e.g. `product_name`), created as `text`, titled with `label_column_label` or the platform's default (see "Customizing the label field's title"). Its format is locked (`90219`); it may be renamed and its default value may be changed (the default of every other core column is locked, `90220`) |
+| `<label_column>` | `label` (`computed_label` when a `computed_fields` rule writes it) | The actual named field (e.g. `product_name`), created as `text`, titled with `label_column_label` or the platform's default (see "Customizing the label field's title"). Its format is locked (`90219`); it may be renamed and its default value may be changed (the default of every other core column is locked, `90220`) |
 | `created_at` |, | Timestamp, auto-maintained |
 | `updated_at` |, | Timestamp, auto-maintained |
 | `_label` | `_label` | **Composed label** — the record's full human-readable label, folded from its parent chain (spine → … → local `label`). Read-only, read-time; **not** in the `fields` catalog. |
@@ -344,12 +345,13 @@ When `create_entity` is called, the system automatically creates:
 | empty | Ordinary field | no |
 | `id` | Primary key | yes |
 | `label` | Display label | yes, but it may be renamed and its default value changed |
+| `computed_label` | Display label written by one of the entity's `computed_fields` rules | as `label` |
 | `audit` | `created_at` and `updated_at` | yes |
 | `core` | Other system columns | yes |
 | `rollup` | Value aggregated by the database from the field's `rollup` definition (see `rollup-fields.md`) | no |
 | `computed` | Value written by one of the entity's `computed_fields` rules | no |
 
-A protected column cannot be deleted (`90217`) or renamed (`90218`), and its format (`90219`) and default value (`90220`) cannot change; the label column is the exception for renaming and for its default value. A `rollup` or `computed` field can still be renamed, deleted, or moved to another format with the same column type; `get_schema` reports these two with `is_core: false`.
+A protected column cannot be deleted (`90217`) or renamed (`90218`), and its format (`90219`) and default value (`90220`) cannot change; the label column is the exception for renaming and for its default value. A `rollup` or `computed` field can still be deleted or moved to another format with the same column type; `get_schema` reports these two with `is_core: false`. Renaming any field is limited by the rules that name it ("Safe Evolution Patterns" → High-Risk). The platform derives these markers and never changes `input_type`: a client shows a visible `computed`, `computed_label` or `rollup` field disabled because of its `ctype`.
 
 > ℹ️ An `is_a` / `has_a` entity gets only `id`, `created_at` and `updated_at`. Its label field, and every other field of its base, are the base's, so create only the entity's **own** fields; a name that repeats a base field fails with `90243`. See `entity-families.md`.
 
@@ -513,6 +515,8 @@ Choose `format` carefully. Format **can** be changed after creation on a managed
 - `code` renders a monospace code editor; reserve for stored source / configuration snippets.
 
 > 🛑 **Reserved field names.** A `field_name` must **not** start with `_` (reserves the entity's own `_label`); the platform rejects it on create and on rename (`90224`). A name ending in `_id_label` is accepted, but it shadows the generated `<fk>_label` companion of the FK `<fk>` when both exist, so avoid it. Plain `*_label` names (e.g. `status_label`) remain allowed.
+>
+> **A field name has to fit with its table name.** The table name (`<table_name>_ext` for an `is_a` / `has_a` entity), the field name and 10 bytes must fit in 63 bytes (`90276`, on create and on rename), for every field, `created_at` included; `call-file.ts` and `writeModel` check it before sending.
 
 ### `width` Values
 
@@ -561,15 +565,15 @@ The rule is `{"if": [{"==": [{"var": "workflow_state"}, "sold"]}, "required", "h
 
 An `input_type_rule` never blocks a write, so the validation rule on the entity is what refuses a missing value. Write one per set of values, naming every field needed there, guarded with `$mode` so a record written before the rule can still be deleted. A new entity carries it on `create_entity`; an existing one takes `update_entity` with its full list. Hiding needs no validation rule: a value left behind when the record moves on stays stored, and a form cannot clear a hidden field.
 
-What counts as empty depends on the format, because only three formats can be `NULL` (see "`default_value`"):
+What counts as empty depends on the format, because only five formats can be `NULL` (see "`default_value`"):
 
 | Format | Empty value | The value is set when |
 |---|---|---|
-| `date`, `date-time`, `reference` | `NULL` | `{"!=": [{"var": "<field>"}, null]}` |
+| `date`, `time`, `date-time`, `uuid`, `reference` | `NULL` | `{"!=": [{"var": "<field>"}, null]}` |
 | `number`, `float`, `double`, the integer formats, `rating` | `0` | `{"!=": [{"var": "<field>"}, 0]}` |
 | Text formats and `enum` | `''` | `{"!=": [{"var": "<field>"}, ""]}` |
 
-A needed number for which 0 is a real value and a needed `boolean` cannot be told from empty, so they stay out of the validation rule. Worked example: `jsonlogic.md` → "Dynamic `input_type` via `input_type_rule`".
+A needed number for which 0 is a real value and a needed `boolean` cannot be told from empty, so they stay out of the validation rule. So does a needed `duration`, `binary` or JSON field (`json`, `object`, `array`, `jsonlogic`): the kit does not test their empty value, and `isSet` refuses them, as it refuses a `boolean`. Worked example: `jsonlogic.md` → "Dynamic `input_type` via `input_type_rule`".
 
 ### `unique_value`
 
@@ -594,20 +598,21 @@ When `default_value` is blank, the column-add trigger gives a NOT NULL column th
 | `boolean` | `BOOLEAN` | `FALSE` |
 | `json`, `jsonlogic`, `object` | `JSONB` | `'{}'` |
 | `array` | `JSONB` | `'[]'` |
-| `uuid`, `time`, `duration`, `binary` | `UUID` / `TIME` / `INTERVAL` / `BYTEA` | none: no zero value, so every insert must send one |
-| `date-time`, `date`, `reference` | `TIMESTAMPTZ` / `DATE` / key type | none: the column allows NULL |
+| `duration` | `INTERVAL` | no time (0 seconds) |
+| `binary` | `BYTEA` | no bytes, which a required binary refuses (`90258`) |
+| `date-time`, `date`, `time`, `uuid`, `reference` | `TIMESTAMPTZ` / `DATE` / `TIME` / `UUID` / key type | none: the column allows NULL |
 | `enum` | `TEXT` (with CHECK) | `''`: a required enum refuses it (`90258`), so give it a `default_value` |
 
-Nullability is also computed by format (via the platform's `is_nullable()` rule): **only `reference`, `date`, and `date-time` allow NULL**. Every other format is `NOT NULL`, with the zero value above when `default_value` is blank. Non-required fields accept `''`/null as a backfill.
+Nullability is also computed by format (via the platform's `is_nullable()` rule): **only `reference`, `date`, `time`, `date-time` and `uuid` allow NULL**. Every other format is `NOT NULL`, with the zero value above when `default_value` is blank. A required field refuses a missing value (`90258`), NULL in these five formats. Non-required fields accept `''`/null as a backfill.
 
 **Rule:** `default_value` is optional on `create_field`. Set it when the zero value is wrong for the domain (a non-zero starting balance, a specific seed string) and always on a required `enum`.
 
 - **A required enum has no automatic default.** With no `default_value` the default is `''`, which a required enum refuses (`90258`): every write must send a value, and adding the field to a table with rows fails (`90259`). Pass `default_value` (the value, never the label). The order of `enum_values` only affects display; list values in lifecycle order (`draft`, `pending`, `new`, `open`, `active` first) for that reason.
 - **The lifecycle state field is named exactly `workflow_state`.** An entity with a lifecycle (an ordered set of states a record moves through, such as `draft` → `submitted` → `approved`) stores it in one required `enum` field named `workflow_state`: `enum_values` are the states in order, `default_value` is the initial state. Never `status`, `state` or `lifecycle_state`. Gates, `value_changed` rules and `process_gates.state_column` refer to this name. Every other enum keeps its domain name, even one whose values look like states. Before creating it, read the entity's fields and do not add a second state field when `workflow_state` exists.
 - **Title it with the domain's word for the state.** The name is fixed; the title is not: the word people in the domain use for where a record stands, such as "Stage" or "Status". "Workflow State" is the title when no domain word fits.
-- **Limits and SQL expressions.** A `default_value` has at most 200 characters, with no `;`, `--` or `/*`. It is evaluated only when it exactly matches (case-insensitive) one of `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `CURRENT_TIME`, `LOCALTIMESTAMP`, `LOCALTIME`, `now()`, `clock_timestamp()`, `statement_timestamp()`, `transaction_timestamp()`, `gen_random_uuid()`, `CURRENT_USER`, `SESSION_USER`. Any other text is a literal cast to the column's type, never evaluated.
+- **Limits.** A `default_value` has at most 200 characters, with no `;`, `--` or `/*`. A default worked out on each insert is listed under "Computed defaults" below; any other text is a fixed value cast to the column's type.
 - **`default_value` is stored as text**, whatever the format. A number or boolean is converted (`1` is stored as `"1"`, `true` as `"true"`), and a JSON array or object as its JSON text. Give a value that fits the format: a whole number for an integer field, `true` or `false` for a boolean, valid JSON for a JSON field. Example: a required `integer` field `seats_purchased` with a `>= 1` rule takes `"default_value": "1"` (or `1`), because the auto-default `0` would break the rule.
-- **There is no settable `is_nullable` flag** — nullability is computed purely from `format` (the `is_nullable()` rule above): only `reference`, `date`, and `date-time` are nullable. For every other format the column is NOT NULL regardless of `input_type`; declaring the field optional doesn't make it nullable.
+- **There is no settable `is_nullable` flag** — nullability is computed purely from `format` (the `is_nullable()` rule above): only `reference`, `date`, `time`, `date-time` and `uuid` are nullable. For every other format the column is NOT NULL regardless of `input_type`; declaring the field optional doesn't make it nullable.
 
 A required enum on a possibly-non-empty entity always includes `default_value`. `.tmp_deploy/departments-fields.json`:
 
@@ -632,6 +637,27 @@ A required enum on a possibly-non-empty entity always includes `default_value`. 
 ```bash
 bun "<skill-folder>/references/call-file.ts" create_field .tmp_deploy/departments-fields.json
 ```
+
+#### Computed defaults
+
+The platform works these out for each record a write creates. Write the word on its own:
+
+| Format | `default_value` | A record that leaves the field out gets |
+|---|---|---|
+| `date` | `today`, `tomorrow`, `yesterday` | that day, in UTC |
+| `date-time` | `now`; `today`, `tomorrow`, `yesterday` | the moment of the insert; midnight UTC of that day |
+| `time` | `now` | the time of day of the insert, in UTC |
+| `uuid` | `gen_random_uuid()` | a new UUID |
+| `reference` or `parent` to `users` | `CURRENT_USER` | the signed-in user's id |
+
+- **Other spellings mean the same.** `$today`, `$now`, `$user_id`, `CURRENT_DATE`, `now()` and the other SQL date and time keywords are read the same where the format fits, and a live field may carry any of them. Write the words above: a shell expands `$today` in an unquoted heredoc and leaves an empty default. A day word with anything else (`today + 7`, `tomorrow 09:00`) is refused (`90284`).
+- **A default cannot count days.** A date some days after the insert is sent by the writer. A date that follows from another stored date of the record is a computed field (`jsonlogic.md` → "Date operators"), never one computed from `$today`.
+- **`CURRENT_USER` is the signed-in user only on a `reference` or `parent` field to `users`.**
+  - A value the write sends wins, an explicit `null` included, so the writer can name another user. A field a gate relies on is stamped by the command instead (`rbac.md` → "Controls on a gate").
+  - A write with no signed-in user leaves it NULL, so a required field refuses that write (`90258`).
+  - Records that already exist never take it. On a table with records, add a required one as `default`, fill the records, then make it `required` (`90259` otherwise); a `parent` one can be added only while the table is empty.
+  - On any other field the platform refuses it (`90283`), except on a text field, where it stores the database role name, the same for every user; `call-file.ts` refuses that.
+- **Who opened a record.** The field that records who created, opened, requested or reported a record is a `reference` to `users` with `default_value` `CURRENT_USER` and `input_type` `default`: the form starts with the signed-in user, and the writer can name another. It is named for the domain's verb, `<verb>_by_user_id`, and an entity has one. A field that names who works on, approves or is assigned to a record has no default. A gate that needs the requester uses this field (`rbac.md` → "Controls on a gate").
 
 ### Enum values and labels
 
@@ -794,7 +820,7 @@ Three separate `create_field` calls for the three fields would be three round tr
 | Property | Type | Notes |
 |----------|------|-------|
 | `table_name` | string | Target entity, required |
-| `field_name` | string | Snake_case identifier. Renaming is supported but think twice: views, integrations, and saved queries reference the field by name. |
+| `field_name` | string | Snake_case identifier. Renaming is supported but think twice: views, integrations, and saved queries reference the field by name. What a rename changes in rules: "Safe Evolution Patterns" → High-Risk. |
 | `title` | string | Human-readable label shown in UI |
 | `description` | string | Explains what the field represents |
 | `format` | string | Changeable only to a format with the same physical database type (e.g., one string format can swap to another string format; `int32` to `int64` is refused with `90223`). See format table above. |
@@ -804,8 +830,8 @@ Three separate `create_field` calls for the three fields would be three round tr
 | `searchable` | boolean | Adds this field to the entity's full-text search index |
 | `unique_value` | boolean | Enforces uniqueness at database level through a partial unique index: for string formats, `NULL` and `''` are exempt. See `### unique_value` above. |
 | `enum_values` | array | Required when `format: "enum"`: the allowed entries, each a value or a `{"value", "label"}` object with an optional `description`, `color` and `icon`. Records and `default_value` hold the value, never the label; never an object map. See "Enum values and labels" above. |
-| `precision` | integer (0–18) | For `format: "number"` only, number of digits after the decimal point in the generated `NUMERIC` column. Defaults to `2` (suits money and most measured quantities). Set higher (e.g. `4`–`6`) for tax rates, FX rates, or scientific values; `0` for integer-like counts that still want NUMERIC semantics. |
-| `default_value` | string | Override for the platform's auto-default. Only set when the auto-default is wrong for the domain. See `### default_value` above for the auto-default table per format, the 200-character limit and the SQL expressions it evaluates. Stored as text: a number or boolean is converted (`1` → `"1"`, `true` → `"true"`), a JSON array or object to its JSON (`{}` → `"{}"`). |
+| `precision` | integer (0–18) | For `format: "number"` only, number of digits after the decimal point in the generated `NUMERIC` column. Defaults to `2` (suits money and most measured quantities). Set higher (e.g. `4`–`6`) for tax rates, FX rates, or scientific values; `0` for integer-like counts that still want NUMERIC semantics. A change on an existing field alters the column: lowering it rounds the stored values, and any change rewrites the table under an exclusive lock (see "Safe Evolution Patterns"). |
+| `default_value` | string | Override for the platform's auto-default. Only set when the auto-default is wrong for the domain. See `### default_value` above for the auto-default table per format, the 200-character limit and the computed defaults. Stored as text: a number or boolean is converted (`1` → `"1"`, `true` → `"true"`), a JSON array or object to its JSON (`{}` → `"{}"`). |
 | `reference_table` | string | Target entity's `table_name` for `reference`/`parent` fields |
 | `reference_delete_mode` | string | `restrict`, `clear`, or `cascade`. On an `is_a` entity never `cascade` (`90249`): set `restrict` or `clear` explicitly, on `parent` fields too. |
 | `relationship_label` | string | Verb for the relationship, set on every `reference` and `parent` field in the same `create_field` call that creates it; omitted, the platform writes `has`. Read it as `<Referenced Entity> <label> <Holding Entity>` (e.g. `"employs"` on `employees.department_id`). Used as the arrow label in module diagrams and in navigation labels. See "Relationship labels". |
@@ -988,9 +1014,13 @@ This holds for every module and every install order.
 - Adding an `input_type_rule` to a `required` field (the database stops enforcing `required` for it)
 - Adding or changing a `rollup` definition or `computed_fields` (recalculates existing records with no audit row; the tables written take no other writes until the save commits) — see `rollup-fields.md`
 - Modifying or removing an existing `input_type_rule` (forms suddenly show, hide, or unlock a field mid-workflow) — see `jsonlogic.md`
+- Raising `precision` of a `number` field (the table is rewritten under an exclusive lock, so other work on it waits until the change commits)
 
 ### 🛑 High-Risk (require explicit confirmation)
 - Renaming `table_name` or `field_name`, breaks all references
+  - A field that a rule names cannot be renamed (`90275`, which names the rule). The rules that count: a `computed_fields` entry (which also names the field it writes), a validation rule or the `select_rule` of the field's entity, an `input_type_rule` of one of its fields, and the same kinds of rule on an `is_a` / `has_a` entity below it. Change the rule, then rename. A rule of another entity that reads the field through `set_record` is not checked: the rename goes through and that rule reads null, so change it in the same step.
+  - A table rename rewrites the entity of every `set_record` in the `computed_fields`, `validation_rules` and `select_rule` of every entity, the renamed one included. Nothing else in a rule changes, so the table name written anywhere else in a rule keeps the old name.
+- Lowering `precision` of a `number` field: the stored values are rounded, and the lost digits are gone
 - Deleting entities or fields, permanent data loss
 - Removing permissions still in use by roles
 - Changing primary key fields (`id_type` cannot change at all, `90233`; a record's key value cannot change either, `90236`)
@@ -1152,7 +1182,7 @@ semantius call crud read_entity '{"filters": "table_name=eq.<table>"}'
 ```
 
 ### Fields not displaying correctly
-- Check `label_column` is set and matches a real field with `ctype='label'`
+- Check `label_column` is set and matches a real field with `ctype` `label` (`computed_label` when a rule writes it)
 - Check `field_order` for display sequence
 - Check `input_type` is appropriate
 - Ensure `width: "default"` unless a specific override is needed

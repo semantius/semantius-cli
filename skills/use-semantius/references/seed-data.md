@@ -47,7 +47,7 @@ Write it as `.tmp_deploy/seed_<module_slug>.json`, with your file-write tool:
 - **Users.** A column that references `users` takes `{"external_id": "…"}` of a user `--describe` lists, or `null`. Never invent a user.
 - **Columns.** Every record of a table carries the same columns, the `id` among them.
   - An empty value is `""` for text and `0` for a number.
-  - `null` goes only in a `reference`, `date` or `date-time` column, never in a `parent` column.
+  - `null` goes only in a `reference`, `date`, `time`, `date-time` or `uuid` column, never in a `parent` column.
   - A column the platform fills (a computed or rollup column, `created_at`, `updated_at`) is never written. The one exception is an approval stamp ("Approval stamps").
 - **Dates** are written out (`2026-11-05`, `2026-11-05T14:00:00Z`), worked out from today's date.
 - **Order.** Tables go in any order, and so do the records of a table.

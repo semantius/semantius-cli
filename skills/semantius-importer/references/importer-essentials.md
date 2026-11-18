@@ -96,7 +96,7 @@ Properties the importer uses:
 | `default_value` | Always on a required enum (its automatic default is `''`, which a required enum refuses), and when the zero value is wrong. Always a value, never a label. |
 | `reference_table` (+ `reference_delete_mode`) | **Mandates `format: "reference"` or `"parent"`** — never combine `reference_table` with a scalar format. Delete modes: `restrict`, `clear`, `cascade`. |
 
-**Nullability is computed from `format`**: only `reference`, `date`, `date-time` accept NULL; every other format is NOT NULL with a zero-value default when `default_value` is blank (`''`, `0`, `false`, `[]` for `array`, `{}` for other JSON; `0` for `rating` means not rated; an `enum` defaults to `''`, which a required enum refuses; `uuid`, `time`, `duration` and `binary` have no zero value). This drives the empty-cell policy in schema-mapping.md section 7.
+**Nullability is computed from `format`**: only `reference`, `date`, `time`, `date-time` and `uuid` accept NULL; every other format is NOT NULL with a zero-value default when `default_value` is blank (`''`, `0`, `false`, `[]` for `array`, `{}` for other JSON; `0` for `rating` means not rated; an `enum` defaults to `''`, which a required enum refuses; a `duration` defaults to no time and a `binary` to no bytes). This drives the empty-cell policy in schema-mapping.md section 7.
 
 ## 4. Updates
 

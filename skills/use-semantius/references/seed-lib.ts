@@ -272,7 +272,7 @@ const isRequesterStamp = (rule: Row): boolean => {
 const enumValues = (f: FieldMeta): string[] =>
   (Array.isArray(f.enum_values) ? f.enum_values : []).map((e: any) => (e && typeof e === "object" ? String(e.value) : String(e)));
 
-const NULLABLE = new Set(["reference", "date", "date-time"]);
+const NULLABLE = new Set(["reference", "date", "time", "date-time", "uuid"]);
 const isRelationship = (f: FieldMeta): boolean => (f.format === "reference" || f.format === "parent") && !!f.reference_table;
 
 /** How a record names itself, or a record of `m` is named by another. */

@@ -23,8 +23,8 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { coverageProblems, labelColumnProblems, lifecycleNameProblems, lifecyclesOf, planAccess, shapeProblems, type AccessRecord } from "./access-rules";
-import { FIELD_FORMATS as FORMATS, fieldProblems, iconProblems, keyProblems, labelReadProblems, madeFieldProblems, rollupRelationshipProblems, writeTierProblems, type EntityInfo } from "./call-file";
+import { coverageProblems, labelColumnProblems, lifecycleNameProblems, lifecyclesOf, openerProblems, planAccess, shapeProblems, type AccessRecord } from "./access-rules";
+import { FIELD_FORMATS as FORMATS, fieldProblems, iconProblems, keyProblems, labelReadProblems, madeFieldProblems, nameProblems, rollupRelationshipProblems, writeTierProblems, type EntityInfo } from "./call-file";
 import { cascadeProblems, otherParentProblems, parentChainProblems, relationshipProblems, type RelationshipRecord } from "./relationship-rules";
 
 export type Logic = unknown;
@@ -115,6 +115,9 @@ export const setRecord = (name: string, table: string, id: Logic, body: Logic): 
   return { set_record: [name, table, id, body] };
 };
 
+/** Formats whose field stays out of a validation rule's emptiness test, besides boolean (`data-modeling.md` → "Fields that apply only to some enum or boolean values"). */
+const UNTESTED_FORMATS = new Set(["duration", "binary", "json", "object", "array", "jsonlogic"]);
+
 /** The value that counts as set for a field of `format` (`data-modeling.md` → "Fields that apply only to some enum or boolean values"). */
 export function isSet(field: string, format: string): Logic {
   const example = 'isSet("rejection_reason", "text"), isSet("sold_date", "date"), isSet("sale_price", "number")';
@@ -123,7 +126,8 @@ export function isSet(field: string, format: string): Logic {
     throw new Error(`isSet(field, format): format is ${shown(format)}, not a field format; give the field's own format, because what counts as empty depends on it. A right call: ${example}`);
   }
   if (format === "boolean") throw new Error(`isSet("${field}", "boolean"): a boolean cannot be told from empty, so it stays out of the validation rule (data-modeling.md → "Fields that apply only to some enum or boolean values")`);
-  if (["date", "date-time", "reference"].includes(format)) return ne(v(field), null);
+  if (UNTESTED_FORMATS.has(format)) throw new Error(`isSet("${field}", "${format}"): ${/^[aeiou]/.test(format) ? "an" : "a"} ${format} field stays out of the validation rule (data-modeling.md → "Fields that apply only to some enum or boolean values")`);
+  if (["date", "time", "date-time", "uuid", "reference"].includes(format)) return ne(v(field), null);
   if (["number", "float", "double", "integer", "int32", "int64", "rating"].includes(format)) return ne(v(field), 0);
   return ne(v(field), "");
 }
@@ -253,14 +257,15 @@ function canReturn(rule: unknown, mode: string): boolean {
   return !!rule && typeof rule === "object" && Object.values(rule as Record<string, unknown>).some((x) => canReturn(x, mode));
 }
 
-/** Formats whose empty value is also a real value: a field of these gets no "needed in this state" rule. */
-const NO_EMPTY_VALUE = new Set(["boolean", "integer", "int32", "int64", "number", "float", "double", "rating"]);
+/** Formats whose empty value is also a real value, and those that stay out of the emptiness test: a field of these gets no "needed in this state" rule. */
+const NO_EMPTY_VALUE = new Set(["boolean", "integer", "int32", "int64", "number", "float", "double", "rating", ...UNTESTED_FORMATS]);
 
 /**
  * Every problem of a new model's entities and fields, checked together before anything is written:
  * - the field checks of `call-file.ts` (a field `create_entity` already made, a required reference with `clear`, a
  *   rollup over hidden rows, a rollup whose `link_field` is not a relationship field of the child that points at the
- *   rollup's own entity) and its icons;
+ *   rollup's own entity), its name checks (a table or field name the platform refuses for a leading "_" or its length)
+ *   and its icons;
  * - a field its `input_type_rule` makes required in some states, with no validation rule of its entity that reads it
  *   (`data-modeling.md` → "Fields that apply only to some enum or boolean values");
  * - a field its `input_type_rule` shows `readonly` while no `computed_fields` rule of its entity fills it;
@@ -279,6 +284,7 @@ export function modelProblems(entities: ReadonlyArray<any>, fields: ReadonlyArra
   const byTable = new Map<string, any>(entities.filter((e) => typeof e?.table_name === "string").map((e) => [e.table_name, e]));
   const out = [
     ...keyProblems("create_entity", entities), ...keyProblems("create_field", fields),
+    ...nameProblems(entities, fields, byTable as Map<string, EntityInfo>),
     ...iconProblems(entities, fields), ...madeFieldProblems(fields, byTable as Map<string, EntityInfo>), ...fieldProblems(fields, byTable as Map<string, EntityInfo>),
     ...rollupRelationshipProblems(fields, [], new Set(byTable.keys())),
   ];
@@ -347,6 +353,7 @@ function accessProblems(entities: ReadonlyArray<any>, fields: ReadonlyArray<any>
   if (access === undefined) {
     return [
       ...lifecycleNameProblems(fields.filter((f) => entities.some((e) => e?.table_name === f?.table_name))),
+      ...openerProblems(fields.filter((f) => entities.some((e) => e?.table_name === f?.table_name))),
       ...labelColumnProblems(entities),
       ...coverageProblems(null, lifecycles).map((p) => `${p}; pass it as access in writeModel (rbac.md, "The access record")`),
     ];

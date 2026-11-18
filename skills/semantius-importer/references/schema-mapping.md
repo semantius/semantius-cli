@@ -223,11 +223,11 @@ The user confirms (or picks another column) in the mapping review. Mechanics for
 
 ## 7. Empty-cell policy
 
-The platform computes nullability from `format`: only `reference`, `date`, and `date-time` columns accept NULL; every other format is NOT NULL with an auto-default. The import script must therefore send, for an empty CSV cell:
+The platform computes nullability from `format`: only `reference`, `date`, `time`, `date-time` and `uuid` columns accept NULL; every other format is NOT NULL with an auto-default. The import script must therefore send, for an empty CSV cell:
 
 | Target format | Empty cell sends | Note |
 |---|---|---|
-| `date`, `date-time`, `reference` | `null` | |
+| `date`, `time`, `date-time`, `uuid`, `reference` | `null` | |
 | `string`, `multiline`, `color`, `icon` | `""` | |
 | `integer`, `number` | `0` | When the column has empties and zero would be a lie (a missing measurement is not a zero), surface it once during mapping review with the empty-cell question (SKILL.md writing convention 7): keep `0`, store the column as `string` so the empties stay blank, or drop the column. A blank is never possible in the number field itself |
 | `boolean` | `false` | Same caveat and the same question as numbers when absence differs from "no" |

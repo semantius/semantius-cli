@@ -55,6 +55,27 @@ export type FieldRow = {
   ctype?: string | null; rollup?: any; field_order?: number | null; default_value?: unknown;
 };
 
+/** Formats that stay out of a rule's emptiness test (data-modeling.md → "Fields that apply only to some enum or boolean values"). */
+const UNTESTED_FORMATS = new Set(["duration", "binary", "json", "object", "array", "jsonlogic"]);
+/** A field's `default_value` as text, without the quotes a reader may have kept around it. */
+const defaultOf = (f: FieldRow): string => (f.default_value === undefined || f.default_value === null ? "" : String(f.default_value).replace(/^['"]|['"]$/g, "").trim());
+/** A relative day or moment on a date, date-time or time field (data-modeling.md → "Computed defaults"). */
+const DAY_OR_MOMENT = /^(today|tomorrow|yesterday|now|\$today|\$now|current_timestamp|current_date|current_time|localtimestamp|localtime|now\(\)|clock_timestamp\(\)|statement_timestamp\(\)|transaction_timestamp\(\))$/i;
+/** The signed-in user on a reference or parent field to users (data-modeling.md → "Computed defaults"). */
+const SIGNED_IN_USER = /^(current_user|\$user_id)$/i;
+/** Whether the database works the default out when the record is written, so the stored value is not the text. */
+const computedDefault = (f: FieldRow): boolean => {
+  const d = defaultOf(f);
+  if (["date", "date-time", "time"].includes(f.format ?? "")) return DAY_OR_MOMENT.test(d);
+  if (f.format === "uuid") return /^gen_random_uuid\(\)$/i.test(d);
+  if (f.format === "reference" || f.format === "parent") return f.reference_table === "users" && SIGNED_IN_USER.test(d);
+  // On a text field the database stores its role name for these, the same for every user.
+  return /^(current_user|session_user)$/i.test(d);
+};
+/** The field that records who opened a record: a reference or parent to users whose default is the signed-in user. */
+const opensRecord = (f: FieldRow): boolean => (f.format === "reference" || f.format === "parent") && f.reference_table === "users" && SIGNED_IN_USER.test(defaultOf(f));
+const NUMBER_FORMATS = new Set(["number", "float", "double", "integer", "int32", "int64", "rating"]);
+
 export type AccessPlan = {
   problems: string[];
   warnings: string[];
@@ -90,6 +111,17 @@ const OLD_WS = V("$old.workflow_state");
 const changedTo = (state: string): L => AND(CHANGED(WS), EQ(V(WS), state));
 const isOneOf = (value: L, list: string[]): L => (list.length === 1 ? EQ(value, list[0]) : IN(value, list));
 const REQ = "requested_by_user_id";
+/**
+ * The field that names a table's requester: `requested_by_user_id` when the table has it, else its one field that
+ * records who opened a record (data-modeling.md → "Computed defaults"), else `requested_by_user_id`, which the
+ * command adds.
+ */
+const requesterOf = (fieldsOf: ReadonlyMap<string, ReadonlyArray<FieldRow>>, table: string): string => {
+  const fs = fieldsOf.get(table) ?? [];
+  if (fs.some((f) => f.field_name === REQ)) return REQ;
+  const openers = fs.filter(opensRecord);
+  return openers.length === 1 ? openers[0].field_name : REQ;
+};
 
 // ---------- words ----------
 const article = (phrase: string) => (/^[aeiou]/i.test(phrase) ? "an" : "a");
@@ -284,7 +316,7 @@ function normalizeRoles(record: AccessRecord, byTable: Map<string, EntityRow>, f
         const computedNames = new Set((e?.computed_fields ?? []).map((x: any) => String(x?.name ?? "").split(".")[0]));
         const own = r.limitedTo?.[t];
         const up = new Set((fieldsOf.get(t) ?? []).filter((f) => isRelationship(f) && f.reference_table && (writes.includes(f.reference_table) || Object.keys(r.limitedTo ?? {}).includes(f.reference_table))).map((f) => f.field_name));
-        const kept = (fieldsOf.get(t) ?? []).filter((f) => !["id", "created_at", "updated_at", WS, REQ].includes(f.field_name) && !["id", "audit", "rollup", "computed"].includes(String(f.ctype ?? ""))
+        const kept = (fieldsOf.get(t) ?? []).filter((f) => !["id", "created_at", "updated_at", WS, requesterOf(fieldsOf, t)].includes(f.field_name) && !["id", "audit", "rollup", "computed"].includes(String(f.ctype ?? ""))
           && !f.rollup?.link_field && !computedNames.has(f.field_name) && f.field_name !== own && !up.has(f.field_name) && !(fills[t] ?? []).includes(f.field_name)
           && !/_by_user_id$/.test(f.field_name) && !(f.field_name === e?.label_column && computedNames.has(f.field_name)));
         if (kept.length) leaves[t] = kept.map((f) => f.field_name);
@@ -317,6 +349,14 @@ export function lifecycleNameProblems(fields: ReadonlyArray<{ table_name?: strin
     if (own) out.push(`${t}.${f.field_name}: an entity's lifecycle is its enum workflow_state (data-modeling.md, "default_value"). Name this field workflow_state, and say in the access record who moves a record into each of its states (rbac.md, "The access record"); an enum about something else is named for what it is about`);
   }
   return out;
+}
+
+/** A table with more than one field that records who opened a record: an entity has one (`data-modeling.md` → "Computed defaults"). */
+export function openerProblems(fields: ReadonlyArray<FieldRow>): string[] {
+  const byTable = new Map<string, string[]>();
+  for (const f of fields.filter(opensRecord)) byTable.set(f.table_name, [...(byTable.get(f.table_name) ?? []), f.field_name]);
+  return [...byTable].filter(([, fs]) => fs.length > 1).map(([t, fs]) =>
+    `${t}: ${fs.join(", ")} all default to the signed-in user (CURRENT_USER); only the field that records who opened a record takes it (data-modeling.md, "Computed defaults"). Clear the default of the others`);
 }
 
 /** A label column that is a lifecycle: the label holds a name, title or number people call the record by (`data-modeling.md` → "Choosing the label"). */
@@ -476,6 +516,8 @@ function resolveGates(c: Ctx): Gate[] {
       if (!/_user_id$/.test(f)) c.problems.push(`role ${key}: "limitedTo" names ${t}.${f}; the field that names the person is <part>_user_id, such as requested_by_user_id or interviewer_user_id`);
       const live = fieldOf(c, t, f);
       if (live && !(live.format === "reference" && live.reference_table === "users")) c.problems.push(`role ${key}: ${t}.${f} is not a reference to users`);
+      const opener = requesterOf(c.fieldsOf, t);
+      if (f === REQ && opener !== REQ) c.problems.push(`role ${key}: "limitedTo" names ${t}.${REQ}, but ${t}.${opener} records who opened a ${singularOf(c, t)}: name ${opener}`);
       // The entity a role is limited to is that role's own list across the records above it, which a parent child cannot have.
       for (const p of (c.fieldsOf.get(t) ?? []).filter((x) => x.format === "parent")) {
         c.problems.push(`role ${key}: "limitedTo" gives the ${role.title.toLowerCase()} a list of their own ${pluralOf(c, t)} across ${pluralOf(c, String(p.reference_table))}, and a parent child has no list or menu entry of its own. Make ${t}.${p.field_name} a reference (data-modeling.md, "Choosing the Right Format", question 3)`);
@@ -516,7 +558,8 @@ function userFieldProblems(c: Ctx, raw: AccessRecord, gates: Gate[]): string[] {
     for (const f of fs) {
       if (f.reference_table !== "users" || !isRelationship(f)) continue;
       const id = `${table}.${f.field_name}`;
-      if (used.has(id) || stamps.has(f.field_name)) continue;
+      // The field that records who opened a record names whoever wrote it, not a person of the access record.
+      if (used.has(id) || stamps.has(f.field_name) || f.field_name === requesterOf(c.fieldsOf, table) || opensRecord(f)) continue;
       const entry = raw.userFields?.[id];
       if (entry === undefined) {
         out.push(`${id} names a person. Say whom in "userFields": { "${id}": "<person>" }, the everyday person ("${everyday}") or a key of "roles"; a role's person is used in that role's "limitedTo" or as a gate's "namedPerson"`);
@@ -558,7 +601,8 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
     fieldsOf.get(f.table_name)!.push(f);
   }
   for (const fs of fieldsOf.values()) fs.sort((x, y) => (x.field_order ?? 0) - (y.field_order ?? 0));
-  plan.problems.push(...lifecycleNameProblems(input.fields.filter((f) => byTable.has(f.table_name))), ...labelColumnProblems(input.entities));
+  const ownFields = input.fields.filter((f) => byTable.has(f.table_name));
+  plan.problems.push(...lifecycleNameProblems(ownFields), ...openerProblems(ownFields), ...labelColumnProblems(input.entities));
   const record = normalizeRoles(normalizeRecord(raw, fieldsOf, plan.problems), byTable, fieldsOf);
   const c: Ctx = { slug: input.slug, moduleName: input.moduleName, record, byTable, fieldsOf, problems: plan.problems };
   plan.problems.push(...coverageProblems(record, lifecyclesOf(input.fields).filter((l) => byTable.has(l.table))));
@@ -589,8 +633,9 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
     if (!stampsOf.get(table)!.some((x) => x.name === entry.name)) stampsOf.get(table)!.push(entry);
   };
   const requesterStamp = (table: string) => {
-    userField(table, REQ, "Requested By", "requests", "readonly");
-    stamp(table, { name: REQ, jsonlogic: IF(MODE("insert"), USER, V(`$old.${REQ}`)) });
+    const req = requesterOf(fieldsOf, table);
+    userField(table, req, "Requested By", "requests", "readonly");
+    stamp(table, { name: req, jsonlogic: IF(MODE("insert"), USER, V(`$old.${req}`)) });
   };
   for (const g of gates) {
     if (g.kind !== "transition") requesterStamp(g.table);
@@ -609,7 +654,7 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
   }
   for (const [key, role] of partRoles) {
     for (const [t, f] of Object.entries(role.limitedTo ?? {})) {
-      if (f === REQ) requesterStamp(t);
+      if (f === requesterOf(fieldsOf, t)) requesterStamp(t);
       else userField(t, f, role.title, `is the ${role.title.toLowerCase()} of`);
     }
     void key;
@@ -631,11 +676,11 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
   const namedPath = (g: Gate, from: string) => (g.named!.chain.length ? `${bindingOf(g.named!.chain[g.named!.chain.length - 1].fk)}.${g.named!.field}` : from ? `${from}.${g.named!.field}` : `$old.${g.named!.field}`);
   const namedOr = (g: Gate, from: string) => OR(EQ(V(namedPath(g, from)), null), EQ(USER, V(namedPath(g, from))));
   const who = (g: Gate, from = ""): L => (g.named ? viaNamed(g, from, OR(HAS(admin), AND(HAS(g.perm), namedOr(g, from)))) : HAS(g.perm));
-  const notRequester: L = IF(MODE("insert"), HAS(admin), NE(V(`$old.${REQ}`), USER));
-  const checkParts = (g: Gate): L[] => (g.kind === "transition" ? [who(g)] : [who(g), notRequester]);
+  const notRequester = (table: string): L => IF(MODE("insert"), HAS(admin), NE(V(`$old.${requesterOf(fieldsOf, table)}`), USER));
+  const checkParts = (g: Gate): L[] => (g.kind === "transition" ? [who(g)] : [who(g), notRequester(g.table)]);
   const check = (g: Gate): L => (g.kind === "transition" ? who(g) : AND(...checkParts(g)));
   const lockCheck = (g: Gate, from = ""): L => {
-    const req = from ? `${from}.${REQ}` : `$old.${REQ}`;
+    const req = `${from || "$old"}.${requesterOf(fieldsOf, g.table)}`;
     const inner = AND(HAS(g.perm), ...(g.named ? [namedOr(g, from)] : []), NE(V(req), USER));
     return OR(HAS(admin), g.named?.chain.length ? viaNamed(g, from, inner) : inner);
   };
@@ -676,7 +721,7 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
         const from = values.includes("rejected") ? [w, "rejected"] : [w];
         add(table, `recall_${singSnake}`,
           `Only the person who requested it, or an admin, can move ${a(`${listOf(from.map((s) => stateLabel(c, table, s)))} ${sing}`)} back to ${stateLabel(c, table, prepared)}.`,
-          IF(AND(CHANGED(WS), IN(OLD_WS, from), EQ(V(WS), prepared)), OR(HAS(admin), AND(NE(V(`$old.${REQ}`), null), EQ(V(`$old.${REQ}`), USER))), true));
+          IF(AND(CHANGED(WS), IN(OLD_WS, from), EQ(V(WS), prepared)), OR(HAS(admin), AND(NE(V(`$old.${requesterOf(fieldsOf, table)}`), null), EQ(V(`$old.${requesterOf(fieldsOf, table)}`), USER))), true));
       } else {
         add(table, `${g.spec.verb}_${singSnake}`,
           `Only ${who_} can ${verb} ${a(sing)}${g.kind === "payout" ? ", and never the person who requested it" : ""}.`,
@@ -750,17 +795,31 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
       const leaves = role.leaves?.[table];
       if (!leaves?.length) continue;
       const fs = leaves.map((n) => fieldOf(c, table, n)!);
+      // The value a field holds when an insert leaves it out, as the rule reads it: its default in the field's own type, or the empty value of its format.
       const empty = (f: FieldRow): L => {
-        if (f.default_value !== undefined && f.default_value !== null && f.default_value !== "") return String(f.default_value).replace(/^['"]|['"]$/g, "");
-        if (["date", "date-time", "reference", "parent"].includes(f.format ?? "")) return null;
-        if (["number", "float", "double", "integer", "int32", "int64", "rating"].includes(f.format ?? "")) return 0;
+        const d = defaultOf(f);
+        if (d !== "") {
+          if (f.format === "boolean") return d.toLowerCase() === "true";
+          if (NUMBER_FORMATS.has(f.format ?? "") && Number.isFinite(Number(d))) return Number(d);
+          return d;
+        }
+        if (["date", "time", "date-time", "uuid", "reference", "parent"].includes(f.format ?? "")) return null;
+        if (NUMBER_FORMATS.has(f.format ?? "")) return 0;
         if (f.format === "boolean") return false;
         return "";
       };
+      // An insert is not tested for a field of a format that stays out of the emptiness test, nor for one whose default
+      // the database computes when the record is written: the rule cannot know that value. A change of it is still refused.
+      const untestable = fs.filter((f) => UNTESTED_FORMATS.has(f.format ?? "") || computedDefault(f));
+      for (const f of untestable) {
+        const why = UNTESTED_FORMATS.has(f.format ?? "") ? `${/^[aeiou]/.test(f.format ?? "") ? "an" : "a"} ${f.format} field is not tested for empty` : `its default ${defaultOf(f)} is computed when the record is written`;
+        plan.warnings.push(`${table}.${f.field_name}: the ${role.title.toLowerCase()} leaves it to others, but ${why}, so the ${role.title.toLowerCase()} can still set it when creating ${a(sing)}; only a change of it afterward is refused`);
+      }
+      const tested = fs.filter((f) => !untestable.includes(f));
       const one = (parts: L[], op: (...p: L[]) => L) => (parts.length === 1 ? parts[0] : op(...parts));
       add(table, `${key}_leaves_${snake(byTable.get(table)?.singular_label ?? table)}_fields`,
         `Only a Manager can set ${a(sing)}'s ${listOf(fs.map((f) => (f.title ?? f.field_name).toLowerCase()))}.`,
-        IF(HAS(manage), true, IF(MODE("insert"), one(fs.map((f) => EQ(V(f.field_name), empty(f))), AND), NOT(one(fs.map((f) => CHANGED(f.field_name)), OR)))));
+        IF(HAS(manage), true, IF(MODE("insert"), tested.length ? one(tested.map((f) => EQ(V(f.field_name), empty(f))), AND) : true, NOT(one(fs.map((f) => CHANGED(f.field_name)), OR)))));
     }
   }
 
@@ -809,7 +868,8 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
     if (role.seesOnlyNamed) {
       for (const g of gates.filter((x) => x.named && x.spec.takenBy[0] === key)) {
         if (holders.some((h) => h.table === g.named!.table)) continue;
-        const reqClause = allFields(g.named!.table).some((f) => f.field_name === REQ) ? [EQ(V(REQ), USER)] : [];
+        const req = requesterOf(fieldsOf, g.named!.table);
+        const reqClause = allFields(g.named!.table).some((f) => f.field_name === req) ? [EQ(V(req), USER)] : [];
         holders.push({ table: g.named!.table, field: g.named!.field, open: admin, extra: reqClause });
       }
     }
