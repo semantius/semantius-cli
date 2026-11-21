@@ -6,7 +6,7 @@
 import { z } from 'zod/v4'
 
 export const entitySchema = z.looseObject({
-  table_name: z.string().describe('Physical table name: lowercase letters, digits and _, starting with a letter, at most 41 bytes (90273), and not ending in _ext (reserved). A leading _ marks an internal table and is refused (90271). Primary key. Changing it on update renames the physical table.'),
+  table_name: z.string().describe('Physical table name: lowercase letters, digits and _, starting with a letter, at most 41 bytes (90273), and not ending in _ext (reserved). A leading _ marks an internal table and is refused (90271). Primary key. Changing it on update renames the physical table and carries the new name to the fields that reference the entity, its RACI events and its process gates. A rename is refused for an entity that built-in fields reference (users, roles, permissions, modules, entities; 90286), when a rollup function name would collide (90281), and when a queue trigger name would exceed 63 bytes (90506).'),
   singular: z.string().optional().describe('Singular form of table name (on create, auto-derived from table_name when blank)'),
   plural: z.string().optional().describe('Plural form of table name, auto-assigned to table_name'),
   singular_label: z.string().optional().describe('Human-readable singular noun for UI/reports (e.g. Customer), symmetric with plural_label. On create, when blank it is derived from singular (service becomes "Service"), so pass it whenever that is not the right noun. It does not set the title of the label field: that is label_column_label.'),
@@ -19,13 +19,13 @@ export const entitySchema = z.looseObject({
     .string()
     .optional()
     .describe(
-      'Permission required to SELECT from this table, by name. It must already exist: this is a foreign key to permissions(permission_name), so an unregistered name is rejected with a foreign-key error rather than accepted. Create the permission first, then the entity. A rollup between two entities with different view permissions needs include_hidden_rows (90269).'
+      'Permission required to SELECT from this table, by name, and next to edit_permission to UPDATE and DELETE its rows; a select_rule, when set, takes its place. A holder of it, of edit_permission or of admin sees this entity in entities and fields and in get_schema (an is_a or has_a entity only when it sees every base too); nobody else does. It must already exist: this is a foreign key to permissions(permission_name), so an unregistered name is rejected with a foreign-key error rather than accepted. Create the permission first, then the entity. A rollup between two entities with different view permissions needs include_hidden_rows (90269).'
     ),
   edit_permission: z
     .string()
     .optional()
     .describe(
-      'Permission required to INSERT/UPDATE/DELETE from this table, by name. Same foreign key as view_permission: the permission must already exist. A permission an entity names cannot be deleted while the entity stands.'
+      'Permission required to INSERT/UPDATE/DELETE from this table, by name. Without a select_rule, UPDATE and DELETE also need view_permission: a holder of this permission alone updates and deletes nothing, without an error, and the inserts of these tools, which return the row, are refused with 42501, so give every editor the view permission too. With a select_rule, UPDATE and DELETE need the rule instead. A holder of it sees this entity in entities and fields, as a holder of view_permission does. Same foreign key as view_permission: the permission must already exist. A permission an entity names cannot be deleted while the entity stands.'
     ),
   id_column: z.string().optional().describe('Name of the primary key column (default id), created automatically. Set on create and locked afterwards (a change is refused with 90253); omit it on update.'),
   // Optional rather than .default(): this schema also serves update_entity, and
@@ -48,7 +48,7 @@ export const entitySchema = z.looseObject({
     .describe('Reference or parent field of this entity whose record label the composed _label is built from (the identity spine). Empty = self-identifying: the composed label is the local label. Not allowed on a junction entity, and the spine must stay acyclic. Changing it re-points the composed label; no data is migrated.'),
   order_column: z.string().optional()
     .describe('Name of an integer column that stores a fixed row order. Setting it creates an INTEGER NOT NULL column (default 0) on a managed entity, and a record inserted with no value or 0 gets MAX + 10 (10 for the first). Renaming or clearing it drops the old column and its data, so it must name a column the table does not already have (90278). Not available for is_a or has_a entities (90249). Empty = no fixed order.'),
-  managed: z.boolean().optional().describe('When false, automatic DDL execution for table and field changes is disabled'),
+  managed: z.boolean().optional().describe('When false, automatic DDL execution for table and field changes is disabled. Switching it from false back to true rebuilds the table\'s insert, select, update and delete policies from the current edit_permission, view_permission and select_rule.'),
   searchable: z.boolean().optional().describe('Whether table is included in full-text search (auto-computed)'),
   is_child: z.boolean().optional().describe('Whether table has any parent relationships (auto-computed)'),
   edit_mode: z.enum(['auto', 'sidebar', 'modal', 'page']).optional().describe('UI edit mode for records of this table: auto, sidebar, modal, or page'),
@@ -57,7 +57,7 @@ export const entitySchema = z.looseObject({
   computed_fields: z.array(z.any()).optional().describe('Ordered list of {name, jsonlogic, description?} entries (name and jsonlogic are required), evaluated and stored on every insert and update: each entry derives the named field from the same record before the write. Saving applies the rules to existing records, and a record that cannot take its new value refuses the save (90908). A named field gets ctype computed (computed_label for the label column) and keeps its input_type, and it cannot be renamed while a rule names it (90275). A rule naming an unknown operator is refused on save (90909). A rule cannot name a rollup field (90907). Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
   validation_rules: z.array(z.any()).optional().describe('Ordered list of {code, message, jsonlogic, hint?, description?} entries. code, message and jsonlogic are required; code must be a five-digit class 99 code such as "99001" (otherwise refused with 90905). Each rule must evaluate truthy for the write to succeed. Default []. On update the list replaces the stored list: send the full list; [] removes the rules.'),
   select_rule: z.record(z.string(), z.any()).optional()
-    .describe('JsonLogic rule evaluated per row for the FOR SELECT RLS policy: true = the current user may see the record. Empty = no per-row rule. Setting a rule on an entity that a rollup aggregates over needs include_hidden_rows on that rollup (90269).'),
+    .describe('JsonLogic rule evaluated per row for the SELECT, UPDATE and DELETE RLS policies: true = the current user may see the record, and with edit_permission update or delete it. When set, it replaces view_permission for all three; INSERT needs edit_permission only. Empty = no per-row rule. Setting a rule on an entity that a rollup aggregates over needs include_hidden_rows on that rollup (90269).'),
   entity_type: z.enum(['operational_workflow', 'operational_record', 'catalog', 'junction', 'computed', 'unclassified']).optional()
     .describe('What kind of data this entity holds. operational_workflow: records move through a gated lifecycle (even one gated step such as draft to submitted counts). operational_record: everyday business records without such a lifecycle. catalog: reference or lookup data maintained by admins. junction: a pure connecting record between entities with no fields of its own; the platform labels its rows by the records they relate. computed: every field is derived and never written directly. unclassified: not classified yet (the default). Set it on create or change it on update like any other column.'),
   catalog_entity_code: z.string().optional()

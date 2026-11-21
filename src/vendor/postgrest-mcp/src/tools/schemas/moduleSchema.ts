@@ -41,7 +41,7 @@ export const moduleSchema = z.looseObject({
     .optional()
     .nullable()
     .describe(
-      'Default viewer role of this module (FK to roles.id)'
+      'Default viewer role of this module (FK to roles.id, restrict): the role cannot be deleted while a module names it (23001 on PostgreSQL 18, 23503 before)'
     ),
   default_manager_role_id: z
     .number()
@@ -49,7 +49,7 @@ export const moduleSchema = z.looseObject({
     .optional()
     .nullable()
     .describe(
-      'Default manager role of this module (FK to roles.id)'
+      'Default manager role of this module (FK to roles.id, restrict): the role cannot be deleted while a module names it (23001 on PostgreSQL 18, 23503 before)'
     ),
   default_admin_role_id: z
     .number()
@@ -57,7 +57,7 @@ export const moduleSchema = z.looseObject({
     .optional()
     .nullable()
     .describe(
-      'Default admin role of this module (FK to roles.id)'
+      'Default admin role of this module (FK to roles.id, restrict): the role cannot be deleted while a module names it (23001 on PostgreSQL 18, 23503 before)'
     ),
   logo_color: z.string().optional().describe('Hex color code for module logo, lowercase (for example #4f46e5)'),
   icon_name: z.string().optional().describe('Icon shown for the module: a Lucide icon name in kebab-case (e.g. "users"; latest Lucide release, names searchable in https://cdn.jsdelivr.net/npm/lucide-static/tags.json) or an icon URL'),

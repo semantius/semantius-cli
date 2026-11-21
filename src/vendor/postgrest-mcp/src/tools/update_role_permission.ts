@@ -32,6 +32,7 @@ export const updateRolePermissionTool: Tool<typeof inputSchema, undefined> = {
       `Provide the id and the fields to update. ` +
       `Only the fields included in "data" will be updated; other fields remain unchanged. ` +
       `Returns the updated record with all current field values. ` +
+      `The grant of admin to the Administrator role (id "2.admin") cannot be pointed at another role or permission (42501, hint code 90108). ` +
       `"id" may also be an array to apply the same update to several records in one request; the response is always an array of updated records.`,
     inputSchema,
   },

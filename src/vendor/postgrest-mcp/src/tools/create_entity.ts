@@ -34,6 +34,7 @@ export const createEntityTool: Tool<typeof inputSchema, undefined> = {
       `This tool validates input data and returns the complete created record. ` +
       `The server fills created_at, updated_at, plural, searchable and is_child, and derives singular and singular_label when blank. ` +
       `Unless managed is false this creates the physical table with its row-level security policies and its id, label, created_at and updated_at fields (never create them with create_field). Defaults: view_permission public:read, edit_permission admin, id_column id, label_column label. ` +
+      `Without a select_rule, updating and deleting the entity's records needs both its edit_permission and its view_permission, and only holders of either one (or of admin) see the entity in entities and fields. ` +
       `Accepts a single object or an array of objects (bulk insert in one request); the response is always an array of created records.`,
     inputSchema,
   },

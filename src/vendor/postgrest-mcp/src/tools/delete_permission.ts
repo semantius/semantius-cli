@@ -13,7 +13,7 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 const inputSchema = {
   permission_name: oneOrMany(z.string()).describe(
     `permission_name of the permission to delete, or a non-empty array of permission_names to delete several records in one request. If one fails, none is deleted. ` +
-    `Refused (foreign key violation) while an entity's view_permission or edit_permission, a module's view_permission, or a queue's view_permission or manage_permission names it; a module's manage_permission or admin_permission naming it is cleared (set to null). ` +
+    `Refused by the foreign key (23001 or 23503, the message names the constraint) while an entity's view_permission or edit_permission, a module's view_permission, or a queue's view_permission or manage_permission names it; a module's manage_permission or admin_permission naming it is cleared (set to null). The permission admin cannot be deleted (42501, hint code 90108). ` +
     `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
@@ -27,7 +27,7 @@ export const deletePermissionTool: Tool<typeof inputSchema, undefined> = {
   options: {
     title: 'Delete Permission',
     description: `Permanently deletes a permission record by permission_name, which is the primary key of the permissions table. ` +
-      `This operation cannot be undone. Also deletes all role grants, direct user grants and hierarchy entries of the permission. It is refused (foreign key violation) while an entity's view_permission or edit_permission, a module's view_permission, or a queue's view_permission or manage_permission names it; a module's manage_permission or admin_permission naming it is cleared (set to null). ` +
+      `This operation cannot be undone. Also deletes all role grants, direct user grants and hierarchy entries of the permission. It is refused by the foreign key (23001 or 23503, the message names the constraint) while an entity's view_permission or edit_permission, a module's view_permission, or a queue's view_permission or manage_permission names it; a module's manage_permission or admin_permission naming it is cleared (set to null). The permission admin cannot be deleted (42501, hint code 90108). ` +
       `Returns the deleted record for confirmation (always an array; "permission_name" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records.`,
     inputSchema,

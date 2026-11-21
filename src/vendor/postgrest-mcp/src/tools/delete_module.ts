@@ -13,7 +13,8 @@ import { oneOrMany, keyFilter } from '../utils/bulk.ts'
 const inputSchema = {
   id: oneOrMany(z.number().int()).describe(
     `ID of the module to delete, or a non-empty array of IDs to delete several modules in one request. If one fails, none is deleted. ` +
-    `Deleting a module automatically deletes ALL of its entities, fields, and business records, and its permissions. ` +
+    `Deleting a module automatically deletes ALL of its entities, fields, and business records, its permissions and its roles (its default roles among them). ` +
+    `Refused while RACI events name one of its entities or roles, or while another module names one of its roles as a default role (23001 on PostgreSQL 18, 23503 before). ` +
     `WARNING: This operation is permanent and cannot be undone.`
   ),
   accept: z
@@ -26,7 +27,8 @@ export const deleteModuleTool: Tool<typeof inputSchema, undefined> = {
   name: 'delete_module',
   options: {
     title: 'Delete Module',
-    description: `Permanently deletes a module by ID INCLUDING all of its entities, their fields, and all business records and its permissions (automatic cascade, one request). ` +
+    description: `Permanently deletes a module by ID INCLUDING all of its entities, their fields, and all business records, its permissions and its roles, its default roles among them (automatic cascade, one request). ` +
+      `Refused while RACI events name one of its entities or roles, or while another module names one of its roles as a default role (23001 on PostgreSQL 18, 23503 before). ` +
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several modules in one request). ` +
       `Do NOT delete entities first. ` +

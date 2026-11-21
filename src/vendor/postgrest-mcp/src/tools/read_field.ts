@@ -75,7 +75,8 @@ export const readFieldTool: Tool<typeof inputSchema, undefined> = {
     description: `Reads and queries fields from the fields table. ` +
       `Supports flexible filtering, column selection, pagination, and sorting using PostgREST query syntax. ` +
       `Returns an array of matching records. Use filters to narrow results, select to choose columns, ` +
-      `limit/offset for pagination, and order for sorting.`,
+      `limit/offset for pagination, and order for sorting. ` +
+      `Returns only the fields of entities the caller sees in read_entity (a holder of their view_permission or edit_permission, or of admin), so a check for references to an entity made without admin can miss some.`,
     inputSchema,
   },
   handler: async ({ filters, select, limit, offset, order, accept }, { authInfo }) => {

@@ -31,7 +31,7 @@ export const updatePermissionTool: Tool<typeof inputSchema, undefined> = {
     description: `Updates an existing permission record by permission_name, which is the primary key of the permissions table. ` +
       `Provide the permission_name and the fields to update. ` +
       `Only the fields included in "data" will be updated; other fields remain unchanged. ` +
-      `Renaming a permission (setting "permission_name" in "data") cascades to every table that names it, and regenerates the affected RLS policies. ` +
+      `Renaming a permission (setting "permission_name" in "data") cascades to every table that names it, and regenerates the affected RLS policies. The permission admin cannot be renamed (42501, hint code 90108). ` +
       `Returns the updated record with all current field values. ` +
       `"permission_name" may also be an array to apply the same update to several records in one request; the response is always an array of updated records.`,
     inputSchema,

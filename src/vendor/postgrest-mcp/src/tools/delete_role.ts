@@ -29,7 +29,9 @@ export const deleteRoleTool: Tool<typeof inputSchema, undefined> = {
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Refused (90104) when this would leave the system without an enabled Administrator, and refused (foreign key violation) while a module names the role as its default_viewer_role_id, default_manager_role_id or default_admin_role_id.`,
+      `Refused (90104) when this would leave the system without an enabled Administrator. ` +
+      `Refused by the foreign key (23001 on PostgreSQL 18, 23503 before; the message names the constraint) while a module names the role as its default_viewer_role_id, default_manager_role_id or default_admin_role_id, and while RACI events name it (raci_events_target_role_id_fkey). ` +
+      `Deleting a module deletes its roles, its default roles among them.`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo }) => {

@@ -22,7 +22,7 @@ export const roleSchema = z.looseObject({
     .describe(
       'How the role was created: system (platform built-in), model (scaffold role of a domain module), model_master (scaffold role of a master module) or user (created by an admin). Set on insert and never changed. Defaults to user when omitted.'
     ),
-  module_id: z.number().int().optional().nullable().describe('Module this role belongs to. Omit it and the role belongs to no module.'),
+  module_id: z.number().int().optional().nullable().describe('Module this role belongs to. Omit it and the role belongs to no module. Deleting the module deletes the role (cascade).'),
   catalog_role_code: z
     .string()
     .optional()

@@ -45,6 +45,8 @@ export const generateModuleDiagramTool: Tool<typeof inputSchema, undefined> = {
       `(or the table_name with show_table_name), and each arrow is labelled with the field's relationship_label. ` +
       `Arrows run from the referenced (one) side to the entity holding the field (many side); ` +
       `a flat line marks a unique (one-to-one) reference. ` +
+      `It reads as the caller, so it covers only the entities the caller sees (a holder of their view_permission or ` +
+      `edit_permission, or of admin); a table_name the caller does not see is reported as not found. ` +
       `Returns the diagram as a mermaid code block, ready to paste into a spec or markdown document.`,
     inputSchema,
   },

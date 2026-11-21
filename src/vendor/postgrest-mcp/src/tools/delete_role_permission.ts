@@ -28,7 +28,8 @@ export const deleteRolePermissionTool: Tool<typeof inputSchema, undefined> = {
     description: `Permanently deletes a role permission record by ID. ` +
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
-      `WARNING: Be extremely careful to avoid deleting unintended records.`,
+      `WARNING: Be extremely careful to avoid deleting unintended records. ` +
+      `The grant of admin to the Administrator role (id "2.admin") cannot be deleted (42501, hint code 90108).`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo }) => {

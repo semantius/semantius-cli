@@ -23,7 +23,7 @@ export const postgrestRequestTool: Tool<typeof inputSchema, undefined> = {
   name: 'postgrestRequest',
   options: {
     title: 'Call PostgREST API',
-    description: 'Performs a raw HTTP request against the PostgREST API. Use only for queries or filter-based mutations the typed CRUD tools cannot express; the typed tools already support arrays for bulk create/update/delete. Always sends Prefer: return=representation. On is_a and has_a entities PUT and on_conflict upserts fail with 42P10: insert, then PATCH.',
+    description: 'Performs a raw HTTP request against the PostgREST API. Use only for queries or filter-based mutations the typed CRUD tools cannot express; the typed tools already support arrays for bulk create/update/delete. Always sends Prefer: return=representation, so on an entity without a select_rule an insert or upsert needs the view_permission as well as the edit_permission (42501 otherwise); an UPDATE or DELETE of rows the caller may not read changes nothing and returns []. On is_a and has_a entities PUT and on_conflict upserts fail with 42P10: insert, then PATCH.',
     inputSchema,
   },
   handler: async ({ method, path, body, accept }, { authInfo }) => {

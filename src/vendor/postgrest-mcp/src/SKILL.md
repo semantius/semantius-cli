@@ -43,10 +43,12 @@
    **`parent` delete modes:**
    - `cascade` (the normal choice, since a child usually shares its parent's permissions): deleting the parent deletes its children.
    - `restrict` (rare): for a child that has its own permissions or an audit log with its own lifecycle (scorecards, signed offers). A cascade does not check the child's own delete permission (a Postgres referential action does not apply row-level security); `restrict` refuses the parent's deletion while children exist, so each child is removed through its own permission. Keep the format `parent` and change the delete mode; a `reference` would be optional and drop out of the parent's child list.
-   - `clear` never works on a `parent`: the column is NOT NULL, so every delete of the parent would fail. A child that must survive its parent is a `reference` with `clear`.
+   - `clear` is refused on a `parent` (`90282`): the column is NOT NULL, so every delete of the parent would fail. A child that must survive its parent is a `reference` with `clear`.
 
    ### 3. Access Control (RBAC)
    - **Entity-level gates:** `view_permission` (read), `edit_permission` (write). `edit_permission` gates INSERT, UPDATE and DELETE alike; there is no separate delete permission. To let only some users delete (or approve, or close), add a `validation_rules` entry that tests `$mode`.
+   - **Writers need the view permission too.** On an entity without a `select_rule`, UPDATE and DELETE need `edit_permission` and `view_permission`: a role with the edit permission and without the view permission updates and deletes nothing, without an error. An INSERT that reads nothing back needs only `edit_permission`, but the tools of this server always ask for the written rows back (`Prefer: return=representation`), so their inserts are refused with `42501` without the view permission, and so is an upsert that meets an existing row. Give every role that holds an entity's edit permission its view permission as well. On an entity with a `select_rule`, the rule takes the view permission's place (see *Row-Level Read Access*).
+   - **The catalog follows the same gates.** An entity's rows in `entities` and `fields` are visible only to a holder of its `view_permission`, its `edit_permission` or `admin`, on every level of an `is_a` or `has_a` entity; writes to both still need `admin`. A user whom a `select_rule` admits to records but who holds neither permission sees no metadata of the entity.
    - **Permission flow:** Users → Roles → Permissions (with optional hierarchy)
    - **Effective permissions:** Computed from direct grants + inherited permissions
    - **Naming convention:** Use `<module>:<action>` (e.g., `crm:read`, `crm:manage`, `leads:write`). The platform accepts any name made of segments `[a-z0-9][a-z0-9_-]*` joined by `:` (zero or more colons), so `admin` is valid too
@@ -78,7 +80,7 @@
 
    1. **Labels are semantic contracts** – Set intentional, clear labels/descriptions on all entities and fields
    2. **References over raw IDs** – Use `reference_table` + `reference_delete_mode` for relationships
-   3. **Security by default** – Set `view_permission` and `edit_permission` deliberately on new entities (the defaults are `public:read` and `admin`)
+   3. **Security by default** – Set `view_permission` and `edit_permission` deliberately on new entities (the defaults are `public:read` and `admin`, and the seeded hierarchy has `admin` include `public:read`). A role that edits an entity needs its view permission too, or its updates and deletes change nothing
    4. **Additive changes first** – Prefer adding over deleting/renaming unless impact is understood
    5. **Validate before runtime** – Ensure one PK field (`is_pk=true`; a second one is refused with `90215`) and one label field (`ctype` `label`, or `computed_label` when a rule writes it) per entity
    6. **Never create auto-generated fields** – When creating an entity, the system automatically creates `id`, the field named in `label_column` (the entity's label field), `created_at` and `updated_at`. Do **not** call `create_field` for any of these.
@@ -115,7 +117,7 @@
 
    3. **Create baseline permissions** (always both):
       - `<module>:read` — grants read access to the module's entities
-      - `<module>:manage` — grants full write access to the module's entities
+      - `<module>:manage` — grants write access to the module's entities. Updates and deletes also need the entity's view permission (normally `<module>:read`), so a holder of `manage` needs `read` as well: grant both to the role, or have `manage` include `read` (`create_permission_hierarchy`)
 
    4. **Create a default role** (recommended):
       - E.g., `<module>_viewer` with `<module>:read`
@@ -142,7 +144,7 @@
    2. **Resolve permissions** – Use `read_permission` to find suitable `view_permission` and `edit_permission`. Use module-level permissions (e.g., `crm:read`, `crm:manage`) or create entity-specific ones if needed.
 
    3. **Create the entity** with:
-      - `table_name` (lowercase, snake_case, **always plural**; e.g., `customers`, `categories`; never starting with `_`, which marks an internal table (`90271`), never ending in `_ext`, which is reserved, and at most 41 bytes (`90273`)) — renaming is high-risk: breaks all references. A table rename rewrites only the entity argument of `set_record` in the rules of other entities; anything else in a rule that spells the old name stays.
+      - `table_name` (lowercase, snake_case, **always plural**; e.g., `customers`, `categories`; never starting with `_`, which marks an internal table (`90271`), never ending in `_ext`, which is reserved, and at most 41 bytes (`90273`)) — renaming is high-risk (see *Safe Evolution Patterns*). A rename carries the new name to the fields that reference the entity, to its RACI events and process gates, and to the entity argument of `set_record` in the rules of other entities; anything else in a rule that spells the old name stays, and so does every client, link or text outside the platform that spells it.
       - `singular` – optional; derived from `table_name` when blank (`services` becomes `service`, `cities` becomes `city`)
       - `singular_label` – human-readable singular noun (e.g., "Service", "Company"), symmetric with `plural_label`. Pass it: when blank it is derived from `singular` (`service` becomes "Service"), which is wrong whenever `singular` is. It does not set the title of the label field: that is `label_column_label`.
       - `plural` – do not pass it: the platform always sets it to `table_name`
@@ -151,13 +153,13 @@
       - `label_column` – the snake_case **field name** whose value identifies a record (e.g., `service_name`, `company_name`). This must be a snake_case identifier, not a human-readable title. Always single-line text: it is created as `text` and, as a core column, its format never changes (`90219`), so it is never an enum, number, date, boolean or FK. Omit it for a junction (the platform composes its `_label` from the records it relates; set the auto `label` field's `input_type` to `default`) and for an `is_a` or `has_a` entity: it comes from the base (`90242`).
       - `label_column_label` – the title of the label field, given in this same call (e.g., `label_column: "offer_number"` with `label_column_label: "Offer #"`); no `update_field` call is needed afterwards. Omit it to get the default: the label column in words without the entity's singular or plural (`company_name` on `companies` becomes "Name", `region_description` on `regions` becomes "Description"), except that a column ending in `_number`, `_no`, `_id` or `_code` keeps it (`offer_number` becomes "Offer Number"). It always equals the label field's `title`: changing either one changes both. An `is_a` or `has_a` entity takes it from the base (`90242`).
       - `module_id` (required — use resolved module)
-      - `view_permission` and `edit_permission` – optional (defaults `public:read` and `admin`); set both deliberately. Each must name an existing permission.
+      - `view_permission` and `edit_permission` – optional (defaults `public:read` and `admin`); set both deliberately. Each must name an existing permission. Without a `select_rule`, UPDATE and DELETE need both, so every editor also needs the view permission (see *Access Control*). A holder of either one, or of `admin`, sees the entity in `entities` and `fields`; nobody else does.
       - Optional: `icon_name` — the icon to show for the entity: a Lucide icon name (see Field Format Quick Reference) or an icon URL; leave unset unless the user requests a specific icon.
       - Optional: `name_sort` — sort key that orders entities in navigation; leave unset unless the user wants a specific navigation order.
       - Optional: `edit_mode` — controls how records open for editing: `auto` (default, system decides), `sidebar`, `modal`, or `page`
       - Optional: `cube_mode` — OLAP cube generation: `auto` (default, include in cube) or `disabled`
       - `audit_log`: Optional boolean, default `false`. When `true`, every INSERT / UPDATE / DELETE on this entity is recorded by the platform. Enable on entities where change history matters (contracts, financial records, policy data); leave off for high-volume or ephemeral data where audit noise outweighs the value.
-      - Optional: `managed` — When `false`, automatic DDL execution is disabled for this entity. Leave unset (defaults to `true`) for normal entities where Semantius manages the database schema. Set to `false` only for external or legacy tables where DDL is managed outside the platform.
+      - Optional: `managed` — When `false`, automatic DDL execution is disabled for this entity. Leave unset (defaults to `true`) for normal entities where Semantius manages the database schema. Set to `false` only for external or legacy tables where DDL is managed outside the platform. Switching it from `false` back to `true` rebuilds the table's insert, select, update and delete policies from the entity's current `edit_permission`, `view_permission` and `select_rule`.
       - Optional: `order_column` — Enable fixed, user-defined row ordering (e.g. drag-and-drop) by naming the snake_case field that stores the sort position. The platform provisions that INTEGER column and, when an insert sends no value, assigns the highest value below 900000 plus 10 (10 for the first record). The name must be one the table does not already have, as a field or a system column (`90278`): the column belongs to the platform, and clearing `order_column` drops it with its data. Leave unset (default `''`) unless the user wants records to keep a manual order rather than a natural/sorted one.
       - Optional: `id_type` — the key type of the table. **Chosen once on create and locked afterwards** (an update that changes it fails with `90233`), so decide before creating:
         - `auto_increment` (default, leave it unset): a 64-bit number the database assigns. Right for almost every entity.
@@ -186,7 +188,7 @@
    4. **Add domain fields** based on user requirements (see Field Format Quick Reference below). Pass all fields of the entity to a single `create_field` call as an array in `data`.
       - Omit `field_order`: the platform appends each new field after the entity's existing ones in array order. A hand-picked value can sit above the label field's 20 or tie with a neighbor; values from 900000 up are outside the automatic numbering.
       - A `field_name` must not start with `_`: `_label` and `<fk>_label` are read-time projections of the composed label, absent from the `fields` catalog, selected by name (`select=id,_label,customer_id_label`) and never created, written or imported.
-      - Never create a `users` entity: the built-in `users` table exists. Reference it with `reference_table: "users"`, and do not rename or change the format of any built-in field.
+      - Never create a `users` entity: the built-in `users` table exists. Reference it with `reference_table: "users"`, and do not rename or change the format of any built-in field. The `reference_delete_mode` and `reference_table` of a built-in field cannot change either (`90285`, `90286`), and the entities built-in fields reference (`users`, `roles`, `permissions`, `modules`, `entities`) cannot be renamed (`90286`).
       - The `catalog_*` columns (`catalog_entity_code`, `catalog_field_code`, `catalog_module_code`, `catalog_role_code`) are stamped by spec deploys and write-once (set on create or filled once while empty, then never changed); never create them as fields.
 
    **Example user request:** "Add a service catalog with service name, description, and cost"
@@ -236,7 +238,7 @@
    2. **Create parent field** with:
       - `format: "parent"`
       - `reference_table: "<target_table_name>"`
-      - `reference_delete_mode: "cascade"` (the normal choice: children are deleted with the parent), or `"restrict"` in the rare case of a child with its own permissions or an audit log. On an `is_a` entity `cascade` is refused (`90249`): set `"restrict"`.
+      - `reference_delete_mode: "cascade"` (the normal choice: children are deleted with the parent), or `"restrict"` in the rare case of a child with its own permissions or an audit log. `"clear"` is refused (`90282`). On an `is_a` entity `cascade` is refused (`90249`): set `"restrict"`.
       - Optional: `relationship_label` — verb label for ER diagrams and navigation
       - Optional: `singular_label_parent` / `plural_label_parent` — override the default labels inherited from the parent entity (e.g. use `"Billing Address"` instead of `"Address"` when a customer has multiple address roles)
 
@@ -287,7 +289,7 @@
    2. `create_entity` with `id_type: "is_a"` (plus `id_prefix`) or `"has_a"`, and `id_refentity: "<base table_name>"`. Do not set `label_column` or `label_parent`: they come from the base (on create the platform overwrites them; changing them later is refused with `90242`), and a later change of the root's `label_column` reaches every entity based on it. The entity's table is `<table_name>_ext`, so that name must be free too (`90250`).
    3. Add only the entity's **own** fields with `create_field`. A field belongs to the entity that owns it: an inherited field is changed through its owner, and a field name may not repeat one of the base's or of an entity based on this one (`90243`); siblings (emails and tasks) may share names.
 
-   **Reading and writing:** each entity is read and written at its own `table_name`, which shows the whole record — the base's fields and its own. `get_schema` lists the inherited properties with `"inherited_from": "<owner>"`, and a has_a base lists its `extensions: [{table, properties, required}]`. A reader needs the view permission of every level, a writer the edit permission of every level it writes; a record the caller cannot write whole is skipped, never half-written.
+   **Reading and writing:** each entity is read and written at its own `table_name`, which shows the whole record — the base's fields and its own. `get_schema` lists the inherited properties with `"inherited_from": "<owner>"`, and a has_a base lists its `extensions: [{table, properties, required}]`. A reader needs the view permission of every level, a writer the edit permission of every level it writes, and an update or delete also the view permission (or the `select_rule`) of those levels; a record the caller cannot write whole is skipped, never half-written. The entity's rows in `entities` and `fields`, and its `get_schema`, are visible only to a caller who holds its view or edit permission, or `admin`, on every level up to the root.
    - **Writes through any level reach the record's own type.** `PATCH /activities?id=eq.<eml id>` runs the emails rules too, and `DELETE /activities?id=eq.<eml id>` deletes the email completely, running the delete rules of every level (any of them may refuse). An update writes the level that changed and the levels below it.
    - **Create a `has_a` record** without an `id` to create the base record too, or with the `id` of an existing base record to **attach** to it: only the extension's fields are written, and a base value that differs from the stored one is refused (`90246`) — change it through the base. An `id` that no base record has creates the base record with that id, which must carry the base's prefix (`90237`).
    - **Update a base field through a `has_a` record** — a customer's `city`, when the partner is a person: it is a change of the person record, so the rules and edit permissions of every level of it apply, and a caller who may not write the person skips the record. An update of the extension's own fields writes only the extension.
@@ -313,7 +315,7 @@
 
    **Trigger lifecycle.** When both arrays are empty or null, no entity trigger function exists. As soon as one becomes non-empty, the platform generates a BEFORE INSERT/UPDATE/DELETE function on the table. When both arrays go back to empty, or the entity is deleted, the function is dropped.
 
-   **Saving `computed_fields` recalculates existing records.** A validation rule added later is not applied retroactively; it checks later writes only. Adding or changing `computed_fields` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with `90908`, whose `record_id` and `problem` say why. The pass moves no `updated_at` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps `$user_id` or `$now` unconditionally moves on this pass, as on any update; make such a stamp insert-only: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.created_by"}]}`. Removing a rule keeps the last values as ordinary data.
+   **Saving `computed_fields` recalculates existing records.** A validation rule added later is not applied retroactively; it checks later writes only. Adding or changing `computed_fields` recalculates every record whose value moves. A record that cannot take its new value (a validation rule refuses it, the rule fails on it, or a constraint does) refuses the whole save with `90908`, whose `record_id` (in the key's own JSON type: a number for a numeric key, a string otherwise) and `problem` say why. The pass moves no `updated_at` and writes no audit row, queue message or RACI event, and the tables it writes take no other writes until the save commits. A rule that stamps `$user_id` or `$now` unconditionally moves on this pass, as on any update; make such a stamp insert-only: `{"if": [{"==": [{"var": "$mode"}, "insert"]}, {"var": "$user_id"}, {"var": "$old.created_by"}]}`. Removing a rule keeps the last values as ordinary data.
 
    **Derived marker.** A field a rule names gets `ctype: "computed"`; the label column gets `ctype: "computed_label"` instead and keeps the label's protection. `input_type` stays as you set it: the rule overwrites whatever a form submits, and a client shows a visible `computed` or `computed_label` field disabled because of its `ctype`. The marker goes when no rule names the field. Rules match fields by name and a rename does not rewrite them, so **a field that a rule names cannot be renamed** (`90275`, and the error names the rule): change the rule first, then rename. A field renamed onto a name a rule writes gets the marker. A rule cannot name a rollup field (`90907`), and a computed field cannot become a rollup (`90261`).
 
@@ -460,6 +462,7 @@
    - Omit `ctype`: it becomes `rollup` by itself. Omit `precision` too: it is copied from a `number` value field when the rollup is saved (see *`precision` Values*).
    - `input_type` stays as you set it: the database overwrites whatever a form submits, and a client shows a visible rollup field disabled because of its `ctype`.
    - `required`, `searchable` and `unique_value` are refused (`90261`), and so is a definition on a key, a core field, a `reference` or `parent` field, or a field a `computed_fields` rule names.
+   - Each link has one maintenance function, `common.rollup_<child>_<link>`, shared by the rollups over that link; when `rollup_<child>_<link>` is longer than 59 characters, `<child>_<link>` is cut to 42 characters and 8 md5 hex digits are added, so two long links can spell one name. A rollup whose function name a rollup over another link already uses is refused (`90281`, naming that rollup), also when a rename changes the name: rename the child entity or the link field.
    - Neither side can be an `is_a` or `has_a` entity (`90249`). On an unmanaged entity the definition is kept as metadata, and takes effect once both sides are managed.
 
    **The filter** is compiled to SQL, so only this subset is accepted: `and`, `or`, `!`, `!!`, `==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in` with a non-empty list of literals, literals, and `var` naming a text, boolean, number, date, time, timestamp, UUID or TypeID column of the child (a bare boolean column or boolean literal also works as a condition, and `<` and `<=` take three operands). Everything else is refused on save (`90265`, and the error names it): other operators such as `if`, arithmetic, `cat` and `missing`, the variables `$user_id`, `$now` and `$today`, dotted paths, and a `var` with a default. `==` and `!=` treat `null` as a value; an ordering comparison with a NULL column excludes the record. `===` and `!==` between a column and a literal of another JSON type (`{"===": [{"var": "qty"}, "5"]}`) are refused (`90265`). Text is ordered by code point (`"B" < "a"`), not by the column's collation, and a literal number is compared with a `number` column as written, not rounded to the column's decimals. The date operators (`date_add`, `date_diff`, `date_part`, `date_trunc`, `to_date`, `date_format`) can be used as values: their date is a date or date-time column, an ISO 8601 literal or another date operator, and their unit, part or pattern is a literal. A date literal compared with a date or date-time column must be ISO 8601 and is read in UTC.
@@ -487,10 +490,10 @@
 
    Entities can carry an optional `select_rule` (JSONB object, default `{}`) that is evaluated per row to determine whether the current user is allowed to view the record. **It replaces `view_permission` for reads:** the FOR SELECT policy is the rule alone, with no `view_permission` check. Only while the rule is `{}` does the default policy `has_permission(view_permission)` apply. A rule that tests no permission therefore admits every row it matches to every user who can reach the table, and a rule that only compares `owner_id` to `$user_id` hides all other rows from administrators too: test a permission inside the rule (`has_permission`) for the roles that must see everything.
 
-   Writes keep `edit_permission`: UPDATE and DELETE require `edit_permission` AND the rule on the existing row (a row the rule hides cannot be updated or deleted), `WITH CHECK` is `edit_permission` only (a write may move a row out of its own rule), and INSERT needs `edit_permission` only.
+   Writes keep `edit_permission`: UPDATE and DELETE require `edit_permission` AND the rule on the existing row (a row the rule hides cannot be updated or deleted; `view_permission` plays no part), `WITH CHECK` is `edit_permission` only (a write may move a row out of its own rule), and INSERT needs `edit_permission` only, also when the inserted row is returned. Without a rule, UPDATE and DELETE require `edit_permission` AND `view_permission` (see *Access Control*).
 
    - **Result:** the row is visible when the result is truthy: `false`, `0`, `null` and the empty string hide it; non-zero numbers, non-empty strings, non-empty arrays and objects show it. Write the rule to return a boolean. A rule that raises an error hides the row; the query still runs.
-   - **Trigger lifecycle:** When `select_rule` is non-empty, the platform generates the SELECT, UPDATE and DELETE policies of the table. When the rule is cleared (back to `{}`) the default `view_permission` policies replace them; when the entity is deleted they are dropped.
+   - **Trigger lifecycle:** When `select_rule` is non-empty, the platform generates the SELECT, UPDATE and DELETE policies of the table. When the rule is cleared (back to `{}`) the default policies replace them: SELECT on `view_permission`, UPDATE and DELETE on `edit_permission` and `view_permission`; when the entity is deleted they are dropped.
    - **Reserved variables:** only `$today`, `$now` and `$user_id`; there is no `$old` and no `$mode` on a read. `$user_id` is the typical anchor for ownership checks.
    - **Use sparingly:** Per-row evaluation runs on every read, so keep the JsonLogic simple — prefer direct comparisons to columns and reserved variables over deep traversals. `set_record` (cross-entity lookup) works here but runs an extra SELECT per row of every read.
    - **Checked on save:** a rule that names an unknown operator (`90909`) or is not a single operation, such as `true` (`90919`), is refused when the entity is saved (see *Checks on save and arithmetic*).
@@ -550,7 +553,7 @@
 
    3. **Grant permissions to role**:
       - Use `create_role_permission` to grant permissions to the role
-      - Use `create_permission_hierarchy` if a permission should include another (e.g., `crm:manage` implicitly includes `crm:read`). Set `including_permission_name` to the broader permission (`crm:manage`) and `included_permission_name` to the narrower one (`crm:read`). Leave `origin` unset on creation (defaults to `"user"`). `permission_hierarchy.origin` is strictly immutable after INSERT — no upgrade paths.
+      - Use `create_permission_hierarchy` if a permission should include another (e.g., `crm:manage` includes `crm:read`, so a holder of `crm:manage` may also read, which its updates and deletes need). Set `including_permission_name` to the broader permission (`crm:manage`) and `included_permission_name` to the narrower one (`crm:read`). Leave `origin` unset on creation (defaults to `"user"`). `permission_hierarchy.origin` is strictly immutable after INSERT — no upgrade paths.
 
    4. **Assign role to user** (if requested):
       - Find user with `read_user`
@@ -576,7 +579,7 @@
    - **`manage_permission`** / **`admin_permission`** — names of the module's manage and admin permissions.
    - **`default_viewer_role_id`** / **`default_manager_role_id`** / **`default_admin_role_id`** — FKs to `roles.id` for the module's default viewer, manager and admin roles.
 
-   The last five are regular fields: set them with `create_module` or `update_module`. They are foreign keys, so the permissions and roles they name must already exist.
+   The last five are regular fields: set them with `create_module` or `update_module`. They are foreign keys, so the permissions and roles they name must already exist. The three role references are `restrict`: a role that a module names as a default role cannot be deleted (23001 on PostgreSQL 18, 23503 before). A role's `module_id` is `cascade`: deleting a module deletes its roles, its default roles among them.
 
    ### Permission hierarchy columns
 
@@ -595,7 +598,7 @@
 
    Every `permission_hierarchy` row carries an `origin` of `"system"`, `"model"`, `"model_master"`, or `"user"` (default for new records):
 
-   - `"system"` — platform-seeded at DB init.
+   - `"system"` — platform-seeded at DB init: `user:manage` includes `user:read`, and `admin` includes `public:read`.
    - `"model"` — row declared in a model file's §2 Permissions summary table.
    - `"model_master"` — auto-created by the deployer as a side effect of promotion or Branch A wire-up; covers both the master's internal chain (`<master>:manage -> <master>:read`) and cross-module bridges (`<consumer>:read -> <master>:read`).
    - `"user"` — manually added by an admin.
@@ -610,7 +613,7 @@
 
    A webhook receiver accepts one signed HTTP `POST {api_baseurl}/hook/{webhook_receiver_id}` per record and writes it to one table (`api_baseurl` comes from `getCurrentUser`).
 
-   1. `read_entity` / `read_field` for the target table: the payload is matched to fields by name, unknown keys are ignored, and a `readonly` field is dropped. For `bigint` and `text` keys the sender supplies the `id`. A generated key is omitted; a payload that does carry it is used as the record's key and written.
+   1. `read_entity` / `read_field` for the target table: the payload is matched to fields by name, unknown keys are ignored, and a `readonly` field is dropped. For `bigint` and `text` keys the sender supplies the `id`. A generated key is omitted; a payload that does carry it is used as the record's key and written. A delivery is written without a signed-in user, so a `reference` or `parent` field to `users` whose default is `CURRENT_USER` or `$user_id` stays NULL unless the payload sends it.
    2. `create_webhook_receiver` with `label` (the producing system), `table_name`, `auth_type: "hmac"` and a `secret` of at least 32 random characters (`openssl rand -hex 32`); give the secret to the sender. The receiver verifies a signature only for `hmac` and accepts every request for `none` and `header`; an `hmac` receiver with no secret, or a request without `webhook-id` or `webhook-signature`, is answered 401. Optional: `jsonata`, an expression that reshapes the payload first.
    3. The sender signs `{webhook-id}.{webhook-timestamp}.{body}` with HMAC-SHA256 (a secret starting `whsec_` is base64-decoded first and the decoded bytes are read as UTF-8 text, so use such a secret only when they are text) and sends `webhook-id` (unique per message; with `hmac`, a repeat of one that succeeded is ignored), `webhook-timestamp` and `webhook-signature: v1,{base64 signature}`.
    4. The receiver upserts by the entity's key, then by a `unique_value` field. `read_webhook_receiver_log` (filter `webhook_receiver_id`) shows each delivery: `result` 10 success, 20 signature failed, 30 invalid JSON, 40 table not found, 50 write failed, 60 JSONata error, and `error_message`.
@@ -674,7 +677,8 @@
    - These may affect existing data or access patterns
 
    ### 🛑 High-Risk Changes (require explicit user confirmation)
-   - Renaming `table_name` or `field_name` (breaks all references). A field rename is refused while a rule names the field (`90275`): a `computed_fields` entry, validation rule or `select_rule` of the entity, an `input_type_rule` of its fields, or one of those rules of an `is_a`/`has_a` entity below it; the error names the rule to change first. A rename that would give the field's index a name another table's index carries is refused (`90274`), and so is a name that is too long (`90276`, see *Naming rules*)
+   - Renaming `table_name` or `field_name` (clients, links and anything else outside the platform that spell the old name keep it). A field rename is refused while a rule names the field (`90275`): a `computed_fields` entry, validation rule or `select_rule` of the entity, an `input_type_rule` of its fields, or one of those rules of an `is_a`/`has_a` entity below it; the error names the rule to change first. A rename that would give the field's index a name another table's index carries is refused (`90274`), and so is a name that is too long (`90276`, see *Naming rules*), and a rename of a rollup's child entity or link field under which its maintenance function would take a name a rollup over another link uses (`90281`). A table rename is also refused when a queue mapping's trigger name `queue_<queue>_<event>_on_<table>` would exceed 63 bytes (`90506`), and for an entity that built-in fields reference (`90286`)
+   - Deleting an entity or a role that RACI events name (refused by `raci_events_entity_fkey` or `raci_events_target_role_id_fkey`: 23001 on PostgreSQL 18, 23503 before)
    - Deleting entities or fields (permanent data loss)
    - Removing permissions still in use by roles
    - Changing primary key fields (`id_type` cannot change at all; a record's key value cannot change either, the update fails with `90236`)
@@ -690,10 +694,14 @@
 
    ### "Permission denied" errors
 
+   **Symptoms that are permission problems too:**
+   - An update or delete returns an empty array and changes nothing, or an insert is refused with `42501`, on an entity without a `select_rule`: the user holds its `edit_permission` but not its `view_permission`, which UPDATE and DELETE need and which the returned row of an insert needs.
+   - `read_entity` / `read_field` return nothing for an entity and `get_schema` answers `42P01` `Table "<name>" not found in entities`: the user holds neither its view nor its edit permission (nor `admin`), so the catalog hides it exactly as if it did not exist.
+
    **Diagnosis workflow:**
    1. Call `getCurrentUser` to see the user's effective permissions
-   2. Call `read_entity` on the table to see required `view_permission` / `edit_permission`
-   3. Check if user has the required permission in their list
+   2. Call `read_entity` on the table to see required `view_permission` / `edit_permission` (as an administrator: the user may not see the entity at all)
+   3. Check if user has the required permission in their list; a writer needs both
    4. If not, trace through: user → `user_roles` → `role_permissions` → `permission_hierarchy`
 
    **Resolution:** Grant the missing permission to the user's role, or assign a role that already has it.
@@ -737,7 +745,9 @@
 
    ### Nullability and Default Values
 
-   > ℹ️ **There is no `is_nullable` field: nullability follows `format`.** `default_value` is optional and may be set. When it is blank, a NOT NULL column gets the zero value shown in the table and a nullable column stays NULL. `parent` is the one NOT NULL format with no default, so every insert must send it, unless it is a `parent` field to `users` whose `default_value` is `CURRENT_USER`.
+   > ℹ️ **There is no `is_nullable` field: nullability follows `format`.** `default_value` is optional and may be set. When it is blank, a NOT NULL column gets the zero value shown in the table and a nullable column stays NULL. `parent` is the one NOT NULL format with no default, so every insert must send it, unless it is a `parent` field to `users` whose `default_value` is `CURRENT_USER` or `$user_id`.
+
+   > ℹ️ **Defaults read at each insert.** A `reference` or `parent` field to `users` takes `CURRENT_USER` or `$user_id` (in any case) as its `default_value`: an insert that leaves it out stores the signed-in user's id (NULL without one). `$user_id` anywhere else, and `CURRENT_USER` on a reference to another entity or on a column that is not text, are refused (`90283`); `CURRENT_USER` on a text column stores the database role name. A `date` or `date-time` default of `today`, `tomorrow`, `yesterday`, `now`, `$today` or `$now`, and a `time` default of `now` or `$now`, takes the UTC day or clock at each insert; any other default naming those words (`tomorrow 09:00`, `$today + 1`, `today` on a time field) is refused (`90284`). `get_schema` returns such a default as written.
 
    | Format(s) | PostgreSQL type | Auto default | Nullable? |
    |-----------|-----------------|--------------|-----------|
@@ -811,7 +821,7 @@
    Numbers, booleans and durations have no missing value, so `0`, `false` and a zero duration are accepted. A field with an `input_type_rule` is not enforced by the database, because the rule can turn `required` off per record.
 
    - **Existing rows:** a row that already lacks a required value stays readable; its UPDATE fails until the value is filled in.
-   - **Populated tables:** adding a required field with no real `default_value`, or with `CURRENT_USER`, which existing rows never take, to a table with rows fails with `90259`, and so does changing a field to `required` while rows have no value for it. Add the field as `default`, backfill it, then change it to `required`.
+   - **Populated tables:** adding a required field with no real `default_value`, or with `CURRENT_USER` or `$user_id`, which existing rows never take, to a table with rows fails with `90259`, and so does adding a `parent` field to `users` with such a default and changing a field to `required` while rows have no value for it. Add the field as `default`, backfill it, then change it to `required`.
    - **Labels:** the label field a new entity gets automatically is `required`. If its writers don't send a label, such as a junction (a connecting record) whose label is composed from the records it relates, set that field's `input_type` to `default`.
    - **Delete mode:** `required` together with `reference_delete_mode: "clear"` fails with `90257`, because clearing the reference would make every delete of the parent fail.
 
@@ -879,7 +889,7 @@
    | `rollup` | Value aggregated by the database from the field's `rollup` definition | no |
    | `computed` | Value written by one of the entity's `computed_fields` rules | no |
 
-   A protected column cannot be deleted (`90217`) or renamed (`90218`), and its format (`90219`) and default value (`90220`) cannot change; the label column (`label` or `computed_label`) is the exception for renaming and for its default value. A `rollup` or `computed` field can still be deleted or moved to another format with the same column type. A `rollup` field can be renamed. A `computed` field or `computed_label` column cannot be renamed while its rule names it (`90275`). `get_schema` reports `is_core: false` for `rollup` and `computed`, and `true` for `computed_label`.
+   A protected column cannot be deleted (`90217`) or renamed (`90218`), and its format (`90219`), default value (`90220`), `reference_delete_mode` (`90285`) and `reference_table` (`90286`) cannot change; the label column (`label` or `computed_label`) is the exception for renaming and for its default value. A `rollup` or `computed` field can still be deleted or moved to another format with the same column type. A `rollup` field can be renamed. A `computed` field or `computed_label` column cannot be renamed while its rule names it (`90275`). `get_schema` reports `is_core: false` for `rollup` and `computed`, and `true` for `computed_label`.
 
    **The label marker follows `entities.label_column`.** Pointing `label_column` at another field makes that field the label (`label`, or `computed_label` when a rule writes it), and the previous label field becomes an ordinary field. A plain or computed field can become the label; an `id`, `audit`, `core` or `rollup` field cannot (`90270`).
 
@@ -900,7 +910,7 @@
    - **`create_*`**: `data` is either one object or a **non-empty array of objects**. **Items do not need the same keys**: the server sends the union of keys and keys omitted from an item take the column default. All rows are inserted in one request and one transaction (all-or-nothing). Example: `create_field` with `data: [ {...description}, {...cost} ]`.
    - **`update_*`**: `id` is either one value or a **non-empty array of ids** (for `update_entity` the key is `table_name`, for `update_permission` it is `permission_name`). The **same** `data` is applied to every listed record. For per-record values, call once per record.
    - **`delete_*`**: `id` (or `table_name` for entities, `permission_name` for permissions) is either one value or a **non-empty array**; all listed records are deleted in one request.
-   - **Responses** are always an array of the created/updated/deleted records. Never combine an array input with `accept: application/vnd.pgrst.object+json` (that Accept value requests exactly one row and fails otherwise).
+   - **Responses** are always an array of the created/updated/deleted records. An update or delete returns only the rows it changed, without an error for the others: an empty array means that none of the listed records exists or may be written by the caller, which includes a caller who lacks the entity's view permission (see *Access Control*). Every write asks for its rows back (`Prefer: return=representation`). Never combine an array input with `accept: application/vnd.pgrst.object+json` (that Accept value requests exactly one row and fails otherwise).
    - **Duplicate checks still apply**: before a bulk `create_*`, run one `read_*` with an `in.(...)` filter covering all items (e.g. `field_name=in.(description,cost)&table_name=eq.services`).
    - Keep batches reasonable (roughly up to 100 rows or ids per call); split larger sets.
    - Typical batches: all fields of a new entity, the `<module>:read` + `<module>:manage` permissions of a new module, all `role_permission` rows of a role, all `permission_hierarchy` rows of a module.
@@ -910,7 +920,7 @@
    - **read_entity** — Query entities (use `filters` to find by `table_name` before creating)
    - **create_entity** — Define a new domain concept
    - **update_entity** — Modify entity metadata or permissions
-   - **delete_entity** — Remove entity (check all dependencies first!). Refused with `90260` while fields of other entities reference it, whatever their `reference_delete_mode`, which governs deleting records rather than the entity: find them with `read_field(filters: "reference_table=eq.<table_name>")`, then delete them or point them at another entity. Refused with `90266` while a rollup of another entity aggregates over it. It drops the entity's table with all its records.
+   - **delete_entity** — Remove entity (check all dependencies first!). Refused with `90260` while fields of other entities reference it, whatever their `reference_delete_mode`, which governs deleting records rather than the entity: find them with `read_field(filters: "reference_table=eq.<table_name>")`, then delete them or point them at another entity. Refused with `90266` while a rollup of another entity aggregates over it, and while RACI events name it (`raci_events_entity_fkey`: 23001 on PostgreSQL 18, 23503 before). It drops the entity's table with all its records, and deletes its process gates.
 
    ### Field Management
    - **read_field** — Query fields (filter by `table_name`; also use to find cross-references before deletion)
@@ -922,18 +932,18 @@
    - **read_module** — Check if a module exists before creating one
    - **create_module** — Create a new domain grouping
    - **update_module** — Modify module metadata
-   - **delete_module** — Remove module INCLUDING all its entities, fields, and records (automatic cascade; do NOT delete entities first). Confirm with the user and, where the `semantius` CLI is available, back up first with its `export_module` (`semantius call utils/export_module`; it is a CLI tool, not a tool of this server). Refused with `90260` while a field of another module references one of its entities, and with `90266` while a rollup of another module aggregates over one; references between its own entities do not count. Two modules that reference each other need one such field removed first.
+   - **delete_module** — Remove module INCLUDING all its entities, fields, records, permissions and roles, its default roles among them (automatic cascade; do NOT delete entities first). Confirm with the user and, where the `semantius` CLI is available, back up first with its `export_module` (`semantius call utils/export_module`; it is a CLI tool, not a tool of this server). Refused with `90260` while a field of another module references one of its entities, and with `90266` while a rollup of another module aggregates over one; references between its own entities do not count. Two modules that reference each other need one such field removed first. Also refused while RACI events name one of its entities or roles, or while another module names one of its roles as a default role (23001 on PostgreSQL 18, 23503 before).
 
    ### RBAC Tools
    - **read_permission** / **create_permission** — Manage atomic capabilities
    - **read_permission_hierarchy** / **create_permission_hierarchy** — Set up permission inheritance
    - **read_role** / **create_role** — Manage permission bundles
    - **read_role_permission** / **create_role_permission** — Grant permissions to roles
-   - **update_permission** / **delete_permission** — keyed by `permission_name`; renaming one cascades to every table that names it, and deleting is refused (foreign key violation) while an entity's `view_permission` or `edit_permission`, a module's `view_permission`, or a queue's `view_permission` or `manage_permission` names it; a module's `manage_permission` and `admin_permission` are cleared instead. Role grants, user grants and hierarchy entries of the permission are deleted with it. The permission `admin` can be neither deleted nor renamed (`90104`)
+   - **update_permission** / **delete_permission** — keyed by `permission_name`; renaming one cascades to every table that names it, and deleting is refused by the foreign key (23001 or 23503, naming the constraint) while an entity's `view_permission` or `edit_permission`, a module's `view_permission`, or a queue's `view_permission` or `manage_permission` names it; a module's `manage_permission` and `admin_permission` are cleared instead. Role grants, user grants and hierarchy entries of the permission are deleted with it. The permission `admin` can be neither deleted nor renamed (42501, `hint.code` `90108`). Every new permission is granted to the Administrator role, role 2, whatever that role is named
    - **update_permission_hierarchy** / **delete_permission_hierarchy** — keyed by `id` (`"<including>.<included>"`); `origin` never changes
-   - **update_role** / **delete_role** — keyed by `id`; the `origin` never changes and the `slug` of a `system` role is fixed. Deleting a role also deletes its user assignments and permission grants; it is refused (`90104`) for the last enabled Administrator, and by a foreign key violation while a module names it as a default role
-   - **update_role_permission** / **delete_role_permission** — keyed by `id` (`"<role_id>.<permission_name>"`). The grant of `admin` to the Administrator role (role 2) can be neither deleted nor pointed at another role or permission (`90104`)
-   - **read_user** / **create_user** / **update_user** / **delete_user** — User identity management. Deleting a user also deletes their role assignments, direct permission grants and API keys, and is refused (`90104`) for the last enabled Administrator. Only a holder of `admin` may set or change `external_id`, on insert or update (42501, `hint.code` `90107`; sending the unchanged value passes). A `user:manage` holder therefore creates agents (`is_agent: true`, inserted without `external_id`) but not people: a person's row comes from their first sign-in or from an administrator
+   - **update_role** / **delete_role** — keyed by `id`; the `origin` never changes and the `slug` of a `system` role is fixed. Deleting a role also deletes its user assignments and permission grants; it is refused (`90104`) for the last enabled Administrator, and by the foreign key (23001 on PostgreSQL 18, 23503 before) while a module names it as a default role or RACI events name it (`raci_events_target_role_id_fkey`)
+   - **update_role_permission** / **delete_role_permission** — keyed by `id` (`"<role_id>.<permission_name>"`). The grant of `admin` to the Administrator role (role 2) can be neither deleted nor pointed at another role or permission (42501, `hint.code` `90108`). A row created without `granted_by` records the caller
+   - **read_user** / **create_user** / **update_user** / **delete_user** — User identity management. Deleting a user also deletes their role assignments, direct permission grants and API keys, and is refused (`90104`) for the last enabled Administrator. The assignments and grants the user made for others stay, with `assigned_by` or `granted_by` emptied. `last_seen` is `disabled`: a form shows it and does not submit it, and the database refuses no write to it. Only a holder of `admin` may set or change `external_id`, on insert or update (42501, `hint.code` `90107`; sending the unchanged value passes). A `user:manage` holder therefore creates agents (`is_agent: true`, inserted without `external_id`) but not people: a person's row comes from their first sign-in or from an administrator
    - **read_user_role** / **create_user_role** / **update_user_role** / **delete_user_role** — Assign roles to users; `id` is `"<user_id>.<role_id>"`. Every user already holds role 1, which cannot be removed (`90103`). The Administrator role cannot be removed from the last enabled Administrator, and that `user_roles` row cannot be updated to another role or user (`90104`)
 
    ### Utilities
@@ -946,7 +956,7 @@
    - **get_cli_config** / **get_cli_token** — CLI setup text (creates a new API key on every call) and a short-lived JWT for the `x-api-key` header
    - **refresh_schema_cache** — Reloads PostgREST's schema cache; the cache refreshes by itself after structural changes, so call it only when a just-created entity or field is missing from `postgrestRequest` responses
    - **sendEmail** — Sends a transactional email (`to`, `subject`, and `text` or `html`; `from` defaults to the caller's email)
-   - **get_schema** is not a tool of this server: it is the database function `get_schema(p_table_name)`, called with `postgrestRequest` as `POST /rpc/get_schema` and `{"p_table_name": "<table>"}`. It returns the entity's JSON schema (properties, `inherited_from`, `ctype`, `is_core`, `rollup`) and is verbose; a token-optimized tool is planned.
+   - **get_schema** is not a tool of this server: it is the database function `get_schema(p_table_name)`, called with `postgrestRequest` as `POST /rpc/get_schema` and `{"p_table_name": "<table>"}`. It returns the entity's JSON schema (properties, `inherited_from`, `ctype`, `is_core`, `rollup`) and is verbose; a token-optimized tool is planned. It describes only an entity the caller sees in the catalog (see *Access Control*); for any other it answers `42P01` `Table "<name>" not found in entities`, exactly as for a missing one. A reference to an entity the caller does not see keeps `reference_table`, `reference_delete_mode` and `relationship_label` but has none of the `reference_table_*` keys, and its `<fk>_label` description names the table. The `extensions` of a `has_a` base, and the children `get_schema_children` lists, are the ones the caller sees.
    - **postgrestRequest**: Direct PostgREST API for complex queries, filter-based bulk mutations, or per-row differing updates (typed tools already cover array creates and id-list updates/deletes)
    - **sqlToRest** — Convert SQL to PostgREST format for complex operations
 
@@ -956,7 +966,8 @@
 
    | Error | Meaning | Do |
    |-------|---------|----|
-   | `23503` | A foreign key target does not exist | Create it first: base before based entity, permission or role before module wiring |
+   | `23503` | A foreign key target does not exist; up to PostgreSQL 17 also a delete refused while records reference the record through a `restrict` key, and on every version one refused at commit through a deferred key such as `modules.view_permission`. The message names the constraint | Create the target first: base before based entity, permission or role before module wiring. For a refused delete, delete or repoint the referencing records first |
+   | `23001` | PostgreSQL 18: a delete refused while records reference the record through a `restrict` key, such as a module's default role, `raci_events_entity_fkey` or `raci_events_target_role_id_fkey`. The message names the constraint | Delete or repoint the referencing records first |
    | `90212` | A field's `reference_table` names no entity | Create the referenced entity first |
    | `90260` | Delete refused: a field of another entity references it | `read_field` with `reference_table=eq.<table>`, then delete or repoint those fields |
    | `90266` | Delete refused: a rollup uses it | Remove or change the rollup field first |
@@ -971,19 +982,24 @@
    | `90277` | A field named as the entity's `label_parent` has to stay `reference` or `parent` | Clear `label_parent` first |
    | `90278` | `order_column` names a column the table already has | Name a new column |
    | `90280` | A rollup's function and another parent's rollup guard would share a name | Rename the child entity or the link field |
+   | `90281` | A rollup's maintenance function name is already used by a rollup over another link (also on a rename) | Rename the child entity or the link field |
+   | `90282` | A `parent` field with delete mode `clear`, on create or when its format or delete mode changes to that pair | Use `restrict` or `cascade`, or a `reference` with `clear` |
+   | `90283` | `$user_id` as a default outside a `reference`/`parent` field to `users`, or `CURRENT_USER` on a reference to another entity or a non-text column | Use it only on a field to `users` |
+   | `90284` | A date, date-time or time default names `today`, `tomorrow`, `yesterday` or `now` in another form than one of those words, `$today` or `$now` on its own (`tomorrow 09:00`, `$today + 1`), or a day word on a time field | Write the word on its own; a time field takes only `now` or `$now` |
+   | `90285` / `90286` | The `reference_delete_mode` / `reference_table` of a built-in field cannot change; `90286` also refuses renaming an entity built-in fields reference | Leave built-in fields and entities as they are |
    | `90909` / `90919` | A rule names an operator the evaluator does not implement / a validation rule or `select_rule` is not one operation | Fix the rule |
    | `90920` | Arithmetic with no finite result: text that carries no number, a zero divisor | Guard the operands in the rule |
-   | `90505` / `90506` | A queue name is not lower case or over 47 bytes / a queue mapping's trigger name would not fit 63 bytes | Use a shorter lower-case name |
+   | `90505` / `90506` | A queue name does not match `^[a-z_][a-z0-9_]*$` or is over 47 bytes / a trigger name `queue_<queue>_<event>_on_<table>` would not fit 63 bytes, when a table is mapped to a queue, a mapping moves to another queue, or a mapped table is renamed | Use a shorter queue or table name |
    | `PGRST102` | A bulk array whose rows have different keys (raw `postgrestRequest` only) | Give every row the same keys |
    | `42P10` | Upsert on an `is_a` / `has_a` entity | Insert, then PATCH |
 
-   **Naming rules:** `module_slug` `^[a-z0-9][a-z0-9_-]*$`; `permission_name` one or more segments `[a-z0-9][a-z0-9_-]*` joined by `:`; role `slug` `^[a-z0-9_]+$`; `table_name` lowercase snake_case, not starting with `_` (`90271`), not ending in `_ext`, at most 41 bytes (`90273`); `field_name` `^[a-z_][a-z0-9_]*$` (a leading `_` is refused, `90224`), and table name + field name at most 53 bytes, where the table name is `<table_name>_ext` for an `is_a` or `has_a` entity (`90276`; a table cannot be renamed to a name under which one of its fields would no longer fit).
+   **Naming rules:** `module_slug` `^[a-z0-9][a-z0-9_-]*$`; `permission_name` one or more segments `[a-z0-9][a-z0-9_-]*` joined by `:`; role `slug` `^[a-z0-9_]+$`; `table_name` lowercase snake_case, not starting with `_` (`90271`), not ending in `_ext`, at most 41 bytes (`90273`); `field_name` `^[a-z_][a-z0-9_]*$` (a leading `_` is refused, `90224`), and table name + field name at most 53 bytes, where the table name is `<table_name>_ext` for an `is_a` or `has_a` entity (`90276`; a table cannot be renamed to a name under which one of its fields would no longer fit); queue name `^[a-z_][a-z0-9_]*$`, at most 47 bytes (`90505`).
 
    ---
 
    ## Agent Workflow Tips
 
-   1. **Always read before writing** – Before any `create_*`, call the corresponding `read_*` to check for duplicates or find existing records. Example: always call `read_entity` filtering by `table_name` before `create_entity`. For a bulk create, one `read_*` with an `in.(...)` filter covers all items.
+   1. **Always read before writing** – Before any `create_*`, call the corresponding `read_*` to check for duplicates or find existing records. Example: always call `read_entity` filtering by `table_name` before `create_entity`. For a bulk create, one `read_*` with an `in.(...)` filter covers all items. A read returns only what the caller may see: `read_entity` and `read_field` show a non-admin only the entities whose view or edit permission it holds, so the duplicate check of an entity or field needs `admin`, which writing them needs anyway.
    2. **Resolve prerequisites in order** – Module → Permissions → Entity → Fields. Never skip steps.
    3. **Batch related writes** – Put all fields of one entity, both baseline permissions of one module, or all `role_permission` rows of one role into a single `create_*` call with an array in `data`; use an id array for `update_*` / `delete_*` across several records. Fewer calls, one transaction.
    4. **Be conversational** – Explain what you're creating and why, especially for module/permission scaffolding the user may not have explicitly requested.

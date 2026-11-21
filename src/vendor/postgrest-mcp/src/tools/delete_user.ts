@@ -29,7 +29,8 @@ export const deleteUserTool: Tool<typeof inputSchema, undefined> = {
       `This operation cannot be undone. ` +
       `Returns the deleted record for confirmation (always an array; "id" may be an array to delete several records in one request). ` +
       `WARNING: Be extremely careful to avoid deleting unintended records. ` +
-      `Also deletes the user's role assignments, direct permission grants and API keys. Refused (90104) when this would remove the last enabled Administrator.`,
+      `Also deletes the user's role assignments, direct permission grants and API keys. Refused (90104) when this would remove the last enabled Administrator. ` +
+      `Role assignments and permission grants the user made for others stay, with assigned_by or granted_by emptied.`,
     inputSchema,
   },
   handler: async ({ id, accept }, { authInfo }) => {

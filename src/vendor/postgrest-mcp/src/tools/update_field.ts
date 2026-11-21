@@ -33,7 +33,8 @@ export const updateFieldTool: Tool<typeof inputSchema, undefined> = {
       `Provide the id and the fields to update. ` +
       `Only the fields included in "data" will be updated; other fields remain unchanged. ` +
       `Returns the updated record with all current field values. ` +
-      `Immutable: table_name (90221), is_pk (90222), ctype (90214), catalog_field_code once set (90202), and a format change that would alter the column type (90223). ` +
+      `Immutable: table_name (90221), is_pk (90222), ctype (90214), catalog_field_code once set (90202), and a format change that would alter the column type (90223); on a core field also format (90219), default_value except the label column's (90220), reference_delete_mode (90285) and reference_table (90286). ` +
+      `A parent field cannot get delete mode clear (90282). ` +
       `Changing field_name renames the column and changes the field id (<table_name>.<field_name>). ` +
       `"id" may also be an array to apply the same update to several records in one request; the response is always an array of updated records.`,
     inputSchema,

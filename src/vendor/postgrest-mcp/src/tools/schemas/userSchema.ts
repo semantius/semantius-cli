@@ -15,5 +15,5 @@ export const userSchema = z.looseObject({
   is_agent: z.boolean().optional().describe('When TRUE this user is a service principal (agent). Default FALSE.'),
   is_disabled: z.boolean().optional().describe('When TRUE, the user account is disabled and its roles are ignored for permission checks. Disabling the last enabled Administrator is refused (hint code 90104).'),
   settings: z.unknown().optional().describe('User-specific settings and preferences (JSON)'),
-  last_seen: z.string().optional().nullable().describe('Timestamp when user was last active (ISO 8601). Set by the platform on login; do not set it. A user created with last_seen set while no Administrator exists becomes the Administrator.'),
+  last_seen: z.string().optional().nullable().describe('Timestamp when user was last active (ISO 8601). Set by the platform on login; do not set it. Its input_type is disabled: a form shows it and does not submit it, and the database refuses no write to it. A user created with last_seen set while no Administrator exists becomes the Administrator.'),
 })

@@ -75,7 +75,8 @@ export const readEntityTool: Tool<typeof inputSchema, undefined> = {
       `Supports flexible filtering, column selection, pagination, and sorting using PostgREST query syntax. ` +
       `Returns an array of matching records. Use filters to narrow results, select to choose columns, ` +
       `limit/offset for pagination, and order for sorting. ` +
-      `Also returns id_type, id_prefix, id_refentity (the base of an is_a or has_a entity, else null), label_parent, computed_fields and validation_rules (JSON arrays).`,
+      `Also returns id_type, id_prefix, id_refentity (the base of an is_a or has_a entity, else null), label_parent, computed_fields and validation_rules (JSON arrays). ` +
+      `Returns only the entities the caller may see: those whose view_permission or edit_permission it holds (on every level of an is_a or has_a entity), or every entity for a holder of admin. A hidden entity is missing from the result, as one that does not exist.`,
     inputSchema,
   },
   handler: async ({ filters, select, limit, offset, order, accept }, { authInfo }) => {

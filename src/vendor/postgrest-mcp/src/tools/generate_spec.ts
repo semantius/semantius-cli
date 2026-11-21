@@ -108,7 +108,7 @@ function isNonEmpty(v: unknown): boolean {
 }
 
 function deleteMode(f: Row): string {
-  return f.reference_delete_mode || (f.format === 'parent' ? 'cascade' : 'restrict')
+  return f.reference_delete_mode || 'restrict'
 }
 
 /** A JSON column's value, parsed when it arrives as a string (undefined when it does not parse). */
@@ -952,7 +952,8 @@ export const generateSpecTool: Tool<typeof inputSchema, undefined> = {
       `and the module's RACI processes, RACI assignments and process gates). ` +
       `It covers every stored property of the module, its entities, all their fields (the platform-created id, label, ` +
       `created_at and updated_at rows included), its permissions, hierarchy rows and roles; a property left out holds ` +
-      `the platform default that section 3 states. Not covered: the fields of entities owned by other modules, the ` +
+      `the platform default that section 3 states. It reads as the caller, so it covers only the entities the caller sees ` +
+      `(a holder of their view_permission or edit_permission, or of admin), and the permissions, hierarchy rows, roles and RACI only for an administrator; call it as an administrator for the whole module. Not covered: the fields of entities owned by other modules, the ` +
       `computed entity flags searchable and is_child, the computed name of a RACI assignment or gate, ` +
       `processes with no module, and when and by whom a role was granted a permission. ` +
       `The permission tier is inferred, since the platform stores none. ` +
