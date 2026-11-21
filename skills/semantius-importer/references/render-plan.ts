@@ -57,7 +57,7 @@ type Mapping = {
   table: string;
   id_column?: string;
   natural_key?: string | null;
-  on_exists?: string; // legacy (postponed update mode); warned on below
+  on_exists?: string; // not a mapping key (the import is insert-only); warned on below
   expected_records?: number | null;
   batch_size?: number;
   columns: ColumnSpec[];
@@ -136,7 +136,7 @@ if (M.natural_key) {
   }
 }
 if (M.on_exists !== undefined && M.on_exists !== "insert") {
-  console.log(`\n⚠ on_exists "${M.on_exists}" is not supported: the import is insert-only (updating existing records is postponed); import.ts will refuse to run - remove the key`);
+  console.log(`\n⚠ on_exists "${M.on_exists}" is not supported: the import is insert-only and never modifies existing rows; import.ts will refuse to run - remove the key`);
 }
 const dupes = nonSkipNames.filter((n, i) => n && nonSkipNames.indexOf(n) !== i);
 if (dupes.length) console.log(`\n⚠ duplicate field names in mapping: ${[...new Set(dupes)].join(", ")}`);

@@ -2,6 +2,53 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## No planned features or database versions
+
+2026-11-21. Asked for by Martin Amm: a skill describes current behavior only.
+
+- `crud-tools.md`: the `get_schema` note no longer says a token-optimized tool is planned.
+- `jsonlogic.md` → "Out of scope": per-field computed expressions are out of scope because `computed_fields` is a property of the entity, with no "for now".
+- `cli-usage.md`: a transfer target without `fix_id_sequence` answers `PGRST202`, instead of naming the version that lacked it.
+- `flows.md`: no question, step or order changed, so no row changes.
+
+## Deferred permission key, string record ids, webhook deliveries, inserts past a read rule, get_schema for hidden entities
+
+2026-11-21. Asked for by Martin Amm, after checking the skills against the tool descriptions of postgrest-mcp `fa93599`, which semantius-cli vendors. Checked against `c:\dev\semantius\apps\_core\migrations` (`0090_rbac_seed.once.sql`, `0210_computed_validation.sql`, `0250_public_functions.sql`) and `c:\dev\postgrest-mcp\src\db\hook.ts`.
+
+- `crud-tools.md` → "Error to action": `23503` on every PostgreSQL version for a permission delete that `modules_view_permission_fkey`, a deferred key, refuses at commit.
+- `jsonlogic.md`: the `record_id` of `90908` is a number for an `auto_increment` or `bigint` key and a string for every other key.
+- `webhooks.md` → Step 1: a delivery has no signed-in user, so a field to `users` that defaults to `CURRENT_USER` or `$user_id` stays empty unless the payload sends it, and a required or `parent` one refuses the delivery.
+- `select-rule.md`: with a rule, an insert needs `edit_permission` only, and a write that moves a row out of the writer's rule still returns that row.
+- `rbac.md` → "Diagnosing Access Issues" and `data-modeling.md` → "Runtime schema introspection": `get_schema` answers `42P01` for an entity the user may not see, as for a missing one, and leaves out the `reference_table_*` keys of a reference to such an entity.
+- `flows.md`: all 252 lines read again against the changed files. No question, step or order changed, so no row changes; rows 8.6, 8.7 and 9.5 cite `data-modeling.md` and `rbac.md` for sections this entry does not touch.
+
+## Rollup filters: a literal in the type of what it is compared with
+
+2026-11-20. Asked for by Martin Amm, once the platform refused, when a rollup definition is saved (`90265`), a number against text and a string in an `in` list against a number, where the interpreter would count other records than the compiled filter. Checked against `c:\dev\semantius\apps\_core\migrations\0440_rollup.sql` (`rollup_filter_literal`, the `in` branch of `rollup_filter_cond`) and `apps\test\tests\0555_test_rollup.sql`, the uncommitted working tree included.
+
+- `rollup-fields.md` → "The filter": a number against a text column or `date_format` is refused, so the literal is written `"10"`; a string in an `in` list against a number column, `date_part` or `date_diff` is refused, so the list is written `[1, 5]`.
+- `flows.md`: no question, step or order changed, so no row changes.
+
+## An update or delete needs the view permission; the catalog shows a user only what it may see
+
+2026-11-20. Asked for by Martin Amm, as the skill's part of the platform's documentation update for pg_semantius 0.5.0. Checked against the `## 0.5.0` section of `c:\dev\semantius\extension\CHANGES.md`, `docs\error-contract.md`, `docs\authorization.md` and the migrations under `apps\_core\migrations` (`0060`, `0090`, `0100`, `0150`, `0160`, `0170`, `0180`, `0210`, `0250`, `0280`, `0340`, `0350`, `0440`), the uncommitted working tree included. Martin Amm decided the four findings of the review of this update: the two texts on `admin` and on disabled users' keys, and the two script fixes marked below.
+
+- Access: on an entity without a `select_rule`, an update or delete needs the `view_permission` as well as the `edit_permission`; a role with the edit permission alone updates and deletes nothing, with no error, and an insert that reads the record back, as every `crud` tool does, is refused (`42501`). With a `select_rule` the view permission plays no part in a write. `rbac.md` ("Core Concepts", "Naming Convention", the bundle table, "Choosing an entity's permissions", "Diagnosing Access Issues", "Updating RBAC"), `data-modeling.md` (the write tier, `edit_permission`, Troubleshooting), `select-rule.md`, `entity-families.md`, `jsonlogic.md` (the delete-only gate) and `SKILL.md` (Quick Decision Guide, "Writes") say so. `admin` includes `public:read`, and every user holds `public:read` and `user:read` through the User role (`rbac.md`).
+- `review-module.md` → "Permissions and roles": a row that every role holding an entity's `edit_permission` also holds its `view_permission`.
+- The catalog: an entity's rows in `entities` and `fields` are visible only with its view or edit permission or `admin`, on every level of an `is_a` / `has_a` entity, and permissions, roles and grants only with `admin`. `SKILL.md` ("Asking the user to pick a value", "Before any new entity", the cubes), `data-modeling.md` (the built-ins, "Runtime schema introspection"), `entity-families.md` → "Reading", `review-module.md` → "Read the module", `crud-tools.md`, `cli-usage.md` (exports) and `cube-tools.md`.
+- The Administrator (decided by Martin Amm): every new permission is granted to role 2 whatever its name; the platform keeps an enabled holder of role 2 (`90104`) and role 2's grant of `admin`, and refuses deleting or renaming the permission `admin` (`90108`). `rbac.md` → "Naming Convention", "Grant Permissions to Roles".
+- Service users (decided by Martin Amm): a disabled user's keys stop working until the user is enabled again (`cli-usage.md` → "Delegated vs. dedicated access").
+- Deletes: a role that a module names as a default role, and an entity or a role that RACI events name, cannot be deleted (`23001` on PostgreSQL 18, `23503` before); deleting a module deletes its permissions and roles, its default roles among them; deleting a user keeps the assignments and grants that user made, with `assigned_by` / `granted_by` empty; a process gate's `entity` names an entity, follows its rename and is deleted with it (`rbac.md`, `data-modeling.md`, `crud-tools.md`).
+- Built-in fields: their `reference_delete_mode` and `reference_table` cannot change (`90285`, `90286`), and `users`, `roles`, `permissions`, `modules` and `entities`, which they reference, cannot be renamed (`90286`); `users.last_seen` is `disabled` and the database refuses no write to it (`data-modeling.md`).
+- Fields and names: a `parent` field with `clear` (`90282`); a rollup whose maintenance function would take the name of another relationship's rollup, also on a rename (`90281`, `rollup-fields.md`); the queue name (`90505`), a queue trigger name on a mapping and on a rename of its table (`90506`), and the triggers a changed mapping reinstalls (`data-modeling.md`); switching `managed` back on rebuilds the insert policy; `$user_id` on a text field and a day word on a `time` field (`data-modeling.md` → "Computed defaults"); `90908`'s `record_id` in the key's own type (`jsonlogic.md`); `fix_id_sequence`'s `90106` and `90231` (`cli-usage.md`).
+- `crud-tools.md` → "Error to action" gains `23001`, `23503` as a refused delete, `42501`, `90104` / `90108` and `90281` to `90286`, and two rows that ran together on one line are split.
+- `call-file.ts` (`fieldProblems`, so `writeModel` too): a `parent` field with `reference_delete_mode: clear` is refused before anything is sent; an update that sets `clear` without `format` reads the format from the host.
+- `access-rules.ts` (`planAccess`, so `module-rbac-setup.ts --access` and `writeModel`): an entity a role that does part of the work writes is refused, naming both permissions, when its `view_permission` is not `<slug>:read`, `public:read` or `user:read`, because `<slug>:write_<entity>` would not include it.
+- `entity-match-checker.ts` (decided by Martin Amm): the reserved names of the platform's own entities come from `CORE_TABLES`, the 22 entities the platform installs, as well as from the catalog, so a user who does not see them is still refused their names.
+- `seed-lib.ts --clear` (decided by Martin Amm): the deleted records are counted from each delete's answer, and a delete that removed fewer records than it named stops the clear; `seed-data.md` says so.
+- Tests: `scripts/call-file.test.ts`, `scripts/jsonlogic-kit.test.ts`, `scripts/access-rules.test.ts`, `scripts/entity-match-checker.test.ts`, `scripts/seed-lib.test.ts`.
+- `flows.md`: all 252 lines read again against the changed files. No row changes: no question, step or order changed; row 8.2 already says a platform table's name is never taken, row 9.2 describes the review report's sections, not each row it verifies, and row 9.5's role is never a default role or named by RACI events, since `--access` refuses a `raci` module. The file format is unchanged; `version` stays `3.1`.
+
 ## Computed defaults: relative days, now, and the signed-in user
 
 2026-11-18. Asked for by Martin Amm, once the platform worked out `today`, `tomorrow`, `yesterday`, `now`, `$today` and `$now` on each insert in UTC, gave the signed-in user for `CURRENT_USER` or `$user_id` on a field to `users`, and refused misplaced ones (`90283`, `90284`). Checked against `c:\dev\semantius\apps\_core\migrations\0160_dd_functions.sql`, its tests 0530 and 0531, and a scratch entity on the live instance; a review subagent checked the plan. The full list of spellings went into the `create_field` tool description in postgrest-mcp, which the CLI vendors; the skill writes one spelling per meaning.

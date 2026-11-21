@@ -72,7 +72,7 @@ The current host outranks `SEMANTIUS_HOST` / `SEMANTIUS_ORG` and every `.env`, a
 ### Delegated vs. dedicated access
 
 - **`semantius use` / `login` delegate the user's own account.** The agent acts as the user, with every permission they have.
-- **An API key is a separate credential, revocable on its own.** A personal key (`uk-…`) still acts as the user. An admin can issue a key for a dedicated service user (`sk-…`) with a narrower role: recommend that for unattended agents and CI. Keys are created at `https://<org>.semantius.app/settings` (the dashboard's "API Keys" link opens it).
+- **An API key is a separate credential, revocable on its own.** A personal key (`uk-…`) still acts as the user. An admin can issue a key for a dedicated service user (`sk-…`) with a narrower role: recommend that for unattended agents and CI. A key acts only while its user is enabled: disabling the user (`is_disabled`) stops every key of that user, and enabling the user again restores them. Keys are created at `https://<org>.semantius.app/settings` (the dashboard's "API Keys" link opens it).
 
 ### Checking the connection
 
@@ -542,11 +542,11 @@ semantius call utils/import_entities '{"path":"accounts.json"}'
 - **A record written by hand names itself `<prefix>_sr<n>`** (`candidate_sr1`) where its entity has a TypeID key, in its id and in every relationship to it. The import stores the TypeID `<prefix>_0sr<n>` padded with `x` to 26 characters; an export never writes the short form. Sample data is written this way (`seed-data.md`).
 - **Records of an `is_a` or `has_a` entity** are inserted when new and patched when changed, since the platform refuses an upsert on one (`entity-families.md` → "Writing").
 - **`import_entities` also takes a module file**, importing only its entities (their module must exist on the target). `import_module` needs a module file.
-- **The target needs the `fix_id_sequence` RPC**, which moves each table's id sequence past the imported ids. A target on 0.5.0-beta1 lacks it until it is rebuilt; the import then stops before writing any record.
+- **The target needs the `fix_id_sequence` RPC**, which moves each table's id sequence past the imported ids. It needs the entity's `edit_permission` and the entity visible to the user in the catalog; anybody else gets `42501` with `hint.code` `90106`, and an admin who names a table that is no entity gets `90231`. A target without it answers `PGRST202`, and the import then stops before writing any record.
 - **Validation rules and `select_rule`** are written once the fields exist and **before any record**, so a first import and a re-import meet the same rules. A record that violates the exported rules fails the import instead of being written: a file exported from a host whose rules were added after its data may not import cleanly. That is intended, not transient: fix the data or the rule, don't retry.
 - **`id_type`** (the entity's key type) and **`id_refentity`** are sent on create only; both are locked once the table exists, so a re-import onto an existing entity leaves them alone.
 - **The file** is valid JSON with metadata pretty-printed and one record per line, so a committed file diffs record by record. A re-export of unchanged data is byte-identical.
-- An export contains only the rows this user can see, and is not a snapshot of a source that is written to meanwhile. The tools always talk to the host's PostgREST directly: `--crud-mcp` and a `crud.postgrest` URL in the config file do not apply, and an authentication failure exits 4, not 5. A static `SEMANTIUS_JWT` is not refreshed, so it can expire during a long run.
+- An export contains only the rows this user can see, and only the entities whose catalog rows the user sees (with the entity's view or edit permission, or `admin`), and it is not a snapshot of a source that is written to meanwhile. The tools always talk to the host's PostgREST directly: `--crud-mcp` and a `crud.postgrest` URL in the config file do not apply, and an authentication failure exits 4, not 5. A static `SEMANTIUS_JWT` is not refreshed, so it can expire during a long run.
 - Records are compared as PostgREST prints them, so between hosts whose databases use different time zones every timestamp differs and every row is rewritten. A table with several hundred columns can exceed a proxy's URL limit (nginx: 8 KB), since reads and writes list every column.
 
 ---

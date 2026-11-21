@@ -129,8 +129,9 @@ Never send `id_refentity` on `update_entity` (`90241`). The one change it takes 
   semantius call crud read_field '{"filters": "table_name=in.(emails,activities)"}'
   ```
 
-  `get_schema` lists inherited properties with `"inherited_from": "<owner>"`, and a `has_a` base lists its `extensions: [{table, properties, required}]`.
-- **Permissions span every level.** A reader needs the view permission of every level; a writer needs the edit permission of every level it writes. A record the caller cannot write whole is skipped, never half-written. A role that writes a based entity must also be granted edit on its base, including a cross-module grant when the base lives in another module.
+  `get_schema` lists inherited properties with `"inherited_from": "<owner>"`, and a `has_a` base lists its `extensions: [{table, properties, required}]`, the ones the caller sees.
+  `read_entity` and `read_field` show a based entity's rows only to a user who sees every level: the view or edit permission of each level, or `admin`.
+- **Permissions span every level.** A reader needs the view permission of every level; a writer needs the edit permission of every level it writes, and an update or delete also the view permission of each level without a `select_rule`. A record the caller cannot write whole is skipped, never half-written. A role that writes a based entity must also be granted edit on its base, including a cross-module grant when the base lives in another module.
 - **Search spans every level.** `search_vector` covers the searchable fields of the base as well as the entity's own. That search cannot use an index, so on large tables add a narrowing filter.
 
 ---

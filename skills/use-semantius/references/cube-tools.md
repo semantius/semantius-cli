@@ -19,7 +19,7 @@ The `cube` server exposes 4 tools implementing a **CubeJS-compatible API**. Quer
 
 | Key | What it contains |
 |-----|-----------------|
-| `cubes` | Available cubes with measures, dimensions, join relationships, and metadata hints (`eventStream` flag for funnels, etc.) |
+| `cubes` | Available cubes with measures, dimensions, join relationships, and metadata hints (`eventStream` flag for funnels, etc.). Only the entities the signed-in user may view or edit have a cube |
 | `queryLanguageReference` | **Complete** TypeScript DSL: field naming, filter operators, time dimensions, analysis modes (funnel/flow/retention). This is the authoritative source, do not construct queries from memory. |
 | `dateFilteringGuide` | Decision tree for date filtering vs time grouping. Read this whenever the user mentions any time period. |
 

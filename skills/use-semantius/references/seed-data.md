@@ -125,7 +125,7 @@ A record written straight into a state at or past an approval (`approved`, `orde
 
   It deletes the file's records, children first, and ends `Clear finished`, which is not a seed.
   - Only on entities this build created, and only during the build that seeded them. Later, clear only when the user asks: by then a table may hold real records.
-  - When it stops (a delete the platform refuses, or a record that is not the one the file wrote), stop and tell the user. The tables it names as done are already empty.
+  - It counts what each delete removed, from the delete's own answer. When it stops (a delete the platform refuses, a delete that removed fewer records than it named, or a record that is not the one the file wrote), stop and tell the user. The tables it names as done are already empty.
 
 ## Report
 

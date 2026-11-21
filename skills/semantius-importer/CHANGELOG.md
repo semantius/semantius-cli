@@ -2,6 +2,16 @@
 
 This file is history, not contract: it is **not** loaded into context at runtime. The body of `SKILL.md` is always the current contract. Newest entries first.
 
+## The skill states what it does today, with no postponed or planned features
+
+2026-11-21. Asked for by Martin Amm: a skill describes current behavior only, so every note about a postponed, disabled, deferred or planned feature, an earlier version or a CLI version is gone, and each limit is stated as what the skill does.
+
+- `README.md` keeps "What it does" and "Layout". The "Postponed", "Disabled this iteration", "Deferred design" and "Pending platform/tooling work (roadmap)" sections are removed; the id-preservation design they held stays in git history. Two bullets state the limits: the import is insert-only, and the platform assigns the primary key.
+- `SKILL.md`: the id line says the import never writes source ids into a new entity's primary key; the unique-key question and "Insert-only" no longer point at the README.
+- `schema-mapping.md`: the user is told "the platform assigns new ids, and the column is kept as a field of its own", no longer that preservation comes later; "Why deferred" is removed; the output shape and the format set carry no CLI version; `on_exists` is described as not a key of the mapping; the payload guard no longer names `PATCH`, which the script never sends.
+- `import-script-template.md` and `importer-essentials.md`: no roadmap; the tool has no `prefer` input, so there is no batched upsert.
+- `import.template.ts` and `render-plan.ts`: comments and the `on_exists` messages say the import is insert-only and never modifies existing rows.
+
 ## A time or uuid column takes null
 
 2026-11-16. Asked for by Martin Amm, with the platform update that use-semantius follows from the same day (pg_semantius 0.5.0). `SKILL.md` (the nullability row), `importer-essentials.md` and `schema-mapping.md` section 7: `reference`, `date`, `time`, `date-time` and `uuid` accept NULL, so an empty cell of a `time` or `uuid` column sends `null`; a `duration` defaults to no time and a `binary` to no bytes. No script changes: an empty cell takes the column's `empty_value` from `mapping.json`. The file format is unchanged; `version` stays `3.1`.

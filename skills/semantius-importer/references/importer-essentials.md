@@ -118,7 +118,7 @@ semantius call crud update_entity '{"table_name": "products", "data": {"descript
 - **Bulk insert = array body where every object carries the same keys.** Heterogeneous arrays are rejected with the misleading `PGRST102 Empty or invalid json` (a column-discovery constraint, not an encoding problem). Fill absent values explicitly per the empty-cell policy. (Adding `?columns=a,b` to the path lifts the same-keys rule but makes omitted keys NULL — no `missing=default` on this raw path — so the importer keeps uniform rows. Only the typed catalog tools accept ragged arrays.)
 - Row count: `GET /<table>?select=count` returns `[{"count": N}]`.
 - Update one row: `PATCH /<table>?<key>=eq.<value>` with the changed fields as `body`.
-- Do not send a `prefer` key: the tool has no such input (`Prefer: return=representation` is fixed), so batched upsert is unavailable — see the README roadmap.
+- Do not send a `prefer` key: the tool has no such input (`Prefer: return=representation` is fixed), so there is no batched upsert.
 - Filter operators: `eq`, `neq`, `gt/gte/lt/lte`, `like`/`ilike`, `in.(a,b)`, `is.null`. Combine with `&` (a top-level comma is not AND — it silently matches nothing).
 
 ## 6. Deep links

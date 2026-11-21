@@ -28,7 +28,7 @@ On success the tool returns `{outputPath, schema}` inline **and** writes the sam
 
 Codes: `FILE_NOT_FOUND`, `NOT_A_FILE`, `PERMISSION_DENIED`, `EMPTY_FILE`, `NO_HEADER_ROW`, `PARSE_ERROR`, `READ_ERROR`, `WRITE_ERROR`, `INVALID_ARGUMENT`, `INVALID_OPTION`, `UNKNOWN_ERROR`. Surface the message and stop; there is nothing to continue with.
 
-### Output shape (CLI v0.8.3+)
+### Output shape
 
 `schema` is a wrapper object, not a bare array:
 
@@ -67,7 +67,7 @@ Per field:
 | `header` | The raw CSV header, verbatim. The import script keys rows by this. |
 | `field_name` | Normalized snake_case suggestion, unique within the file: lowercase, non-alphanumerics collapsed to `_`, leading/trailing `_` trimmed; an empty header becomes `field_<col_no>`; collisions get numeric suffixes (`_2`, `_3`); names that would end in the reserved `_id_label` suffix are suffixed away from it. A **suggestion**: the skill still verifies it (sections 3 and 4) and the user can override. Note: a header like `2024 Revenue` yields the digit-leading `2024_revenue`, which is mechanically valid here but worth a rename in review (e.g. `revenue_2024`). |
 | `col_no` | 1-based column position. |
-| `format` | The Semantius-aligned field format. Currently observed values: `integer`, `number`, `date`, `date-time`, `email`, `url`, `string`, `boolean`, `enum`. The set is **open** — future CLI versions may add values, and the skill passes any format through (section 2 fallback rule), so an unknown value is never an error. |
+| `format` | The Semantius-aligned field format. Values: `integer`, `number`, `date`, `date-time`, `email`, `url`, `string`, `boolean`, `enum`. The set is **open**: the skill passes any other value through (section 2 fallback rule), so an unknown value is never an error. |
 | `precision` | Max decimal places seen; `0` for every non-numeric base format. |
 | `required` | `true` = no empty cell was seen in any inspected row; `false` = at least one exists. A statement about the CSV with **no `create_field` counterpart** — never send it. |
 | `input_type` | `"required"`, present **only** when `required` is `true`. The derived property that IS sendable to `create_field`; treated as a proposal the user can downgrade (section 6). |
@@ -108,7 +108,7 @@ The vocabulary is aligned, so most formats pass straight into `create_field`:
 | (chosen in section 3, or the format of an existing target field) | `rating` | | parse as integer; a value outside 0–5 fails the row |
 | (the format of an existing target field) | `color`, `icon` | | pass through |
 
-**Fallback rule: any `format` not in the table passes through verbatim.** The table documents the formats whose handling has nuances; it is guidance, never an allowlist. A format without a row (`email`, `url`, anything a future CLI version emits) is sent to `create_field` as-is (together with `precision`, `enum_values`, and `input_type` when present), passed through untouched by the import script's coercion, and gets the empty-cell default of its PostgreSQL type (section 7; types: the format → type table in `use-semantius/references/data-modeling.md`) unless the platform's nullability rule marks it NULL-capable. A new format must never break or block the skill.
+**Fallback rule: any `format` not in the table passes through verbatim.** The table documents the formats whose handling has nuances; it is guidance, never an allowlist. A format without a row (`email`, `url`, any other value) is sent to `create_field` as-is (together with `precision`, `enum_values`, and `input_type` when present), passed through untouched by the import script's coercion, and gets the empty-cell default of its PostgreSQL type (section 7; types: the format → type table in `use-semantius/references/data-modeling.md`) unless the platform's nullability rule marks it NULL-capable. An unlisted format never breaks or blocks the skill.
 
 **The introspection verdict is gold — default to it, and never override it silently.** Every `format` (and `precision`, `enum_values`, `input_type`, and the boolean pair) in the csvschema output is a deliberate decision produced by the detection rules of section 1, not an accident. Pass it through to `create_field` unchanged unless there is a genuine, domain-level reason to change it. If you are confident the verdict is wrong for the data (e.g. a heuristic `string` id column that is really a numeric measurement, or an enum that is really an integer), that override is a **user decision, not a mapping edit**: raise it in the mapping review as an `AskUserQuestion` that states the introspected format, the proposed override, and the reason, and defaults to the introspected format. The enum review is the one place where the default is the other way round: there the question defaults to the format section 3 gives by meaning, and to `enum` only when the meaning is unclear. Silently changing a column's format in the mapping is editorializing the source's declared type — the exact mistake this rule exists to prevent. A mapping that differs from the csvschema verdict without a recorded user decision is a defect. The one exception: an `enum` verdict on dates, real numbers or an amount is corrected without a question (section 3).
 
@@ -153,9 +153,9 @@ The util's `field_name` suggestions are mechanically valid. The skill still veri
 
 **Digit-leading names.** The normalizer can produce names like `2024_revenue` (from `2024 Revenue`). Mechanically valid, but propose a rename in the review (`revenue_2024`) — some downstream tooling rejects unquoted digit-leading identifiers.
 
-**The primary-key policy (active this iteration).** Every entity has a primary key column named by its **`id_column`** property — platform default `id`, customizable per entity. The two target paths differ:
+**The primary-key policy.** Every entity has a primary key column named by its **`id_column`** property — platform default `id`, customizable per entity. The two target paths differ:
 
-**New entity (create path)** — this is where `id_mode` applies: the wrapper tells you whether the file brings a usable primary key, and the (deferred) preservation design below is about exactly this case. Until it is re-enabled, **report** the detection ("this file carries a usable primary key; preservation lands in a later iteration") and apply the classic policy. Entities this skill creates keep the platform default `id_column` of `id`.
+**New entity (create path)** — this is where `id_mode` applies: the wrapper tells you whether the file brings a usable primary key. **Report** the detection ("this file carries a usable primary key; the platform assigns new ids, and the column is kept as a field of its own") and apply the classic policy. Entities this skill creates keep the platform default `id_column` of `id`.
 
 **Existing entity (reuse path)** — `id_mode` is **ignored**: the entity already has its primary key. Read the actual `id_column` from `read_entity` (never assume `id`) and apply the collision policy plus the payload guard. **The key type decides whether the file maps to `id` at all** (read `id_type` with it):
 
@@ -170,9 +170,7 @@ The util's `field_name` suggestions are mechanically valid. The skill still veri
 | a CSV column whose field name equals the target's primary key column (`id` on a new entity, the live `id_column` on an existing one) | rename to `external_id`, offer to **mark it unique** (`unique_value: true`; becomes the `natural_key` the import dedupes on, so re-runs skip rows already present) | skip the column |
 | `id_move_column` (new entity, `id_mode: "move"`) | keep as its own `integer` field, offer to mark it unique (same as above) | skip |
 
-**The unique-key question (user-facing wording).** Any column that identifies a row in the source (an id, a code, a reference number) is a candidate. Ask once, in plain words: *"`<Header>` looks like a unique id from the source. Mark `<field>` as unique so re-running this import skips rows that are already there?"* Options: **Unique** (Recommended) — `unique_value: true` goes on the field, `natural_key` in `mapping.json` names it, the import skips rows whose value already exists; **Not unique** — plain insert, re-running the file inserts every row again. The phrase "natural key" is internal (`mapping.json`) and never appears in a question or a plan; the user decides about **uniqueness**. There is no "update existing rows" option: **updating existing records is postponed** (README → Postponed), the import is insert-only.
-
-**Why deferred:** explicit-id imports leave the platform id sequence behind and the first platform-side insert collides (verified live). The full preservation design, the sequence rule, and the repairing RPC's SQL live in the README under "Deferred design"; the `fix_id_sequence` RPC it depended on now ships with the platform (the CLI's transfer import uses it), so re-enabling preservation is a planning item, not a platform blocker (README → roadmap).
+**The unique-key question (user-facing wording).** Any column that identifies a row in the source (an id, a code, a reference number) is a candidate. Ask once, in plain words: *"`<Header>` looks like a unique id from the source. Mark `<field>` as unique so re-running this import skips rows that are already there?"* Options: **Unique** (Recommended) — `unique_value: true` goes on the field, `natural_key` in `mapping.json` names it, the import skips rows whose value already exists; **Not unique** — plain insert, re-running the file inserts every row again. The phrase "natural key" is internal (`mapping.json`) and never appears in a question or a plan; the user decides about **uniqueness**. There is no "update existing rows" option: the import is insert-only.
 
 **Other reserved-name collisions.** `label`, the `<label_column>` field, `created_at`, and `updated_at` are auto-created; `_label` and `<fk>_label` are read-time projections. None may be targeted by `create_field`:
 
@@ -182,7 +180,7 @@ The util's `field_name` suggestions are mechanically valid. The skill still veri
 | `label` | rename to `source_label` | skip; or choose it as the label column (section 6), which makes it the auto-created field |
 | anything ending `_id_label` or starting `_` | already avoided by the util's normalizer; if a manual rename reintroduces it, reject the rename | |
 
-**Manual renames to reserved names are rejected in the review loop**: the target entity's `id_column` (default `id`, read from the live entity — never assumed), `label`, `created_at`, `updated_at`, and the chosen label column are never valid `field_name` targets. As a second line of defense the import script **silently strips the entity's primary key column from every payload** (insert and PATCH) while id preservation is deferred — a mapping mistake cannot reintroduce explicit-id inserts and the sequence desync they cause (import-script-template.md design rule 2; the script reads `id_column` from mapping.json, filled from the live entity).
+**Manual renames to reserved names are rejected in the review loop**: the target entity's `id_column` (default `id`, read from the live entity — never assumed), `label`, `created_at`, `updated_at`, and the chosen label column are never valid `field_name` targets. As a second line of defense the import script **silently strips the entity's primary key column from every payload**, so a mapping mistake cannot send an explicit id (import-script-template.md design rule 2; the script reads `id_column` from mapping.json, filled from the live entity).
 
 Record every decision in the mapping (section 8); renamed columns keep their raw `header` key so the script can still find them in the CSV.
 
@@ -303,8 +301,8 @@ Top-level keys:
 |---|---|
 | `table` | Target `table_name`. |
 | `id_column` | Copied from the target entity's live `id_column` property (`read_entity`; `id` for entities this skill just created). The import script's payload guard keys on it. |
-| `natural_key` | Optional. Names the **field** (not header) the user chose to mark unique (`unique_value: true` on that column). The import skips rows whose value already exists in the table; existing rows are never modified (updating existing records is postponed, README → Postponed). Absent/null: plain insert, re-running duplicates rows. Internal name only — user-facing wording is "unique key" / "marked unique". |
-| `on_exists` | **Removed** (postponed). The scripts reject a mapping that still carries `"on_exists": "update"`; do not write the key. |
+| `natural_key` | Optional. Names the **field** (not header) the user chose to mark unique (`unique_value: true` on that column). The import skips rows whose value already exists in the table; existing rows are never modified. Absent/null: plain insert, re-running duplicates rows. Internal name only — user-facing wording is "unique key" / "marked unique". |
+| `on_exists` | Not a key of the mapping: the import is insert-only. `render-plan.ts` warns about any value but `"insert"`, and `import.ts` refuses to run with one; do not write the key. |
 | `expected_records` | The introspection wrapper's `record_count` on a full scan; `null` when the scan was capped. The import verifies `parsed` against it (section 9). |
 | `batch_size` | Optional insert batch size (default 250, sane range 200–500). |
 | `questions` | The question ledger (SKILL.md writing convention 7): one entry per question Stages 2–4 ask, with `stage`, `header`, `question` (the exact text), `options` (the labels, "(Recommended)" on the default) and `decides` (what the answer sets in this file). `answer` stays absent until the user answers, then holds the chosen label, an array of labels for a multi-select, or the user's own text. `render-plan.ts` lists every entry without an answer; `create-fields.ts` (its dry run too) and `import.ts` refuse to run while one is open. |

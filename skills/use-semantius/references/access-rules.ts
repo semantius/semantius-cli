@@ -849,7 +849,16 @@ export function planAccess(input: { slug: string; moduleName: string; record: un
     else if (fieldOf(c, table, WS) && e.entity_type === "operational_workflow") update.entity_type = "operational_record";
     const writers = partRoles.filter(([, r]) => (r.writes ?? []).includes(table));
     if (writers.length) {
-      if ([manage, P(`write_${table}`)].includes(e.edit_permission ?? manage)) update.edit_permission = P(`write_${table}`);
+      const write = P(`write_${table}`);
+      // An UPDATE or DELETE needs the entity's view permission besides its edit permission, so the write permission has to
+      // include it: it includes the module's read permission, and every user holds public:read and user:read through the
+      // User role. Any other view permission would leave the role updating and deleting nothing, with no error.
+      const view = e.view_permission ?? read;
+      if ([manage, write].includes(e.edit_permission ?? manage) && ![read, write, "public:read", "user:read"].includes(view)) {
+        plan.problems.push(`${table}: the ${listOf(writers.map(([, r]) => r.title.toLowerCase()), "and")} ${writers.length > 1 ? "write" : "writes"} it, so its edit_permission would be ${write}, which includes ${read} but not its view_permission ${view}. ` +
+          `An update or delete needs both permissions: a holder of ${write} would update and delete no record, with no error, and an insert that reads the record back is refused (42501). ` +
+          `Either point its view_permission at ${read}, which lets every holder of ${read} read its records (do that only if they may), or do not give this role write access to it; then run this again (rbac.md, "Roles that do part of the work")`);
+      } else if ([manage, write].includes(e.edit_permission ?? manage)) update.edit_permission = write;
       else plan.warnings.push(`${table}: a role that does part of the work writes it, but its edit_permission is ${e.edit_permission}, not ${manage}; its write tier is not the manage tier, so it was left as it is`);
     }
     if (Object.keys(update).length) plan.entities.set(table, update);

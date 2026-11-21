@@ -96,7 +96,7 @@ semantius --host <target> call utils/import_entities '{"path":"accounts.json"}'
 
 | Error | Meaning | Remedy |
 |---|---|---|
-| `PGRST202` on `fix_id_sequence` | the target database is too old (0.5.0-beta1) | it must be rebuilt or upgraded; the import stopped before writing any record |
+| `PGRST202` on `fix_id_sequence` | the target database lacks the `fix_id_sequence` RPC | it must be rebuilt or upgraded; the import stopped before writing any record |
 | a validation rule's error on a record | rules are written **before** records, so every record must pass the target's rules | fix the data at the source or the rule, then re-export. **Not transient: a retry fails the same way** |
 | unknown `external_id` | a referenced user does not exist on the target | create or invite that user on the target, then re-run |
 | a missing module (`import_entities` from a module file) | the entities' module is not on the target | use `import_module`, or create the module first |

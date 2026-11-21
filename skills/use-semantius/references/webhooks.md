@@ -19,6 +19,8 @@ The receiver writes only the keys that match a field of the table; other keys ar
 
 The composed-label columns — the entity's own `_label` and any FK companion `<fk>_label` (e.g. `customer_id_label`) — are likewise **never payload fields**. They are platform-owned, read-time projections, not real columns, and don't appear in `read_field` at all.
 
+**Fields that default to the signed-in user.** A delivery is written with no signed-in user, so a `reference` or `parent` field to `users` whose `default_value` is `CURRENT_USER` or `$user_id`, such as the field that records who opened a record, stays empty unless the payload sends it, and a required or `parent` one refuses the delivery (`data-modeling.md` → "Computed defaults"). Send the `users` id in the payload when the records should name someone.
+
 **Enum fields.** An enum field accepts only the values of its `enum_values`. When the producing system sends labels instead (e.g. "On hold" for `on_hold`), the payload must carry the `value` of the matching `{"value", "label"}` entry (an entry may also carry a `description`, `color` and `icon`; ignore them).
 
 **The key field depends on the entity's `id_type`:**

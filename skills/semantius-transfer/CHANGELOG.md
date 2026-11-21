@@ -6,6 +6,10 @@ Entries below are newest first.
 
 ---
 
+## A missing `fix_id_sequence` is named without a database version
+
+2026-11-21. Asked for by Martin Amm: a skill describes current behavior only. The failure table's `PGRST202` row says the target database lacks the `fix_id_sequence` RPC instead of naming the version that lacked it.
+
 ## The shared preflight runs in full, and hosts are settled in Stage 1
 
 2026-11-11. Asked for by Martin Amm. The Preflight section runs `use-semantius/references/preflight.md` in full: its one question-format step, which now includes dot and similarly limited tools, and checks 1 to 3. So the skill stays in the repo root, installs the CLI or finds it when it is not on PATH yet, and probes and signs in to the host this machine is set to. The skill's own preflight check is only that `semantius tools utils` lists `export_module`. Resolving the source and target, `whoami` and the `login --host` sign-in for every named host, and the check that a transfer names two different hosts move to the new "Stage 1 — Settle hosts and scope", which the workflow table and the failure table name. The file format is unchanged; `version` stays `3.1`.

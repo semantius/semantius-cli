@@ -4,7 +4,9 @@
  * entities on the instance, so one real-world thing is never modeled twice. Of the
  * platform's own `_core` module only `users` is compared: the people in a new
  * entity may be the platform's users or separate. The other `_core` entities are
- * never reused, so only their `table_name`s count, as reserved names.
+ * never reused, so only their `table_name`s count, as reserved names. They come from
+ * `CORE_TABLES` as well as from the catalog, because the catalog shows a user only the
+ * entities it may view or edit.
  *
  * RESERVED NAME: the new `table_name` equals a `_core` table other than `users`.
  * SAME NAME: the new `table_name` equals an existing one. SIMILAR NAME: the new
@@ -59,15 +61,29 @@ function namesMatch(a: string[], b: string[]): boolean {
   return short.length > 0 && short[short.length - 1] === long[long.length - 1] && short.every((w) => long.includes(w));
 }
 
-/** The `table_name`s of the `_core` entities that are never reused: every one but `users`. */
+/**
+ * The entities of the platform's `_core` module, as the platform installs them. A user sees an entity's row in
+ * `entities` only with its view or edit permission or `admin`, and most of these are viewed with `admin`, so the
+ * catalog read alone would let a user without it take one of their names.
+ */
+export const CORE_TABLES: ReadonlySet<string> = new Set([
+  "entities", "fields", "users", "modules", "roles", "permissions", "user_roles", "role_permissions", "user_permissions", "permission_hierarchy",
+  "audit_record_logs", "audit_ddl_logs", "queues", "queue_table_events", "processes", "raci_assignments", "process_gates", "raci_events",
+  "webhook_receivers", "webhook_receiver_logs", "dashboards", "user_bookmarks",
+]);
+
+/** The `table_name`s of the `_core` entities that are never reused: every one but `users`, from `CORE_TABLES` and from the `_core` entities the catalog shows. */
 export function reservedTables(existing: Existing[], moduleNames: Map<number, string>): Set<string> {
-  return new Set(existing.filter((e) => moduleNames.get(e.module_id ?? -1) === CORE_MODULE && e.table_name !== "users").map((e) => e.table_name));
+  const shown = existing.filter((e) => moduleNames.get(e.module_id ?? -1) === CORE_MODULE).map((e) => e.table_name);
+  return new Set([...CORE_TABLES, ...shown].filter((t) => t !== "users"));
 }
 
 /** Every match between the new entities and the existing ones; `separate` sets aside similar-name matches only, and a `reserved` table matches only by its exact name. */
 export function findMatches(batch: Record<string, string[]>, existing: Existing[], separate: Set<string> = new Set(), reserved: Set<string> = new Set()): Match[] {
   const matches: Match[] = [];
   for (const [table, others] of Object.entries(batch)) {
+    // A reserved name is refused whether or not the caller sees its entity in the catalog.
+    if (reserved.has(table) && !existing.some((e) => e.table_name === table)) matches.push({ table, kind: "reserved", entity: { table_name: table } });
     for (const entity of existing) {
       if (entity.table_name === table) {
         matches.push({ table, kind: reserved.has(table) ? "reserved" : "same", entity });

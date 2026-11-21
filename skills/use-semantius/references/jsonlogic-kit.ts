@@ -263,7 +263,7 @@ const NO_EMPTY_VALUE = new Set(["boolean", "integer", "int32", "int64", "number"
 /**
  * Every problem of a new model's entities and fields, checked together before anything is written:
  * - the field checks of `call-file.ts` (a field `create_entity` already made, a required reference with `clear`, a
- *   rollup over hidden rows, a rollup whose `link_field` is not a relationship field of the child that points at the
+ *   parent field with `clear`, a rollup over hidden rows, a rollup whose `link_field` is not a relationship field of the child that points at the
  *   rollup's own entity), its name checks (a table or field name the platform refuses for a leading "_" or its length)
  *   and its icons;
  * - a field its `input_type_rule` makes required in some states, with no validation rule of its entity that reads it

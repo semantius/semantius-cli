@@ -6,8 +6,7 @@
  * never edited per run. All run configuration comes from `./mapping.json`
  * (schema-mapping.md section 8) next to this script.
  *
- * INSERT-ONLY: existing rows are never modified (updating existing records
- * from a re-import is postponed, see README -> Postponed). Safe to re-run
+ * INSERT-ONLY: existing rows are never modified. Safe to re-run
  * only with `natural_key` set in mapping.json (the field marked unique):
  * rows whose key already exists are skipped. Otherwise re-running duplicates rows.
  *
@@ -59,7 +58,7 @@ type Mapping = {
   table: string;
   id_column?: string;
   natural_key?: string | null;
-  // Legacy key from the (postponed) update mode. Anything but "insert" is rejected.
+  // Not a mapping key: the import is insert-only, so anything but "insert" is rejected.
   on_exists?: string;
   expected_records?: number | null;
   batch_size?: number;
@@ -76,10 +75,10 @@ const TABLE = M.table;
 const BATCH_SIZE = M.batch_size ?? 250;
 // The field the user chose to mark unique (unique_value: true), or null
 // (plain insert; re-running duplicates rows). Rows whose key value already
-// exists in the table are SKIPPED - never updated (update mode is postponed).
+// exists in the table are SKIPPED - never updated.
 const NATURAL_KEY: string | null = M.natural_key ?? null;
 if (M.on_exists !== undefined && M.on_exists !== "insert") {
-  console.error(`mapping.json: on_exists "${M.on_exists}" is not supported - this import is insert-only (updating existing records is postponed). Remove the key.`);
+  console.error(`mapping.json: on_exists "${M.on_exists}" is not supported - this import is insert-only and never modifies existing rows. Remove the key.`);
   process.exit(4);
 }
 const OPEN_QUESTIONS = (M.questions ?? []).filter((q) => q.answer === undefined || q.answer === null);
@@ -91,7 +90,7 @@ if (OPEN_QUESTIONS.length) {
 // The entity's primary key column, copied into mapping.json from the LIVE
 // entity's id_column property (read_entity; default "id", but customizable
 // per entity - never assume the literal "id" for existing targets). Stripped
-// from every payload (hard guard, design rule 2) while id preservation is deferred.
+// from every payload (hard guard, design rule 2).
 const ID_COLUMN = M.id_column ?? "id";
 // record_count from the introspection wrapper; null when the scan was capped.
 const EXPECTED_RECORDS: number | null = M.expected_records ?? null;
@@ -246,8 +245,8 @@ for await (const record of parser) {
     failed.push({ batchIndex: -1, row: record, error: bad });
     continue;
   }
-  // Hard guard (design rule 2): the primary key never travels while id
-  // preservation is deferred - silently dropped, whatever the mapping says.
+  // Hard guard (design rule 2): the primary key never travels - silently
+  // dropped, whatever the mapping says.
   delete out[ID_COLUMN];
   if (NATURAL_KEY) {
     const key = String(out[NATURAL_KEY]);

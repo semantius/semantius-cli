@@ -28,7 +28,8 @@
  *     (23514), an `id_prefix` that is not the entity's singular without digits, one prefix on
  *     two entities of the payload, and an `id_prefix` another entity on the host already has
  *     (23505) are refused;
- *   - a required `reference` with `reference_delete_mode: clear` is refused (the platform's 90257);
+ *   - a required `reference` with `reference_delete_mode: clear` is refused (the platform's 90257), and so is a
+ *     `parent` field with it (90282); an update that does not carry the field's `format` reads it from the host;
  *   - a `default_value` of `SESSION_USER`, or of `CURRENT_USER` on a field that is not a `reference` or `parent`
  *     to `users`, is refused: it stores the database role name, never a person; an update that does not
  *     carry the field's `format` reads it from the host;
@@ -380,8 +381,8 @@ export function existingFieldProblems(fields: ReadonlyArray<any>, existing: Read
 export const USER_DEFAULT = /^(current_user|session_user)$/i;
 
 /**
- * The field problems the platform refuses one at a time: a required reference with `clear` (90257), and a rollup over
- * rows that readers of its entity may not see, without `include_hidden_rows` (90269). `entities` holds the parent and
+ * The field problems the platform refuses one at a time: a required reference with `clear` (90257), a parent field with
+ * `clear` (90282), and a rollup over rows that readers of its entity may not see, without `include_hidden_rows` (90269). `entities` holds the parent and
  * the child of each rollup; a rollup whose entities are not in it is not checked. Also a default the platform accepts
  * but that never names a person: `SESSION_USER`, and `CURRENT_USER` on a field that is not a reference or parent to
  * users (a field with no `format` is not checked for it).
@@ -392,6 +393,9 @@ export function fieldProblems(fields: ReadonlyArray<any>, entities: ReadonlyMap<
     const where = `${f.table_name}.${f.field_name}`;
     if (f.format === "reference" && f.input_type === "required" && f.reference_delete_mode === "clear") {
       out.push(`${where}: a required reference cannot take reference_delete_mode clear, which empties it when the record it points at is deleted (90257). Use restrict, or make the field optional (data-modeling.md, "Choosing the Right Format").`);
+    }
+    if (f.format === "parent" && f.reference_delete_mode === "clear") {
+      out.push(`${where}: a parent field cannot take reference_delete_mode clear: its column is NOT NULL, so every delete of a record it points at that has children would fail, and the platform refuses it (90282). Use restrict or cascade, or make it a reference with clear (data-modeling.md, "Choosing the Right Format").`);
     }
     const userDefault = typeof f.default_value === "string" ? f.default_value.trim() : "";
     const toUsers = (f.format === "reference" || f.format === "parent") && f.reference_table === "users";
@@ -853,10 +857,11 @@ export async function main(
     if (!existing) problems.push("the fields could not be read from the host, so the payload was not checked for fields that already exist; check the connection and run it again.");
     else problems.push(...existingFieldProblems(created, new Set(existing), entities));
   }
-  // A default of a role name or the signed-in user is checked against the field's format: an update that does not carry it reads it from the host.
-  const unformatted = fields.filter((f) => typeof f.format !== "string" && typeof f.default_value === "string" && USER_DEFAULT.test(f.default_value.trim())).map((f) => `${f.table_name}.${f.field_name}`);
+  // A default of a role name or the signed-in user, and the delete mode clear, are checked against the field's format: an update that does not carry it reads it from the host.
+  const unformatted = fields.filter((f) => typeof f.format !== "string"
+    && ((typeof f.default_value === "string" && USER_DEFAULT.test(f.default_value.trim())) || f.reference_delete_mode === "clear")).map((f) => `${f.table_name}.${f.field_name}`);
   const hostFormats = unformatted.length ? await readFieldRefs(unformatted) : [];
-  if (!hostFormats) problems.push("the fields whose default names a user could not be read from the host, so their default was not checked; check the connection and run it again.");
+  if (!hostFormats) problems.push("the fields whose default names a user, or whose delete mode becomes clear, could not be read from the host, so they were not checked; check the connection and run it again.");
   const formatOf = new Map((hostFormats ?? []).map((r) => [`${r.table_name}.${r.field_name}`, r]));
   problems.push(...fieldProblems(fields.map((f) => {
     const host = formatOf.get(`${f.table_name}.${f.field_name}`);

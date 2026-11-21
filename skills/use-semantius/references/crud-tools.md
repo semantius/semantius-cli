@@ -73,8 +73,15 @@ The order is "Mandatory Creation Order" in `data-modeling.md`; follow it as writ
 
 | Error | Meaning | Do |
 |-------|---------|----|
-| `23503` | A foreign key target does not exist | Create it first: base before based entity, permission or role before module wiring |
+| `23503` | A foreign key target does not exist; on a delete before PostgreSQL 18, a `restrict` foreign key refuses it; on every version, a delete of a permission that a module's `view_permission` names is refused at commit (`modules_view_permission_fkey`, a deferred key). The constraint is named in the message | Create it first: base before based entity, permission or role before module wiring. For a refused delete, as `23001` |
+| `23001` | Delete refused by a `restrict` foreign key (PostgreSQL 18): a role a module names as a default role (`modules_default_*_role_id_fkey`), an entity or a role RACI events name (`raci_events_entity_fkey`, `raci_events_target_role_id_fkey`), a record that a relationship field with delete mode `restrict` points at | Remove or repoint what the named constraint holds first |
+| `42501` | Refused for permission: `hint.code` names the reason (`90101` a missing permission). With no `hint.code` it is row-level security: an insert without the edit permission, or by a user who holds the edit permission and not the view permission | `rbac.md` → "Diagnosing Access Issues" |
+| `90104`, `90108` | The last enabled Administrator, or role 2's grant of `admin` and the permission `admin` itself, would be removed (`42501` with this `hint.code`) | Grant role 2 to another enabled user first; never delete or rename `admin` (`rbac.md` → "Grant Permissions to Roles") |
 | `90212` | A field's `reference_table` names no entity | Create the referenced entity first |
+| `90281` | A rollup's maintenance function would carry the name of another rollup's | Rename the child entity or its relationship field (`rollup-fields.md` → "Creating one") |
+| `90282` | A `parent` field with `reference_delete_mode: clear` | `restrict` or `cascade`, or a `reference` with `clear` |
+| `90283`, `90284` | A `CURRENT_USER` or `$user_id` default where it cannot mean the signed-in user (`90283`), or a relative day or time a default cannot hold (`90284`) | `data-modeling.md` → "Computed defaults" |
+| `90285`, `90286` | A built-in field's `reference_delete_mode` or `reference_table` changed, or a rename of an entity built-in fields reference (`users`, `roles`, `permissions`, `modules`, `entities`) | Leave them as they are |
 | `90260` | Delete refused: a field of another entity references it | `read_field` with `reference_table=eq.<table>`, then delete or repoint those fields |
 | `90266` | Delete refused: a rollup uses it | Remove or change the rollup field first |
 | `90247` | An `is_a` / `has_a` entity or a base still has records | Delete its records first |
@@ -86,7 +93,8 @@ The order is "Mandatory Creation Order" in `data-modeling.md`; follow it as writ
 | `90276` | The table name, the field name and 10 bytes exceed 63 bytes; on an `is_a` / `has_a` entity a `table_name` over 39 bytes | Shorten the field name or the table name |
 | `90275` | A rename of a field that a rule names (the hint names the rule) | Change the rule first, then rename |
 | `90909`, `90919` | A rule names an unknown operator, or a `select_rule` / validation rule is not one operation | Fix the rule (`jsonlogic.md` → "Deploy-time guarantees") |
-| `90920` | Arithmetic over text with no number, a zero divisor, or an infinite result | Guard the value in the rule || `42703` | The column does not exist | Check the name with `read_field`; a webhook log filters on `webhook_receiver_id` |
+| `90920` | Arithmetic over text with no number, a zero divisor, or an infinite result | Guard the value in the rule |
+| `42703` | The column does not exist | Check the name with `read_field`; a webhook log filters on `webhook_receiver_id` |
 | `PGRST102` | A bulk array whose rows have different keys | Give every row the same keys |
 | `42P10` | Upsert on an `is_a` / `has_a` entity | Insert, then PATCH |
 
@@ -100,7 +108,7 @@ semantius call crud create_field '{"data": {"table_name": "orders", "field_name"
 semantius call crud create_field '{"data": [{"table_name": "orders", "field_name": "total", "title": "Total", "format": "number"}, {"table_name": "orders", "field_name": "note", "title": "Note", "format": "text"}]}'
 
 # WRONG: delete a module's entities one by one, then the module
-# RIGHT: back it up, then one delete_module (it cascades to entities, fields and records)
+# RIGHT: back it up, then one delete_module (it cascades to entities, fields, records, permissions and roles)
 semantius call crud delete_module '{"id": 12}'
 
 # WRONG: a scalar format with a reference_table
@@ -171,7 +179,7 @@ semantius call crud postgrestRequest '{"method":"GET","path":"/orders?status=eq.
 
 **Schema management examples (Semantius system tables):**
 ```bash
-# Read all entities in a module
+# Read all entities in a module (only those the user may view or edit, every one for a holder of admin)
 semantius call crud postgrestRequest '{"method":"GET","path":"/entities?module_id=eq.3&order=table_name.asc"}'
 
 # Bulk update field widths
@@ -342,7 +350,7 @@ semantius call crud create_field '{"data": [
 # Same patch on several fields in one update_field call (string composite ids)
 semantius call crud update_field '{"id": ["services.cost", "services.description"], "data": {"width": "m"}}'
 
-# Several roles deleted in one delete_role call (integer ids)
+# Several roles deleted in one delete_role call (integer ids); refused while a module names one as a default role or RACI events name it (23001, 23503 before PostgreSQL 18)
 semantius call crud delete_role '{"id": [4, 5, 6]}'
 
 # Duplicate check for a bulk create: ONE read over every item
@@ -358,7 +366,7 @@ semantius call crud read_field '{"filters": "table_name=eq.services&field_name=i
 Every entity exposes a read-only **`_label`** — its composed, human-readable label, folded from its parent chain (the identity spine's `_label` ⧺ ` › ` ⧺ the local label). Every `reference`/`parent` FK named `X` exposes a read-only companion **`X_label`** = the referenced row's composed `_label` (e.g. `customer_id` → `customer_id_label`).
 
 - **Select them explicitly by name** — `select=id,_label,customer_id_label`. They are not authored fields (absent from the `fields` catalog; `read_field` never returns them) and are **not** included in `select=*`.
-- **Names are deterministic, so no discovery call is needed:** `_label` on the entity, and `<fk>_label` on each `reference`/`parent` FK (the FK field name + `_label`). (`get_schema` is a verbose database function, `POST /rpc/get_schema` with `p_table_name`, not a skill tool — don't use it to find these; a token-optimized tool is planned.)
+- **Names are deterministic, so no discovery call is needed:** `_label` on the entity, and `<fk>_label` on each `reference`/`parent` FK (the FK field name + `_label`). (`get_schema` is a verbose database function, `POST /rpc/get_schema` with `p_table_name`, not a skill tool — don't use it to find these.)
 - **Read-only.** Never `create_field`, write, or import into `_label` / `<fk>_label`; the platform owns them and computes them at read time.
 - **Not inside a rule.** A read adds them, so a `computed_fields` or `validation_rules` rule that reads one gets null. A rule reads a related record's stored label column with `set_record` (`jsonlogic.md`).
 

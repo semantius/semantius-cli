@@ -575,7 +575,8 @@ export async function reportSeed(path: string): Promise<string> {
 /**
  * Deletes the file's records, children first. A record with a sample id is the file's own. A record with any
  * other key (a junction's number) is deleted only while it still holds the relationships the file gave it: a
- * difference means the record is not the one the file wrote, and that table is left alone.
+ * difference means the record is not the one the file wrote, and that table is left alone. The records deleted are
+ * counted from each delete's answer, and a delete that removes fewer records than it names stops the clear.
  */
 export async function clearSeed(path: string): Promise<string> {
   const tables = childrenFirst(await readSeedFile(path));
@@ -596,14 +597,25 @@ export async function clearSeed(path: string): Promise<string> {
         throw new Error(`${t.table}: ${other.length} record(s) with the file's ids (${other.slice(0, 5).map((r) => r.id).join(", ")}) hold other relationships than the file gave them, so they are not the records it wrote. Nothing was deleted from ${t.table} or the tables after it; ${deleted} record(s) were deleted before. Stop and tell the user.`);
       }
     }
+    // The count is what each DELETE answers with, the rows it removed. The user has just read these rows, so a
+    // delete that removes fewer has no error to show: the edit permission is missing, a row was deleted meanwhile,
+    // or an is_a or has_a record was skipped as a whole.
+    let removed = 0;
     for (const part of chunk([...stored.keys()])) {
-      try { await pgRequest("DELETE", `/${t.table}?${inFilter("id", part)}`); }
+      let answer: unknown;
+      try { answer = await pgRequest("DELETE", `/${t.table}?${inFilter("id", part)}`); }
       catch (e) {
         throw new Error(`${t.table}: the platform refused the delete (${e instanceof Error ? e.message : e}). ${deleted} record(s) were deleted before it; the tables after ${t.table} still hold theirs. Stop and tell the user.`);
       }
-      deleted += part.length;
+      const gone = Array.isArray(answer) ? answer.length : 0;
+      removed += gone;
+      deleted += gone;
+      if (gone < part.length) {
+        throw new Error(`${t.table}: the delete of ${part.length} record(s) removed ${gone}, with no error: this user read these records just before, so the edit permission is missing, a record was deleted meanwhile, or an is_a or has_a record was skipped as a whole. ` +
+          `${deleted} record(s) were deleted, ${removed} of them from ${t.table}; ${t.table} and the tables after it still hold theirs. Stop and tell the user.`);
+      }
     }
-    out.push(`  ${t.table}: ${stored.size} record(s) deleted`);
+    out.push(`  ${t.table}: ${removed} record(s) deleted`);
   }
   out.push("", `Clear finished: ${deleted} record(s) deleted. Nothing was seeded: import the file again to write them.`);
   return out.join("\n");

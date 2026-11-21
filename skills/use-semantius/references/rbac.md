@@ -14,7 +14,7 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 | **Role** | Named bundle of permissions (e.g., `crm_viewer`, `crm_manager`) |
 | **Role Permission** | M:N join: grants a permission to a role |
 | **User Role** | M:N join: assigns a role to a user |
-| **Entity gates** | `view_permission` gates reads of an entity (an entity with a `select_rule` uses the rule instead; see `select-rule.md`); `edit_permission` gates insert, update **and** delete together. There is no delete-permission column. To let only some users delete, close or approve a record, add a validation rule that tests `$mode` (or the changed field) and then an owner match or `has_permission`; see `jsonlogic.md` § *Detecting the operation* |
+| **Entity gates** | `view_permission` gates reads of an entity (an entity with a `select_rule` uses the rule instead; see `select-rule.md`); `edit_permission` gates insert, update **and** delete together. On an entity without a `select_rule`, an update or delete needs the `view_permission` too: a role with the edit permission and without the view permission updates and deletes nothing, with no error, and an insert that reads the record back (every `crud` tool does) is refused with `42501`. With a `select_rule`, an update or delete needs the edit permission and the rule, and the view permission plays no part. A user sees an entity's rows in `entities` and `fields` only with its view or edit permission or `admin`. There is no delete-permission column. To let only some users delete, close or approve a record, add a validation rule that tests `$mode` (or the changed field) and then an owner match or `has_permission`; see `jsonlogic.md` § *Detecting the operation* |
 
 ---
 
@@ -23,10 +23,10 @@ Role-based access control in Semantius flows: **Users → Roles → Permissions*
 **Always use `<module>:<action>` format:**
 - `crm:read`, read access to CRM entities
 - `crm:manage`, full write access to CRM entities
-- `leads:write`, specific write-only on leads
+- `leads:write`, write access to leads; it includes the read permission, because on an entity without a `select_rule` a write-only permission inserts only records it does not read back, and updates and deletes nothing
 - `service_catalog:read`
 
-Don't invent free-form names like `"can_edit"`; scope every permission to a module. A bare `admin` is also a valid name (it is the default `edit_permission`).
+Don't invent free-form names like `"can_edit"`; scope every permission to a module. A bare `admin` is also a valid name (it is the default `edit_permission`, and it includes `public:read`, the default `view_permission`). The permission `admin` can be neither deleted nor renamed (`42501`, `hint.code` `90108`).
 
 **The prefix names the module that owns the capability, which may not be installed yet.** `ats-candidate-crm:write_candidates` is a valid permission in a tenant that only has `hiring-starter`. The platform checks only the shape of the name: a permission's prefix does not have to match its `module_id`, a hierarchy row can cross modules, and `has_permission` compares names without looking at modules.
 
@@ -55,7 +55,7 @@ An entity's `view_permission` and `edit_permission` point at its own read and wr
 | `<unit>:admin` | `<unit>:manage`, `write_<entity>` for each entity written at the `admin` tier, plus gates and overrides |
 | Role that does part of the work | `<unit>:read`, and `write_<entity>` for each entity it writes ("Roles that do part of the work" below). `<unit>:manage` includes each of those |
 | Role that takes gates | `<unit>:manage` and each gate its role takes ("Roles that take gates" below) |
-| `write_<entity>` | `read_<entity>`, because a write without read is unusable under row-level security |
+| `write_<entity>` | `read_<entity>`, because an update or delete needs the view permission as well, and an insert that reads the record back is refused without it |
 
 For example, `hiring-starter` embeds `candidates`, whose master is `ats-candidate-crm`:
 
@@ -77,7 +77,7 @@ The names are the same in every install order: when `ats-candidate-crm` installs
 
 ## Choosing an entity's permissions
 
-An entity's `view_permission` and `edit_permission` follow from its class (`data-modeling.md` → "Classifying an entity"). The class gives the **write tier**, the permission level that gates INSERT, UPDATE and DELETE. Choose the class first, then take the permissions from this section, and send all three in the `create_entity` payload. `writeModel` and `call-file.ts` refuse a payload whose `edit_permission` is `<slug>:read`, `<slug>:manage` or `<slug>:admin` but not the tier of its `entity_type` (a `catalog` at `:admin`, an `operational_record` or `operational_workflow` at `:manage`); a `junction`, a `computed` entity and a `<slug>:write_<entity>` are not checked.
+An entity's `view_permission` and `edit_permission` follow from its class (`data-modeling.md` → "Classifying an entity"). The class gives the **write tier**, the permission level that gates INSERT, UPDATE and DELETE (an UPDATE or DELETE also needs the `view_permission`, "Core Concepts"; `<slug>:manage` includes `<slug>:read`, and `<slug>:admin` includes `<slug>:manage`). Choose the class first, then take the permissions from this section, and send all three in the `create_entity` payload. `writeModel` and `call-file.ts` refuse a payload whose `edit_permission` is `<slug>:read`, `<slug>:manage` or `<slug>:admin` but not the tier of its `entity_type` (a `catalog` at `:admin`, an `operational_record` or `operational_workflow` at `:manage`); a `junction`, a `computed` entity and a `<slug>:write_<entity>` are not checked.
 
 | Write tier | Entities | Hand-built module (module-wide) | Spec-deployed module (per entity) |
 |---|---|---|---|
@@ -99,7 +99,7 @@ A module that reuses another module's entity gets view access to that entity and
 
 | The entity's `view_permission` | What to write |
 |---|---|
-| `public:read` or `user:read` | Nothing: it is a platform-level permission |
+| `public:read` or `user:read` | Nothing: it is a platform-level permission, which every user holds through the built-in User role (and `admin` includes `public:read`) |
 | Used by this entity alone, and not the owner's `<owner>:read` | One hierarchy row: `<slug>:read` includes it |
 | The owner's `<owner>:read`, or shared with other entities | Give the entity its own, in the order below, so no existing user loses access |
 
@@ -264,7 +264,7 @@ For each gate of the record it writes:
    The `has_permission` branch is the gate's check, here for a gate without controls; an approval gate puts its whole check there ("Controls on a gate"), so a requester cannot skip past their own approval. A state the record can also reach without the gate (`rejected` beside `approved`, `canceled` before signing) is not in `after`, even when it can be reached after the gate too; when it comes after the gate in the `workflow_state` order, it goes in `notAfter`. Every state after the gate in that order is in one of the two lists, and the script refuses a record that leaves one out, because a state missing from `after` loses the gate's sequence rule and, on an approval gate, its locks and stamps, and the move into it then counts as moving an approved record back. For an offer whose gate is `approved`, with `draft`, `submitted`, `approved`, `rejected`, `sent`, `accepted` and `declined`: an offer is sent only once approved, and accepted or declined only once sent, so `after` is `sent`, `accepted`, `declined`; `rejected` is reached instead of `approved`, so it is not, and as the approval's own rejection it needs no `notAfter` either. For a purchase order whose gate is `issued`, with `draft`, `issued`, `received`, `closed` and `canceled`: `after` is `received` and `closed`, and `notAfter` is `canceled`, which a draft can reach too. A state after the gate stays in `after` when it has a gate of its own (`terminated` after `signed`, `ordered` after `approved`): its own gate rule still decides who takes it.
 6. **The entity's class:** `operational_workflow`. An entity with a lifecycle and no gate is `operational_record`, and a module with no gate is `advanced`.
 
-**Another role for a step, or none.** The access summary names each gated step and the roles that take it. When the user names another role for a step, change the record (give the state to that role's person, adding the role to `roles` when it is new) and run the command again. Naming the module's Manager role means every editor may take the step, so it is not a gate: give the state to the everyday person in the record, with the user's choice as its `because`, then drop the gate in this order: its gate rule, its sequence rule and its controls (below) first, then its permission and its hierarchy rows. When a role takes no other gate, move its users to the Manager role after the user agrees, then delete its grant, the role, its bundle and the bundle's hierarchy rows, and take it out of the record. Running the command then sets the entity's class and the module's access level.
+**Another role for a step, or none.** The access summary names each gated step and the roles that take it. When the user names another role for a step, change the record (give the state to that role's person, adding the role to `roles` when it is new) and run the command again. Naming the module's Manager role means every editor may take the step, so it is not a gate: give the state to the everyday person in the record, with the user's choice as its `because`, then drop the gate in this order: its gate rule, its sequence rule and its controls (below) first, then its permission and its hierarchy rows. When a role takes no other gate, move its users to the Manager role after the user agrees, then delete its grant, the role, its bundle and the bundle's hierarchy rows, and take it out of the record. Running the command then sets the entity's class and the module's access level. A role cannot be deleted while a module names it as a default role or RACI events name it (`23001` on PostgreSQL 18, `23503` before).
 
 The platform saves a rule that names a permission that does not exist, and that check is then false for every caller, admins included, so the step is closed to everyone; inside a `!` a misspelled name fails open instead, and the clause admits everyone. The command creates every permission before a rule that names it. A rule written by hand (a `select_rule` of its own, a rule outside the record) is checked the same way: collect every `has_permission` and `require_permission` name in it and read them in one `read_permission` with `permission_name=in.(…)`; `call-file.ts` does this for every payload it sends. The module's tier permissions are `<slug>:read`, `<slug>:manage` and `<slug>:admin`; viewer, manager and admin are role names, so `recruiting:manager` and `recruiting:viewer` are never permissions. The direct path marks no gate as high risk, so every gate is included in `<slug>:admin`.
 
@@ -321,7 +321,7 @@ In the record, such a role has `"writes"` (the entities it writes), `"limitedTo"
 From it the command creates:
 
 1. **The permissions:** each `<slug>:write_<entity>` ("Write tickets") and the bundle `<slug>:<role_key>`, described by what it does ("Write your own tickets and ticket comments"), each with `module_id`.
-2. **The hierarchy rows:** `<slug>:manage` includes each `<slug>:write_<entity>`; each `<slug>:write_<entity>` includes `<slug>:read`, because a write without read is unusable under row-level security; the bundle includes `<slug>:read`, each `<slug>:write_<entity>` the role writes and each gate it takes.
+2. **The hierarchy rows:** `<slug>:manage` includes each `<slug>:write_<entity>`; each `<slug>:write_<entity>` includes `<slug>:read`, because an update or delete needs the entity's view permission as well; the bundle includes `<slug>:read`, each `<slug>:write_<entity>` the role writes and each gate it takes. The command refuses an entity the role writes whose `view_permission` is not `<slug>:read` (or `public:read` or `user:read`, which every user holds), naming both permissions: `<slug>:write_<entity>` would not include it.
 3. **The role and its grant,** as for a role that takes gates: `role_name` "<Module Name> <Role Title>" ("Service Desk Requester"), `slug` `<module slug with - as _>_<role_key>`, `module_id`.
 4. **The entities:** each written entity's `edit_permission`; the field that names the holders (the requester field, stamped on insert, or the assigned field, such as `interviewer_user_id`) when it is missing; the write and field rules; and the `select_rule`s on each limited entity, on each entity below it (one whose `parent` field, or required `reference`, points at it) and on each hidden entity. A rollup over an entity with such a `select_rule` needs `include_hidden_rows: true` before the rule is set (`90269` otherwise). The command sets it on each such rollup, without asking, and names it (`rollup-fields.md` → "Hidden child rows").
 
@@ -644,17 +644,17 @@ The `validation_rules` of `purchase_request_lines`:
 
 #### A gate in a `raci` module
 
-The matrix is platform data: `processes`, `raci_assignments` and `process_gates` are ordinary entities, read and written with `postgrestRequest`. A new gate joins it like this:
+The matrix is platform data: `processes`, `raci_assignments` and `process_gates` are ordinary entities, read and written with `postgrestRequest` by a holder of `admin`, their view and edit permission. A new gate joins it like this:
 
 1. **Read the mode.** `living` when the instance has any `processes` row or the module's `settings.raci_mode` is `living`; otherwise `documentation`.
 2. **Ask once** which role is Accountable for the new step. Name the step in plain words and offer the module's existing roles. If the user cannot name one, include the gate only in `<slug>:admin`, with no role bundle, and say so in the summary.
 3. **Create the gate permission** and its `<slug>:admin` hierarchy row, exactly as in steps 1 and 2 above; no role bundle includes it.
 4. **Write the matrix for the mode.**
-   - `living`: insert a `processes` row (`name`, `module_id`, `process_key` `<verb>_<noun>`); a `raci_assignments` row (`process_id`, `role_id` of the Accountable role, `raci: accountable`); and a `process_gates` row (`process_id`, `entity`, `gate_kind` `approval` for an approval gate ("Controls on a gate"), `create` for a restricted create, otherwise `transition`; `to_state`; `state_column` the name of the entity's state field, since the default is `status`). The Accountable role is not granted the gate: the rule resolves it live.
+   - `living`: insert a `processes` row (`name`, `module_id`, `process_key` `<verb>_<noun>`); a `raci_assignments` row (`process_id`, `role_id` of the Accountable role, `raci: accountable`); and a `process_gates` row (`process_id`, `entity`, `gate_kind` `approval` for an approval gate ("Controls on a gate"), `create` for a restricted create, otherwise `transition`; `to_state`; `state_column` the name of the entity's state field, since the default is `status`). The Accountable role is not granted the gate: the rule resolves it live. A gate's `entity` is a reference to `entities`: a name that is no entity is refused (`23503`), renaming the entity carries its gates along, and deleting the entity deletes them. An entity or a role that RACI events (`raci_events`) name cannot be deleted (`raci_events_entity_fkey`, `raci_events_target_role_id_fkey`; `23001` on PostgreSQL 18, `23503` before); renaming the entity carries its events along.
    - `documentation`: nothing is stored. Grant the gate permission to the Accountable role with `create_role_permission`.
 5. **Write the rule for the mode.** `living`: the same rule as above with the permission check widened to `{"or": [{"is_raci_actor": ["<entity>", "<to_state>", "accountable"]}, {"has_permission": "<gate>"}]}`. `documentation`: `{"has_permission": "<gate>"}` as in step 4 above.
 
-The Accountable role still needs the entity's write tier (`<slug>:manage`) to change the record at all; the gate only decides who may take the step.
+The Accountable role still needs the entity's write tier (`<slug>:manage`, which includes the entity's view permission `<slug>:read`) to change the record at all; the gate only decides who may take the step.
 
 ---
 
@@ -712,7 +712,7 @@ The role fields are **`role_name`** (the human display name) and **`slug`** (sna
 
 **`origin`** records who provisioned a role or hierarchy relationship, and it cannot change after creation. Leave it unset when you create RBAC by hand; it defaults to `"user"`. `"model"` and `"model_master"` are set only by a spec deploy (a domain module and a master module respectively), and `"system"` only by the platform. `origin` is set on INSERT; a change is refused (`90203` on a role, `90205` on a `permission_hierarchy` row). The `system` roles are the platform built-ins seeded at database init (e.g. `Administrator`, `User`); the `slug` of a `system` role cannot be changed (`90204`), while roles of any other origin can be renamed.
 
-**Module columns.** A module carries `module_type` (`"domain"`, the default, or `"master"` for a module promoted for sharing; its `input_type` is `readonly`, which the database does not enforce), `manage_permission` and `admin_permission` (the names of the module's manage and admin permissions), and `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id` (the module's default roles). The last five are ordinary fields set with `create_module` or `update_module`; they are foreign keys, so the permissions and roles they name must already exist.
+**Module columns.** A module carries `module_type` (`"domain"`, the default, or `"master"` for a module promoted for sharing; its `input_type` is `readonly`, which the database does not enforce), `manage_permission` and `admin_permission` (the names of the module's manage and admin permissions), and `default_viewer_role_id`, `default_manager_role_id`, `default_admin_role_id` (the module's default roles). The last five are ordinary fields set with `create_module` or `update_module`; they are foreign keys, so the permissions and roles they name must already exist. A role that a module names as its default cannot be deleted (`restrict`: `23001` on PostgreSQL 18, `23503` before), and deleting a module deletes its roles, its default roles among them.
 
 ```bash
 # Several roles — in ONE call
@@ -764,7 +764,9 @@ semantius call crud create_role_permission '{
 
 The three role ids come from one `read_role` with `"filters": "slug=in.(crm_viewer,crm_manager,crm_admin)"`, matched by `slug`, never by the position of a row in the `create_role` response.
 
-The built-in `Administrator` role already holds every permission of a new module, granted by the platform, so grant only to the module's own roles.
+The built-in `Administrator` role (role id 2, whatever its name) already holds every permission of a new module, granted by the platform when the permission is created, so grant only to the module's own roles.
+
+The platform keeps an enabled Administrator. It refuses with `42501`, `hint.code` `90104`, a change that would leave no enabled user holding role 2: removing the role from its last enabled holder, pointing that holder's `user_roles` row at another role or user, disabling or deleting that user, and deleting role 2. It refuses with `42501`, `hint.code` `90108`, deleting role 2's grant of `admin` or pointing it at another role or permission, and deleting or renaming the permission `admin`. Only a direct database session as a role with BYPASSRLS is exempt.
 
 ### 5. Assign Roles to Users
 
@@ -809,7 +811,7 @@ semantius call crud getCurrentUser '{}'
 
 ## Diagnosing Access Issues
 
-When a user gets "permission denied":
+When a user gets "permission denied", or an update or delete that should change records answers `[]` with no error:
 
 1. **Get their effective permissions:**
    ```bash
@@ -819,8 +821,9 @@ When a user gets "permission denied":
 2. **Check what the entity requires:**
    ```bash
    semantius call crud read_entity '{"filters": "table_name=eq.<table>"}'
-   # Look at view_permission and edit_permission
+   # Look at view_permission, edit_permission and select_rule
    ```
+   Read it as an admin: a user sees an entity's row only with its view or edit permission or `admin`, so an empty answer to the user is no proof that the entity is missing. `get_schema` answers that user `42P01` `Table "<name>" not found in entities`, as for a missing entity, and lists a reference to an entity the user cannot see without its `reference_table_*` keys. Without a `select_rule`, an update or delete needs both permissions: a user with only the edit permission updates and deletes nothing, with no error, and an insert that reads the record back is refused with `42501`. With a `select_rule`, it needs the edit permission and a row the rule admits.
 
 3. **Trace the chain:**
    ```
@@ -829,7 +832,7 @@ When a user gets "permission denied":
                                     permission_hierarchy (inherited)
    ```
 
-4. **Fix:** Grant the missing permission to one of the user's roles, or assign a role that already has it.
+4. **Fix:** Grant the missing permission to one of the user's roles, or assign a role that already has it. A missing view permission next to an edit permission is fixed in the hierarchy: the write permission includes the read permission.
 
 ---
 
@@ -877,4 +880,4 @@ semantius call crud update_entity '{
 
 After `update_entity` on `entity_type`, set `edit_permission` to the new write tier in the same call (see "Choosing an entity's permissions" above).
 
-`edit_permission` covers insert, update and delete alike. A gate on one operation (only some roles may delete) is a validation rule on the entity, not a third permission column; see `jsonlogic.md` § *Detecting the operation*.
+`edit_permission` covers insert, update and delete alike, and an update or delete also needs the `view_permission` unless the entity has a `select_rule` ("Core Concepts"). A gate on one operation (only some roles may delete) is a validation rule on the entity, not a third permission column; see `jsonlogic.md` § *Detecting the operation*.
